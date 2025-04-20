@@ -46,5 +46,16 @@
         # home-manager configuration goes here.
         homeModules.default = ./home/default.nix;
       };
+      perSystem =
+        { pkgs, ... }:
+        {
+          treefmt = {
+            projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
+            programs = {
+              nixfmt.enable = true;
+            };
+          };
+        };
+
     };
 }
