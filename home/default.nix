@@ -1,8 +1,11 @@
 {
+  flake,
+  config,
   pkgs,
   ...
 }:
 {
+  imports = [ ]; # exposes programs.niri.settings
   # Home Manager needs a bit of information about you and the paths it should
   # manage.
   home.username = "frederik";
@@ -17,6 +20,112 @@
   # want to update the value, then make sure to first check the Home Manager
   # release notes.
   home.stateVersion = "25.05"; # Please read the comment before changing.
+
+  programs.niri.settings = {
+    ### Inputs
+    input.touchpad = {
+      "accel-profile" = "adaptive";
+      "accel-speed" = 0.3;
+      "scroll-factor" = 0.5;
+      dwt = true;
+    };
+    input.keyboard = {
+      "repeat-delay" = 250;
+      "repeat-rate" = 30;
+      xkb.layout = "us, us(intl)";
+      xkb.options = "ctrl:nocaps, compose:ralt, grp:win_space_toggle, grp_led:caps, altwin:swap_alt_win";
+    };
+
+    ### Outputs
+
+    ### Keybindings
+    binds = with config.lib.niri.actions; {
+      "Super+Shift+Slash".action = show-hotkey-overlay;
+      "Super+Return".action = spawn "foot";
+      "Super+D".action = spawn "${pkgs.fuzzel}/bin/fuzzel";
+      "Super+Shift+D".action = spawn "${pkgs.centerpiece}/bin/centerpiece";
+      "Super+Alt+L".action = spawn "swaylock";
+
+      "Super+Q".action = close-window;
+      "Super+H".action = focus-column-left;
+      "Super+J".action = focus-window-down;
+      "Super+K".action = focus-window-up;
+      "Super+L".action = focus-column-right;
+
+      "Super+Shift+H".action = move-column-left;
+      "Super+Shift+J".action = move-window-down;
+      "Super+Shift+K".action = move-window-up;
+      "Super+Shift+L".action = move-column-right;
+
+      "Print".action = screenshot;
+      "Alt+Print".action = screenshot-window;
+
+      "Super+Shift+Q".action = quit;
+
+    };
+
+    ### Window‑specific rules
+    "window-rules" = [
+      {
+        matches = [ { "app-id" = "foot"; } ];
+        "default-column-width".proportion = 0.5;
+      }
+    ];
+
+  };
+
+  programs.waybar = {
+    enable = true;
+
+    # JSON‐like attrset → Waybar config
+    settings.statusBar = {
+      layer = "top";
+      position = "bottom";
+
+      # choose only the sections you care about:
+      "modules-left" = [ "sway/workspaces" ];
+      "modules-center" = [ "sway/mode" ];
+      "modules-right" = [
+        "cpu"
+        "memory"
+        "network"
+        "battery"
+        "clock"
+      ];
+
+      # per‑module configuration:
+      cpu = {
+        format = "{usage}%";
+      };
+      memory = {
+        format = "{usedMiB} MiB";
+      };
+      network = {
+        interface = "wlan0"; # adjust to your Wi‑Fi / ethernet device
+        format = "{essid} {ipaddr}";
+      };
+      battery = {
+        format = "{capacity}%";
+        # icon‑only when low:
+        low-at = 15;
+      };
+      clock = {
+        format = "%Y‑%m‑%d %H:%M";
+      };
+    };
+
+    # (optional) very simple CSS to tighten spacing:
+    style = ''
+      * {
+        padding: 0 6px;
+        margin: 0;
+        background: #1e1e1e;
+        color: #eee;
+        font-family: Iosevka, monospace;
+        font-size: 10pt;
+      }
+    '';
+  };
 
   # The home.packages option allows you to install Nix packages into your
   # environment.
@@ -36,7 +145,7 @@
     nvd
     vulnix
     yazi
-    # mullvad
+    mullvad
     cosmic-files
     # betterbird  # issues on archlinux
     nixd
@@ -46,23 +155,20 @@
     devenv
     gitui
     websocat
-    # overskride  # not used
-    # bluetui  # not yet available
+    overskride # not used
+    bluetui # not yet available
     git-graph
     zotero
-    # zathura
-    # rio
+    zathura
+    rio
     colmena
     tailscale
     nix-eval-jobs
     nix-fast-build
-    # rerun # doesnt work on archlinux by default
-    #
-    # nixgl.auto.nixGLDefault
-    # nix-gl-host
-    nixos-rebuild
+    rerun # doesnt work on archlinux by default
     typstyle
     statix
+    rclone
   ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -80,19 +186,14 @@
     # '';
   };
 
-  # Home Manager can also manage your environment variables through
-  # 'home.sessionVariables'. If you don't want to manage your shell through Home
-  # Manager then you have to manually source 'hm-session-vars.sh' located at
-  # either
-  #
-  #  ~/.nix-profile/etc/profile.d/hm-session-vars.sh
-  #
-  # or
-  #
-  #  /etc/profiles/per-user/frederik/etc/profile.d/hm-session-vars.sh
-  #
   home.sessionVariables = {
     EDITOR = "hx";
+    TERM = "foot";
+  };
+
+  fonts.fontconfig = {
+    enable = true;
+    defaultFonts.monospace = [ "JetBrains Mono" ];
   };
 
   programs = {
@@ -104,112 +205,11 @@
 
     nushell = {
       enable = true;
-      extraConfig = ''
-        $env.config = {
-          show_banner: false
-          rm: {
-            always_trash: true
-          }
-
-          completions: {
-            case_sensitive: false # set to true to enable case-sensitive completions
-            quick: true  # set this to false to prevent auto-selecting completions when only one remains
-            partial: true  # set this to false to prevent partial filling of the prompt
-            algorithm: "prefix"  # prefix or fuzzy
-            external: {
-              enable: true # set to false to prevent nushell looking into $env.PATH to find more suggestions, `false` recommended for WSL users as this look up my be very slow
-              max_results: 100 # setting it lower can improve completion performance at the cost of omitting some options
-              completer: null # check 'carapace_completer' above as an example
-            }
-          }
-          buffer_editor: "hx" # command that will be used to edit the current line buffer with ctrl+o, if unset fallback to $env.EDITOR and $env.VISUAL
-          edit_mode: emacs # emacs, vi
-          cursor_shape: {
-            emacs: line # block, underscore, line (line is the default)
-            vi_insert: block # block, underscore, line (block is the default)
-            vi_normal: underscore # block, underscore, line  (underscore is the default)
-          }
-          shell_integration: {
-            # osc2 abbreviates the path if in the home_dir, sets the tab/window title, shows the running command in the tab/window title
-            osc2: true
-            # osc7 is a way to communicate the path to the terminal, this is helpful for spawning new tabs in the same directory
-            osc7: true
-            # osc8 is also implemented as the deprecated setting ls.show_clickable_links, it shows clickable links in ls output if your terminal supports it. show_clickable_links is deprecated in favor of osc8
-            osc8: true
-            # osc9_9 is from ConEmu and is starting to get wider support. It's similar to osc7 in that it communicates the path to the terminal
-            osc9_9: false
-            # osc133 is several escapes invented by Final Term which include the supported ones below.
-            # 133;A - Mark prompt start
-            # 133;B - Mark prompt end
-            # 133;C - Mark pre-execution
-            # 133;D;exit - Mark execution finished with exit code
-            # This is used to enable terminals to know where the prompt is, the command is, where the command finishes, and where the output of the command is
-            osc133: true
-            # osc633 is closely related to osc133 but only exists in visual studio code (vscode) and supports their shell integration features
-            # 633;A - Mark prompt start
-            # 633;B - Mark prompt end
-            # 633;C - Mark pre-execution
-            # 633;D;exit - Mark execution finished with exit code
-            # 633;E - NOT IMPLEMENTED - Explicitly set the command line with an optional nonce
-            # 633;P;Cwd=<path> - Mark the current working directory and communicate it to the terminal
-            # and also helps with the run recent menu in vscode
-            osc633: true
-            # reset_application_mode is escape \x1b[?1l and was added to help ssh work better
-            reset_application_mode: true
-          }
-        }
-      '';
-      extraEnv = ''
-        $env.ENV_CONVERSIONS = {
-          "PATH": {
-            from_string: { |s| $s | split row (char esep) | path expand -n }
-            to_string: { |v| $v | path expand -n | str join (char esep) }
-          }
-          "Path": {
-            from_string: { |s| $s | split row (char esep) | path expand -n }
-            to_string: { |v| $v | path expand -n | str join (char esep) }
-          }
-        }
-        # Custom environment variables
-        $env.BORG_REPO = "/run/media/frederik/LinuxBackup"
-        $env.BUP_DIR = "/run/media/frederik/LinuxBackup/.bup"
-        $env.FZF_DEFAULT_COMMAND = "fd --type f"
-        $env.IPYTHONDIR = "/home/frederik/.config/ipython"
-        $env.DEEPL_API_KEY = "***REMOVED***"
-        $env.RAISENOW_CLIENT_ID = "***REMOVED***"
-        $env.RAISENOW_CLIENT_SECRET = "***REMOVED***"
-        $env.ILOVEPDF_PUBLIC_KEY = "***REMOVED***"
-        $env.MAUDE_LIB = "/usr/share/maude"
-        $env.HELIX_RUNTIME = "/home/frederik/.config/helix/runtime/"
-        $env._JAVA_AWT_WM_NONREPARENTING = 1
-        $env.TERM = "foot"
-        $env.FLAKE = "/home/frederik/.config/home-manager"
-        # $env.LOCALE_ARCHIVE = "${pkgs.glibcLocales}/lib/locale/locale-archive";
-        # Added this because foot showed locale issues. Found https://gist.github.com/peti/2c818d6cb49b0b0f2fd7c300f8386bc3
-        $env.LOCALE_ARCHIVE_2_27 = "${pkgs.glibcLocales}/lib/locale/locale-archive";
-        $env.LOCALE_ARCHIVE_2_11 = "/usr/lib/locale/locale-archive";
-        $env.COPILOT_API_KEY = "***REMOVED***"
-        $env.HANDLER = "copilot"
-        $env.SSH_ASKPASS = "/usr/bin/pinentry-bemenu"
-
-        $env.PATH = ($env.PATH | prepend '/home/frederik/.local/bin' | append '/home/frederik/.cargo/bin')
-
-        # use ~/.bin/wolframalpha.nu [ wolfram, wolframimg ]
-        use ~/.bin/deeplen.nu
-        use ~/.bin/joshuto.nu joshuto_cd
-
-        use ~/.bin/yazi.nu yy
-
-        alias tt = taskwarrior-tui
-        alias jo = yy
-        alias js = yy
-
-        source /home/frederik/tools/nu_scripts/custom-completions/git/git-completions.nu
-        source /home/frederik/tools/nu_scripts/custom-completions/pass/pass-completions.nu
-        source /home/frederik/tools/nu_scripts/custom-completions/tealdeer/tldr-completions.nu
-        source /home/frederik/tools/nu_scripts/custom-completions/npm/npm-completions.nu
-        source /home/frederik/tools/nu_scripts/custom-completions/cargo/cargo-completions.nu
-      '';
+      settings = {
+        show_banner = false;
+        rm.always_trash = true;
+        buffer_editor = "hx";
+      };
     };
     starship = {
       enable = true;
@@ -229,7 +229,7 @@
       enableNushellIntegration = true;
     };
     mpv = {
-      enable = false;
+      enable = true;
       config = {
         hwdec = "auto-safe";
         vo = "gpu";
@@ -256,11 +256,10 @@
       };
     };
     foot = {
-      enable = false;
+      enable = true;
       settings = {
         main = {
-          term = "xterm-256color";
-          font = "Consolas ligaturized v3:size=10";
+          font = "monospace:size=12";
         };
         mouse = {
           hide-when-typing = "yes";
