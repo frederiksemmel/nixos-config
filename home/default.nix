@@ -144,31 +144,31 @@
     };
   };
 
-  # programs.rclone = {
-  #   enable = true;
-  #   remotes = {
-  #     spadesvision = {
-  #       # non-secret config options
-  #       config = {
-  #         type = "drive";
-  #         client_id = "113233231770-v4b6rfq5ajc3imv0vs0g3fnbl2q8rd84.apps.googleusercontent.com";
-  #         scope = "drive";
-  #         team_drive = "0AH2EQdMAdZriUk9PVA";
-  #         root_folder_id = ""; # leave blank if you don’t use it
-  #       };
+  programs.rclone = {
+    enable = true;
+    remotes = {
+      spadesvision = {
+        # non-secret config options
+        config = {
+          type = "drive";
+          client_id = "113233231770-v4b6rfq5ajc3imv0vs0g3fnbl2q8rd84.apps.googleusercontent.com";
+          scope = "drive";
+          team_drive = "0AH2EQdMAdZriUk9PVA";
+          root_folder_id = ""; # leave blank if you don’t use it
+        };
 
-  #       # sensitive values go here
-  #       secrets = {
-  #         client_secret = "***REMOVED***";
+        # sensitive values go here
+        secrets = {
+          client_secret = "***REMOVED***";
 
-  #         # token is a JSON blob; use a Nix multiline string so you don’t have to escape quotes
-  #         token = ''
-  #           {"access_token":"***REMOVED***","token_type":"Bearer","refresh_token":"***REMOVED***","expiry":"2025-04-17T16:00:06.20313431+02:00"}
-  #         '';
-  #       };
-  #     };
-  #   };
-  # };
+          # token is a JSON blob; use a Nix multiline string so you don’t have to escape quotes
+          token = ''
+            {"access_token":"***REMOVED***","token_type":"Bearer","refresh_token":"***REMOVED***","expiry":"2025-04-17T16:00:06.20313431+02:00"}
+          '';
+        };
+      };
+    };
+  };
 
   programs.bottom.enable = true;
 
