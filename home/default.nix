@@ -5,21 +5,172 @@
   ...
 }:
 {
-  imports = [ ]; # exposes programs.niri.settings
-  # Home Manager needs a bit of information about you and the paths it should
-  # manage.
+  imports = [ flake.inputs.zen-browser.homeModules.beta ];
+
   home.username = "frederik";
   home.homeDirectory = "/home/frederik";
   home.language.base = "en_US.UTF-8";
 
-  # This value determines the Home Manager release that your configuration is
-  # compatible with. This helps avoid breakage when a new Home Manager release
-  # introduces backwards incompatible changes.
-  #
-  # You should not change this value, even if you update Home Manager. If you do
-  # want to update the value, then make sure to first check the Home Manager
-  # release notes.
-  home.stateVersion = "25.05"; # Please read the comment before changing.
+  home.stateVersion = "25.05";
+
+  home.packages = with pkgs; [
+    # Nix stuff
+    cachix
+    colmena
+    deploy-rs
+    devenv
+    nix-eval-jobs
+    nix-fast-build
+    nix-output-monitor
+    nixd
+    nix-tree
+    nixos-generators
+    nvd
+    vulnix
+    nh
+    nil
+
+    # Development & Formatting Tools
+    alejandra
+    dprint
+    nufmt
+    nixfmt-rfc-style
+    statix
+    typstyle
+    cargo
+
+    # Containerization & Virtualization
+    qemu
+
+    # Version Control & Collaboration
+    git-interactive-rebase-tool
+    git-graph
+    gitui
+
+    # Networking & Communication
+    bluetui
+    mullvad
+    tailscale
+    websocat
+
+    # File & Data Management
+    cosmic-files
+    qrscan
+    trashy
+    yazi
+
+    # Productivity & Document Tools
+    zathura
+    zotero
+
+    # Miscellaneous Utilities
+    overskride
+    rage
+    rerun
+  ];
+
+  # Home Manager is pretty good at managing dotfiles. The primary way to manage
+  # plain files is through 'home.file'.
+  home.file = {
+    ".rclone_filter_spadesvision.txt".text = ''
+      - Marketing/Material für Swisscasino Video/**
+      - Development/TCSJOHNHUXLEY Shared/Jetson reComputer j4011 Installation/**
+      - Development/TCSJOHNHUXLEY Shared/Mock Spades Vision Server/**
+    '';
+    # # Building this configuration will create a copy of 'dotfiles/screenrc' in
+    # # the Nix store. Activating the configuration will then make '~/.screenrc' a
+    # # symlink to the Nix store copy.
+    # ".screenrc".source = dotfiles/screenrc;
+
+    # # You can also set the file content immediately.
+    # ".gradle/gradle.properties".text = ''
+    #   org.gradle.console=verbose
+    #   org.gradle.daemon.idletimeout=3600000
+    # '';
+  };
+
+  home.sessionVariables = {
+    EDITOR = "hx";
+    TERM = "foot";
+  };
+
+  fonts.fontconfig = {
+    enable = true;
+    defaultFonts.monospace = [ "JetBrains Mono" ];
+  };
+
+  programs.firefox = {
+    enable = true;
+    languagePacks = [
+      "en-US"
+      "de-CH"
+      "es"
+    ];
+  };
+
+  programs.zen-browser = {
+    enable = true;
+    policies = {
+      DisableAppUpdate = true;
+      DisableTelemetry = true;
+      # find more options here: https://mozilla.github.io/policy-templates/
+    };
+  };
+
+  programs.git = {
+    enable = true;
+
+    # identity
+    userName = "Frederik Semmel";
+    userEmail = "frederiksemmel@gmail.com";
+
+    # Delta syntax-highlighting
+    delta = {
+      enable = true;
+      options = {
+        navigate = true; # use n/N to move between diff hunks
+        "side-by-side" = true; # two-column view
+        dark = true; # dark theme
+        # light = false;              # disable auto-detect if you prefer a light theme
+      };
+    };
+
+    # other git settings
+    extraConfig = {
+      merge.conflictstyle = "diff3";
+      diff.colorMoved = "default";
+      sequence.editor = "interactive-rebase-tool";
+      init.defaultBranch = "main";
+    };
+  };
+
+  # programs.rclone = {
+  #   enable = true;
+  #   remotes = {
+  #     spadesvision = {
+  #       # non-secret config options
+  #       config = {
+  #         type = "drive";
+  #         client_id = "113233231770-v4b6rfq5ajc3imv0vs0g3fnbl2q8rd84.apps.googleusercontent.com";
+  #         scope = "drive";
+  #         team_drive = "0AH2EQdMAdZriUk9PVA";
+  #         root_folder_id = ""; # leave blank if you don’t use it
+  #       };
+
+  #       # sensitive values go here
+  #       secrets = {
+  #         client_secret = "***REMOVED***";
+
+  #         # token is a JSON blob; use a Nix multiline string so you don’t have to escape quotes
+  #         token = ''
+  #           {"access_token":"***REMOVED***","token_type":"Bearer","refresh_token":"***REMOVED***","expiry":"2025-04-17T16:00:06.20313431+02:00"}
+  #         '';
+  #       };
+  #     };
+  #   };
+  # };
+
+  programs.bottom.enable = true;
 
   programs.niri.settings = {
     "prefer-no-csd" = true;
@@ -232,124 +383,56 @@
 
   programs.waybar = {
     enable = true;
+    systemd.enable = true;
 
-    # JSON‐like attrset → Waybar config
     settings.mainBar = {
       layer = "top";
       position = "top";
-
-      # choose only the sections you care about:
-      "modules-left" = [ "sway/workspaces" ];
-      "modules-center" = [ "sway/mode" ];
-      "modules-right" = [
-        "cpu"
-        "memory"
-        "network"
-        "battery"
-        "clock"
+      height = 30;
+      output = [
+        "eDP-1"
+        "HDMI-A-1"
+      ];
+      modules-left = [
+        "wlr/taskbar"
+      ];
+      modules-center = [
+        "custom/hello-from-waybar"
+      ];
+      modules-right = [
+        "mpd"
+        "custom/mymodule#with-css-id"
+        "temperature"
       ];
 
-      # per‑module configuration:
-      cpu = {
-        format = "{usage}%";
+      "sway/workspaces" = {
+        disable-scroll = true;
+        all-outputs = true;
       };
-      memory = {
-        format = "{usedMiB} MiB";
-      };
-      network = {
-        interface = "wlan0"; # adjust to your Wi‑Fi / ethernet device
-        format = "{essid} {ipaddr}";
-      };
-      battery = {
-        format = "{capacity}%";
-        # icon‑only when low:
-        low-at = 15;
-      };
-      clock = {
-        format = "%Y‑%m‑%d %H:%M";
+      "custom/hello-from-waybar" = {
+        format = "hello {}";
+        max-length = 40;
+        interval = "once";
+        exec = pkgs.writeShellScript "hello-from-waybar" ''
+          echo "from within waybar"
+        '';
       };
     };
-
     # (optional) very simple CSS to tighten spacing:
     style = ''
       * {
-        padding: 0 6px;
-        margin: 0;
-        background: #1e1e1e;
-        color: #eee;
-        font-family: Iosevka, monospace;
-        font-size: 10pt;
+        border: none;
+        border-radius: 0;
+        font-family: Source Code Pro;
+      }
+      window#waybar {
+        background: #16191C;
+        color: #AAB2BF;
+      }
+      #workspaces button {
+        padding: 0 5px;
       }
     '';
-  };
-
-  # The home.packages option allows you to install Nix packages into your
-  # environment.
-  home.packages = with pkgs; [
-    nixos-generators
-    trashy
-    qrscan
-    qemu
-    deploy-rs
-    nufmt
-    nixfmt-rfc-style
-    alejandra
-    dprint
-    nh
-    nix-output-monitor
-    rage
-    nvd
-    vulnix
-    yazi
-    mullvad
-    cosmic-files
-    # betterbird  # issues on archlinux
-    nixd
-    nil
-    nix-tree
-    cachix
-    devenv
-    gitui
-    websocat
-    overskride # not used
-    bluetui # not yet available
-    git-graph
-    zotero
-    zathura
-    rio
-    colmena
-    tailscale
-    nix-eval-jobs
-    nix-fast-build
-    rerun # doesnt work on archlinux by default
-    typstyle
-    statix
-    rclone
-  ];
-
-  # Home Manager is pretty good at managing dotfiles. The primary way to manage
-  # plain files is through 'home.file'.
-  home.file = {
-    # # Building this configuration will create a copy of 'dotfiles/screenrc' in
-    # # the Nix store. Activating the configuration will then make '~/.screenrc' a
-    # # symlink to the Nix store copy.
-    # ".screenrc".source = dotfiles/screenrc;
-
-    # # You can also set the file content immediately.
-    # ".gradle/gradle.properties".text = ''
-    #   org.gradle.console=verbose
-    #   org.gradle.daemon.idletimeout=3600000
-    # '';
-  };
-
-  home.sessionVariables = {
-    EDITOR = "hx";
-    TERM = "foot";
-  };
-
-  fonts.fontconfig = {
-    enable = true;
-    defaultFonts.monospace = [ "JetBrains Mono" ];
   };
 
   programs = {
@@ -665,14 +748,4 @@
     # Let Home Manager install and manage itself.
     home-manager.enable = true;
   };
-
-  # This doesnt support flakes yet. Doing a custom service
-  # services.home-manager.autoUpgrade = {
-  #   enable = true;
-  #   frequency = "weekly";
-  # };
-  # # Fix for https://github.com/nix-community/home-manager/issues/3127
-  # systemd.user.services.home-manager-auto-upgrade.Service.Environment = [
-  #   "PATH=${lib.makeSearchPath "bin" [ pkgs.nix ]}"
-  # ];
 }

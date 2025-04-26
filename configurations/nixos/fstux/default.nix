@@ -37,13 +37,7 @@
   programs.sway.enable = true;
   programs.niri.enable = true;
 
-  environment.systemPackages = with pkgs; [
-    alacritty
-    mesa
-    glxinfo
-    centerpiece
-    firefox
-  ];
+  environment.systemPackages = [ ];
 
   fonts.packages = with pkgs; [
     jetbrains-mono
@@ -85,6 +79,7 @@
   '';
 
   virtualisation = {
+    memorySize = 1024 * 2;
     qemu = {
       options = [
         "-device virtio-gpu-gl-pci"
