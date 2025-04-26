@@ -5,7 +5,10 @@
   ...
 }:
 {
-  imports = [ flake.inputs.zen-browser.homeModules.beta ];
+  imports = [
+    flake.inputs.zen-browser.homeModules.beta
+    flake.inputs.centerpiece.hmModules."x86_64-linux".default
+  ];
 
   home.username = "frederik";
   home.homeDirectory = "/home/frederik";
@@ -117,6 +120,85 @@
     };
   };
 
+  programs.centerpiece = {
+    enable = true;
+    config = {
+      color = {
+        text = "#ffffff";
+        background = "#000000";
+      };
+      plugin = {
+        applications = {
+          enable = true;
+        };
+        brave_bookmarks = {
+          enable = true;
+        };
+        brave_history = {
+          enable = true;
+        };
+        brave_progressive_web_apps = {
+          enable = true;
+        };
+        clock = {
+          enable = true;
+        };
+        firefox_bookmarks = {
+          enable = true;
+        };
+        firefox_history = {
+          enable = true;
+        };
+        git_repositories = {
+          enable = true;
+          commands = [
+            [
+              "alacritty"
+              "--command"
+              "nvim"
+              "$GIT_DIRECTORY"
+            ]
+            [
+              "alacritty"
+              "--working-directory"
+              "$GIT_DIRECTORY"
+            ]
+          ];
+        };
+        gitmoji = {
+          enable = false;
+        };
+        resource_monitor_battery = {
+          enable = true;
+        };
+        resource_monitor_cpu = {
+          enable = true;
+        };
+        resource_monitor_disks = {
+          enable = true;
+        };
+        resource_monitor_memory = {
+          enable = true;
+        };
+        sway_windows = {
+          enable = true;
+        };
+        system = {
+          enable = true;
+        };
+        wifi = {
+          enable = true;
+        };
+      };
+    };
+
+    # enables a systemd service to index git-repositories
+    services.index-git-repositories = {
+      enable = true;
+      interval = "5min";
+    };
+  };
+
   programs.git = {
     enable = true;
 
@@ -155,10 +237,6 @@
           scope = "drive";
           team_drive = "0AH2EQdMAdZriUk9PVA";
           root_folder_id = ""; # leave blank if you don’t use it
-        };
-
-        # sensitive values go here
-        secrets = {
           client_secret = "***REMOVED***";
 
           # token is a JSON blob; use a Nix multiline string so you don’t have to escape quotes
@@ -743,7 +821,6 @@
         ];
       };
     };
-    # centerpiece.enable = true;
 
     # Let Home Manager install and manage itself.
     home-manager.enable = true;

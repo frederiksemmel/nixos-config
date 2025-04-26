@@ -1,7 +1,11 @@
 {
   nixConfig = {
-    extra-substituters = [ "https://niri.cachix.org" ];
-    extra-trusted-public-keys = [ "niri.cachix.org-1:Wv0OmO7PsuocRKzfDoJ3mulSl7Z6oezYhGhR+3W2964=" ];
+    extra-substituters = [
+      "https://niri.cachix.org"
+    ];
+    extra-trusted-public-keys = [
+      "niri.cachix.org-1:Wv0OmO7PsuocRKzfDoJ3mulSl7Z6oezYhGhR+3W2964="
+    ];
   };
   inputs = {
     # Principle inputs (updated by `nix run .#update`)
@@ -17,6 +21,8 @@
     niri.inputs.nixpkgs.follows = "nixpkgs";
     zen-browser.url = "github:0xc000022070/zen-browser-flake";
     zen-browser.inputs.nixpkgs.follows = "nixpkgs";
+    centerpiece.url = "github:friedow/centerpiece";
+    centerpiece.inputs.nixpkgs.follows = "nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixos-unified.url = "github:srid/nixos-unified";
@@ -48,6 +54,8 @@
                 imports = [ self.homeModules.default ];
                 home.stateVersion = "25.05";
               };
+              home-manager.backupFileExtension = "backup";
+              home-manager.useGlobalPkgs = true;
             }
           ];
         };
