@@ -78,16 +78,5 @@
     sway
   '';
 
-  virtualisation = {
-    memorySize = 1024 * 2;
-    qemu = {
-      options = [
-        "-device virtio-gpu-gl-pci"
-        "-display sdl,gl=on"
-        "-vga none"
-      ];
-    };
-  };
-
   system.stateVersion = "25.05";
 }
