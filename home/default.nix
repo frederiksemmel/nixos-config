@@ -8,6 +8,7 @@
   imports = [
     flake.inputs.zen-browser.homeModules.beta
     flake.inputs.centerpiece.hmModules."x86_64-linux".default
+    flake.inputs.agenix.homeManagerModules.default
   ];
 
   home.username = "frederik";
@@ -15,6 +16,12 @@
   home.language.base = "en_US.UTF-8";
 
   home.stateVersion = "25.05";
+
+  age.secrets = {
+    spadesvision_gdrive_token.file = ../secrets/spadesvision_gdrive_token.age;
+    spadesvision_gdrive_client_secret.file = ../secrets/spadesvision_gdrive_token.age;
+  };
+  age.identityPaths = [ "/home/frederik/.ssh/id_github" ];
 
   home.packages = with pkgs; [
     # Nix stuff
@@ -70,6 +77,8 @@
     overskride
     rage
     rerun
+    pass-wayland
+    ragenix
   ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -226,6 +235,8 @@
     };
   };
 
+  programs.jq.enable = true;
+
   programs.rclone = {
     enable = true;
     remotes = {
@@ -237,12 +248,8 @@
           scope = "drive";
           team_drive = "0AH2EQdMAdZriUk9PVA";
           root_folder_id = ""; # leave blank if you don’t use it
-          client_secret = "***REMOVED***";
-
-          # token is a JSON blob; use a Nix multiline string so you don’t have to escape quotes
-          token = ''
-            {"access_token":"***REMOVED***","token_type":"Bearer","refresh_token":"***REMOVED***","expiry":"2025-04-17T16:00:06.20313431+02:00"}
-          '';
+          client_secret = config.age.secrets.spadesvision_gdrive_client_secret.path;
+          token = config.age.secrets.spadesvision_gdrive_token.path;
         };
       };
     };
