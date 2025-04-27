@@ -2,14 +2,24 @@
   flake,
   pkgs,
   lib,
+  config,
   ...
 }:
 {
-  imports = [
-    flake.inputs.disko.nixosModules.disko
+  imports = with flake.inputs; [
+    niri.nixosModules.niri
+    agenix.nixosModules.default
+    disko.nixosModules.disko
     ./disko-btrfs.nix
-    flake.inputs.nixos-hardware.nixosModules.tuxedo-infinitybook-pro14-gen7
+    nixos-hardware.nixosModules.tuxedo-infinitybook-pro14-gen7
   ];
+
+  home-manager.users.frederik = {
+    imports = [ flake.self.homeModules.default ];
+    home.stateVersion = "25.05";
+  };
+  home-manager.backupFileExtension = "backup";
+  home-manager.useGlobalPkgs = true;
 
   nixpkgs.config.allowUnfree = true;
   # make `nix run nixpkgs#nixpkgs` use the same nixpkgs as the one used by this flake.

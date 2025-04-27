@@ -23,6 +23,8 @@
     zen-browser.inputs.nixpkgs.follows = "nixpkgs";
     centerpiece.url = "github:friedow/centerpiece";
     centerpiece.inputs.nixpkgs.follows = "nixpkgs";
+    agenix.url = "github:ryantm/agenix";
+    agenix.inputs.nixpkgs.follows = "nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixos-unified.url = "github:srid/nixos-unified";
@@ -45,18 +47,7 @@
         nixosConfigurations."fstux" = self.nixos-unified.lib.mkLinuxSystem { home-manager = true; } {
           nixpkgs.hostPlatform = "x86_64-linux";
           imports = [
-            # Your machine's configuration.nix goes here
             ./configurations/nixos/fstux
-            inputs.niri.nixosModules.niri
-            # Setup home-manager in NixOS config
-            {
-              home-manager.users.frederik = {
-                imports = [ self.homeModules.default ];
-                home.stateVersion = "25.05";
-              };
-              home-manager.backupFileExtension = "backup";
-              home-manager.useGlobalPkgs = true;
-            }
           ];
         };
 
