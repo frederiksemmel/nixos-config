@@ -35,6 +35,15 @@
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
 
+  hardware.graphics = {
+    enable = true;
+  };
+  hardware.enableRedistributableFirmware = true;
+
+  networking.useNetworkd = true;
+  networking.useDHCP = false;
+  networking.wireless.iwd.enable = true;
+
   users.users.frederik = {
     isNormalUser = true;
     extraGroups = [ "wheel" ];
@@ -46,6 +55,7 @@
 
   programs.sway.enable = true;
   programs.niri.enable = true;
+  programs.ssh.startAgent = true;
 
   environment.systemPackages = [ ];
 
