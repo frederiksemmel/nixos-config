@@ -50,6 +50,7 @@
     typstyle
     cargo
     rustc
+    rerun
 
     # Containerization & Virtualization
     qemu
@@ -62,7 +63,6 @@
     # Networking & Communication
     bluetui
     mullvad
-    tailscale
     websocat
     transmission_4-gtk
 
@@ -71,10 +71,12 @@
     qrscan
     trashy
     yazi
+    fd
 
     # Productivity & Document Tools
     zathura
     zotero
+    xournalpp
 
     # Miscellaneous Utilities
     overskride
@@ -129,6 +131,57 @@
       "de-CH"
       "es"
     ];
+  };
+
+  programs.ssh = {
+    enable = true;
+    addKeysToAgent = "yes";
+    matchBlocks = {
+      "github.com" = {
+        user = "git";
+        identityFile = "~/.ssh/id_github";
+      };
+
+      "git.sr.ht" = {
+        user = "git";
+        identityFile = "~/.ssh/id_sourcehut";
+      };
+
+      "gitlab.inf.ethz.ch" = {
+        user = "git";
+        identityFile = "~/.ssh/id_gitlab_inf";
+      };
+
+      "gitlab.ethz.ch" = {
+        user = "git";
+        identityFile = "~/.ssh/id_gitlab_ethz";
+      };
+
+      tcsJetson = {
+        host = "*tcs-jetson*";
+        identityFile = "~/.ssh/spadesvision/tcs-jetson/id_tcs-jetson_spadesvision";
+      };
+
+      tcsJetsonRoot = {
+        match = ''
+          host *tcs-jetson*
+          user root
+        '';
+        identityFile = "~/.ssh/spadesvision/tcs-jetson/id_tcs-jetson_root";
+      };
+      bern = {
+        host = "*bern*";
+        identityFile = "~/.ssh/spadesvision/spadesvision/id_spadesvision_spadesvision";
+      };
+
+      bernRoot = {
+        match = ''
+          host *bern*
+          user root
+        '';
+        identityFile = "~/.ssh/spadesvision/spadesvision/id_spadesvision_root";
+      };
+    };
   };
 
   programs.zen-browser = {
@@ -509,7 +562,7 @@
     settings.mainBar = {
       # Positioning and size
       position = "bottom";
-      layer = "top";
+      layer = "overlay";
       height = 26;
 
       spacing = 20;
@@ -612,6 +665,13 @@
 
     nushell = {
       enable = true;
+      environmentVariables = {
+        ENV_CONVERSIONS.PATH = {
+          from_string = lib.hm.nushell.mkNushellInline "{|s| $s | split row (char esep) }";
+          to_string = lib.hm.nushell.mkNushellInline "{|v| $v | str join (char esep) }";
+        };
+        EDITOR = "hx";
+      };
       settings = {
         show_banner = false;
         rm.always_trash = true;

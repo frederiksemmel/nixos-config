@@ -57,7 +57,7 @@
     buildMachines = [
       {
         hostName = "eu.nixbuild.net";
-        system = "x86_64-linux";
+        system = "aarch64-linux";
         maxJobs = 100;
         supportedFeatures = [
           "benchmark"
@@ -82,6 +82,25 @@
   networking.useNetworkd = true;
   networking.useDHCP = false;
   networking.wireless.iwd.enable = true;
+  networking.firewall = {
+    enable = true;
+    allowedTCPPorts = [
+      80
+      443
+      5173
+      5174
+    ];
+    allowedUDPPortRanges = [
+      {
+        from = 4000;
+        to = 4007;
+      }
+      {
+        from = 8000;
+        to = 8010;
+      }
+    ];
+  };
 
   users.users.frederik = {
     isNormalUser = true;
@@ -127,6 +146,7 @@
   fonts.enableDefaultPackages = true;
 
   services.devmon.enable = true;
+  services.tailscale.enable = true;
 
   services.greetd = {
     enable = true;
