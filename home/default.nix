@@ -50,6 +50,8 @@
     typstyle
     cargo
     rustc
+    rust-analyzer
+    clippy
     rerun
 
     # Containerization & Virtualization
@@ -72,6 +74,7 @@
     trashy
     yazi
     fd
+    ripgrep
 
     # Productivity & Document Tools
     zathura
@@ -205,19 +208,19 @@
           enable = true;
         };
         brave_bookmarks = {
-          enable = true;
+          enable = false;
         };
         brave_history = {
-          enable = true;
+          enable = false;
         };
         brave_progressive_web_apps = {
-          enable = true;
+          enable = false;
         };
         clock = {
           enable = true;
         };
         firefox_bookmarks = {
-          enable = true;
+          enable = false;
         };
         firefox_history = {
           enable = true;
@@ -254,13 +257,13 @@
           enable = true;
         };
         sway_windows = {
-          enable = true;
+          enable = false;
         };
         system = {
           enable = true;
         };
         wifi = {
-          enable = true;
+          enable = false;
         };
       };
     };
@@ -375,8 +378,8 @@
 
         # Launchers
         "${mod}+Return".action = spawn "foot";
-        "${mod}+D".action = spawn "${pkgs.fuzzel}/bin/fuzzel";
-        "${mod}+Shift+D".action = spawn "${pkgs.centerpiece}/bin/centerpiece";
+        "${mod}+D".action = spawn "centerpiece";
+        # "${mod}+Shift+D".action = spawn "centerpiece";
         # "${mod}+Ctrl+Shift+L".action = spawn "swaylock";
 
         # Volume controls
@@ -726,7 +729,7 @@
       enable = true;
       settings = {
         main = {
-          font = "monospace:size=11";
+          font = "monospace:size=10";
         };
         mouse = {
           hide-when-typing = "yes";
@@ -818,9 +821,8 @@
                   leptos_macro = [ "server" ];
                 };
               };
-              checkOnSave = {
-                command = "clippy";
-              };
+              checkOnSave = true;
+              check.command = "clippy";
             };
           };
 
