@@ -98,6 +98,8 @@
 
   programs.sway.enable = true;
   programs.niri.enable = true;
+  nixpkgs.overlays = [ flake.inputs.niri.overlays.niri ];
+  programs.niri.package = pkgs.niri-unstable;
 
   programs.ssh.startAgent = true;
   programs.light.enable = true;
@@ -123,9 +125,6 @@
     nerd-fonts.fira-code
   ];
   fonts.enableDefaultPackages = true;
-
-  # nixpkgs.overlays = [ flake.inputs.niri.overlays.niri ];
-  # programs.niri.package = pkgs.niri-unstable;
 
   services.devmon.enable = true;
 
