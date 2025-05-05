@@ -2,6 +2,7 @@
   flake,
   config,
   pkgs,
+  lib,
   ...
 }:
 {
@@ -19,7 +20,7 @@
 
   age.secrets = {
     spadesvision_gdrive_token.file = ../secrets/spadesvision_gdrive_token.age;
-    spadesvision_gdrive_client_secret.file = ../secrets/spadesvision_gdrive_token.age;
+    spadesvision_gdrive_client_secret.file = ../secrets/spadesvision_gdrive_client_secret.age;
   };
   age.identityPaths = [ "/home/frederik/.ssh/id_github" ];
 
@@ -37,7 +38,6 @@
     nixos-generators
     nvd
     vulnix
-    nh
     nil
 
     # Development & Formatting Tools
@@ -48,6 +48,7 @@
     statix
     typstyle
     cargo
+    rustc
 
     # Containerization & Virtualization
     qemu
@@ -62,6 +63,7 @@
     mullvad
     tailscale
     websocat
+    transmission_4-gtk
 
     # File & Data Management
     cosmic-files
@@ -79,6 +81,9 @@
     rerun
     pass-wayland
     ragenix
+    wl-clipboard
+    zip
+    unzip
   ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -110,6 +115,8 @@
     enable = true;
     defaultFonts.monospace = [ "JetBrains Mono" ];
   };
+
+  services.swww.enable = true;
 
   programs.firefox = {
     enable = true;
@@ -248,6 +255,8 @@
           scope = "drive";
           team_drive = "0AH2EQdMAdZriUk9PVA";
           root_folder_id = ""; # leave blank if you don’t use it
+        };
+        secrets = {
           client_secret = config.age.secrets.spadesvision_gdrive_client_secret.path;
           token = config.age.secrets.spadesvision_gdrive_token.path;
         };
@@ -256,6 +265,13 @@
   };
 
   programs.bottom.enable = true;
+
+  programs.nh = {
+    enable = true;
+    clean.enable = true;
+    clean.extraArgs = "--keep-since 14d --keep 10";
+    flake = "/home/frederik/repos/nixos-config";
+  };
 
   programs.niri.settings = {
     "prefer-no-csd" = true;
@@ -294,7 +310,7 @@
     binds =
       with config.lib.niri.actions;
       let
-        mod = "Alt";
+        mod = "Super";
       in
       {
         # Hotkey overlay
@@ -313,11 +329,16 @@
         "XF86AudioLowerVolume".action = spawn "wpctl" "set-volume" "@DEFAULT_AUDIO_SINK@" "0.1-";
         "XF86AudioMute".allow-when-locked = true;
         "XF86AudioMute".action = spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SINK@" "toggle";
+
         "XF86AudioMicMute".allow-when-locked = true;
         "XF86AudioMicMute".action = spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SOURCE@" "toggle";
+        "XF86MonBrightnessUp".action = spawn "light" "-A" "10";
+        "XF86MonBrightnessDown".action = spawn "light" "-U" "10";
+        "Shift+XF86MonBrightnessUp".action = spawn "light" "-A" "1";
+        "Shift+XF86MonBrightnessDown".action = spawn "light" "-U" "1";
 
         # Window management
-        "${mod}+Q".action = close-window;
+        "${mod}+Shift+Q".action = close-window;
 
         # Focus
         "${mod}+H".action = focus-column-left;
@@ -425,6 +446,14 @@
         "${mod}+Shift+F".action = fullscreen-window;
         "${mod}+Ctrl+F".action = expand-column-to-available-width;
         "${mod}+C".action = center-column;
+        "${mod}+B".action =
+          let
+            toggleWaybar = pkgs.writeShellScriptBin "toggle-waybar" ''
+              #!/usr/bin/env bash
+              ${lib.getExe pkgs.killall} -SIGUSR1 -r waybar
+            '';
+          in
+          spawn (lib.getExe toggleWaybar);
 
         # Adjust dimensions
         "${mod}+Minus".action = set-column-width "-10%";
@@ -466,56 +495,106 @@
 
   };
 
+  # Enable Waybar service
   programs.waybar = {
     enable = true;
     systemd.enable = true;
+    package = pkgs.waybar;
 
+    # Broad stroke customization
     settings.mainBar = {
+      # Positioning and size
+      position = "bottom";
       layer = "top";
-      position = "top";
-      height = 30;
-      output = [
-        "eDP-1"
-        "HDMI-A-1"
-      ];
+      height = 26;
+
+      spacing = 20;
+
+      # Choose only the modules you care about
       modules-left = [
-        "wlr/taskbar"
+        "niri/workspaces"
       ];
-      modules-center = [
-        "custom/hello-from-waybar"
-      ];
-      modules-right = [
-        "mpd"
-        "custom/mymodule#with-css-id"
-        "temperature"
+      "modules-center" = [ "clock" ];
+      "modules-right" = [
+        "network"
+        "pulseaudio"
+        "battery"
+        "cpu"
+        "memory"
       ];
 
-      "sway/workspaces" = {
-        disable-scroll = true;
-        all-outputs = true;
+      # Example: override only the clock format
+      clock = {
+        format = "{:%Y-%m-%d %H:%M}";
+        tooltip = true;
+        interval = 60;
       };
-      "custom/hello-from-waybar" = {
-        format = "hello {}";
-        max-length = 40;
-        interval = "once";
-        exec = pkgs.writeShellScript "hello-from-waybar" ''
-          echo "from within waybar"
-        '';
+
+      # Example: simple battery display
+      battery = {
+        format = "BAT {capacity}%";
+        "critical-threshold" = 15;
+        interval = 30;
+      };
+
+      # Network: show SSID and strength on wlan0
+      network = {
+        interface = "wlan0";
+        "format-wifi" = "{essid} ({signalStrength}%)";
+      };
+      # CPU load
+      cpu = {
+        format = "CPU {usage}%";
+        interval = 10;
+      };
+
+      # Memory usage
+      memory = {
+        format = "MEM {used}%";
+        interval = 30;
       };
     };
-    # (optional) very simple CSS to tighten spacing:
+
+    # Inject minimal custom CSS; other styles use Waybar defaults
     style = ''
       * {
         border: none;
-        border-radius: 0;
-        font-family: Source Code Pro;
+        border-radius: 4px;
+        /* `ttf-font-awesome` is required to be installed for icons */
+        font-family: "monospace", JetBrains Mono;
+
+        /* adjust font-size value to your liking: */
+        font-size: 12px;
+
+        min-height: 0;
       }
       window#waybar {
-        background: #16191C;
-        color: #AAB2BF;
+        background: rgba(30, 30, 30, 1.0);
+        color: #ffffff;
       }
+            
       #workspaces button {
-        padding: 0 5px;
+        color: #ffffff;
+        box-shadow: inset 0 -3px transparent;
+        min-width: 0;
+      }
+
+      #workspaces button:hover {
+        background: rgba(0, 0, 0, 0.9);
+        box-shadow: inset 0 -3px #ffffff;
+      }
+
+      #workspaces button.focused {
+        background-color: #64727d;
+      }
+
+      #workspaces button.urgent {
+        background-color: #eb4d4b;
+      }
+
+      #workspaces {
+        margin-left: 0;
+        min-width: 0;
       }
     '';
   };
@@ -583,7 +662,7 @@
       enable = true;
       settings = {
         main = {
-          font = "monospace:size=12";
+          font = "monospace:size=11";
         };
         mouse = {
           hide-when-typing = "yes";
