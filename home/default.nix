@@ -53,6 +53,7 @@
     rust-analyzer
     clippy
     rerun
+    bacon
 
     # Containerization & Virtualization
     qemu
@@ -75,6 +76,8 @@
     yazi
     fd
     ripgrep
+    sendme
+    ffmpeg
 
     # Productivity & Document Tools
     zathura
@@ -93,6 +96,7 @@
     xdg-utils
     ncdu
     google-cloud-sdk
+    xwayland-satellite
   ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -113,6 +117,21 @@
     #   org.gradle.console=verbose
     #   org.gradle.daemon.idletimeout=3600000
     # '';
+  };
+
+  # Define an XDG desktop entry for Rerun
+  xdg.desktopEntries.rerun = {
+    name = "Rerun";
+    genericName = "Multimodal Data Viewer";
+    comment = "Visualize streams of multimodal data";
+    exec = "rerun %F";
+    terminal = false;
+    icon = "rerun";
+    categories = [
+      "Development"
+      "Science"
+      "Utility"
+    ];
   };
 
   home.sessionVariables = {
@@ -350,6 +369,18 @@
     };
 
     ### Outputs
+    outputs."eDP-1" = {
+      position = {
+        x = 0;
+        y = 1440;
+      };
+    };
+    outputs."DP-3" = {
+      position = {
+        x = 0;
+        y = 0;
+      };
+    };
 
     ### Visuals
     layout.gaps = 0; # disables the default 16px gap :contentReference[oaicite:0]{index=0}
@@ -884,7 +915,7 @@
           };
 
           taplo = {
-            command = "taplo";
+            command = lib.getExe pkgs.taplo;
             args = [
               "lsp"
               "stdio"
