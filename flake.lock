@@ -368,6 +368,22 @@
         "type": "github"
       }
     },
+    "rerunpin": {
+      "locked": {
+        "lastModified": 1745496492,
+        "narHash": "sha256-rhy5bWc1Zg526tS+ZWv4E3apvP/otawi9InHdkdqXn4=",
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "9e2987c476ab5ed3f2db3154a45856132288547f",
+        "type": "github"
+      },
+      "original": {
+        "owner": "nixos",
+        "repo": "nixpkgs",
+        "rev": "9e2987c476ab5ed3f2db3154a45856132288547f",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
         "agenix": "agenix",
@@ -379,6 +395,7 @@
         "nixos-hardware": "nixos-hardware",
         "nixos-unified": "nixos-unified",
         "nixpkgs": "nixpkgs_3",
+        "rerunpin": "rerunpin",
         "treefmt-nix": "treefmt-nix_2",
         "zen-browser": "zen-browser"
       }

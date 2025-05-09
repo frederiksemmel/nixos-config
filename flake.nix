@@ -26,6 +26,8 @@
     agenix.url = "github:ryantm/agenix";
     agenix.inputs.nixpkgs.follows = "nixpkgs";
 
+    rerunpin.url = "github:nixos/nixpkgs/9e2987c476ab5ed3f2db3154a45856132288547f";
+
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixos-unified.url = "github:srid/nixos-unified";
   };

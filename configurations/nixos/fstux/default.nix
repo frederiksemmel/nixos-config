@@ -147,6 +147,10 @@
 
   services.devmon.enable = true;
   services.tailscale.enable = true;
+  services.udev.extraRules = ''
+    #Enable user access to all basler cameras
+    SUBSYSTEM=="usb", ATTRS{idVendor}=="2676", MODE:="0666", TAG+="uaccess", TAG+="udev-acl"
+  '';
 
   services.greetd = {
     enable = true;
