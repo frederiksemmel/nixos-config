@@ -40,6 +40,7 @@
     vulnix
     nil
     nix-index
+    nix-search-tv
 
     # Development & Formatting Tools
     alejandra
@@ -78,6 +79,7 @@
     ripgrep
     sendme
     ffmpeg
+    pcloud
 
     # Productivity & Document Tools
     zathura
@@ -97,6 +99,7 @@
     ncdu
     google-cloud-sdk
     xwayland-satellite
+    tldr
   ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -135,6 +138,12 @@
   };
 
   home.sessionVariables = {
+    DISPLAY = ":0"; # For xwayland
+    EDITOR = "hx";
+    TERM = "foot";
+  };
+  systemd.user.sessionVariables = {
+    DISPLAY = ":0"; # For xwayland
     EDITOR = "hx";
     TERM = "foot";
   };
@@ -355,6 +364,7 @@
   programs.niri.settings = {
     "prefer-no-csd" = true;
     ### Inputs
+    input.focus-follows-mouse.enable = true;
     input.touchpad = {
       accel-profile = "adaptive";
       accel-speed = 0.3;
@@ -380,6 +390,19 @@
         x = 0;
         y = 0;
       };
+    };
+
+    ### Startup
+    spawn-at-startup = [
+      {
+        command = [
+          (lib.getExe pkgs.xwayland-satellite)
+        ];
+      }
+    ];
+    environment = {
+      QT_QPA_PLATFORM = "wayland";
+      DISPLAY = ":0";
     };
 
     ### Visuals
@@ -699,12 +722,11 @@
 
     nushell = {
       enable = true;
-      environmentVariables = {
+      environmentVariables = config.home.sessionVariables // {
         ENV_CONVERSIONS.PATH = {
           from_string = lib.hm.nushell.mkNushellInline "{|s| $s | split row (char esep) }";
           to_string = lib.hm.nushell.mkNushellInline "{|v| $v | str join (char esep) }";
         };
-        EDITOR = "hx";
       };
       settings = {
         show_banner = false;
@@ -777,6 +799,7 @@
     };
     helix = {
       enable = true;
+      defaultEditor = true;
       settings = {
         theme = "monokai_pro_ristretto";
 
