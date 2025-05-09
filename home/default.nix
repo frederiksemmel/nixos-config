@@ -53,7 +53,6 @@
     rustc
     rust-analyzer
     clippy
-    rerun
     bacon
 
     # Containerization & Virtualization
@@ -89,7 +88,7 @@
     # Miscellaneous Utilities
     overskride
     rage
-    rerun
+    (flake.inputs.rerunpin.legacyPackages.${pkgs.system}.rerun)
     pass-wayland
     ragenix
     wl-clipboard
