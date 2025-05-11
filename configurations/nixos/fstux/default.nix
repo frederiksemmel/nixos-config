@@ -79,6 +79,7 @@
     tailor-gui.enable = true;
   };
 
+  networking.hostName = "fstux";
   networking.useNetworkd = true;
   networking.useDHCP = false;
   networking.wireless.iwd.enable = true;

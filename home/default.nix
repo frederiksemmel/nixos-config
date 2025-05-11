@@ -24,82 +24,93 @@
   };
   age.identityPaths = [ "/home/frederik/.ssh/id_github" ];
 
-  home.packages = with pkgs; [
-    # Nix stuff
-    cachix
-    colmena
-    deploy-rs
-    devenv
-    nix-eval-jobs
-    nix-fast-build
-    nix-output-monitor
-    nixd
-    nix-tree
-    nixos-generators
-    nvd
-    vulnix
-    nil
-    nix-index
-    nix-search-tv
+  home.packages =
+    let
+      handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
+        #!${pkgs.bash}/bin/bash
+        ${lib.getExe pkgs.handlr-regex} open "$@"
+      '';
+    in
+    with pkgs;
+    [
+      # Nix stuff
+      cachix
+      colmena
+      deploy-rs
+      devenv
+      nix-eval-jobs
+      nix-fast-build
+      nix-output-monitor
+      nixd
+      nix-tree
+      nixos-generators
+      nvd
+      vulnix
+      nil
+      nix-index
+      nix-search-tv
+      fzf
 
-    # Development & Formatting Tools
-    alejandra
-    dprint
-    nufmt
-    nixfmt-rfc-style
-    statix
-    typstyle
-    cargo
-    rustc
-    rust-analyzer
-    clippy
-    bacon
+      # Development & Formatting Tools
+      alejandra
+      dprint
+      nufmt
+      nixfmt-rfc-style
+      statix
+      typstyle
+      cargo
+      rustc
+      rust-analyzer
+      clippy
+      bacon
 
-    # Containerization & Virtualization
-    qemu
+      # Containerization & Virtualization
+      qemu
 
-    # Version Control & Collaboration
-    git-interactive-rebase-tool
-    git-graph
-    gitui
+      # Version Control & Collaboration
+      git-interactive-rebase-tool
+      git-graph
+      gitui
 
-    # Networking & Communication
-    bluetui
-    mullvad
-    websocat
-    transmission_4-gtk
+      # Networking & Communication
+      bluetui
+      mullvad
+      websocat
+      transmission_4-gtk
 
-    # File & Data Management
-    cosmic-files
-    qrscan
-    trashy
-    yazi
-    fd
-    ripgrep
-    sendme
-    ffmpeg
-    pcloud
+      # File & Data Management
+      cosmic-files
+      qrscan
+      trashy
+      yazi
+      fd
+      ripgrep
+      sendme
+      ffmpeg
+      pcloud
+      handlr-regex
+      (lib.hiPrio handlr-xdg-open)
 
-    # Productivity & Document Tools
-    zathura
-    zotero
-    xournalpp
+      # Productivity & Document Tools
+      zathura
+      zotero
+      xournalpp
 
-    # Miscellaneous Utilities
-    overskride
-    rage
-    (flake.inputs.rerunpin.legacyPackages.${pkgs.system}.rerun)
-    pass-wayland
-    ragenix
-    wl-clipboard
-    zip
-    unzip
-    xdg-utils
-    ncdu
-    google-cloud-sdk
-    xwayland-satellite
-    tldr
-  ];
+      # Miscellaneous Utilities
+      overskride
+      rage
+      (flake.inputs.rerunpin.legacyPackages.${pkgs.system}.rerun)
+      pass-wayland
+      ragenix
+      wl-clipboard
+      zip
+      unzip
+      xdg-utils
+      ncdu
+      google-cloud-sdk
+      xwayland-satellite
+      tldr
+    ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
   # plain files is through 'home.file'.
@@ -727,6 +738,9 @@
           to_string = lib.hm.nushell.mkNushellInline "{|v| $v | str join (char esep) }";
         };
       };
+      shellAliases = {
+        ns = "nix-search-tv print | fzf --preview 'nix-search-tv preview {}' --scheme history";
+      };
       settings = {
         show_banner = false;
         rm.always_trash = true;
@@ -750,6 +764,7 @@
       enable = true;
       enableNushellIntegration = true;
     };
+    imv.enable = true;
     mpv = {
       enable = true;
       config = {
