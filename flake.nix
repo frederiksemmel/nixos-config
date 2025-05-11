@@ -57,8 +57,9 @@
         homeModules.default = ./home/default.nix;
       };
       perSystem =
-        { pkgs, ... }:
+        { self', pkgs, ... }:
         {
+          packages.default = self'.packages.activate;
           treefmt = {
             projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
             programs = {
