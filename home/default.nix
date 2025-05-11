@@ -6,10 +6,11 @@
   ...
 }:
 {
-  imports = [
-    flake.inputs.zen-browser.homeModules.beta
-    flake.inputs.centerpiece.hmModules."x86_64-linux".default
-    flake.inputs.agenix.homeManagerModules.default
+  imports = with flake.inputs; [
+    zen-browser.homeModules.beta
+    centerpiece.hmModules."x86_64-linux".default
+    agenix.homeManagerModules.default
+    # niri.homeModules.niri
   ];
 
   home.username = "frederik";
@@ -164,6 +165,12 @@
   };
 
   services.swww.enable = true;
+  services.wlsunset = {
+    enable = true;
+    latitude = 47.37;
+    longitude = 8.5417;
+    temperature.night = 3000;
+  };
 
   programs.firefox = {
     enable = true;
@@ -371,6 +378,7 @@
     flake = "/home/frederik/repos/nixos-config";
   };
 
+  programs.niri.package = pkgs.niri-unstable;
   programs.niri.settings = {
     "prefer-no-csd" = true;
     ### Inputs
