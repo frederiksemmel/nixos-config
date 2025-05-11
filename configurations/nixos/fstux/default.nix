@@ -161,7 +161,7 @@
           ${pkgs.greetd.tuigreet}/bin/tuigreet \
             --time \
             --remember \
-            --cmd ${pkgs.niri}/bin/niri-session
+            --cmd ${pkgs.niri-unstable}/bin/niri-session
         '';
         user = "greeter";
       };
