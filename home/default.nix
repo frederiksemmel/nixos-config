@@ -83,7 +83,6 @@
       cosmic-files
       qrscan
       trashy
-      yazi
       fd
       ripgrep
       sendme
@@ -188,6 +187,11 @@
     extraConfig = ''
       set selection-clipboard clipboard
     '';
+  };
+
+  programs.yazi = {
+    enable = true;
+    enableNushellIntegration = true;
   };
 
   programs.ssh = {
