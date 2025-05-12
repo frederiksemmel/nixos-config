@@ -96,9 +96,9 @@
       pavucontrol
 
       # Productivity & Document Tools
-      zathura
       zotero
       xournalpp
+      libreoffice
 
       # Miscellaneous Utilities
       overskride
@@ -182,6 +182,12 @@
       "de-CH"
       "es"
     ];
+  };
+  programs.zathura = {
+    enable = true;
+    extraConfig = ''
+      set selection-clipboard clipboard
+    '';
   };
 
   programs.ssh = {
