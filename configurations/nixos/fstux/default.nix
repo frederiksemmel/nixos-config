@@ -100,6 +100,7 @@
       5173
       5174
     ];
+    allowedUDPPorts = [ 5353 ];
     allowedUDPPortRanges = [
       {
         from = 4000;
@@ -161,6 +162,12 @@
     #Enable user access to all basler cameras
     SUBSYSTEM=="usb", ATTRS{idVendor}=="2676", MODE:="0666", TAG+="uaccess", TAG+="udev-acl"
   '';
+  services.printing.enable = true;
+  # services.avahi = {
+  #   enable = true;
+  #   nssmdns4 = true;
+  #   openFirewall = true;
+  # };
 
   services.greetd = {
     enable = true;
