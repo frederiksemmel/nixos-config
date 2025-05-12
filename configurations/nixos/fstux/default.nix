@@ -36,6 +36,7 @@
   nix.settings.nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
 
   time.timeZone = "Europe/Zurich";
+  security.sudo-rs.enable = true;
 
   programs.ssh.extraConfig = ''
     Host eu.nixbuild.net
@@ -81,6 +82,14 @@
 
   networking.hostName = "fstux";
   networking.useNetworkd = true;
+  systemd.network.networks."25-wlan" = {
+    matchConfig.Type = "wlan";
+    networkConfig = {
+      DHCP = "yes";
+      MulticastDNS = "yes";
+      DNS = "9.9.9.9 1.1.1.1";
+    };
+  };
   networking.useDHCP = false;
   networking.wireless.iwd.enable = true;
   networking.firewall = {

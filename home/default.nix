@@ -92,6 +92,9 @@
       handlr-regex
       (lib.hiPrio handlr-xdg-open)
 
+      # Audio & Video
+      pavucontrol
+
       # Productivity & Document Tools
       zathura
       zotero
@@ -649,11 +652,26 @@
       "modules-center" = [ "clock" ];
       "modules-right" = [
         "network"
+        "backlight"
         "pulseaudio"
         "battery"
         "cpu"
         "memory"
       ];
+
+      backlight = {
+        format = "BRI {percent}%";
+      };
+
+      pulseaudio = {
+        format-muted = "VOL MUTED";
+        format = "VOL {volume}% {icon}";
+        format-icons = {
+          default = "";
+          headphone = "headphone";
+          headset = "headset";
+        };
+      };
 
       # Example: override only the clock format
       clock = {
