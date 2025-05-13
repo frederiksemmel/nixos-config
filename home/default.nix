@@ -98,6 +98,7 @@
       zotero
       xournalpp
       libreoffice
+      ungoogled-chromium
 
       # Miscellaneous Utilities
       overskride
@@ -154,11 +155,13 @@
     DISPLAY = ":0"; # For xwayland
     EDITOR = "hx";
     TERM = "foot";
+    NIXOS_OZONE_WL = "1";
   };
   systemd.user.sessionVariables = {
     DISPLAY = ":0"; # For xwayland
     EDITOR = "hx";
     TERM = "foot";
+    NIXOS_OZONE_WL = "1";
   };
 
   fonts.fontconfig = {
