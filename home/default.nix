@@ -447,17 +447,17 @@
 
     ### Visuals
     layout.gaps = 0; # disables the default 16px gap :contentReference[oaicite:0]{index=0}
+    layout.focus-ring.enable = false;
+    layout.border = {
+      enable = true;
+      width = 2;
+      inactive.color = "#000000";
+      active.color = "#505050";
+    };
     # Turn off only the window-close animation
     animations = {
       window-close = null;
       window-open = null;
-    };
-    layout.focus-ring.enable = false;
-    layout.border = {
-      enable = true;
-      width = 1;
-      inactive.color = "#000000";
-      active.color = "#505050";
     };
 
     ### Keybindings
