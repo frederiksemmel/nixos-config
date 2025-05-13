@@ -99,6 +99,8 @@
       xournalpp
       libreoffice
       ungoogled-chromium
+      evince
+      #papers issues with saving and icons
 
       # Miscellaneous Utilities
       overskride
@@ -123,6 +125,10 @@
       - Marketing/Material für Swisscasino Video/**
       - Development/TCSJOHNHUXLEY Shared/Jetson reComputer j4011 Installation/**
       - Development/TCSJOHNHUXLEY Shared/Mock Spades Vision Server/**
+    '';
+    ".config/handlr/handlr.toml".text = ''
+      enable_selector = true
+      selector = "${lib.getExe pkgs.tofi}"
     '';
     # # Building this configuration will create a copy of 'dotfiles/screenrc' in
     # # the Nix store. Activating the configuration will then make '~/.screenrc' a
