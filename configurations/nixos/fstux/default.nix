@@ -98,9 +98,12 @@
       80
       443
       5173
-      5174
+      8765
     ];
-    allowedUDPPorts = [ 5353 ];
+    allowedUDPPorts = [
+      5353
+      5355
+    ];
     allowedUDPPortRanges = [
       {
         from = 4000;
