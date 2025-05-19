@@ -78,6 +78,7 @@
       mullvad
       websocat
       transmission_4-gtk
+      postman
 
       # File & Data Management
       cosmic-files
@@ -129,6 +130,7 @@
     ".config/handlr/handlr.toml".text = ''
       enable_selector = true
       selector = "${lib.getExe pkgs.tofi}"
+      term_exec_args = '-e'
     '';
     # # Building this configuration will create a copy of 'dotfiles/screenrc' in
     # # the Nix store. Activating the configuration will then make '~/.screenrc' a
@@ -143,18 +145,31 @@
   };
 
   # Define an XDG desktop entry for Rerun
-  xdg.desktopEntries.rerun = {
-    name = "Rerun";
-    genericName = "Multimodal Data Viewer";
-    comment = "Visualize streams of multimodal data";
-    exec = "rerun %F";
-    terminal = false;
-    icon = "rerun";
-    categories = [
-      "Development"
-      "Science"
-      "Utility"
-    ];
+  xdg.desktopEntries = {
+    rerun = {
+      name = "Rerun";
+      genericName = "Multimodal Data Viewer";
+      comment = "Visualize streams of multimodal data";
+      exec = "rerun %F";
+      terminal = false;
+      icon = "rerun";
+      categories = [
+        "Development"
+        "Science"
+        "Utility"
+      ];
+    };
+    # footclient = {
+    #   name = "Foot Client";
+    #   genericName = "Terminal";
+    #   exec = "footclient";
+    #   terminal = false;
+    #   icon = "foot";
+    #   categories = [
+    #     "System"
+    #     "TerminalEmulator"
+    #   ];
+    # };
   };
 
   home.sessionVariables = {
@@ -199,6 +214,10 @@
   };
 
   programs.yazi = {
+    enable = true;
+    enableNushellIntegration = true;
+  };
+  programs.carapace = {
     enable = true;
     enableNushellIntegration = true;
   };
@@ -784,9 +803,13 @@
         };
       };
       shellAliases = {
-        ns = "nix-search-tv print | fzf --preview 'nix-search-tv preview {}' --scheme history";
+        ns = "exec (nix-search-tv print | fzf --preview 'nix-search-tv preview {}' --scheme history)";
       };
       settings = {
+        completions.external = {
+          enable = true;
+          max_results = 20;
+        };
         show_banner = false;
         rm.always_trash = true;
         buffer_editor = "hx";
@@ -839,6 +862,7 @@
     };
     foot = {
       enable = true;
+      server.enable = true;
       settings = {
         main = {
           font = "monospace:size=10";
