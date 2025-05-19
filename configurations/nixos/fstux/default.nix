@@ -79,6 +79,8 @@
     enable = true;
     tailor-gui.enable = true;
   };
+  hardware.bluetooth.enable = true; # enables support for Bluetooth
+  services.blueman.enable = true;
 
   networking.hostName = "fstux";
   networking.useNetworkd = true;
@@ -143,6 +145,13 @@
 
   environment.systemPackages = [ ];
 
+  xdg.portal = {
+    config.common = {
+      # Electron apps and chromium fail to open the file picker for some reason.
+      "org.freedesktop.impl.portal.FileChooser" = "gtk";
+    };
+  };
+
   fonts.packages = with pkgs; [
     jetbrains-mono
     source-code-pro
@@ -171,6 +180,13 @@
   #   nssmdns4 = true;
   #   openFirewall = true;
   # };
+  security.rtkit.enable = true;
+  services.pipewire = {
+    enable = true;
+    alsa.enable = true;
+    alsa.support32Bit = true;
+    pulse.enable = true;
+  };
 
   services.greetd = {
     enable = true;
