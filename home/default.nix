@@ -64,6 +64,7 @@
       rust-analyzer
       clippy
       bacon
+      ty
 
       # Containerization & Virtualization
       qemu
@@ -79,6 +80,7 @@
       websocat
       transmission_4-gtk
       postman
+      flake.inputs.iwmenu.packages.${pkgs.system}.default
 
       # File & Data Management
       cosmic-files
@@ -106,7 +108,8 @@
       # Miscellaneous Utilities
       overskride
       rage
-      (flake.inputs.rerunpin.legacyPackages.${pkgs.system}.rerun)
+      rerun
+      # (flake.inputs.rerunpin.legacyPackages.${pkgs.system}.rerun)
       pass-wayland
       ragenix
       wl-clipboard
@@ -117,6 +120,7 @@
       google-cloud-sdk
       xwayland-satellite
       tldr
+      wlr-which-key
     ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -131,6 +135,48 @@
       enable_selector = true
       selector = "${lib.getExe pkgs.tofi}"
       term_exec_args = '-e'
+    '';
+    ".config/wlr-which-key/config.yaml".text = ''
+      # Theming
+      font: monospace
+      background: "#000000ff"
+      color: "#ffffff"
+      # border: "#8ec07c"
+      separator: " ➜ "
+      border_width: 0
+      corner_r: 0
+      padding: 15 # Defaults to corner_r
+      # rows_per_column: 5 # No limit by default
+      # column_padding: 25 # Defaults to padding
+
+      # Anchor and margin
+      anchor: center # One of center, left, right, top, bottom, bottom-left, top-left, etc.
+      # Only relevant when anchor is not center
+      margin_right: 0
+      margin_bottom: 0
+      margin_left: 0
+      margin_top: 0
+
+      # Permits key bindings that conflict with compositor key bindings.
+      # Default is `false`.
+      # inhibit_compositor_keyboard_shortcuts: true
+
+      menu:
+        "w":
+          desc: Wifi
+          cmd: iwmenu -l fuzzel
+        "p":
+          desc: Power
+          submenu:
+            "s":
+              desc: Sleep
+              cmd: systemctl suspend
+            "r":
+              desc: Reboot
+              cmd: reboot
+            "o":
+              desc: Off
+              cmd: poweroff
     '';
     # # Building this configuration will create a copy of 'dotfiles/screenrc' in
     # # the Nix store. Activating the configuration will then make '~/.screenrc' a
@@ -190,6 +236,9 @@
     defaultFonts.monospace = [ "JetBrains Mono" ];
   };
 
+  services.mako = {
+    enable = true;
+  };
   services.swww.enable = true;
   services.wlsunset = {
     enable = true;
@@ -213,6 +262,27 @@
     '';
   };
 
+  programs.fuzzel = {
+    enable = true;
+    settings = {
+      # COLORS (all in RRGGBBAA)
+      colors.background = "000000ff"; # black background :contentReference[oaicite:0]{index=0}
+      colors.text = "ffffffff"; # white text for unselected entries :contentReference[oaicite:1]{index=1}
+      # colors.border = "ffffffff";
+
+      # keep the selection colors consistent (black bg + white fg)
+      colors.selection = "000000ff";
+      colors.selection-text = "ffffffff";
+
+      # matching substrings in both normal and selected entries
+      colors.match = "ffffffff";
+      colors.selection-match = "ffffffff";
+
+      # BORDER
+      border.radius = 0; # disable rounded corners (default is 10) :contentReference[oaicite:2]{index=2}
+      border.width = 0; # 1px border
+    };
+  };
   programs.yazi = {
     enable = true;
     enableNushellIntegration = true;
@@ -492,7 +562,8 @@
         # Launchers
         "${mod}+Return".action = spawn "foot";
         "${mod}+D".action = spawn "centerpiece";
-        # "${mod}+Shift+D".action = spawn "centerpiece";
+        "${mod}+Shift+D".action = spawn "fuzzel";
+        "${mod}+O".action = spawn "wlr-which-key";
         # "${mod}+Ctrl+Shift+L".action = spawn "swaylock";
 
         # Volume controls
