@@ -735,6 +735,10 @@
         matches = [ { "app-id" = "foot"; } ];
         "default-column-width".proportion = 0.5;
       }
+      {
+        matches = [ { "app-id" = "zen-beta"; } ];
+        "default-column-width".proportion = 1.0;
+      }
     ];
 
   };

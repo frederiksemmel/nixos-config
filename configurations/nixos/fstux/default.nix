@@ -11,6 +11,7 @@
     disko.nixosModules.disko
     ./disko-btrfs.nix
     nixos-hardware.nixosModules.tuxedo-infinitybook-pro14-gen7
+    tuxedo-nixos.nixosModules.default
   ];
 
   home-manager.users.frederik = {
@@ -75,12 +76,14 @@
     enable = true;
   };
   hardware.enableRedistributableFirmware = true;
-  hardware.tuxedo-rs = {
-    enable = true;
-    tailor-gui.enable = true;
-  };
+  # hardware.tuxedo-rs = {
+  #   enable = true;
+  #   tailor-gui.enable = true;
+  # };
   hardware.bluetooth.enable = true; # enables support for Bluetooth
   services.blueman.enable = true;
+
+  hardware.tuxedo-control-center.enable = true;
 
   networking.hostName = "fstux";
   networking.useNetworkd = true;
