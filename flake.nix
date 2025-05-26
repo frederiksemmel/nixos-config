@@ -27,6 +27,8 @@
     agenix.inputs.nixpkgs.follows = "nixpkgs";
     iwmenu.url = "github:e-tho/iwmenu";
     iwmenu.inputs.nixpkgs.follows = "nixpkgs";
+    tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
+    # tuxedo-nixos.inputs.nixpkgs.follows = "nixpkgs";
 
     # rerunpin.url = "github:nixos/nixpkgs/9e2987c476ab5ed3f2db3154a45856132288547f";
 
