@@ -165,18 +165,18 @@
         "w":
           desc: Wifi
           cmd: iwmenu -l fuzzel
-        "p":
-          desc: Power
-          submenu:
-            "s":
-              desc: Sleep
-              cmd: systemctl suspend
-            "r":
-              desc: Reboot
-              cmd: reboot
-            "o":
-              desc: Off
-              cmd: poweroff
+        # "p":
+        #   desc: Power
+        #   submenu:
+        "s":
+          desc: Sleep
+          cmd: systemctl suspend
+        "r":
+          desc: Reboot
+          cmd: reboot
+        "o":
+          desc: Off
+          cmd: poweroff
     '';
     # # Building this configuration will create a copy of 'dotfiles/screenrc' in
     # # the Nix store. Activating the configuration will then make '~/.screenrc' a
@@ -536,8 +536,13 @@
 
     ### Visuals
     layout.gaps = 0; # disables the default 16px gap :contentReference[oaicite:0]{index=0}
-    layout.focus-ring.enable = false;
-    layout.border = {
+    # layout.border = {
+    #   enable = true;
+    #   width = 2;
+    #   inactive.color = "#000000";
+    #   active.color = "#505050";
+    # };
+    layout.focus-ring = {
       enable = true;
       width = 2;
       inactive.color = "#000000";
@@ -563,7 +568,7 @@
         "${mod}+Return".action = spawn "foot";
         "${mod}+D".action = spawn "centerpiece";
         "${mod}+Shift+D".action = spawn "fuzzel";
-        "${mod}+O".action = spawn "wlr-which-key";
+        "${mod}+P".action = spawn "wlr-which-key";
         # "${mod}+Ctrl+Shift+L".action = spawn "swaylock";
 
         # Volume controls
@@ -738,6 +743,10 @@
       {
         matches = [ { "app-id" = "zen-beta"; } ];
         "default-column-width".proportion = 1.0;
+      }
+      {
+        matches = [ { "app-id" = ".qemu-system-x86_64-wrapped"; } ];
+        "default-column-width".fixed = 1280;
       }
     ];
 
