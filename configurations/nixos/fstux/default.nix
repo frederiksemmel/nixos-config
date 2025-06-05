@@ -34,7 +34,11 @@
   # Make `nix repl '<nixpkgs>'` use the same nixpkgs as the one used by this flake.
   environment.etc."nix/inputs/nixpkgs".source = "${flake.inputs.nixpkgs}";
   # https://github.com/NixOS/nix/issues/9574
-  nix.settings.nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
+  nix.settings = {
+    nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
+    substituters = [ "ssh://eu.nixbuild.net" ];
+    trusted-public-keys = [ "nixbuild.net/MCCPN0-1:T5gfNdFwM+2PutSR36OoYdHO6bL0tUGbjlbDl8KOGjk=" ];
+  };
 
   time.timeZone = "Europe/Zurich";
   security.sudo-rs.enable = true;
@@ -61,6 +65,7 @@
         hostName = "eu.nixbuild.net";
         system = "aarch64-linux";
         maxJobs = 100;
+        speedFactor = 4;
         supportedFeatures = [
           "benchmark"
           "big-parallel"
@@ -71,6 +76,7 @@
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
+  # boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
 
   hardware.graphics = {
     enable = true;
