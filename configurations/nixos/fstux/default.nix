@@ -36,8 +36,8 @@
   # https://github.com/NixOS/nix/issues/9574
   nix.settings = {
     nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
-    substituters = [ "ssh://eu.nixbuild.net" ];
-    trusted-public-keys = [ "nixbuild.net/MCCPN0-1:T5gfNdFwM+2PutSR36OoYdHO6bL0tUGbjlbDl8KOGjk=" ];
+    # substituters = [ "ssh://eu.nixbuild.net" ];
+    # trusted-public-keys = [ "nixbuild.net/MCCPN0-1:T5gfNdFwM+2PutSR36OoYdHO6bL0tUGbjlbDl8KOGjk=" ];
   };
 
   time.timeZone = "Europe/Zurich";
@@ -145,7 +145,6 @@
   nixpkgs.overlays = [ flake.inputs.niri.overlays.niri ];
   programs.niri.package = pkgs.niri-unstable;
 
-  programs.ssh.startAgent = true;
   programs.light.enable = true;
   programs.gnupg.agent = {
     enable = true;
@@ -156,8 +155,14 @@
 
   xdg.portal = {
     config.common = {
+      default = [
+        "gnome"
+        "gtk"
+      ];
       # Electron apps and chromium fail to open the file picker for some reason.
       "org.freedesktop.impl.portal.FileChooser" = "gtk";
+      "org.freedesktop.impl.portal.Access" = "gtk";
+      "org.freedesktop.impl.portal.Notification" = "gtk";
     };
   };
 
@@ -179,6 +184,7 @@
 
   services.devmon.enable = true;
   services.tailscale.enable = true;
+  services.mullvad-vpn.enable = true;
   services.udev.extraRules = ''
     #Enable user access to all basler cameras
     SUBSYSTEM=="usb", ATTRS{idVendor}=="2676", MODE:="0666", TAG+="uaccess", TAG+="udev-acl"
