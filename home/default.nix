@@ -11,10 +11,11 @@
     centerpiece.hmModules."x86_64-linux".default
     agenix.homeManagerModules.default
     # niri.homeModules.niri
+    # nixai.homeManagerModules.default
   ];
 
   home.username = "frederik";
-  home.homeDirectory = "/home/frederik";
+  home.homeDirectory = "/home/${config.home.username}";
   home.language.base = "en_US.UTF-8";
 
   home.stateVersion = "25.05";
@@ -23,7 +24,7 @@
     spadesvision_gdrive_token.file = ../secrets/spadesvision_gdrive_token.age;
     spadesvision_gdrive_client_secret.file = ../secrets/spadesvision_gdrive_client_secret.age;
   };
-  age.identityPaths = [ "/home/frederik/.ssh/id_github" ];
+  age.identityPaths = [ "${config.home.homeDirectory}/.ssh/id_github" ];
 
   home.packages =
     let
@@ -76,7 +77,6 @@
 
       # Networking & Communication
       bluetui
-      mullvad
       websocat
       transmission_4-gtk
       postman
@@ -125,70 +125,85 @@
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
   # plain files is through 'home.file'.
-  home.file = {
-    ".rclone_filter_spadesvision.txt".text = ''
-      - Marketing/Material für Swisscasino Video/**
-      - Development/TCSJOHNHUXLEY Shared/Jetson reComputer j4011 Installation/**
-      - Development/TCSJOHNHUXLEY Shared/Mock Spades Vision Server/**
-    '';
-    ".config/handlr/handlr.toml".text = ''
-      enable_selector = true
-      selector = "${lib.getExe pkgs.tofi}"
-      term_exec_args = '-e'
-    '';
-    ".config/wlr-which-key/config.yaml".text = ''
-      # Theming
-      font: monospace
-      background: "#000000ff"
-      color: "#ffffff"
-      # border: "#8ec07c"
-      separator: " ➜ "
-      border_width: 0
-      corner_r: 0
-      padding: 15 # Defaults to corner_r
-      # rows_per_column: 5 # No limit by default
-      # column_padding: 25 # Defaults to padding
+  home.file =
+    let
+      wlr-common-config = ''
+        # Theming
+        font: monospace
+        background: "#000000ff"
+        color: "#ffffff"
+        # border: "#8ec07c"
+        separator: " ➜ "
+        border_width: 0
+        corner_r: 0
+        padding: 15 # Defaults to corner_r
+        # rows_per_column: 5 # No limit by default
+        # column_padding: 25 # Defaults to padding
 
-      # Anchor and margin
-      anchor: center # One of center, left, right, top, bottom, bottom-left, top-left, etc.
-      # Only relevant when anchor is not center
-      margin_right: 0
-      margin_bottom: 0
-      margin_left: 0
-      margin_top: 0
+        # Anchor and margin
+        anchor: center # One of center, left, right, top, bottom, bottom-left, top-left, etc.
+        # Only relevant when anchor is not center
+        margin_right: 0
+        margin_bottom: 0
+        margin_left: 0
+        margin_top: 0
 
-      # Permits key bindings that conflict with compositor key bindings.
-      # Default is `false`.
-      # inhibit_compositor_keyboard_shortcuts: true
+        # Permits key bindings that conflict with compositor key bindings.
+        # Default is `false`.
+        # inhibit_compositor_keyboard_shortcuts: true
+      '';
+    in
+    {
+      ".rclone_filter_spadesvision.txt".text = ''
+        - Marketing/Material für Swisscasino Video/**
+        - Development/TCSJOHNHUXLEY Shared/Jetson reComputer j4011 Installation/**
+        - Development/TCSJOHNHUXLEY Shared/Mock Spades Vision Server/**
+      '';
+      ".config/handlr/handlr.toml".text = ''
+        enable_selector = true
+        selector = "${lib.getExe pkgs.tofi}"
+        term_exec_args = '-e'
+      '';
+      ".config/wlr-which-key/config_power.yaml".text = ''
+        ${wlr-common-config}
+        menu:
+          "w":
+            desc: Wifi
+            cmd: iwmenu -l fuzzel
+          # "p":
+          #   desc: Power
+          #   submenu:
+          "s":
+            desc: Sleep
+            cmd: systemctl suspend
+          "r":
+            desc: Reboot
+            cmd: reboot
+          "o":
+            desc: Off
+            cmd: poweroff
+      '';
+      ".config/wlr-which-key/config_opener.yaml".text = ''
+        ${wlr-common-config}
+        menu:
+          "w":
+            desc: Browser
+            cmd: handlr launch text/html
+          "f":
+            desc: Files
+            cmd: handlr launch x-scheme-handler/file
+      '';
+      # # Building this configuration will create a copy of 'dotfiles/screenrc' in
+      # # the Nix store. Activating the configuration will then make '~/.screenrc' a
+      # # symlink to the Nix store copy.
+      # ".screenrc".source = dotfiles/screenrc;
 
-      menu:
-        "w":
-          desc: Wifi
-          cmd: iwmenu -l fuzzel
-        # "p":
-        #   desc: Power
-        #   submenu:
-        "s":
-          desc: Sleep
-          cmd: systemctl suspend
-        "r":
-          desc: Reboot
-          cmd: reboot
-        "o":
-          desc: Off
-          cmd: poweroff
-    '';
-    # # Building this configuration will create a copy of 'dotfiles/screenrc' in
-    # # the Nix store. Activating the configuration will then make '~/.screenrc' a
-    # # symlink to the Nix store copy.
-    # ".screenrc".source = dotfiles/screenrc;
-
-    # # You can also set the file content immediately.
-    # ".gradle/gradle.properties".text = ''
-    #   org.gradle.console=verbose
-    #   org.gradle.daemon.idletimeout=3600000
-    # '';
-  };
+      # # You can also set the file content immediately.
+      # ".gradle/gradle.properties".text = ''
+      #   org.gradle.console=verbose
+      #   org.gradle.daemon.idletimeout=3600000
+      # '';
+    };
 
   # Define an XDG desktop entry for Rerun
   xdg.desktopEntries = {
@@ -236,6 +251,19 @@
     defaultFonts.monospace = [ "JetBrains Mono" ];
   };
 
+  # services.nixai = {
+  #   enable = true;
+  #   # config = {
+  #   #   timeout = 30;
+  #   # };
+  #   mcp = {
+  #     enable = true;
+  #     port = 8081; # Different port to avoid conflicts
+  #   };
+  # };
+  services.ollama = {
+    enable = true;
+  };
   services.mako = {
     enable = true;
   };
@@ -247,14 +275,6 @@
     temperature.night = 3000;
   };
 
-  programs.firefox = {
-    enable = true;
-    languagePacks = [
-      "en-US"
-      "de-CH"
-      "es"
-    ];
-  };
   programs.zathura = {
     enable = true;
     extraConfig = ''
@@ -486,7 +506,7 @@
     enable = true;
     clean.enable = true;
     clean.extraArgs = "--keep-since 14d --keep 10";
-    flake = "/home/frederik/repos/nixos-config";
+    flake = "${config.home.homeDirectory}/repos/nixos-config";
   };
 
   programs.niri.package = pkgs.niri-unstable;
@@ -550,8 +570,8 @@
     };
     # Turn off only the window-close animation
     animations = {
-      window-close = null;
-      window-open = null;
+      window-close.enable = false;
+      window-open.enable = false;
     };
 
     ### Keybindings
@@ -568,7 +588,10 @@
         "${mod}+Return".action = spawn "foot";
         "${mod}+D".action = spawn "centerpiece";
         "${mod}+Shift+D".action = spawn "fuzzel";
-        "${mod}+P".action = spawn "wlr-which-key";
+        "${mod}+P".action =
+          spawn "wlr-which-key" "${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
+        "${mod}+O".action =
+          spawn "wlr-which-key" "${config.home.homeDirectory}/.config/wlr-which-key/config_opener.yaml";
         # "${mod}+Ctrl+Shift+L".action = spawn "swaylock";
 
         # Volume controls
