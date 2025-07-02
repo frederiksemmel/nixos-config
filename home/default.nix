@@ -104,6 +104,7 @@
       ungoogled-chromium
       evince
       #papers issues with saving and icons
+      signal-desktop
 
       # Miscellaneous Utilities
       overskride
@@ -122,6 +123,7 @@
       wlr-which-key
       usbutils
       pciutils
+      difftastic
     ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -943,7 +945,16 @@
       enable = true;
       enableNushellIntegration = true;
     };
-    imv.enable = true;
+    imv = {
+      enable = true;
+      settings = {
+
+        options = {
+          overlay = "1";
+          font = "monospace:size=10";
+        };
+      };
+    };
     mpv = {
       enable = true;
       config = {
