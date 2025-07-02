@@ -109,7 +109,6 @@
       overskride
       rage
       rerun
-      # (flake.inputs.rerunpin.legacyPackages.${pkgs.system}.rerun)
       pass-wayland
       ragenix
       wl-clipboard
@@ -121,6 +120,8 @@
       xwayland-satellite
       tldr
       wlr-which-key
+      usbutils
+      pciutils
     ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -280,6 +281,9 @@
     extraConfig = ''
       set selection-clipboard clipboard
     '';
+  };
+  programs.zed-editor = {
+    enable = true;
   };
 
   programs.fuzzel = {
