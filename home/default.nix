@@ -93,6 +93,7 @@
       pcloud
       handlr-regex
       (lib.hiPrio handlr-xdg-open)
+      pipe-rename
 
       # Audio & Video
       pavucontrol
@@ -917,6 +918,7 @@
       };
       shellAliases = {
         ns = "exec (nix-search-tv print | fzf --preview 'nix-search-tv preview {}' --scheme history)";
+        yazi = "yy";
       };
       settings = {
         completions.external = {
