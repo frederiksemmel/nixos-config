@@ -9,7 +9,7 @@
   };
   inputs = {
     # Principle inputs (updated by `nix run .#update`)
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable-small";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware";
@@ -51,7 +51,31 @@
       flake = {
         # Configurations for Linux (NixOS) machines
         nixosConfigurations."fstux" = self.nixos-unified.lib.mkLinuxSystem { home-manager = true; } {
-          nixpkgs.hostPlatform = "x86_64-linux";
+          nixpkgs = {
+            hostPlatform = "x86_64-linux";
+            overlays = [
+              (final: prev: {
+                rerun = prev.rerun.overrideAttrs (oldAttrs: {
+                  cargoBuildFeatures = [
+                    "native_viewer"
+                    "nasm"
+                    # "web_viewer" removed
+                  ];
+                  cargoCheckFeatures = [
+                    "native_viewer"
+                    "nasm"
+                    # "web_viewer" removed
+                  ];
+                  # buildFeatures = [
+                  #   "native_viewer"
+                  #   "nasm"
+                  #   # "web_viewer" removed
+                  # ];
+                  buildWebViewerFeatures = [ ]; # not strictly neccessary but cleaner
+                });
+              })
+            ];
+          };
           imports = [
             ./configurations/nixos/fstux
           ];

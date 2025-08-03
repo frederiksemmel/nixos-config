@@ -76,7 +76,7 @@
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
-  # boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
+  boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
 
   hardware.graphics = {
     enable = true;
@@ -110,6 +110,7 @@
       443
       5173
       8765
+      9876
     ];
     allowedUDPPorts = [
       5353
@@ -133,6 +134,7 @@
       "wheel"
       "video"
       "input"
+      "docker"
     ];
     hashedPassword = "$6$sBbqKGdIHSuqH2HL$voX0LJZaG/qu7y.0QUQYGSsadiHf99esXblI196WQNpvkeJf/P9L1BSoLJkCza/KQ/vCsibYteEHXXn0nMO7R0";
     shell = pkgs.nushell;
@@ -217,6 +219,20 @@
       };
     };
   };
+
+  # Enable SSH daemon
+  services.openssh.enable = true;
+
+  # Optional: configure SSH settings
+  services.openssh.settings = {
+    PasswordAuthentication = true; # or false for key-only
+    PermitRootLogin = "no";
+  };
+  # In /etc/nixos/configuration.nix
+  virtualisation.docker = {
+    enable = true;
+  };
+
   # list the sessions that gtkgreet will offer
   environment.etc."greetd/environments".text = ''
     niri
