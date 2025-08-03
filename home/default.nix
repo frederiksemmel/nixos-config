@@ -82,7 +82,7 @@
       bluetui
       websocat
       transmission_4-gtk
-      postman
+      # postman
       flake.inputs.iwmenu.packages.${pkgs.system}.default
 
       # File & Data Management
@@ -133,7 +133,7 @@
       pciutils
       difftastic
 
-      anydesk
+      # anydesk
       rustdesk-flutter
     ];
 
@@ -275,9 +275,9 @@
   #     port = 8081; # Different port to avoid conflicts
   #   };
   # };
-  services.ollama = {
-    enable = true;
-  };
+  # services.ollama = {
+  #   enable = true;
+  # };
   services.mako = {
     enable = true;
   };
@@ -549,6 +549,7 @@
 
     ### Outputs
     outputs."eDP-1" = {
+      # scale = 2.0;
       position = {
         x = 0;
         y = 1440;
@@ -558,6 +559,13 @@
       position = {
         x = 0;
         y = 0;
+      };
+    };
+    outputs."HDMI-A-1" = {
+      mode = {
+        width = 3840;
+        height = 2160;
+        refresh = 23.976;
       };
     };
 
