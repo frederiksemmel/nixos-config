@@ -52,6 +52,8 @@
       nix-index
       nix-search-tv
       fzf
+      nix-diff
+      nix-bundle
 
       # Development & Formatting Tools
       alejandra
@@ -66,6 +68,7 @@
       clippy
       bacon
       ty
+      amber
 
       # Containerization & Virtualization
       qemu
@@ -94,9 +97,13 @@
       handlr-regex
       (lib.hiPrio handlr-xdg-open)
       pipe-rename
+      imagemagick
+      ghostscript
+      inlyne
 
       # Audio & Video
       pavucontrol
+      spotify
 
       # Productivity & Document Tools
       zotero
@@ -125,6 +132,9 @@
       usbutils
       pciutils
       difftastic
+
+      anydesk
+      rustdesk-flutter
     ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
@@ -286,6 +296,9 @@
     '';
   };
   programs.zed-editor = {
+    enable = true;
+  };
+  programs.onlyoffice = {
     enable = true;
   };
 
@@ -511,7 +524,7 @@
 
   programs.nh = {
     enable = true;
-    clean.enable = true;
+    clean.enable = false;
     clean.extraArgs = "--keep-since 14d --keep 10";
     flake = "${config.home.homeDirectory}/repos/nixos-config";
   };
@@ -778,6 +791,10 @@
         matches = [ { "app-id" = ".qemu-system-x86_64-wrapped"; } ];
         "default-column-width".fixed = 1280;
       }
+      {
+        matches = [ { "app-id" = "mpv"; } ];
+        "default-column-width".proportion = 0.5;
+      }
     ];
 
   };
@@ -918,7 +935,6 @@
       };
       shellAliases = {
         ns = "exec (nix-search-tv print | fzf --preview 'nix-search-tv preview {}' --scheme history)";
-        yazi = "yy";
       };
       settings = {
         completions.external = {
