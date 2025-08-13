@@ -35,10 +35,10 @@ let
     # Default is `false`.
     # inhibit_compositor_keyboard_shortcuts: true
   '';
-  swaylockWithSwww = pkgs.writeShellScriptBin "swaylock-with-swww" ''
+  chosenWallpaper = "${config.home.homeDirectory}/wallpapers/longboard.jpg";
+  swaylockWithWallpaper = pkgs.writeShellScriptBin "swaylock-with-swww" ''
     #!${pkgs.bash}/bin/bash
-    WALLPAPER=$(${lib.getExe pkgs.swww} query | grep -oP 'image: \K.*')
-    exec ${lib.getExe pkgs.swaylock-effects} --image "$WALLPAPER"
+    exec ${lib.getExe pkgs.swaylock-effects} --image ${chosenWallpaper}
   '';
 
 in
@@ -199,7 +199,7 @@ in
           cmd: poweroff
         "l":
           desc: Off
-          cmd: ${lib.getExe swaylockWithSwww}
+          cmd: ${lib.getExe swaylockWithWallpaper}
     '';
     ".config/wlr-which-key/config_opener.yaml".text = ''
       ${wlr-common-config}
@@ -289,7 +289,7 @@ in
     events = [
       {
         event = "before-sleep";
-        command = lib.getExe swaylockWithSwww;
+        command = lib.getExe swaylockWithWallpaper;
       }
     ];
   };
@@ -337,9 +337,9 @@ in
       text-wrong-color = "ffffffff";
 
       font = "monospace";
-      font-size = 20;
+      font-size = 30;
 
-      effect-blur = "12x3";
+      effect-blur = "20x3";
       grace = 0;
       hide-keyboard-layout = true;
     };
@@ -648,6 +648,13 @@ in
       {
         command = [
           (lib.getExe pkgs.xwayland-satellite)
+        ];
+      }
+      {
+        command = [
+          (lib.getExe pkgs.swww)
+          "img"
+          chosenWallpaper
         ];
       }
     ];
