@@ -10,7 +10,7 @@
   inputs = {
     # Principle inputs (updated by `nix run .#update`)
     # nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable-small";
+    nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware";
@@ -30,8 +30,8 @@
     iwmenu.inputs.nixpkgs.follows = "nixpkgs";
     tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
     # tuxedo-nixos.inputs.nixpkgs.follows = "nixpkgs";  Need duplicated nixpkgs because of electron
-    nixai.url = "github:olafkfreund/nix-ai-help";
-    nixai.inputs.nixpkgs.follows = "nixpkgs";
+    # nixai.url = "github:olafkfreund/nix-ai-help";
+    # nixai.inputs.nixpkgs.follows = "nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixos-unified.url = "github:srid/nixos-unified";

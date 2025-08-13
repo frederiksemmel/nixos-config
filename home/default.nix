@@ -5,6 +5,43 @@
   lib,
   ...
 }:
+let
+  handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
+    #!${pkgs.bash}/bin/bash
+    ${lib.getExe pkgs.handlr-regex} open "$@"
+  '';
+  wlr-common-config = ''
+    # Theming
+    font: monospace
+    background: "#000000ff"
+    color: "#ffffff"
+    # border: "#8ec07c"
+    separator: " ➜ "
+    border_width: 0
+    corner_r: 0
+    padding: 15 # Defaults to corner_r
+    # rows_per_column: 5 # No limit by default
+    # column_padding: 25 # Defaults to padding
+
+    # Anchor and margin
+    anchor: center # One of center, left, right, top, bottom, bottom-left, top-left, etc.
+    # Only relevant when anchor is not center
+    margin_right: 0
+    margin_bottom: 0
+    margin_left: 0
+    margin_top: 0
+
+    # Permits key bindings that conflict with compositor key bindings.
+    # Default is `false`.
+    # inhibit_compositor_keyboard_shortcuts: true
+  '';
+  swaylockWithSwww = pkgs.writeShellScriptBin "swaylock-with-swww" ''
+    #!${pkgs.bash}/bin/bash
+    WALLPAPER=$(${lib.getExe pkgs.swww} query | grep -oP 'image: \K.*')
+    exec ${lib.getExe pkgs.swaylock-effects} --image "$WALLPAPER"
+  '';
+
+in
 {
   imports = with flake.inputs; [
     zen-browser.homeModules.beta
@@ -26,198 +63,165 @@
   };
   age.identityPaths = [ "${config.home.homeDirectory}/.ssh/id_github" ];
 
-  home.packages =
-    let
-      handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
-        #!${pkgs.bash}/bin/bash
-        ${lib.getExe pkgs.handlr-regex} open "$@"
-      '';
-    in
-    with pkgs;
-    [
-      # Nix stuff
-      cachix
-      colmena
-      deploy-rs
-      devenv
-      nix-eval-jobs
-      nix-fast-build
-      nix-output-monitor
-      nixd
-      nix-tree
-      nixos-generators
-      nvd
-      vulnix
-      nil
-      nix-index
-      nix-search-tv
-      fzf
-      nix-diff
-      nix-bundle
+  home.packages = with pkgs; [
+    # Nix stuff
+    cachix
+    colmena
+    deploy-rs
+    devenv
+    nix-eval-jobs
+    nix-fast-build
+    nix-output-monitor
+    nixd
+    nix-tree
+    nixos-generators
+    nvd
+    vulnix
+    nil
+    nix-index
+    nix-search-tv
+    fzf
+    nix-diff
+    nix-bundle
 
-      # Development & Formatting Tools
-      alejandra
-      dprint
-      nufmt
-      nixfmt-rfc-style
-      statix
-      typstyle
-      cargo
-      rustc
-      rust-analyzer
-      clippy
-      bacon
-      ty
-      amber
+    # Development & Formatting Tools
+    alejandra
+    dprint
+    nufmt
+    nixfmt-rfc-style
+    statix
+    typstyle
+    cargo
+    rustc
+    rust-analyzer
+    clippy
+    bacon
+    ty
+    amber
 
-      # Containerization & Virtualization
-      qemu
+    # Containerization & Virtualization
+    qemu
 
-      # Version Control & Collaboration
-      git-interactive-rebase-tool
-      git-graph
-      gitui
+    # Version Control & Collaboration
+    git-interactive-rebase-tool
+    git-graph
+    gitui
 
-      # Networking & Communication
-      bluetui
-      websocat
-      transmission_4-gtk
-      # postman
-      flake.inputs.iwmenu.packages.${pkgs.system}.default
+    # Networking & Communication
+    bluetui
+    websocat
+    transmission_4-gtk
+    # postman
+    flake.inputs.iwmenu.packages.${pkgs.system}.default
 
-      # File & Data Management
-      cosmic-files
-      qrscan
-      trashy
-      fd
-      ripgrep
-      sendme
-      ffmpeg
-      pcloud
-      handlr-regex
-      (lib.hiPrio handlr-xdg-open)
-      pipe-rename
-      imagemagick
-      ghostscript
-      inlyne
+    # File & Data Management
+    cosmic-files
+    qrscan
+    trashy
+    fd
+    ripgrep
+    sendme
+    ffmpeg
+    pcloud
+    handlr-regex
+    (lib.hiPrio handlr-xdg-open)
+    pipe-rename
+    imagemagick
+    ghostscript
+    inlyne
 
-      # Audio & Video
-      pavucontrol
-      spotify
+    # Audio & Video
+    pavucontrol
+    spotify
 
-      # Productivity & Document Tools
-      zotero
-      xournalpp
-      libreoffice
-      ungoogled-chromium
-      evince
-      #papers issues with saving and icons
-      signal-desktop
+    # Productivity & Document Tools
+    zotero
+    xournalpp
+    libreoffice
+    ungoogled-chromium
+    evince
+    #papers issues with saving and icons
+    signal-desktop
 
-      # Miscellaneous Utilities
-      overskride
-      rage
-      rerun
-      pass-wayland
-      ragenix
-      wl-clipboard
-      zip
-      unzip
-      xdg-utils
-      ncdu
-      google-cloud-sdk
-      xwayland-satellite
-      tldr
-      wlr-which-key
-      usbutils
-      pciutils
-      difftastic
+    # Miscellaneous Utilities
+    overskride
+    rage
+    rerun
+    pass-wayland
+    ragenix
+    wl-clipboard
+    zip
+    unzip
+    xdg-utils
+    ncdu
+    google-cloud-sdk
+    xwayland-satellite
+    tldr
+    wlr-which-key
+    usbutils
+    pciutils
+    difftastic
 
-      # anydesk
-      rustdesk-flutter
-    ];
+    # anydesk
+    rustdesk-flutter
+  ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
   # plain files is through 'home.file'.
-  home.file =
-    let
-      wlr-common-config = ''
-        # Theming
-        font: monospace
-        background: "#000000ff"
-        color: "#ffffff"
-        # border: "#8ec07c"
-        separator: " ➜ "
-        border_width: 0
-        corner_r: 0
-        padding: 15 # Defaults to corner_r
-        # rows_per_column: 5 # No limit by default
-        # column_padding: 25 # Defaults to padding
+  home.file = {
+    ".rclone_filter_spadesvision.txt".text = ''
+      - Marketing/Material für Swisscasino Video/**
+      - Development/TCSJOHNHUXLEY Shared/Jetson reComputer j4011 Installation/**
+      - Development/TCSJOHNHUXLEY Shared/Mock Spades Vision Server/**
+    '';
+    ".config/handlr/handlr.toml".text = ''
+      enable_selector = true
+      selector = "${lib.getExe pkgs.tofi}"
+      term_exec_args = '-e'
+    '';
+    ".config/wlr-which-key/config_power.yaml".text = ''
+      ${wlr-common-config}
+      menu:
+        "w":
+          desc: Wifi
+          cmd: iwmenu -l fuzzel
+        # "p":
+        #   desc: Power
+        #   submenu:
+        "s":
+          desc: Sleep
+          cmd: systemctl suspend
+        "r":
+          desc: Reboot
+          cmd: reboot
+        "o":
+          desc: Off
+          cmd: poweroff
+        "l":
+          desc: Off
+          cmd: ${lib.getExe swaylockWithSwww}
+    '';
+    ".config/wlr-which-key/config_opener.yaml".text = ''
+      ${wlr-common-config}
+      menu:
+        "w":
+          desc: Browser
+          cmd: handlr launch text/html
+        "f":
+          desc: Files
+          cmd: handlr launch x-scheme-handler/file
+    '';
+    # # Building this configuration will create a copy of 'dotfiles/screenrc' in
+    # # the Nix store. Activating the configuration will then make '~/.screenrc' a
+    # # symlink to the Nix store copy.
+    # ".screenrc".source = dotfiles/screenrc;
 
-        # Anchor and margin
-        anchor: center # One of center, left, right, top, bottom, bottom-left, top-left, etc.
-        # Only relevant when anchor is not center
-        margin_right: 0
-        margin_bottom: 0
-        margin_left: 0
-        margin_top: 0
-
-        # Permits key bindings that conflict with compositor key bindings.
-        # Default is `false`.
-        # inhibit_compositor_keyboard_shortcuts: true
-      '';
-    in
-    {
-      ".rclone_filter_spadesvision.txt".text = ''
-        - Marketing/Material für Swisscasino Video/**
-        - Development/TCSJOHNHUXLEY Shared/Jetson reComputer j4011 Installation/**
-        - Development/TCSJOHNHUXLEY Shared/Mock Spades Vision Server/**
-      '';
-      ".config/handlr/handlr.toml".text = ''
-        enable_selector = true
-        selector = "${lib.getExe pkgs.tofi}"
-        term_exec_args = '-e'
-      '';
-      ".config/wlr-which-key/config_power.yaml".text = ''
-        ${wlr-common-config}
-        menu:
-          "w":
-            desc: Wifi
-            cmd: iwmenu -l fuzzel
-          # "p":
-          #   desc: Power
-          #   submenu:
-          "s":
-            desc: Sleep
-            cmd: systemctl suspend
-          "r":
-            desc: Reboot
-            cmd: reboot
-          "o":
-            desc: Off
-            cmd: poweroff
-      '';
-      ".config/wlr-which-key/config_opener.yaml".text = ''
-        ${wlr-common-config}
-        menu:
-          "w":
-            desc: Browser
-            cmd: handlr launch text/html
-          "f":
-            desc: Files
-            cmd: handlr launch x-scheme-handler/file
-      '';
-      # # Building this configuration will create a copy of 'dotfiles/screenrc' in
-      # # the Nix store. Activating the configuration will then make '~/.screenrc' a
-      # # symlink to the Nix store copy.
-      # ".screenrc".source = dotfiles/screenrc;
-
-      # # You can also set the file content immediately.
-      # ".gradle/gradle.properties".text = ''
-      #   org.gradle.console=verbose
-      #   org.gradle.daemon.idletimeout=3600000
-      # '';
-    };
+    # # You can also set the file content immediately.
+    # ".gradle/gradle.properties".text = ''
+    #   org.gradle.console=verbose
+    #   org.gradle.daemon.idletimeout=3600000
+    # '';
+  };
 
   # Define an XDG desktop entry for Rerun
   xdg.desktopEntries = {
@@ -278,6 +282,17 @@
   # services.ollama = {
   #   enable = true;
   # };
+  services.swayidle = {
+    enable = true;
+    package = pkgs.swayidle;
+    extraArgs = [ "-w" ];
+    events = [
+      {
+        event = "before-sleep";
+        command = lib.getExe swaylockWithSwww;
+      }
+    ];
+  };
   services.mako = {
     enable = true;
   };
@@ -289,6 +304,65 @@
     temperature.night = 3000;
   };
 
+  programs.swaylock = {
+    enable = true;
+    package = pkgs.swaylock-effects;
+    settings = {
+      indicator = true;
+      indicator-radius = 40;
+      indicator-thickness = 12;
+
+      ring-color = "ffffff55";
+      ring-clear-color = "ffffff55";
+      ring-ver-color = "ffffff55";
+      ring-wrong-color = "ffffff55";
+
+      key-hl-color = "ffffffff";
+
+      line-color = "00000000";
+      line-clear-color = "00000000";
+      line-ver-color = "00000000";
+      line-wrong-color = "00000000";
+
+      inside-color = "00000000";
+      inside-clear-color = "00000000";
+      inside-ver-color = "00000000";
+      inside-wrong-color = "00000000";
+
+      separator-color = "00000000";
+
+      text-color = "ffffffff";
+      text-clear-color = "ffffffff";
+      text-ver-color = "ffffffff";
+      text-wrong-color = "ffffffff";
+
+      font = "monospace";
+      font-size = 20;
+
+      effect-blur = "12x3";
+      grace = 0;
+      hide-keyboard-layout = true;
+    };
+  };
+  programs.sherlock = {
+    enable = false;
+    settings = {
+      aliases = { };
+      config = {
+      };
+      launchers = [
+        {
+          name = "App Launcher";
+          type = "app_launcher";
+          args = { };
+          priority = 1;
+          home = true;
+        }
+      ];
+      style = null;
+    };
+
+  };
   programs.zathura = {
     enable = true;
     extraConfig = ''
@@ -620,7 +694,6 @@
           spawn "wlr-which-key" "${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
         "${mod}+O".action =
           spawn "wlr-which-key" "${config.home.homeDirectory}/.config/wlr-which-key/config_opener.yaml";
-        # "${mod}+Ctrl+Shift+L".action = spawn "swaylock";
 
         # Volume controls
         "XF86AudioRaiseVolume".allow-when-locked = true;
