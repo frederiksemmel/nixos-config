@@ -112,7 +112,7 @@ in
     websocat
     transmission_4-gtk
     # postman
-    flake.inputs.iwmenu.packages.${pkgs.system}.default
+    iwmenu
 
     # File & Data Management
     cosmic-files
@@ -161,6 +161,8 @@ in
     usbutils
     pciutils
     difftastic
+    pwgen
+    tokei
 
     # anydesk
     rustdesk-flutter
@@ -309,7 +311,7 @@ in
     package = pkgs.swaylock-effects;
     settings = {
       indicator = true;
-      indicator-radius = 40;
+      indicator-radius = 60;
       indicator-thickness = 12;
 
       ring-color = "ffffff55";
@@ -603,7 +605,7 @@ in
     flake = "${config.home.homeDirectory}/repos/nixos-config";
   };
 
-  programs.niri.package = pkgs.niri-unstable;
+  programs.niri.package = pkgs.niri-stable;
   programs.niri.settings = {
     "prefer-no-csd" = true;
     ### Inputs
@@ -1162,7 +1164,7 @@ in
       };
 
       languages = {
-        "language-server" = {
+        language-server = {
           pyright = {
             command = "pyright-langserver";
             args = [ "--stdio" ];
@@ -1178,7 +1180,7 @@ in
             };
           };
 
-          "rust-analyzer" = {
+          rust-analyzer = {
             command = "rust-analyzer";
             config = {
               procMacro = {
@@ -1196,7 +1198,8 @@ in
             args = [ "--lsp" ];
           };
 
-          "tailwindcss-ls" = {
+          tailwindcss-language-server = {
+            command = "tailwindcss-language-server";
             config = {
               userLanguages = {
                 rust = "html";
@@ -1204,7 +1207,7 @@ in
               };
             };
           };
-          "svelteserver" = {
+          svelteserver = {
             command = "svelteserver";
             args = [ "--stdio" ];
           };
@@ -1213,7 +1216,7 @@ in
             command = "tinymist";
           };
 
-          "typst-languagetool-lsp" = {
+          typst-languagetool-lsp = {
             command = "typst-languagetool-lsp";
             config = {
               bundled = false;
@@ -1224,14 +1227,14 @@ in
             command = "harper-ls";
             args = [ "--stdio" ];
             config = {
-              "harper-ls" = {
+              harper-ls = {
                 userDictPath = "~/dict.txt";
                 fileDictPath = "~/.harper/";
               };
             };
           };
 
-          "typst-lsp" = {
+          typst-lsp = {
             command = "typst-lsp";
           };
 
@@ -1280,7 +1283,7 @@ in
             };
             language-servers = [
               "svelteserver"
-              "tailwindcss-ls"
+              "tailwindcss-language-server"
             ];
           }
           {

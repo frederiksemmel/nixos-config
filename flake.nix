@@ -9,8 +9,8 @@
   };
   inputs = {
     # Principle inputs (updated by `nix run .#update`)
-    # nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    # nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware";
@@ -26,12 +26,7 @@
     centerpiece.inputs.nixpkgs.follows = "nixpkgs";
     agenix.url = "github:ryantm/agenix";
     agenix.inputs.nixpkgs.follows = "nixpkgs";
-    iwmenu.url = "github:e-tho/iwmenu";
-    iwmenu.inputs.nixpkgs.follows = "nixpkgs";
     tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
-    # tuxedo-nixos.inputs.nixpkgs.follows = "nixpkgs";  Need duplicated nixpkgs because of electron
-    # nixai.url = "github:olafkfreund/nix-ai-help";
-    # nixai.inputs.nixpkgs.follows = "nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixos-unified.url = "github:srid/nixos-unified";
@@ -54,28 +49,57 @@
         nixosConfigurations."fstux" = self.nixos-unified.lib.mkLinuxSystem { home-manager = true; } {
           nixpkgs = {
             hostPlatform = "x86_64-linux";
-            overlays = [
-              (final: prev: {
-                rerun = prev.rerun.overrideAttrs (oldAttrs: {
-                  cargoBuildFeatures = [
-                    "native_viewer"
-                    "nasm"
-                    # "web_viewer" removed
-                  ];
-                  cargoCheckFeatures = [
-                    "native_viewer"
-                    "nasm"
-                    # "web_viewer" removed
-                  ];
-                  # buildFeatures = [
-                  #   "native_viewer"
-                  #   "nasm"
-                  #   # "web_viewer" removed
-                  # ];
-                  buildWebViewerFeatures = [ ]; # not strictly neccessary but cleaner
-                });
-              })
-            ];
+            # overlays = [
+            #   (final: prev: {
+            #     rerun = prev.rerun.overrideAttrs (oldAttrs: {
+            #       cargoBuildFeatures = [
+            #         "native_viewer"
+            #         "nasm"
+            #         # "web_viewer" removed
+            #       ];
+            #       cargoCheckFeatures = [
+            #         "native_viewer"
+            #         "nasm"
+            #         # "web_viewer" removed
+            #       ];
+            #       # buildFeatures = [
+            #       #   "native_viewer"
+            #       #   "nasm"
+            #       #   # "web_viewer" removed
+            #       # ];
+            #       buildWebViewerFeatures = [ ]; # not strictly neccessary but cleaner
+            #     });
+            #   })
+            # ];
+            # overlays = [
+            #   (final: prev: {
+            #     rerun =
+            #       let
+            #         llvm = prev.llvmPackages;
+            #       in
+            #       prev.rerun.overrideAttrs (old: rec {
+            #         buildInputs = (old.buildInputs or [ ]) ++ [
+            #           llvm.clang-unwrapped
+            #           llvm.llvm
+            #           llvm.libclang
+            #           prev.wabt
+            #         ];
+
+            #         # Inject environment variables into the build environment
+            #         CC = "${llvm.clang-unwrapped}/bin/clang";
+            #         CXX = "${llvm.clang-unwrapped}/bin/clang++";
+            #         AR = "${llvm.llvm}/bin/llvm-ar";
+            #         CC_wasm32_unknown_unknown = "${llvm.clang-unwrapped}/bin/clang";
+
+            #         CLANG_MAJOR_VERSION = "18";
+            #         CLANG_RESOURCE_DIR = "${llvm.clang-unwrapped}/lib/clang/${CLANG_MAJOR_VERSION}";
+            #         LIBCLANG_INCLUDE = "${llvm.libclang.lib}/lib/clang/${CLANG_MAJOR_VERSION}/include";
+
+            #         CFLAGS_wasm32_wasip1 = "-isystem ${llvm.libclang.lib}/lib/clang/${CLANG_MAJOR_VERSION}/include -resource-dir ${llvm.clang-unwrapped}/lib/clang/${CLANG_MAJOR_VERSION}";
+            #         CPPFLAGS = "-isystem ${llvm.libclang.lib}/lib/clang/${CLANG_MAJOR_VERSION}/include -resource-dir ${llvm.clang-unwrapped}/lib/clang/${CLANG_MAJOR_VERSION}";
+            #       });
+            #   })
+            # ];
           };
           imports = [
             ./configurations/nixos/fstux
