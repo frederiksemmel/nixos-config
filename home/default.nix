@@ -86,7 +86,7 @@ in
 
     # Development & Formatting Tools
     alejandra
-    dprint
+    # dprint  TODO put it back once fixed
     nufmt
     nixfmt-rfc-style
     statix
@@ -98,6 +98,7 @@ in
     bacon
     ty
     amber
+    ruplacer
 
     # Containerization & Virtualization
     qemu
@@ -129,6 +130,7 @@ in
     imagemagick
     ghostscript
     inlyne
+    gdrive3
 
     # Audio & Video
     pavucontrol
@@ -1169,6 +1171,10 @@ in
             command = "pyright-langserver";
             args = [ "--stdio" ];
           };
+          ty = {
+            command = "ty";
+            args = [ "server" ];
+          };
 
           ruff = {
             command = "ruff";
@@ -1307,6 +1313,7 @@ in
             roots = [ "pyproject.toml" ];
             language-servers = [
               "pyright"
+              # "ty"
               "ruff"
             ];
             auto-format = true;
