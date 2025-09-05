@@ -47,6 +47,7 @@ in
     zen-browser.homeModules.beta
     centerpiece.hmModules."x86_64-linux".default
     agenix.homeManagerModules.default
+    ./ssh_config.nix
     # niri.homeModules.niri
     # nixai.homeManagerModules.default
   ];
@@ -114,6 +115,7 @@ in
     transmission_4-gtk
     # postman
     iwmenu
+    postgresql
 
     # File & Data Management
     cosmic-files
@@ -175,7 +177,7 @@ in
   home.file = {
     ".rclone_filter_spadesvision.txt".text = ''
       - Marketing/Material für Swisscasino Video/**
-      - Development/TCSJOHNHUXLEY Shared/Jetson reComputer j4011 Installation/**
+      - Development/TCSJOHNHUXLEY Shared/Releases/**
       - Development/TCSJOHNHUXLEY Shared/Mock Spades Vision Server/**
     '';
     ".config/handlr/handlr.toml".text = ''
@@ -256,13 +258,11 @@ in
   };
 
   home.sessionVariables = {
-    DISPLAY = ":0"; # For xwayland
     EDITOR = "hx";
     TERM = "foot";
     NIXOS_OZONE_WL = "1";
   };
   systemd.user.sessionVariables = {
-    DISPLAY = ":0"; # For xwayland
     EDITOR = "hx";
     TERM = "foot";
     NIXOS_OZONE_WL = "1";
@@ -408,57 +408,6 @@ in
   programs.carapace = {
     enable = true;
     enableNushellIntegration = true;
-  };
-
-  programs.ssh = {
-    enable = true;
-    addKeysToAgent = "yes";
-    matchBlocks = {
-      "github.com" = {
-        user = "git";
-        identityFile = "~/.ssh/id_github";
-      };
-
-      "git.sr.ht" = {
-        user = "git";
-        identityFile = "~/.ssh/id_sourcehut";
-      };
-
-      "gitlab.inf.ethz.ch" = {
-        user = "git";
-        identityFile = "~/.ssh/id_gitlab_inf";
-      };
-
-      "gitlab.ethz.ch" = {
-        user = "git";
-        identityFile = "~/.ssh/id_gitlab_ethz";
-      };
-
-      tcsJetson = {
-        host = "*tcs-jetson*";
-        identityFile = "~/.ssh/spadesvision/tcs-jetson/id_tcs-jetson_spadesvision";
-      };
-
-      tcsJetsonRoot = {
-        match = ''
-          host *tcs-jetson*
-          user root
-        '';
-        identityFile = "~/.ssh/spadesvision/tcs-jetson/id_tcs-jetson_root";
-      };
-      bern = {
-        host = "*bern*";
-        identityFile = "~/.ssh/spadesvision/spadesvision/id_spadesvision_spadesvision";
-      };
-
-      bernRoot = {
-        match = ''
-          host *bern*
-          user root
-        '';
-        identityFile = "~/.ssh/spadesvision/spadesvision/id_spadesvision_root";
-      };
-    };
   };
 
   programs.zen-browser = {
@@ -664,7 +613,6 @@ in
     ];
     environment = {
       QT_QPA_PLATFORM = "wayland";
-      DISPLAY = ":0";
     };
 
     ### Visuals
