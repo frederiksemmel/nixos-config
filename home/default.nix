@@ -89,7 +89,8 @@ in
     alejandra
     dprint
     nufmt
-    nixfmt-rfc-style
+    nixfmt
+    nixfmt-tree
     statix
     typstyle
     cargo
