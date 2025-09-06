@@ -77,6 +77,7 @@
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
   boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
+  boot.kernelParams = [ "console=tty2" ];
 
   hardware.graphics = {
     enable = true;
@@ -235,11 +236,11 @@
   };
 
   # Enable SSH daemon
-  services.openssh.enable = true;
+  services.openssh.enable = false;
 
   # Optional: configure SSH settings
   services.openssh.settings = {
-    PasswordAuthentication = true; # or false for key-only
+    PasswordAuthentication = false; # or false for key-only
     PermitRootLogin = "no";
   };
   # In /etc/nixos/configuration.nix
