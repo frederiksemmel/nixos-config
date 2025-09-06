@@ -87,7 +87,7 @@ in
 
     # Development & Formatting Tools
     alejandra
-    # dprint  TODO put it back once fixed
+    dprint
     nufmt
     nixfmt-rfc-style
     statix
