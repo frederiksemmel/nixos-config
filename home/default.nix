@@ -1195,11 +1195,11 @@ in
 
           nil = {
             command = "nil";
-            config = {
-              formatting = {
-                command = [ "nixfmt" ];
-              };
-            };
+            # config = {
+            #   formatting = {
+            #     command = [ "nixfmt" ];
+            #   };
+            # };
           };
 
           nixd = {
@@ -1262,7 +1262,7 @@ in
             roots = [ "pyproject.toml" ];
             language-servers = [
               "pyright"
-              # "ty"
+              "ty"
               "ruff"
             ];
             auto-format = true;
