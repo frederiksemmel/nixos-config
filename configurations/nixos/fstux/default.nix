@@ -92,6 +92,9 @@
 
   hardware.tuxedo-control-center.enable = true;
 
+  # hardware.logitech.wireless.enable = true;
+  # hardware.logitech.wireless.enableGraphical = true;
+
   networking.hostName = "fstux";
   networking.useNetworkd = true;
   systemd.network.networks."25-wlan" = {
