@@ -207,6 +207,9 @@ in
         "l":
           desc: Off
           cmd: ${lib.getExe swaylockWithWallpaper}
+        "i":
+          desc: Inhibit Sleep
+          cmd: systemd-inhibit --what=handle-lid-switch sleep infinity
     '';
     ".config/wlr-which-key/config_opener.yaml".text = ''
       ${wlr-common-config}
@@ -1101,6 +1104,19 @@ in
               ":buffer-close!"
               ":redraw"
             ];
+            "C-t" = [
+              ":new"
+              ":insert-output gitui"
+              ":buffer-close!"
+              ":redraw"
+            ];
+            # space.t submenu for themes
+            space = {
+              t = {
+                "1" = ":theme monokai_pro_ristretto";
+                "2" = ":theme zed_onelight";
+              };
+            };
           };
 
           insert = {

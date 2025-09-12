@@ -49,23 +49,7 @@
         nixosConfigurations."fstux" = self.nixos-unified.lib.mkLinuxSystem { home-manager = true; } {
           nixpkgs = {
             hostPlatform = "x86_64-linux";
-            overlays = [
-              (final: prev: {
-                rerun = prev.rerun.overrideAttrs (oldAttrs: {
-                  cargoBuildFeatures = [
-                    "native_viewer"
-                    "nasm"
-                    # "web_viewer" removed
-                  ];
-                  cargoCheckFeatures = [
-                    "native_viewer"
-                    "nasm"
-                    # "web_viewer" removed
-                  ];
-                  buildWebViewerFeatures = [ ]; # not strictly neccessary but cleaner
-                });
-              })
-            ];
+            overlays = [ ];
           };
           imports = [
             ./configurations/nixos/fstux
