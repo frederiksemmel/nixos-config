@@ -11,8 +11,11 @@
     disko.nixosModules.disko
     ./disko-btrfs.nix
     nixos-hardware.nixosModules.tuxedo-infinitybook-pro14-gen7
-    tuxedo-nixos.nixosModules.default
+    # tuxedo-nixos.nixosModules.default
   ];
+
+  nixpkgs.config.allowUnfree = true;
+  nixpkgs.overlays = with flake.inputs; [ niri.overlays.niri ];
 
   home-manager.users.frederik = {
     imports = [ flake.self.homeModules.default ];
@@ -21,7 +24,6 @@
   home-manager.backupFileExtension = "backup";
   home-manager.useGlobalPkgs = true;
 
-  nixpkgs.config.allowUnfree = true;
   # make `nix run nixpkgs#nixpkgs` use the same nixpkgs as the one used by this flake.
   nix.registry.nixpkgs.flake = flake.inputs.nixpkgs;
   nix.channel.enable = false; # remove nix-channel related tools & configs, we use flakes instead.
@@ -77,20 +79,20 @@
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
   boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
-  boot.kernelParams = [ "console=tty2" ];
+  # boot.kernelParams = [ "console=tty2" ];
 
   hardware.graphics = {
     enable = true;
   };
   hardware.enableRedistributableFirmware = true;
-  # hardware.tuxedo-rs = {
-  #   enable = true;
-  #   tailor-gui.enable = true;
-  # };
+  hardware.tuxedo-rs = {
+    enable = true;
+    tailor-gui.enable = true;
+  };
+  # hardware.tuxedo-control-center.enable = true;
   hardware.bluetooth.enable = true; # enables support for Bluetooth
   services.blueman.enable = true;
-
-  hardware.tuxedo-control-center.enable = true;
+  # services.blueman.enable = true;
 
   # hardware.logitech.wireless.enable = true;
   # hardware.logitech.wireless.enableGraphical = true;
@@ -105,6 +107,17 @@
       DNS = "9.9.9.9 1.1.1.1";
     };
   };
+  systemd.network.networks."10-usb-lan" = {
+    matchConfig.Name = "enp0s13f0u1u1";
+    networkConfig = {
+      DHCP = "yes";
+      LinkLocalAddressing = "yes";
+      # Resolved config and avahi needed for mdns for webrtc. Our app needs to resolve ....local addresses
+      MulticastDNS = "yes";
+      DNS = "9.9.9.9 1.1.1.1";
+    };
+  };
+
   networking.useDHCP = false;
   networking.wireless.iwd.enable = true;
   networking.firewall = {
@@ -119,17 +132,13 @@
     allowedUDPPorts = [
       5353
       5355
+      41641
+      3478
     ];
-    allowedUDPPortRanges = [
-      {
-        from = 4000;
-        to = 4007;
-      }
-      {
-        from = 8000;
-        to = 8010;
-      }
-    ];
+    extraCommands = ''
+      iptables -A nixos-fw -p tcp --source 169.254.0.0/16 --dport 1024:65535 -j nixos-fw-accept
+      iptables -A nixos-fw -p udp --source 169.254.0.0/16 --dport 1024:65535 -j nixos-fw-accept
+    '';
   };
 
   users.users.frederik = {
@@ -145,11 +154,6 @@
   };
 
   users.users.root.hashedPassword = "$6$TFVUB5p/gECWeZMb$GauIqbzHXTRitc6GHwlSGAzkfEpHqMoEnpu7dMK7.4gKNY4RIX3J2gBICORN4xeatkonTzKo0Q2wmyS4SQt7J.";
-
-  programs.sway.enable = true;
-  programs.niri.enable = true;
-  nixpkgs.overlays = [ flake.inputs.niri.overlays.niri ];
-  programs.niri.package = pkgs.niri-unstable;
 
   programs.light.enable = true;
   programs.gnupg.agent = {
@@ -210,11 +214,11 @@
     SUBSYSTEM=="usb", ATTRS{idVendor}=="2676", MODE:="0666", TAG+="uaccess", TAG+="udev-acl"
   '';
   services.printing.enable = true;
-  # services.avahi = {
-  #   enable = true;
-  #   nssmdns4 = true;
-  #   openFirewall = true;
-  # };
+  services.avahi = {
+    enable = true;
+    nssmdns4 = true;
+    openFirewall = true;
+  };
   security.rtkit.enable = true;
   services.pipewire = {
     enable = true;
@@ -238,6 +242,22 @@
     };
   };
 
+  programs.sway.enable = true;
+
+  programs.niri.enable = true;
+  programs.niri.package = pkgs.niri-unstable;
+
+  services.displayManager = {
+    # sessionPackages = with pkgs; [ niri-unstable ];
+    # sddm = {
+    #   enable = true;
+    #   wayland.enable = true;
+    # };
+    # ly = {
+    #   enable = true;
+    # };
+  };
+
   # Enable SSH daemon
   services.openssh.enable = false;
 
@@ -250,12 +270,6 @@
   virtualisation.docker = {
     enable = true;
   };
-
-  # list the sessions that gtkgreet will offer
-  environment.etc."greetd/environments".text = ''
-    niri
-    sway
-  '';
 
   system.stateVersion = "25.05";
 }

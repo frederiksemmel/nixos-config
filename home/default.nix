@@ -49,7 +49,6 @@ in
     agenix.homeManagerModules.default
     ./ssh_config.nix
     # niri.homeModules.niri
-    # nixai.homeManagerModules.default
   ];
 
   home.username = "frederik";
@@ -270,6 +269,9 @@ in
     EDITOR = "hx";
     TERM = "foot";
     NIXOS_OZONE_WL = "1";
+    # NOTE should not be set in the newer niri versions
+    # WAYLAND_DISPLAY = "wayland-1";
+    # DISPLAY = ":0";
   };
 
   fonts.fontconfig = {
@@ -560,7 +562,10 @@ in
     flake = "${config.home.homeDirectory}/repos/nixos-config";
   };
 
-  programs.niri.package = pkgs.niri-stable;
+  # NOTE this was an attempt to make ly work. But somehow graphical-session.target starts way to early
+  # systemd.user.services.swww.Unit.Requisite = [ "graphical-session.target" ];
+  # systemd.user.services.waybar.Unit.Requisite = [ "graphical-session.target" ];
+  # systemd.user.services.swayidle.Unit.Requisite = [ "graphical-session.target" ];
   programs.niri.settings = {
     "prefer-no-csd" = true;
     ### Inputs
@@ -607,13 +612,13 @@ in
           (lib.getExe pkgs.xwayland-satellite)
         ];
       }
-      {
-        command = [
-          (lib.getExe pkgs.swww)
-          "img"
-          chosenWallpaper
-        ];
-      }
+      # {
+      #   command = [
+      #     (lib.getExe pkgs.swww)
+      #     "img"
+      #     chosenWallpaper
+      #   ];
+      # }
     ];
     environment = {
       QT_QPA_PLATFORM = "wayland";

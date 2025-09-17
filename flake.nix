@@ -26,7 +26,7 @@
     centerpiece.inputs.nixpkgs.follows = "nixpkgs";
     agenix.url = "github:ryantm/agenix";
     agenix.inputs.nixpkgs.follows = "nixpkgs";
-    tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
+    # tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixos-unified.url = "github:srid/nixos-unified";

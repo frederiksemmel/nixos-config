@@ -23,6 +23,11 @@ let
     }
     {
       name = "webdemo";
+      pattern = "*spadesvision.com";
+      dir = "webdemo";
+    }
+    {
+      name = "webdemo";
       pattern = "*webdemo*";
       dir = "webdemo";
     }
