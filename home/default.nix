@@ -119,7 +119,6 @@ in
 
     # File & Data Management
     cosmic-files
-    qrscan
     trashy
     fd
     ripgrep
@@ -314,6 +313,10 @@ in
     temperature.night = 3000;
   };
 
+  programs.eza = {
+    enable = true;
+    enableNushellIntegration = true;
+  };
   programs.swaylock = {
     enable = true;
     package = pkgs.swaylock-effects;
