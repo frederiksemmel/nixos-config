@@ -11,6 +11,7 @@
     disko.nixosModules.disko
     ./disko-btrfs.nix
     nixos-hardware.nixosModules.tuxedo-infinitybook-pro14-gen7
+    determinate.nixosModules.default
     # tuxedo-nixos.nixosModules.default
   ];
 
