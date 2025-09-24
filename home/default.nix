@@ -116,6 +116,7 @@ in
     # postman
     iwmenu
     postgresql
+    flake.inputs.pwmenu.packages.${pkgs.system}.default
 
     # File & Data Management
     cosmic-files
@@ -188,8 +189,11 @@ in
       ${wlr-common-config}
       menu:
         "w":
-          desc: Wifi
+          desc: Wifi Menu
           cmd: iwmenu -l fuzzel
+        "a":
+          desc: Audio Menu
+          cmd: pwmenu -l fuzzel -m output-devices
         # "p":
         #   desc: Power
         #   submenu:
@@ -1021,7 +1025,7 @@ in
 
         options = {
           overlay = "1";
-          font = "monospace:size=10";
+          font = "Monospace:10";
         };
       };
     };
