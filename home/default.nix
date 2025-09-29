@@ -194,9 +194,6 @@ in
         "a":
           desc: Audio Menu
           cmd: pwmenu -l fuzzel -m output-devices
-        # "p":
-        #   desc: Power
-        #   submenu:
         "s":
           desc: Sleep
           cmd: systemctl suspend
@@ -319,7 +316,7 @@ in
 
   programs.eza = {
     enable = true;
-    enableNushellIntegration = true;
+    # enableNushellIntegration = true;
   };
   programs.swaylock = {
     enable = true;
@@ -1011,8 +1008,10 @@ in
         battery.disabled = true;
         package.disabled = true;
         nodejs.disabled = true;
+        python.disabled = true;
         gcloud.format = "on [$symbol($project)]($style) ";
         gcloud.project_aliases.decent-decker-379914 = "bj";
+        nix_shell.format = "via [$symbol$name](bold blue) ";
       };
     };
     zoxide = {
