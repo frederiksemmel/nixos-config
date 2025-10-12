@@ -167,6 +167,7 @@ in
     difftastic
     pwgen
     tokei
+    nmap
 
     # anydesk
     rustdesk-flutter
