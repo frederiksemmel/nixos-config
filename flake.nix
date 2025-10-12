@@ -63,7 +63,7 @@
         homeModules.default = ./home/default.nix;
       };
       perSystem =
-        { self', pkgs, ... }:
+        { self', ... }:
         {
           packages.default = self'.packages.activate;
           treefmt = {
