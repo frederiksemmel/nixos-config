@@ -105,11 +105,12 @@
     networkConfig = {
       DHCP = "yes";
       MulticastDNS = "yes";
+      # NOTE remove this in public networks
       DNS = "9.9.9.9 1.1.1.1";
     };
   };
   systemd.network.networks."10-usb-lan" = {
-    matchConfig.Name = "enp0s13f0u1u1";
+    matchConfig.Type = "ether";
     networkConfig = {
       DHCP = "yes";
       LinkLocalAddressing = "yes";

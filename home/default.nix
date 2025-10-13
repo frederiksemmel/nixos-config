@@ -589,26 +589,26 @@ in
     };
 
     ### Outputs
-    outputs."eDP-1" = {
-      # scale = 2.0;
-      position = {
-        x = 0;
-        y = 1440;
-      };
-    };
-    outputs."DP-3" = {
-      position = {
-        x = 0;
-        y = 0;
-      };
-    };
-    outputs."HDMI-A-1" = {
-      mode = {
-        width = 3840;
-        height = 2160;
-        refresh = 23.976;
-      };
-    };
+    # outputs."eDP-1" = {
+    #   # scale = 2.0;
+    #   position = {
+    #     x = 0;
+    #     y = 1440;
+    #   };
+    # };
+    # outputs."DP-3" = {
+    #   position = {
+    #     x = 0;
+    #     y = 0;
+    #   };
+    # };
+    # outputs."HDMI-A-1" = {
+    #   mode = {
+    #     width = 3840;
+    #     height = 2160;
+    #     refresh = 23.976;
+    #   };
+    # };
 
     ### Startup
     spawn-at-startup = [
