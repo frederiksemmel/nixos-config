@@ -100,6 +100,7 @@ in
     ty
     amber
     ruplacer
+    sad
 
     # Containerization & Virtualization
     qemu
@@ -160,7 +161,7 @@ in
     ncdu
     google-cloud-sdk
     xwayland-satellite
-    tldr
+    tealdeer
     wlr-which-key
     usbutils
     pciutils
@@ -168,6 +169,7 @@ in
     pwgen
     tokei
     nmap
+    poppler-utils
 
     # anydesk
     rustdesk-flutter
@@ -178,8 +180,8 @@ in
   home.file = {
     ".rclone_filter_spadesvision.txt".text = ''
       - Marketing/Material für Swisscasino Video/**
-      - Development/TCSJOHNHUXLEY Shared/Releases/**
-      - Development/TCSJOHNHUXLEY Shared/Mock Spades Vision Server/**
+      - Development/TCSJOHNHUXLEY*/Releases/**
+      - Development/TCSJOHNHUXLEY*/Mock Spades Vision Server/**
     '';
     ".config/handlr/handlr.toml".text = ''
       enable_selector = true
@@ -280,19 +282,12 @@ in
     defaultFonts.monospace = [ "JetBrains Mono" ];
   };
 
-  # services.nixai = {
-  #   enable = true;
-  #   # config = {
-  #   #   timeout = 30;
-  #   # };
-  #   mcp = {
-  #     enable = true;
-  #     port = 8081; # Different port to avoid conflicts
-  #   };
-  # };
-  # services.ollama = {
-  #   enable = true;
-  # };
+  services.walker = {
+    enable = true;
+  };
+  services.kanshi = {
+    enable = true;
+  };
   services.swayidle = {
     enable = true;
     package = pkgs.swayidle;
@@ -511,28 +506,26 @@ in
 
   programs.git = {
     enable = true;
+    settings = {
+      # identity
+      user.name = "Frederik Semmel";
+      user.email = "frederiksemmel@gmail.com";
 
-    # identity
-    userName = "Frederik Semmel";
-    userEmail = "frederiksemmel@gmail.com";
-
-    # Delta syntax-highlighting
-    delta = {
-      enable = true;
-      options = {
-        navigate = true; # use n/N to move between diff hunks
-        "side-by-side" = true; # two-column view
-        dark = true; # dark theme
-        # light = false;              # disable auto-detect if you prefer a light theme
-      };
-    };
-
-    # other git settings
-    extraConfig = {
       merge.conflictstyle = "diff3";
       diff.colorMoved = "default";
       sequence.editor = "interactive-rebase-tool";
       init.defaultBranch = "main";
+    };
+  };
+  # Delta syntax-highlighting
+  programs.delta = {
+    enable = true;
+    enableGitIntegration = true;
+    options = {
+      navigate = true; # use n/N to move between diff hunks
+      "side-by-side" = true; # two-column view
+      dark = true; # dark theme
+      # light = false;              # disable auto-detect if you prefer a light theme
     };
   };
 
@@ -588,20 +581,23 @@ in
       xkb.options = "ctrl:nocaps, compose:ralt, grp:win_space_toggle, grp_led:caps, altwin:swap_alt_win";
     };
 
-    ### Outputs
-    # outputs."eDP-1" = {
-    #   # scale = 2.0;
-    #   position = {
-    #     x = 0;
-    #     y = 1440;
-    #   };
-    # };
-    # outputs."DP-3" = {
-    #   position = {
-    #     x = 0;
-    #     y = 0;
-    #   };
-    # };
+    ## Outputs
+    outputs."eDP-1" = {
+      # scale = 2.0;
+      position = {
+        x = 0;
+        y = 0;
+      };
+    };
+    outputs."Dell Inc. DELL U2721DE B0GC623" = {
+      position = {
+        x = 0;
+        y = -1440 - 1;
+      };
+    };
+    outputs."Samsung Electric Company SAMSUNG 0x01000E00" = {
+
+    };
     # outputs."HDMI-A-1" = {
     #   mode = {
     #     width = 3840;
@@ -815,9 +811,9 @@ in
         "${mod}+W".action = toggle-column-tabbed-display;
 
         # Screenshots
-        "Print".action = screenshot;
+        "Print".action.screenshot = [ ];
         # "Ctrl+Print".action = screenshot-screen;  # Doesnt work
-        "Alt+Print".action = screenshot-window;
+        "Alt+Print".action.screenshot-window = [ ];
 
         # Inhibitor toggle
         "${mod}+Escape" = {
@@ -848,6 +844,10 @@ in
       {
         matches = [ { "app-id" = "mpv"; } ];
         "default-column-width".proportion = 0.5;
+      }
+      {
+        matches = [ { "app-id" = "rerun"; } ];
+        "default-column-width".proportion = 1.0;
       }
     ];
 
@@ -1025,7 +1025,7 @@ in
 
         options = {
           overlay = "1";
-          font = "Monospace:10";
+          overlay_font = "Monospace:10";
         };
       };
     };
