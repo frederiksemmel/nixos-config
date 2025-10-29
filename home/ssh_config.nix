@@ -7,6 +7,11 @@ let
       dir = "spadesvision";
     }
     {
+      name = "spadesvision-pfaeffikon";
+      pattern = "*pfaeffikon*";
+      dir = "spadesvision";
+    }
+    {
       name = "spadesvision-zurich";
       pattern = "*zurich*";
       dir = "spadesvision";
