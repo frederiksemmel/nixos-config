@@ -200,9 +200,9 @@
     iosevka
     intel-one-mono
     hack-font
-    vistafonts # includes consolas
+    vista-fonts # includes consolas
     noto-fonts
-    noto-fonts-emoji
+    noto-fonts-color-emoji
     fira-code
     fira-code-symbols
     nerd-fonts.fira-code
