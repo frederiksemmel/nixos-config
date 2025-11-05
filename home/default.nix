@@ -138,6 +138,7 @@ in
     # Audio & Video
     pavucontrol
     spotify
+    shotcut
 
     # Productivity & Document Tools
     zotero
@@ -147,6 +148,7 @@ in
     evince
     #papers issues with saving and icons
     signal-desktop
+    sqlitebrowser
 
     # Miscellaneous Utilities
     overskride
