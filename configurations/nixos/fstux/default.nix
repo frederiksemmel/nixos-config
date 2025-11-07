@@ -39,8 +39,8 @@
   # https://github.com/NixOS/nix/issues/9574
   nix.settings = {
     nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
-    # substituters = [ "ssh://eu.nixbuild.net" ];
-    # trusted-public-keys = [ "nixbuild.net/MCCPN0-1:T5gfNdFwM+2PutSR36OoYdHO6bL0tUGbjlbDl8KOGjk=" ];
+    substituters = [ "https://install.determinate.systems" ];
+    trusted-public-keys = [ "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM=" ];
   };
 
   time.timeZone = "Europe/Zurich";
