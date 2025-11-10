@@ -116,8 +116,7 @@ in
     transmission_4-gtk
     # postman
     iwmenu
-    postgresql
-    flake.inputs.pwmenu.packages.${pkgs.system}.default
+    flake.inputs.pwmenu.packages.${pkgs.stdenv.hostPlatform.system}.default
 
     # File & Data Management
     cosmic-files
