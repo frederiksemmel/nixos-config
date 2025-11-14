@@ -174,7 +174,7 @@ in
     poppler-utils
 
     # anydesk
-    rustdesk-flutter
+    # rustdesk-flutter
   ];
 
   # Home Manager is pretty good at managing dotfiles. The primary way to manage
