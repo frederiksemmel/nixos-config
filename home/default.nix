@@ -67,7 +67,7 @@ in
     # Nix stuff
     cachix
     colmena
-    deploy-rs
+    # deploy-rs  # is in devenv
     devenv
     nix-eval-jobs
     nix-fast-build
@@ -138,6 +138,7 @@ in
     pavucontrol
     spotify
     shotcut
+    wf-recorder
 
     # Productivity & Document Tools
     zotero
