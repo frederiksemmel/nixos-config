@@ -98,9 +98,13 @@ in
     clippy
     bacon
     ty
+
+    ## Find and replace tools
     amber
     ruplacer
+
     sad
+    bat
 
     # Containerization & Virtualization
     qemu
@@ -294,6 +298,9 @@ in
     enable = true;
     package = pkgs.swayidle;
     extraArgs = [ "-w" ];
+    # events = {
+    #   "before-sleep" = lib.getExe swaylockWithWallpaper;
+    # }
     events = [
       {
         event = "before-sleep";
@@ -303,6 +310,10 @@ in
   };
   services.mako = {
     enable = true;
+    extraConfig = ''
+      [app-name=Spotify]
+      default-timeout=3000
+    '';
   };
   services.swww.enable = true;
   services.wlsunset = {
@@ -312,6 +323,9 @@ in
     temperature.night = 3000;
   };
 
+  programs.ghostty = {
+    enable = true;
+  };
   programs.eza = {
     enable = true;
     # enableNushellIntegration = true;
@@ -1201,15 +1215,8 @@ in
             command = "tinymist";
           };
 
-          typst-languagetool-lsp = {
-            command = "typst-languagetool-lsp";
-            config = {
-              bundled = false;
-            };
-          };
-
           harper = {
-            command = "harper-ls";
+            command = lib.getExe pkgs.harper;
             args = [ "--stdio" ];
             config = {
               harper-ls = {
@@ -1294,6 +1301,7 @@ in
               "pyright"
               "ty"
               "ruff"
+              "harper"
             ];
             auto-format = true;
           }

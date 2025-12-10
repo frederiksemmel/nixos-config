@@ -39,8 +39,8 @@
   # https://github.com/NixOS/nix/issues/9574
   nix.settings = {
     nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
-    substituters = [ "https://install.determinate.systems" ];
-    trusted-public-keys = [ "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM=" ];
+    # substituters = [ "https://install.determinate.systems" ];
+    # trusted-public-keys = [ "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM=" ];
   };
 
   time.timeZone = "Europe/Zurich";
@@ -68,7 +68,7 @@
         hostName = "eu.nixbuild.net";
         system = "aarch64-linux";
         maxJobs = 100;
-        speedFactor = 4;
+        speedFactor = 16;
         supportedFeatures = [
           "benchmark"
           "big-parallel"
@@ -79,6 +79,7 @@
 
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
+  boot.loader.systemd-boot.configurationLimit = 5;
   boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
   # boot.kernelParams = [ "console=tty2" ];
 
@@ -158,13 +159,12 @@
 
   users.users.root.hashedPassword = "$6$TFVUB5p/gECWeZMb$GauIqbzHXTRitc6GHwlSGAzkfEpHqMoEnpu7dMK7.4gKNY4RIX3J2gBICORN4xeatkonTzKo0Q2wmyS4SQt7J.";
 
+  programs.sniffnet.enable = true;
   programs.light.enable = true;
   programs.gnupg.agent = {
     enable = true;
     pinentryPackage = pkgs.pinentry-curses;
   };
-
-  environment.systemPackages = [ ];
 
   xdg.portal = {
     config.common = {
@@ -201,6 +201,7 @@
     intel-one-mono
     hack-font
     vista-fonts # includes consolas
+    corefonts
     noto-fonts
     noto-fonts-color-emoji
     fira-code
@@ -269,6 +270,25 @@
     PasswordAuthentication = false; # or false for key-only
     PermitRootLogin = "no";
   };
+
+  services.mediamtx = {
+    enable = true;
+    allowVideoAccess = true;
+    settings = {
+      paths = {
+        all = {
+          source = "publisher";
+        };
+      };
+    };
+  };
+
+  services.usbmuxd.enable = true;
+  environment.systemPackages = with pkgs; [
+    libimobiledevice
+    ifuse # optional, to mount using 'ifuse'
+  ];
+
   # In /etc/nixos/configuration.nix
   virtualisation.docker = {
     enable = true;
