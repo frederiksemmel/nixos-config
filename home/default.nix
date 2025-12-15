@@ -176,6 +176,7 @@ in
     tokei
     nmap
     poppler-utils
+    exfat
 
     # anydesk
     # rustdesk-flutter
@@ -301,12 +302,9 @@ in
     # events = {
     #   "before-sleep" = lib.getExe swaylockWithWallpaper;
     # }
-    events = [
-      {
-        event = "before-sleep";
-        command = lib.getExe swaylockWithWallpaper;
-      }
-    ];
+    events = {
+      "before-sleep" = lib.getExe swaylockWithWallpaper;
+    };
   };
   services.mako = {
     enable = true;
