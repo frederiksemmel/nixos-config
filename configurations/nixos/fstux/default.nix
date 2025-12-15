@@ -284,6 +284,9 @@
   };
 
   services.usbmuxd.enable = true;
+
+  # services.tzupdate.enable = true;
+
   environment.systemPackages = with pkgs; [
     libimobiledevice
     ifuse # optional, to mount using 'ifuse'
