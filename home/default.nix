@@ -1298,7 +1298,7 @@ in
             name = "python";
             roots = [ "pyproject.toml" ];
             language-servers = [
-              "pyright"
+              # "pyright"
               "ty"
               "ruff"
               "harper"
