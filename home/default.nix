@@ -178,7 +178,9 @@ in
     poppler-utils
     exfat
 
-    # anydesk
+    # productivity
+    rustdesk-flutter
+    anydesk
     # rustdesk-flutter
   ];
 
