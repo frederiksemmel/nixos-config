@@ -143,6 +143,7 @@ in
     spotify
     shotcut
     wf-recorder
+    pwvucontrol
 
     # Productivity & Document Tools
     zotero
@@ -593,7 +594,7 @@ in
     input.keyboard = {
       repeat-delay = 250;
       repeat-rate = 30;
-      xkb.layout = "us, us(intl)";
+      xkb.layout = "us, us(intl), us(colemak)";
       xkb.options = "ctrl:nocaps, compose:ralt, grp:win_space_toggle, grp_led:caps, altwin:swap_alt_win";
     };
 
