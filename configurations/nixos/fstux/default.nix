@@ -128,16 +128,16 @@
     allowedTCPPorts = [
       80
       443
-      5173
-      8765
-      9876
-      53317
+      # 5173
+      # 8765
+      # 9876
+      # 53317
     ];
     allowedUDPPorts = [
       5353
-      5355
-      41641
-      3478
+      # 5355
+      # 41641
+      # 3478
     ];
     extraCommands = ''
       iptables -A nixos-fw -p tcp --source 169.254.0.0/16 --dport 1024:65535 -j nixos-fw-accept
