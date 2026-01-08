@@ -152,6 +152,7 @@
       "video"
       "input"
       "docker"
+      "seat"
     ];
     hashedPassword = "REDACTED_PASSWORD_HASH";
     shell = pkgs.nushell;
@@ -231,6 +232,7 @@
     pulse.enable = true;
   };
 
+  # programs.regreet.enable = true;
   services.greetd = {
     enable = true;
     settings = {
@@ -245,22 +247,22 @@
       };
     };
   };
+  # services.displayManager = {
+  #   lemurs.enable = true;
+  # sessionPackages = with pkgs; [ niri-unstable ];
+  # sddm = {
+  #   enable = true;
+  #   wayland.enable = true;
+  # };
+  # ly = {
+  #   enable = true;
+  # };
+  # };
 
   programs.sway.enable = true;
 
   programs.niri.enable = true;
   programs.niri.package = pkgs.niri-unstable;
-
-  services.displayManager = {
-    # sessionPackages = with pkgs; [ niri-unstable ];
-    # sddm = {
-    #   enable = true;
-    #   wayland.enable = true;
-    # };
-    # ly = {
-    #   enable = true;
-    # };
-  };
 
   # Enable SSH daemon
   services.openssh.enable = false;
