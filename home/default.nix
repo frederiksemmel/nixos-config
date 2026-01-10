@@ -135,7 +135,7 @@ in
     pipe-rename
     imagemagick
     ghostscript
-    inlyne
+    # inlyne  # TODO enable when working again
     gdrive3
 
     # Audio & Video
@@ -396,9 +396,9 @@ in
       set selection-clipboard clipboard
     '';
   };
-  programs.zed-editor = {
-    enable = true;
-  };
+  # programs.zed-editor = {
+  #   enable = true;
+  # };
   programs.onlyoffice = {
     enable = true;
   };

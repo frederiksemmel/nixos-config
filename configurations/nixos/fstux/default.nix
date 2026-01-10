@@ -95,6 +95,7 @@
   hardware.bluetooth.enable = true; # enables support for Bluetooth
   services.blueman.enable = true;
   # services.blueman.enable = true;
+  #
 
   # hardware.logitech.wireless.enable = true;
   # hardware.logitech.wireless.enableGraphical = true;
@@ -130,7 +131,7 @@
       443
       # 5173
       # 8765
-      # 9876
+      9876
       # 53317
     ];
     allowedUDPPorts = [
@@ -211,6 +212,15 @@
   ];
   fonts.enableDefaultPackages = true;
 
+  services.tlp = {
+    enable = true;
+
+    # Global TLP settings
+    settings = {
+      # Disable USB autosuspend on both AC and battery
+      USB_AUTOSUSPEND = "0";
+    };
+  };
   services.devmon.enable = true;
   services.tailscale.enable = true;
   services.mullvad-vpn.enable = true;
@@ -287,7 +297,8 @@
 
   services.usbmuxd.enable = true;
 
-  # services.tzupdate.enable = true;
+  # services.automatic-timezoned.enable = true;
+  services.tzupdate.enable = true;
 
   environment.systemPackages = with pkgs; [
     libimobiledevice
