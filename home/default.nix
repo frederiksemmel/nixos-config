@@ -396,9 +396,9 @@ in
       set selection-clipboard clipboard
     '';
   };
-  # programs.zed-editor = {
-  #   enable = true;
-  # };
+  programs.zed-editor = {
+    enable = true;
+  };
   programs.onlyoffice = {
     enable = true;
   };
