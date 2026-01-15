@@ -297,6 +297,34 @@ in
   };
   services.kanshi = {
     enable = true;
+    settings = [
+      {
+        output.criteria = "eDP-1";
+        output.mode = "2880x1800@90Hz";
+        output.scale = 1.75;
+      }
+      {
+        profile.name = "undocked";
+        profile.outputs = [
+          {
+            criteria = "eDP-1";
+          }
+        ];
+      }
+      {
+        profile.name = "office";
+        profile.outputs = [
+          {
+            criteria = "eDP-1";
+            position = "456,1441";
+          }
+          {
+            criteria = "DP-3";
+            position = "0,0";
+          }
+        ];
+      }
+    ];
   };
   services.swayidle = {
     enable = true;
