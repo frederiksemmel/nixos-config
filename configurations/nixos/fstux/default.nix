@@ -137,6 +137,7 @@
     allowedUDPPorts = [
       5353
       # 5355
+      # for tailscale. TODO does it work?
       # 41641
       # 3478
     ];
