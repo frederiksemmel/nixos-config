@@ -190,8 +190,7 @@ in
   home.file = {
     ".rclone_filter_spadesvision.txt".text = ''
       - Marketing/Material für Swisscasino Video/**
-      - Development/TCSJOHNHUXLEY*/Releases/**
-      - Development/TCSJOHNHUXLEY*/Mock Spades Vision Server/**
+      - Development/Jetson Server Dev/Releases*/**
     '';
     ".config/handlr/handlr.toml".text = ''
       enable_selector = true
@@ -304,10 +303,23 @@ in
         output.scale = 1.75;
       }
       {
-        profile.name = "undocked";
+        profile.name = "laptop";
         profile.outputs = [
           {
             criteria = "eDP-1";
+          }
+        ];
+      }
+      {
+        profile.name = "mobile screen";
+        profile.outputs = [
+          {
+            criteria = "eDP-1";
+            position = "1494,0";
+          }
+          {
+            criteria = "Lenovo Group Limited M14d *";
+            position = "0,0";
           }
         ];
       }
