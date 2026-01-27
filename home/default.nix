@@ -120,7 +120,8 @@ in
     transmission_4-gtk
     # postman
     iwmenu
-    flake.inputs.pwmenu.packages.${pkgs.stdenv.hostPlatform.system}.default
+    pwmenu
+    bzmenu
 
     # File & Data Management
     cosmic-files
@@ -206,6 +207,9 @@ in
         "a":
           desc: Audio Menu
           cmd: pwmenu -l fuzzel -m output-devices
+        "b":
+          desc: Bluetooth Menu
+          cmd: bzmenu -l fuzzel
         "s":
           desc: Sleep
           cmd: systemctl suspend
@@ -1263,6 +1267,7 @@ in
               harper-ls = {
                 userDictPath = "~/dict.txt";
                 fileDictPath = "~/.harper/";
+                linters.ToDoHyphen = false;
               };
             };
           };

@@ -20,8 +20,6 @@
     agenix.inputs.nixpkgs.follows = "nixpkgs";
     # tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
-    pwmenu.url = "github:e-tho/pwmenu";
-    pwmenu.inputs.nixpkgs.follows = "nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixos-unified.url = "github:srid/nixos-unified";
