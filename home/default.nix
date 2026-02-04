@@ -150,7 +150,7 @@ in
     zotero
     xournalpp
     libreoffice
-    ungoogled-chromium
+    # ungoogled-chromium
     evince
     #papers issues with saving and icons
     signal-desktop
@@ -315,7 +315,7 @@ in
         ];
       }
       {
-        profile.name = "mobile screen";
+        profile.name = "mobile";
         profile.outputs = [
           {
             criteria = "eDP-1";
@@ -484,6 +484,16 @@ in
       DisableTelemetry = true;
       # find more options here: https://mozilla.github.io/policy-templates/
     };
+  };
+  programs.chromium = {
+    enable = true;
+    commandLineArgs = [ "--enable-features=TouchpadOverscrollHistoryNavigation" ];
+    # NOTE pass extension needs native python app, not easy on nixos
+    # extensions = [
+    #   {
+    #     id = "oblajhnjmknenodebpekmkliopipoolo";
+    #   }
+    # ];
   };
 
   programs.centerpiece = {
@@ -896,6 +906,10 @@ in
       }
       {
         matches = [ { "app-id" = "zen-beta"; } ];
+        "default-column-width".proportion = 1.0;
+      }
+      {
+        matches = [ { "app-id" = "chromium-browser"; } ];
         "default-column-width".proportion = 1.0;
       }
       {
