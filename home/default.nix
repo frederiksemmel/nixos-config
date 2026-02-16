@@ -83,6 +83,7 @@ in
     fzf
     nix-diff
     nix-bundle
+    elfutils
 
     # Development & Formatting Tools
     alejandra

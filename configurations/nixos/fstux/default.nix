@@ -68,7 +68,7 @@
         hostName = "eu.nixbuild.net";
         system = "aarch64-linux";
         maxJobs = 100;
-        speedFactor = 16;
+        speedFactor = 4;
         supportedFeatures = [
           "benchmark"
           "big-parallel"
@@ -118,7 +118,7 @@
       LinkLocalAddressing = "yes";
       # Resolved config and avahi needed for mdns for webrtc. Our app needs to resolve ....local addresses
       MulticastDNS = "yes";
-      DNS = "9.9.9.9 1.1.1.1";
+      # DNS = "9.9.9.9 1.1.1.1";
     };
   };
 
