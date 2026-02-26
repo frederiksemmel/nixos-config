@@ -496,6 +496,9 @@ in
     #   }
     # ];
   };
+  programs.firefox = {
+    enable = true;
+  };
 
   programs.centerpiece = {
     enable = true;

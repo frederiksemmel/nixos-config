@@ -16,6 +16,8 @@
     zen-browser.inputs.nixpkgs.follows = "nixpkgs";
     centerpiece.url = "github:friedow/centerpiece";
     centerpiece.inputs.nixpkgs.follows = "nixpkgs";
+    centerpiece.inputs.treefmt-nix.follows = "treefmt-nix";
+    centerpiece.inputs.home-manager.follows = "home-manager";
     agenix.url = "github:ryantm/agenix";
     agenix.inputs.nixpkgs.follows = "nixpkgs";
     # tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
