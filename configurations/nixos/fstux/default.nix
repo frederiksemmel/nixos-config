@@ -311,5 +311,12 @@
     enable = true;
   };
 
+  virtualisation.virtualbox.host.enable = true;
+  virtualisation.virtualbox.host.enableExtensionPack = true;
+  virtualisation.virtualbox.guest.enable = true;
+  users.extraGroups.vboxusers.members = [ "frederik" ];
+
+  systemd.network.wait-online.ignoredInterfaces = [ "vboxnet0" ];
+
   system.stateVersion = "25.05";
 }

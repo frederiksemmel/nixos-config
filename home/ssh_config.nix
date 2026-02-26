@@ -22,8 +22,18 @@ let
       dir = "spadesvision";
     }
     {
+      name = "spadesvision-badragaz";
+      pattern = "*badragaz*";
+      dir = "spadesvision";
+    }
+    {
       name = "tcs";
       pattern = "*tcs*";
+      dir = "tcs-jetson";
+    }
+    {
+      name = "ags";
+      pattern = "*ags*";
       dir = "tcs-jetson";
     }
     {
