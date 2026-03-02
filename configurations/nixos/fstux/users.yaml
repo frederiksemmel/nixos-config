@@ -1,0 +1,15 @@
+users:
+  alice:
+    displayname: "Alice Admin"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$YOUR_HASH_HERE"
+    email: "alice@example.com"
+    groups:
+      - admin
+      - users
+
+  bob:
+    displayname: "Bob Regular"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$YOUR_HASH_HERE"
+    email: "bob@example.com"
+    groups:
+      - users
