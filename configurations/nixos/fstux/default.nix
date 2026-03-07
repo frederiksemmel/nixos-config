@@ -41,8 +41,8 @@
   # https://github.com/NixOS/nix/issues/9574
   nix.settings = {
     nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
-    # substituters = [ "https://install.determinate.systems" ];
-    # trusted-public-keys = [ "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM=" ];
+    substituters = [ "https://install.determinate.systems" ];
+    trusted-public-keys = [ "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM=" ];
   };
 
   # time.timeZone = "Europe/Zurich";
@@ -165,7 +165,6 @@
   users.users.root.hashedPassword = "$6$TFVUB5p/gECWeZMb$GauIqbzHXTRitc6GHwlSGAzkfEpHqMoEnpu7dMK7.4gKNY4RIX3J2gBICORN4xeatkonTzKo0Q2wmyS4SQt7J.";
 
   programs.sniffnet.enable = true;
-  programs.light.enable = true;
   programs.gnupg.agent = {
     enable = true;
     pinentryPackage = pkgs.pinentry-curses;
@@ -315,7 +314,7 @@
 
   virtualisation.virtualbox.host.enable = true;
   virtualisation.virtualbox.host.enableExtensionPack = true;
-  virtualisation.virtualbox.guest.enable = true;
+  # virtualisation.virtualbox.guest.enable = true;
   users.extraGroups.vboxusers.members = [ "frederik" ];
 
   systemd.network.wait-online.ignoredInterfaces = [ "vboxnet0" ];
@@ -324,7 +323,7 @@
   services.autheliaDevice = {
     enable = true;
     deviceIP = "192.168.1.138";
-    tailscaleHostname = "fstux";
+    tailscaleHostname = "100.103.136.118";
     usersFile = ./users.yaml;
   };
 
