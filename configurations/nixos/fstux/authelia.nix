@@ -32,15 +32,17 @@ in
     services.authelia.instances.main = {
       enable = true;
       secrets = {
-        jwtSecretFile = "/run/secrets/authelia/jwt";
-        storageEncryptionKeyFile = "/run/secrets/authelia/storage";
-        sessionSecretFile = "/run/secrets/authelia/session";
+        jwtSecretFile = "/var/lib/authelia-main/secrets/jwt";
+        storageEncryptionKeyFile = "/var/lib/authelia-main/secrets/storage";
+        sessionSecretFile = "/var/lib/authelia-main/secrets/session";
       };
       settings = {
         theme = "auto";
         default_2fa_method = "";
 
-        server.address = "tcp://127.0.0.1:9091";
+        server = {
+          address = "tcp://127.0.0.1:9091/authelia";
+        };
 
         log = {
           level = "info";
@@ -75,13 +77,13 @@ in
           cookies = [
             {
               domain = cfg.deviceIP;
-              authelia_url = "https://${cfg.deviceIP}/authelia";
-              default_redirection_url = "https://${cfg.deviceIP}";
+              authelia_url = "https://${cfg.deviceIP}:5174/authelia";
+              default_redirection_url = "https://${cfg.deviceIP}:5174";
             }
             {
               domain = cfg.tailscaleHostname;
-              authelia_url = "https://${cfg.tailscaleHostname}/authelia";
-              default_redirection_url = "https://${cfg.tailscaleHostname}";
+              authelia_url = "https://${cfg.tailscaleHostname}:5174/authelia";
+              default_redirection_url = "https://${cfg.tailscaleHostname}:5174";
             }
           ];
           expiration = "12h";

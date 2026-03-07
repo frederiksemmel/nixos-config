@@ -1,7 +1,7 @@
 users:
   alice:
     displayname: "Alice Admin"
-    password: "$argon2id$v=19$m=65536,t=3,p=4$YOUR_HASH_HERE"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$ZGv5rETYdzwPqbKEH3VtOw$mUu8269t11eWHnMdGNtfv7/JzXWC9Kq/c6e9Pu1TKSA"
     email: "alice@example.com"
     groups:
       - admin
@@ -9,7 +9,7 @@ users:
 
   bob:
     displayname: "Bob Regular"
-    password: "$argon2id$v=19$m=65536,t=3,p=4$YOUR_HASH_HERE"
+    password: "$argon2id$v=19$m=65536,t=3,p=4$ZGv5rETYdzwPqbKEH3VtOw$mUu8269t11eWHnMdGNtfv7/JzXWC9Kq/c6e9Pu1TKSA"
     email: "bob@example.com"
     groups:
       - users

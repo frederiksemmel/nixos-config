@@ -471,6 +471,7 @@ in
   };
   programs.yazi = {
     enable = true;
+    shellWrapperName = "yy";
     enableNushellIntegration = true;
   };
   programs.carapace = {
@@ -749,10 +750,10 @@ in
 
         "XF86AudioMicMute".allow-when-locked = true;
         "XF86AudioMicMute".action = spawn "wpctl" "set-mute" "@DEFAULT_AUDIO_SOURCE@" "toggle";
-        "XF86MonBrightnessUp".action = spawn "light" "-A" "10";
-        "XF86MonBrightnessDown".action = spawn "light" "-U" "10";
-        "Shift+XF86MonBrightnessUp".action = spawn "light" "-A" "1";
-        "Shift+XF86MonBrightnessDown".action = spawn "light" "-U" "1";
+        "XF86MonBrightnessUp".action = spawn "brightnessctl" "s" "10%+";
+        "XF86MonBrightnessDown".action = spawn "brightnessctl" "s" "10%-";
+        "Shift+XF86MonBrightnessUp".action = spawn "brightnessctl" "s" "1%+";
+        "Shift+XF86MonBrightnessDown".action = spawn "brightnessctl" "s" "1%-";
 
         # Window management
         "${mod}+Shift+Q".action = close-window;
@@ -927,6 +928,10 @@ in
       {
         matches = [ { "app-id" = "rerun"; } ];
         "default-column-width".proportion = 1.0;
+      }
+      {
+        matches = [ { "title" = "centerpiece"; } ];
+        "open-floating" = true;
       }
     ];
 
