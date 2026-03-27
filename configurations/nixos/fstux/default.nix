@@ -17,11 +17,12 @@
     ./authelia.nix
   ];
 
+  nixpkgs.hostPlatform = "x86_64-linux";
   nixpkgs.config.allowUnfree = true;
-  nixpkgs.overlays = with flake.inputs; [ niri.overlays.niri ];
+  nixpkgs.overlays = [ flake.inputs.niri.overlays.niri ];
 
   home-manager.users.frederik = {
-    imports = [ flake.self.homeModules.default ];
+    imports = [ flake.self.homeModules.frederik ];
     home.stateVersion = "25.05";
   };
   home-manager.backupFileExtension = "backup";
@@ -96,8 +97,6 @@
   # hardware.tuxedo-control-center.enable = true;
   hardware.bluetooth.enable = true; # enables support for Bluetooth
   services.blueman.enable = true;
-  # services.blueman.enable = true;
-  #
 
   # hardware.logitech.wireless.enable = true;
   # hardware.logitech.wireless.enableGraphical = true;
@@ -275,15 +274,6 @@
 
   programs.niri.enable = true;
   programs.niri.package = pkgs.niri-unstable;
-
-  # Enable SSH daemon
-  services.openssh.enable = false;
-
-  # Optional: configure SSH settings
-  services.openssh.settings = {
-    PasswordAuthentication = false; # or false for key-only
-    PermitRootLogin = "no";
-  };
 
   services.mediamtx = {
     enable = true;
