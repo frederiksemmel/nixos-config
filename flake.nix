@@ -15,7 +15,7 @@
     zen-browser.url = "github:0xc000022070/zen-browser-flake";
     zen-browser.inputs.nixpkgs.follows = "nixpkgs";
     centerpiece.url = "github:friedow/centerpiece";
-    centerpiece.inputs.nixpkgs.follows = "nixpkgs";
+    # centerpiece.inputs.nixpkgs.follows = "nixpkgs";  # Not following because it fucking recompiles always
     centerpiece.inputs.treefmt-nix.follows = "treefmt-nix";
     centerpiece.inputs.home-manager.follows = "home-manager";
     agenix.url = "github:ryantm/agenix";
