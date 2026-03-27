@@ -6,6 +6,7 @@
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware";
+    nixos-hardware.inputs.nixpkgs.follows = "nixpkgs";
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
     treefmt-nix.url = "github:numtide/treefmt-nix";
@@ -41,22 +42,38 @@
 
       flake = {
         # Configurations for Linux (NixOS) machines
-        nixosConfigurations."fstux" = self.nixos-unified.lib.mkLinuxSystem { home-manager = true; } {
-          nixpkgs = {
-            hostPlatform = "x86_64-linux";
-            overlays = [ ];
-          };
-          imports = [
-            ./configurations/nixos/fstux
-          ];
-        };
+        nixosConfigurations."fstux" = self.nixos-unified.lib.mkLinuxSystem {
+          home-manager = true;
+        } ./configurations/nixos/fstux;
 
         # home-manager configuration goes here.
-        homeModules.default = ./home/default.nix;
+        homeModules.frederik = ./home/default.nix;
       };
+
       perSystem =
-        { self', ... }:
         {
+          self',
+          pkgs,
+          system,
+          ...
+        }:
+        {
+          _module.args.pkgs = import inputs.nixpkgs {
+            inherit system;
+            config = {
+              allowUnfree = true;
+            };
+          };
+          legacyPackages.homeConfigurations.frederik = self.nixos-unified.lib.mkHomeConfiguration pkgs (
+            { ... }:
+            {
+              imports = with inputs; [
+                self.homeModules.frederik
+                niri.homeModules.niri # need to do it separately because in fstux we do it via the nixosModule
+              ];
+              home.stateVersion = "25.05";
+            }
+          );
           packages.default = self'.packages.activate;
           treefmt = {
             projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
@@ -65,6 +82,5 @@
             };
           };
         };
-
     };
 }
