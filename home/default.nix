@@ -473,6 +473,15 @@ in
     enable = true;
     shellWrapperName = "yy";
     enableNushellIntegration = true;
+    settings = {
+      sort_by = "natural";
+    };
+    theme = {
+      indicator.padding = {
+        open = "█";
+        close = "█";
+      };
+    };
   };
   programs.carapace = {
     enable = true;
@@ -1153,7 +1162,7 @@ in
         scrollback = {
           lines = 100000;
         };
-        colors = {
+        colors-dark = {
           background = "1e1e1e";
           regular2 = "50a14f"; # green: a more "greener" but muted tone
           bright2 = "98c379"; # bright green: complements the normal green with a softer, bright appearance
@@ -1403,6 +1412,10 @@ in
           }
         ];
       };
+    };
+
+    claude-code = {
+      enable = true;
     };
 
     # Let Home Manager install and manage itself.
