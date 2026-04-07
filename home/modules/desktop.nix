@@ -35,7 +35,7 @@ let
     # inhibit_compositor_keyboard_shortcuts: true
   '';
   chosenWallpaper = "${config.home.homeDirectory}/wallpapers/longboard.jpg";
-  swaylockWithWallpaper = pkgs.writeShellScriptBin "swaylock-with-swww" ''
+  swaylockWithWallpaper = pkgs.writeShellScriptBin "swaylock-with-awww" ''
     #!${pkgs.bash}/bin/bash
     exec ${lib.getExe pkgs.swaylock-effects} --image ${chosenWallpaper}
   '';
@@ -113,7 +113,6 @@ in
   };
 
   # NOTE this was an attempt to make ly work. But somehow graphical-session.target starts way to early
-  # systemd.user.services.swww.Unit.Requisite = [ "graphical-session.target" ];
   # systemd.user.services.waybar.Unit.Requisite = [ "graphical-session.target" ];
   # systemd.user.services.swayidle.Unit.Requisite = [ "graphical-session.target" ];
 
@@ -179,7 +178,7 @@ in
       default-timeout=3000
     '';
   };
-  services.swww.enable = true;
+  services.awww.enable = true;
   services.wlsunset = {
     enable = true;
     latitude = 47.37;
@@ -430,13 +429,6 @@ in
           (lib.getExe pkgs.xwayland-satellite)
         ];
       }
-      # {
-      #   command = [
-      #     (lib.getExe pkgs.swww)
-      #     "img"
-      #     chosenWallpaper
-      #   ];
-      # }
     ];
     environment = {
       QT_QPA_PLATFORM = "wayland";
