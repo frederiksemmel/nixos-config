@@ -361,7 +361,7 @@ in
         resource_monitor_memory = {
           enable = true;
         };
-        sway_windows = {
+        niri_windows = {
           enable = false;
         };
         system = {
