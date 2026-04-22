@@ -134,6 +134,7 @@
       # 8765
       9876
       # 53317
+      1883 # for testing rabbitmq
     ];
     allowedUDPPorts = [
       5353
