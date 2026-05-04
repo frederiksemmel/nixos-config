@@ -48,7 +48,7 @@ in
   home.file = {
     ".rclone_filter_spadesvision.txt".text = ''
       - Marketing/Material für Swisscasino Video/**
-      - Development/Jetson Server Dev/Releases*/**
+      - Development/Jetson Server Dev/*Releases*/**
     '';
     ".config/handlr/handlr.toml".text = ''
       enable_selector = true
@@ -299,6 +299,7 @@ in
   };
   programs.firefox = {
     enable = true;
+    configPath = "${config.xdg.configHome}/mozilla/firefox";
   };
 
   programs.centerpiece = {
