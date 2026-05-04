@@ -251,33 +251,33 @@
   };
 
   # programs.regreet.enable = true;
-  # services.greetd = {
-  #   enable = true;
-  #   settings = {
-  #     default_session = {
-  #       command = ''
-  #         ${pkgs.tuigreet}/bin/tuigreet \
-  #           --time \
-  #           --remember \
-  #           --cmd ${pkgs.niri-unstable}/bin/niri-session
-  #       '';
-  #       user = "greeter";
-  #     };
-  #   };
-  # };
-  services.displayManager = {
-    # lemurs.enable = true;
-    # sessionPackages = with pkgs; [ niri-unstable ];
-    # sddm = {
-    #   enable = true;
-    #   wayland.enable = true;
-    # };
-
-    ly = {
-      enable = true;
+  services.greetd = {
+    enable = true;
+    settings = {
+      default_session = {
+        command = ''
+          ${pkgs.tuigreet}/bin/tuigreet \
+            --time \
+            --remember \
+            --cmd ${pkgs.niri-unstable}/bin/niri-session
+        '';
+        user = "greeter";
+      };
     };
   };
-  systemd.services.display-manager.environment.XDG_CURRENT_DESKTOP = "X-NIXOS-SYSTEMD-AWARE";
+  # services.displayManager = {
+  # lemurs.enable = true;
+  # sessionPackages = with pkgs; [ niri-unstable ];
+  # sddm = {
+  #   enable = true;
+  #   wayland.enable = true;
+  # };
+
+  #   ly = {
+  #     enable = true;
+  #   };
+  # };
+  # systemd.services.display-manager.environment.XDG_CURRENT_DESKTOP = "X-NIXOS-SYSTEMD-AWARE";
 
   # programs.sway.enable = true;
 
