@@ -304,6 +304,8 @@
   environment.systemPackages = with pkgs; [
     libimobiledevice
     ifuse # optional, to mount using 'ifuse'
+
+    nautilus
   ];
 
   # In /etc/nixos/configuration.nix
