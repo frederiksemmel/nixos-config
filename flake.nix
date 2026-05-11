@@ -46,23 +46,8 @@
         } ./configurations/nixos/fstux;
 
         # home-manager configuration goes here.
-        homeModules.frederik = ./home/default.nix;
-        homeModules.ubuntu =
-          {
-            flake,
-            config,
-            ...
-          }:
-          {
-            imports = [
-              ./home/ssh_config.nix
-              ./home/modules/dev.nix
-            ];
-
-            home.username = "ubuntu";
-            home.homeDirectory = "/home/${config.home.username}";
-            home.language.base = "en_US.UTF-8";
-          };
+        homeModules.frederik = ./home/users/frederik.nix;
+        homeModules.ubuntu = ./home/users/ubuntu.nix;
       };
 
       perSystem =
