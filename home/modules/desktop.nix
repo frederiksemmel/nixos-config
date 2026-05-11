@@ -59,6 +59,48 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = with pkgs; [
       (lib.hiPrio handlr-xdg-open)
+
+      # Networking & Communication
+      transmission_4-gtk
+      iwmenu
+      pwmenu
+      bzmenu
+
+      # File & Data Management
+      cosmic-files
+      pcloud
+      handlr-regex
+
+      # Audio & Video
+      pavucontrol
+      spotify
+      shotcut
+      wf-recorder
+      pwvucontrol
+
+      # Productivity & Document Tools
+      zotero
+      xournalpp
+      libreoffice
+      # ungoogled-chromium
+      evince
+      # papers issues with saving and icons
+      signal-desktop
+      sqlitebrowser
+      # inlyne  # TODO enable when working again
+
+      # Desktop / Wayland utilities
+      overskride
+      rerun
+      pass-wayland
+      wl-clipboard
+      xdg-utils
+      xwayland-satellite
+      wlr-which-key
+
+      # Remote desktop
+      rustdesk-flutter
+      anydesk
     ];
 
     home.file = {
