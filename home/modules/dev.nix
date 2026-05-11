@@ -66,59 +66,27 @@ in
       # Networking & Communication
       bluetui
       websocat
-      transmission_4-gtk
       # postman
-      iwmenu
-      pwmenu
-      bzmenu
 
       # File & Data Management
-      cosmic-files
       trashy
       fd
       ripgrep
       sendme
       ffmpeg
-      pcloud
-      handlr-regex
       pipe-rename
       imagemagick
       ghostscript
-      # inlyne  # TODO enable when working again
       gdrive3
 
-      # Audio & Video
-      pavucontrol
-      spotify
-      shotcut
-      wf-recorder
-      pwvucontrol
-
-      # Productivity & Document Tools
-      zotero
-      xournalpp
-      libreoffice
-      # ungoogled-chromium
-      evince
-      #papers issues with saving and icons
-      signal-desktop
-      sqlitebrowser
-
       # Miscellaneous Utilities
-      overskride
       rage
-      rerun
-      pass-wayland
       ragenix
-      wl-clipboard
       zip
       unzip
-      xdg-utils
       ncdu
       google-cloud-sdk
-      xwayland-satellite
       tealdeer
-      wlr-which-key
       usbutils
       pciutils
       difftastic
@@ -127,11 +95,6 @@ in
       nmap
       poppler-utils
       exfat
-
-      # productivity
-      rustdesk-flutter
-      anydesk
-      # rustdesk-flutter
     ];
 
     home.sessionVariables = {
