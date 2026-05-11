@@ -1,5 +1,11 @@
-{ lib, ... }:
+{
+  config,
+  pkgs,
+  lib,
+  ...
+}:
 let
+  cfg = config.profiles.ssh;
   entries = [
     {
       name = "spadesvision-bern";
@@ -64,20 +70,24 @@ let
   ) { };
 in
 {
-  programs.ssh = {
-    enable = true;
-    enableDefaultConfig = false;
-    matchBlocks = {
-      "*".addKeysToAgent = "yes";
-      "github.com" = {
-        user = "git";
-        identityFile = "~/.ssh/id_github";
-      };
-      "git.sr.ht" = {
-        user = "git";
-        identityFile = "~/.ssh/id_sourcehut";
-      };
-    }
-    // asBlocks entries;
+  options.profiles.ssh.enable = lib.mkEnableOption "personal ssh config (host aliases, identity files)";
+
+  config = lib.mkIf cfg.enable {
+    programs.ssh = {
+      enable = true;
+      enableDefaultConfig = false;
+      matchBlocks = {
+        "*".addKeysToAgent = "yes";
+        "github.com" = {
+          user = "git";
+          identityFile = "~/.ssh/id_github";
+        };
+        "git.sr.ht" = {
+          user = "git";
+          identityFile = "~/.ssh/id_sourcehut";
+        };
+      }
+      // asBlocks entries;
+    };
   };
 }
