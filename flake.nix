@@ -47,6 +47,22 @@
 
         # home-manager configuration goes here.
         homeModules.frederik = ./home/default.nix;
+        homeModules.ubuntu =
+          {
+            flake,
+            config,
+            ...
+          }:
+          {
+            imports = [
+              ./home/ssh_config.nix
+              ./home/modules/dev.nix
+            ];
+
+            home.username = "ubuntu";
+            home.homeDirectory = "/home/${config.home.username}";
+            home.language.base = "en_US.UTF-8";
+          };
       };
 
       perSystem =
@@ -71,6 +87,15 @@
                 niri.homeModules.niri # need to do it separately because in fstux we do it via the nixosModule
               ];
               home.stateVersion = "25.05";
+            }
+          );
+          legacyPackages.homeConfigurations.ubuntu = self.nixos-unified.lib.mkHomeConfiguration pkgs (
+            { ... }:
+            {
+              imports = [
+                self.homeModules.ubuntu
+              ];
+              home.stateVersion = "25.11";
             }
           );
           packages.default = self'.packages.activate;
