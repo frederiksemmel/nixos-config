@@ -18,6 +18,8 @@
     flake.inputs.nix-gl-host.defaultPackage.x86_64-linux
   ];
 
+  services.pueue.enable = true;
+
   programs.git.settings.user = {
     name = "Frederik Semmel";
     email = "frederiksemmel@gmail.com";
