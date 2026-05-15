@@ -3,6 +3,7 @@
     # Principle inputs (updated by `nix run .#update`)
     # nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable-small";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
+    nixpkgs-old-tailscale.url = "github:nixos/nixpkgs/15f4ee454b1dce334612fa6843b3e05cf546efab";
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware";

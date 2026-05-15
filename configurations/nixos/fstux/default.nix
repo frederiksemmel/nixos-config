@@ -230,7 +230,10 @@
     };
   };
   services.devmon.enable = true;
-  services.tailscale.enable = true;
+  services.tailscale = {
+    enable = true;
+    package = flake.inputs.nixpkgs-old-tailscale.legacyPackages.${pkgs.stdenv.hostPlatform.system}.tailscale;
+  };
   services.mullvad-vpn.enable = true;
   services.udev.extraRules = ''
     #Enable user access to all basler cameras
