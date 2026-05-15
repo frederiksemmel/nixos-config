@@ -143,6 +143,11 @@ in
           rm.always_trash = true;
           buffer_editor = "hx";
         };
+        extraConfig = ''
+          mkdir ~/.cache/devenv | ignore
+          devenv hook nu | save --force ~/.cache/devenv/hook.nu
+          source ~/.cache/devenv/hook.nu
+        '';
       };
 
       starship = {
