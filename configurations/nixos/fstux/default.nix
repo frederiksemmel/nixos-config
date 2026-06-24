@@ -232,7 +232,8 @@
   services.devmon.enable = true;
   services.tailscale = {
     enable = true;
-    package = flake.inputs.nixpkgs-old-tailscale.legacyPackages.${pkgs.stdenv.hostPlatform.system}.tailscale;
+    package =
+      flake.inputs.nixpkgs-old-tailscale.legacyPackages.${pkgs.stdenv.hostPlatform.system}.tailscale;
   };
   services.mullvad-vpn.enable = true;
   services.udev.extraRules = ''
@@ -254,33 +255,35 @@
   };
 
   # programs.regreet.enable = true;
-  services.greetd = {
-    enable = true;
-    settings = {
-      default_session = {
-        command = ''
-          ${pkgs.tuigreet}/bin/tuigreet \
-            --time \
-            --remember \
-            --cmd ${pkgs.niri-unstable}/bin/niri-session
-        '';
-        user = "greeter";
-      };
-    };
-  };
-  # services.displayManager = {
-  # lemurs.enable = true;
-  # sessionPackages = with pkgs; [ niri-unstable ];
-  # sddm = {
-  #   enable = true;
-  #   wayland.enable = true;
-  # };
 
-  #   ly = {
-  #     enable = true;
+  # greetd
+  # services.greetd = {
+  #   enable = true;
+  #   settings = {
+  #     default_session = {
+  #       command = ''
+  #         ${pkgs.tuigreet}/bin/tuigreet \
+  #           --time \
+  #           --remember \
+  #           --cmd ${pkgs.niri-unstable}/bin/niri-session
+  #       '';
+  #       user = "greeter";
+  #     };
   #   };
   # };
-  # systemd.services.display-manager.environment.XDG_CURRENT_DESKTOP = "X-NIXOS-SYSTEMD-AWARE";
+
+  # lemurs
+  services.displayManager = {
+    # lemurs.enable = true;
+    sessionPackages = with pkgs; [ niri-unstable ];
+    # sddm = {
+    #   enable = true;
+    #   wayland.enable = true;
+    # };
+
+    ly.enable = true;
+  };
+  systemd.services.display-manager.environment.XDG_CURRENT_DESKTOP = "X-NIXOS-SYSTEMD-AWARE";
 
   # programs.sway.enable = true;
 
@@ -330,6 +333,8 @@
     tailscaleHostname = "100.103.136.118";
     usersFile = ./users.yaml;
   };
+
+  services.elephant.enable = true;
 
   system.stateVersion = "25.05";
 }

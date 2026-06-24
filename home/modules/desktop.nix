@@ -97,6 +97,7 @@ in
       xdg-utils
       xwayland-satellite
       wlr-which-key
+      brightnessctl
 
       # Remote desktop
       rustdesk-flutter
