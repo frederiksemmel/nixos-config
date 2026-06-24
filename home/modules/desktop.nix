@@ -351,6 +351,7 @@ in
     programs.chromium = {
       enable = true;
       commandLineArgs = [ "--enable-features=TouchpadOverscrollHistoryNavigation" ];
+      package = (pkgs.chromium.override { enableWideVine = true; });
       # NOTE pass extension needs native python app, not easy on nixos
       # extensions = [
       #   {
