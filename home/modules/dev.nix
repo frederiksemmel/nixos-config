@@ -484,7 +484,7 @@ in
         shellWrapperName = "yy";
         enableNushellIntegration = true;
         settings = {
-          sort_by = "natural";
+          sort-by = "natural";
         };
         theme = {
           indicator.padding = {
