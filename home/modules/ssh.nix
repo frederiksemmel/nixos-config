@@ -38,8 +38,8 @@ let
       dir = "tcs-jetson";
     }
     {
-      name = "ags";
-      pattern = "*ags*";
+      name = "demo";
+      pattern = "*demo-jetson*";
       dir = "tcs-jetson";
     }
     {
