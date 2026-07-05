@@ -394,23 +394,10 @@ in
             enable = true;
           };
           git_repositories = {
-            enable = true;
-            commands = [
-              [
-                "alacritty"
-                "--command"
-                "nvim"
-                "$GIT_DIRECTORY"
-              ]
-              [
-                "alacritty"
-                "--working-directory"
-                "$GIT_DIRECTORY"
-              ]
-            ];
+            enable = false;
           };
           gitmoji = {
-            enable = false;
+            enable = true;
           };
           resource_monitor_battery = {
             enable = true;
@@ -425,13 +412,13 @@ in
             enable = true;
           };
           niri_windows = {
-            enable = false;
+            enable = true;
           };
           system = {
             enable = true;
           };
           wifi = {
-            enable = false;
+            enable = true;
           };
         };
       };

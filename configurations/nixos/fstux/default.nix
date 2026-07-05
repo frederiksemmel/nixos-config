@@ -304,7 +304,7 @@
 
   services.usbmuxd.enable = true;
 
-  # services.automatic-timezoned.enable = true;
+  services.automatic-timezoned.enable = true;
   services.tzupdate.enable = true;
 
   environment.systemPackages = with pkgs; [
