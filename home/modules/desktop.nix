@@ -72,7 +72,7 @@ in
       handlr-regex
 
       # Audio & Video
-      pavucontrol
+      # pavucontrol
       spotify
       shotcut
       wf-recorder

@@ -177,12 +177,17 @@
   };
 
   xdg.portal = {
+    enable = true;
+    extraPortals = [
+      pkgs.xdg-desktop-portal-gnome
+      pkgs.xdg-desktop-portal-gtk
+    ];
     config.common = {
       default = [
         "gnome"
         "gtk"
       ];
-      # Electron apps and chromium fail to open the file picker for some reason.
+      # Electron/chromium fail to open the file picker otherwise.
       "org.freedesktop.impl.portal.FileChooser" = "gtk";
       "org.freedesktop.impl.portal.Access" = "gtk";
       "org.freedesktop.impl.portal.Notification" = "gtk";
@@ -312,6 +317,7 @@
     ifuse # optional, to mount using 'ifuse'
 
     nautilus
+    zenity
   ];
 
   # In /etc/nixos/configuration.nix
