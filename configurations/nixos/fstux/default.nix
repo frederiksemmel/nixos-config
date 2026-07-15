@@ -294,6 +294,8 @@
 
   programs.niri.enable = true;
   programs.niri.package = pkgs.niri-unstable;
+  # for pcloud
+  programs.fuse.userAllowOther = true;
 
   services.mediamtx = {
     enable = true;
@@ -315,6 +317,7 @@
   environment.systemPackages = with pkgs; [
     libimobiledevice
     ifuse # optional, to mount using 'ifuse'
+    fuse3 # for pcloud
 
     nautilus
     zenity

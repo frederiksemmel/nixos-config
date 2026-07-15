@@ -458,6 +458,7 @@ in
           diff.colorMoved = "default";
           sequence.editor = "interactive-rebase-tool";
           init.defaultBranch = "main";
+          fetch.prune = true;
         };
       };
 
