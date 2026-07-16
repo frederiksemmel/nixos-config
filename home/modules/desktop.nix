@@ -516,7 +516,7 @@ in
 
           # Launchers
           "${mod}+Return".action = spawn "foot";
-          "${mod}+D".action = spawn "centerpiece";
+          "${mod}+D".action = spawn "vicinae" "toggle";
           "${mod}+Shift+D".action = spawn "fuzzel";
           "${mod}+P".action =
             spawn "wlr-which-key" "${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
@@ -712,10 +712,10 @@ in
           matches = [ { "app-id" = "rerun"; } ];
           "default-column-width".proportion = 1.0;
         }
-        {
-          matches = [ { "title" = "centerpiece"; } ];
-          "open-floating" = true;
-        }
+        # {
+        #   matches = [ { "title" = "centerpiece"; } ];
+        #   "open-floating" = true;
+        # }
       ];
     };
 
@@ -874,6 +874,9 @@ in
         MOUSE_BTN3 = "ignore";
         MOUSE_BTN4 = "ignore";
       };
+    };
+    programs.vicinae = {
+      enable = true;
     };
   };
 }
