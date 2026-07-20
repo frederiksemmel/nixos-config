@@ -43,7 +43,6 @@ let
 in
 {
   imports = with flake.inputs; [
-    zen-browser.homeModules.beta
     centerpiece.hmModules."x86_64-linux".default
   ];
 
@@ -340,14 +339,6 @@ in
       };
     };
 
-    programs.zen-browser = {
-      enable = true;
-      policies = {
-        DisableAppUpdate = true;
-        DisableTelemetry = true;
-        # find more options here: https://mozilla.github.io/policy-templates/
-      };
-    };
     programs.chromium = {
       enable = true;
       commandLineArgs = [ "--enable-features=TouchpadOverscrollHistoryNavigation" ];
@@ -693,10 +684,6 @@ in
           "default-column-width".proportion = 0.5;
         }
         {
-          matches = [ { "app-id" = "zen-beta"; } ];
-          "default-column-width".proportion = 1.0;
-        }
-        {
           matches = [ { "app-id" = "chromium-browser"; } ];
           "default-column-width".proportion = 1.0;
         }
@@ -877,6 +864,7 @@ in
     };
     programs.vicinae = {
       enable = true;
+      systemd.enable = true;
     };
   };
 }

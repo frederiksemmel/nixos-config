@@ -343,7 +343,5 @@
     usersFile = ./users.yaml;
   };
 
-  services.elephant.enable = true;
-
   system.stateVersion = "25.05";
 }

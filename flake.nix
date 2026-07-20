@@ -13,8 +13,6 @@
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
     niri.url = "github:sodiboo/niri-flake";
     niri.inputs.nixpkgs.follows = "nixpkgs";
-    zen-browser.url = "github:0xc000022070/zen-browser-flake";
-    zen-browser.inputs.nixpkgs.follows = "nixpkgs";
     centerpiece.url = "github:friedow/centerpiece";
     # centerpiece.inputs.nixpkgs.follows = "nixpkgs";  # Not following because it fucking recompiles always
     centerpiece.inputs.treefmt-nix.follows = "treefmt-nix";
