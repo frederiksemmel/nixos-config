@@ -295,6 +295,7 @@
   programs.niri.enable = true;
   programs.niri.package = pkgs.niri-unstable;
   # for pcloud
+  programs.fuse.enable = true;
   programs.fuse.userAllowOther = true;
 
   services.mediamtx = {
