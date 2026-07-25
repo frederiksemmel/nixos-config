@@ -86,6 +86,10 @@ in
           user = "git";
           identityFile = "~/.ssh/id_sourcehut";
         };
+        "beast" = {
+          user = "frederik";
+          identityFile = "~/.ssh/beast_login";
+        };
       }
       // asBlocks entries;
     };
