@@ -42,9 +42,9 @@ let
   '';
 in
 {
-  imports = with flake.inputs; [
-    centerpiece.hmModules."x86_64-linux".default
-  ];
+  # imports = with flake.inputs; [
+  #   centerpiece.hmModules."x86_64-linux".default
+  # ];
 
   options.profiles.desktop = {
     enable = lib.mkEnableOption "graphical desktop (niri, waybar, GUI apps)";
@@ -80,7 +80,7 @@ in
       # Productivity & Document Tools
       zotero
       xournalpp
-      libreoffice
+      # libreoffice
       # ungoogled-chromium
       evince
       # papers issues with saving and icons
@@ -355,71 +355,71 @@ in
       configPath = "${config.xdg.configHome}/mozilla/firefox";
     };
 
-    programs.centerpiece = {
-      enable = true;
-      config = {
-        color = {
-          text = "#ffffff";
-          background = "#000000";
-        };
-        plugin = {
-          applications = {
-            enable = true;
-          };
-          brave_bookmarks = {
-            enable = false;
-          };
-          brave_history = {
-            enable = false;
-          };
-          brave_progressive_web_apps = {
-            enable = false;
-          };
-          clock = {
-            enable = true;
-          };
-          firefox_bookmarks = {
-            enable = false;
-          };
-          firefox_history = {
-            enable = true;
-          };
-          git_repositories = {
-            enable = false;
-          };
-          gitmoji = {
-            enable = true;
-          };
-          resource_monitor_battery = {
-            enable = true;
-          };
-          resource_monitor_cpu = {
-            enable = true;
-          };
-          resource_monitor_disks = {
-            enable = true;
-          };
-          resource_monitor_memory = {
-            enable = true;
-          };
-          niri_windows = {
-            enable = true;
-          };
-          system = {
-            enable = true;
-          };
-          wifi = {
-            enable = true;
-          };
-        };
-      };
+    # programs.centerpiece = {
+    #   enable = true;
+    #   config = {
+    #     color = {
+    #       text = "#ffffff";
+    #       background = "#000000";
+    #     };
+    #     plugin = {
+    #       applications = {
+    #         enable = true;
+    #       };
+    #       brave_bookmarks = {
+    #         enable = false;
+    #       };
+    #       brave_history = {
+    #         enable = false;
+    #       };
+    #       brave_progressive_web_apps = {
+    #         enable = false;
+    #       };
+    #       clock = {
+    #         enable = true;
+    #       };
+    #       firefox_bookmarks = {
+    #         enable = false;
+    #       };
+    #       firefox_history = {
+    #         enable = true;
+    #       };
+    #       git_repositories = {
+    #         enable = false;
+    #       };
+    #       gitmoji = {
+    #         enable = true;
+    #       };
+    #       resource_monitor_battery = {
+    #         enable = true;
+    #       };
+    #       resource_monitor_cpu = {
+    #         enable = true;
+    #       };
+    #       resource_monitor_disks = {
+    #         enable = true;
+    #       };
+    #       resource_monitor_memory = {
+    #         enable = true;
+    #       };
+    #       niri_windows = {
+    #         enable = true;
+    #       };
+    #       system = {
+    #         enable = true;
+    #       };
+    #       wifi = {
+    #         enable = true;
+    #       };
+    #     };
+    #   };
 
-      # enables a systemd service to index git-repositories
-      services.index-git-repositories = {
-        enable = true;
-        interval = "5min";
-      };
-    };
+    # enables a systemd service to index git-repositories
+    #   services.index-git-repositories = {
+    #     enable = true;
+    #     interval = "5min";
+    #   };
+    # };
 
     programs.niri.settings = {
       "prefer-no-csd" = true;

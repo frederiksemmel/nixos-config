@@ -3,7 +3,6 @@
     # Principle inputs (updated by `nix run .#update`)
     # nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable-small";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
-    nixpkgs-old-tailscale.url = "github:nixos/nixpkgs/15f4ee454b1dce334612fa6843b3e05cf546efab";
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware";
@@ -13,10 +12,10 @@
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
     niri.url = "github:sodiboo/niri-flake";
     niri.inputs.nixpkgs.follows = "nixpkgs";
-    centerpiece.url = "github:friedow/centerpiece";
+    # centerpiece.url = "github:friedow/centerpiece";
     # centerpiece.inputs.nixpkgs.follows = "nixpkgs";  # Not following because it fucking recompiles always
-    centerpiece.inputs.treefmt-nix.follows = "treefmt-nix";
-    centerpiece.inputs.home-manager.follows = "home-manager";
+    # centerpiece.inputs.treefmt-nix.follows = "treefmt-nix";
+    # centerpiece.inputs.home-manager.follows = "home-manager";
     agenix.url = "github:ryantm/agenix";
     agenix.inputs.nixpkgs.follows = "nixpkgs";
     # tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
