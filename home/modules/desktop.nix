@@ -110,7 +110,7 @@ in
       '';
       ".config/handlr/handlr.toml".text = ''
         enable_selector = true
-        selector = "${lib.getExe pkgs.tofi}"
+        selector = "${lib.getExe pkgs.fuzzel} --dmenu"
         term_exec_args = '-e'
       '';
       ".config/wlr-which-key/config_power.yaml".text = ''
