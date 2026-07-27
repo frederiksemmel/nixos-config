@@ -1,4 +1,5 @@
 {
+  flake,
   config,
   pkgs,
   lib,
@@ -6,8 +7,14 @@
 }:
 let
   cfg = config.profiles.dev;
+  inherit (pkgs.stdenv.hostPlatform) system;
+  llm-agents = flake.inputs.llm-agents.packages.${system};
 in
 {
+  imports = [
+    flake.inputs.mcp-servers-nix.homeManagerModules.default
+  ];
+
   options.profiles.dev.enable = lib.mkEnableOption "development tools, shells, editors";
 
   config = lib.mkIf cfg.enable {
@@ -109,6 +116,11 @@ in
       # NOTE should not be set in the newer niri versions
       # WAYLAND_DISPLAY = "wayland-1";
       # DISPLAY = ":0";
+    };
+
+    # MCP servers, declared once and wired into every agent below.
+    mcp-servers.programs = {
+      playwright.enable = true;
     };
 
     fonts.fontconfig = {
@@ -504,8 +516,13 @@ in
         flake = "${config.home.homeDirectory}/repos/nixos-config";
       };
 
+      # MCP server registry, consumed by every agent with enableMcpIntegration.
+      mcp.enable = true;
+
       claude-code = {
         enable = true;
+        package = llm-agents.claude-code;
+        enableMcpIntegration = true;
       };
 
       # Let Home Manager install and manage itself.
