@@ -22,8 +22,21 @@
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
     nix-gl-host.url = "github:numtide/nix-gl-host";
 
+    # AI coding agents. Deliberately NOT following nixpkgs: the upstream binary
+    # cache only has builds against their own nixpkgs pin.
+    llm-agents.url = "github:numtide/llm-agents.nix";
+    mcp-servers-nix.url = "github:natsukium/mcp-servers-nix";
+    mcp-servers-nix.inputs.nixpkgs.follows = "nixpkgs";
+
     flake-parts.url = "github:hercules-ci/flake-parts";
     nixos-unified.url = "github:srid/nixos-unified";
+  };
+
+  nixConfig = {
+    extra-substituters = [ "https://cache.numtide.com" ];
+    extra-trusted-public-keys = [
+      "niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g="
+    ];
   };
 
   outputs =
