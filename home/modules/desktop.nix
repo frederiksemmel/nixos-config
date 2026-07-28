@@ -36,6 +36,7 @@ let
     # Default is `false`.
     # inhibit_compositor_keyboard_shortcuts: true
   '';
+  claudebar = pkgs.callPackage ../../packages/claudebar.nix { };
   swaylockWithWallpaper = pkgs.writeShellScriptBin "swaylock-with-awww" ''
     #!${pkgs.bash}/bin/bash
     exec ${lib.getExe pkgs.swaylock-effects} --image ${cfg.wallpaper}
@@ -97,6 +98,7 @@ in
       xwayland-satellite
       wlr-which-key
       brightnessctl
+      claudebar
 
       # Remote desktop
       rustdesk-flutter
@@ -727,6 +729,7 @@ in
         ];
         "modules-center" = [ "clock" ];
         "modules-right" = [
+          "custom/claudebar"
           "network"
           "backlight"
           "pulseaudio"
@@ -737,6 +740,18 @@ in
 
         backlight = {
           format = "BRI {percent}%";
+        };
+
+        # Claude plan usage: session % and time until the 5h window resets.
+        # The usage endpoint is rate limited, so 300s is the lowest sane interval;
+        # `pkill -RTMIN+13 waybar` forces a refresh.
+        "custom/claudebar" = {
+          exec = "${lib.getExe claudebar} --format 'CLD {session_pct}% {session_reset}'";
+          "return-type" = "json";
+          interval = 300;
+          signal = 13;
+          tooltip = true;
+          "on-click" = "xdg-open https://claude.ai/settings/usage";
         };
 
         pulseaudio = {
