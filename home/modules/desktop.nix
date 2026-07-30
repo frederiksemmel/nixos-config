@@ -288,6 +288,10 @@ in
       extraConfig = ''
         [app-name=Spotify]
         default-timeout=3000
+
+        [app-name=claude-code]
+        border-color=#d97757
+        border-size=2
       '';
     };
     services.awww.enable = true;

@@ -9,6 +9,7 @@ let
   cfg = config.profiles.dev;
   inherit (pkgs.stdenv.hostPlatform) system;
   llm-agents = flake.inputs.llm-agents.packages.${system};
+  claude-notify = pkgs.callPackage ../../packages/claude-notify.nix { };
 in
 {
   imports = [
@@ -523,6 +524,60 @@ in
         enable = true;
         package = llm-agents.claude-code;
         enableMcpIntegration = true;
+
+        # NOTE: setting `settings` makes ~/.claude/settings.json a read-only
+        # store symlink, so everything that used to live there is declared here.
+        # The CLI can no longer write it: `/config`, `/model` and `/plugin` only
+        # hold for the session unless the change is made below.
+        settings = {
+          model = "opus";
+          effortLevel = "xhigh";
+          tui = "fullscreen";
+          skipDangerousModePermissionPrompt = true;
+
+          enabledPlugins = {
+            "astral@astral-sh" = true;
+            "pyright-lsp@claude-plugins-official" = true;
+            "rust-analyzer-lsp@claude-plugins-official" = true;
+            "typescript-lsp@claude-plugins-official" = true;
+            "frontend-design@claude-plugins-official" = true;
+          };
+
+          # Not the `marketplaces` option: that one only emits `source =
+          # "directory"` entries, and this marketplace is a GitHub repo.
+          extraKnownMarketplaces.astral-sh.source = {
+            source = "github";
+            repo = "astral-sh/claude-code-plugins";
+          };
+
+          hooks = {
+            # Fires when a session wants something from you: a permission
+            # dialog, a 60s-idle prompt, an MCP form, or a waiting subagent.
+            Notification = [
+              {
+                matcher = "permission_prompt|idle_prompt|elicitation_dialog|agent_needs_input";
+                hooks = [
+                  {
+                    type = "command";
+                    command = lib.getExe claude-notify;
+                  }
+                ];
+              }
+            ];
+            # Turn complete, i.e. the prompt is yours again. Drop this entry to
+            # only get notified once the prompt has actually sat idle for 60s.
+            Stop = [
+              {
+                hooks = [
+                  {
+                    type = "command";
+                    command = lib.getExe claude-notify;
+                  }
+                ];
+              }
+            ];
+          };
+        };
       };
 
       # Let Home Manager install and manage itself.
