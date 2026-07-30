@@ -41,6 +41,40 @@ let
     #!${pkgs.bash}/bin/bash
     exec ${lib.getExe pkgs.swaylock-effects} --image ${cfg.wallpaper}
   '';
+  # Route audio over HDMI when the tv kanshi profile is applied. The card's
+  # analog profile has a higher priority than the HDMI one, so wireplumber
+  # never picks HDMI on its own.
+  tvAudio = pkgs.writeShellApplication {
+    name = "tv-audio";
+    runtimeInputs = with pkgs; [
+      jq
+      pipewire
+      wireplumber
+    ];
+    text = ''
+      card="alsa_card.pci-0000_00_1f.3"
+      profile="output:hdmi-stereo+input:analog-stereo"
+      sink="alsa_output.pci-0000_00_1f.3.hdmi-stereo"
+
+      card_id=$(pw-dump | jq -r --arg n "$card" \
+        'first(.[] | select(.info.props."device.name" == $n) | .id)')
+      profile_index=$(pw-dump "$card_id" | jq -r --arg p "$profile" \
+        'first(.[0].info.params.EnumProfile[] | select(.name == $p) | .index)')
+      wpctl set-profile "$card_id" "$profile_index"
+
+      # The sink node only shows up once the profile switch has settled.
+      sink_id=""
+      for _ in $(seq 20); do
+        sink_id=$(pw-dump | jq -r --arg n "$sink" \
+          'first(.[] | select(.info.props."node.name" == $n) | .id) // empty')
+        if [ -n "$sink_id" ]; then
+          break
+        fi
+        sleep 0.25
+      done
+      wpctl set-default "$sink_id"
+    '';
+  };
 in
 {
   # imports = with flake.inputs; [
@@ -207,6 +241,24 @@ in
               position = "0,0";
             }
           ];
+        }
+        {
+          # TV above the laptop, horizontally centered on it:
+          # (3840 - 2880/1.75) / 2 = 1097
+          profile.name = "tv";
+          profile.outputs = [
+            {
+              criteria = "Samsung Electric Company SAMSUNG *";
+              mode = "3840x2160@24Hz";
+              scale = 1.0;
+              position = "0,0";
+            }
+            {
+              criteria = "eDP-1";
+              position = "1097,2160";
+            }
+          ];
+          profile.exec = [ (lib.getExe tvAudio) ];
         }
         {
           profile.name = "office";
