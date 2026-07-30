@@ -75,6 +75,7 @@ in
       ServerAliveInterval 60
       IPQoS throughput
       IdentityFile /home/frederik/.ssh/my-nixbuild-key
+      Port 2223
   '';
 
   programs.ssh.knownHosts = {
