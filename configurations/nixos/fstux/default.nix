@@ -4,6 +4,20 @@
   lib,
   ...
 }:
+let
+  # The Intel HDMI codec exposes four HDMI PCMs, but the laptop only has one
+  # HDMI port. ACP therefore builds a dozen "Digital Stereo/Surround (HDMI
+  # 2/3/4)" card profiles that can never become available and just clutter
+  # pavucontrol. Drop those mappings from the stock profile set.
+  singleHdmiProfileSet = pkgs.runCommand "alsa-single-hdmi-profile-set" { } ''
+    mkdir -p $out
+    awk '
+      /^\[/ { skip = /^\[Mapping hdmi-[a-z0-9-]+-extra[0-9]+\]/ }
+      !skip
+    ' ${pkgs.pipewire}/share/alsa-card-profile/mixer/profile-sets/default.conf \
+      > $out/single-hdmi.conf
+  '';
+in
 {
   imports = with flake.inputs; [
     niri.nixosModules.niri
@@ -255,6 +269,16 @@
     alsa.enable = true;
     alsa.support32Bit = true;
     pulse.enable = true;
+    wireplumber.extraConfig."51-single-hdmi" = {
+      "monitor.alsa.rules" = [
+        {
+          matches = [ { "device.name" = "alsa_card.pci-0000_00_1f.3"; } ];
+          actions.update-props = {
+            "device.profile-set" = "${singleHdmiProfileSet}/single-hdmi.conf";
+          };
+        }
+      ];
+    };
   };
 
   # programs.regreet.enable = true;
