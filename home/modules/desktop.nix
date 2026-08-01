@@ -37,6 +37,7 @@ let
     # inhibit_compositor_keyboard_shortcuts: true
   '';
   claudebar = pkgs.callPackage ../../packages/claudebar.nix { };
+  rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
   # Route audio over HDMI when the tv kanshi profile is applied. The card's
   # analog profile has a higher priority than the HDMI one, so wireplumber
   # never picks HDMI on its own.
@@ -211,6 +212,15 @@ in
             desc: Files
             cmd: handlr launch x-scheme-handler/file
       '';
+    };
+
+    # Icon= is a theme name, and nixpkgs' rerun installs no icon at all, so the
+    # lookup failed and launchers drew their fallback glyph. recursive, because
+    # ~/.local/share/icons/hicolor also holds unmanaged icons (pcloud's
+    # AppImage) that a whole-directory symlink would displace.
+    xdg.dataFile."icons/hicolor" = {
+      source = "${rerun-icon}/share/icons/hicolor";
+      recursive = true;
     };
 
     # Define an XDG desktop entry for Rerun
