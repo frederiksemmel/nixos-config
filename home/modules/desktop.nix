@@ -37,10 +37,6 @@ let
     # inhibit_compositor_keyboard_shortcuts: true
   '';
   claudebar = pkgs.callPackage ../../packages/claudebar.nix { };
-  swaylockWithWallpaper = pkgs.writeShellScriptBin "swaylock-with-awww" ''
-    #!${pkgs.bash}/bin/bash
-    exec ${lib.getExe pkgs.swaylock-effects} --image ${cfg.wallpaper}
-  '';
   # Route audio over HDMI when the tv kanshi profile is applied. The card's
   # analog profile has a higher priority than the HDMI one, so wireplumber
   # never picks HDMI on its own.
@@ -77,16 +73,17 @@ let
   };
 in
 {
-  # imports = with flake.inputs; [
-  #   centerpiece.hmModules."x86_64-linux".default
-  # ];
+  imports = with flake.inputs; [
+    veila.homeModules.default
+    # centerpiece.hmModules."x86_64-linux".default
+  ];
 
   options.profiles.desktop = {
     enable = lib.mkEnableOption "graphical desktop (niri, waybar, GUI apps)";
     wallpaper = lib.mkOption {
       type = lib.types.str;
       default = "${config.home.homeDirectory}/wallpapers/longboard.jpg";
-      description = "Wallpaper image used by swaylock and other desktop services.";
+      description = "Wallpaper image used by the lock screen and other desktop services.";
     };
   };
 
@@ -171,8 +168,8 @@ in
             desc: Off
             cmd: poweroff
           "l":
-            desc: Off
-            cmd: ${lib.getExe swaylockWithWallpaper}
+            desc: Lock
+            cmd: ${config.programs.veila.package}/bin/veila lock
           "i":
             desc: Inhibit Sleep
             cmd: systemd-inhibit --what=handle-lid-switch sleep infinity
@@ -275,14 +272,8 @@ in
         }
       ];
     };
-    services.swayidle = {
-      enable = true;
-      package = pkgs.swayidle;
-      extraArgs = [ "-w" ];
-      events = {
-        "before-sleep" = lib.getExe swaylockWithWallpaper;
-      };
-    };
+    # Locking is handled by veila's own idle monitor, which takes a logind delay
+    # inhibitor so the lock surface is up before the system actually suspends.
     services.mako = {
       enable = true;
       extraConfig = ''
@@ -304,44 +295,52 @@ in
 
     programs.zed-editor.enable = true;
 
-    programs.swaylock = {
+    # Lock screen. NOTE: PAM cannot be set up from home-manager, so
+    # `security.pam.services.veila` lives in the host config.
+    programs.veila = {
       enable = true;
-      package = pkgs.swaylock-effects;
+      service.enable = true;
+      idle = {
+        enable = true;
+        lockAfter = 600;
+        lockBeforeSleep = true;
+      };
       settings = {
-        indicator = true;
-        indicator-radius = 60;
-        indicator-thickness = 12;
+        theme = "normandy";
 
-        ring-color = "ffffff55";
-        ring-clear-color = "ffffff55";
-        ring-ver-color = "ffffff55";
-        ring-wrong-color = "ffffff55";
+        # Everything below overrides the normandy theme.
+        background = {
+          mode = "file";
+          path = cfg.wallpaper;
+          scaling = "fill";
+        };
 
-        key-hl-color = "ffffffff";
+        lock = {
+          hide_cursor = true;
+          # Blank the displays a minute after locking.
+          screen_off_seconds = 60;
+        };
 
-        line-color = "00000000";
-        line-clear-color = "00000000";
-        line-ver-color = "00000000";
-        line-wrong-color = "00000000";
-
-        inside-color = "00000000";
-        inside-clear-color = "00000000";
-        inside-ver-color = "00000000";
-        inside-wrong-color = "00000000";
-
-        separator-color = "00000000";
-
-        text-color = "ffffffff";
-        text-clear-color = "ffffffff";
-        text-ver-color = "ffffffff";
-        text-wrong-color = "ffffffff";
-
-        font = "monospace";
-        font-size = 30;
-
-        effect-blur = "20x3";
-        grace = 0;
-        hide-keyboard-layout = true;
+        # Widgets. Positions/colors come from normandy.
+        battery.enabled = true;
+        weather = {
+          enabled = true;
+          location = "Zurich";
+          latitude = 47.37;
+          longitude = 8.5417;
+          unit = "celsius";
+        };
+        visuals = {
+          # Which of us/us(intl)/us(colemak) is active — typing the password in
+          # the wrong layout is otherwise silent.
+          keyboard.enabled = true;
+          # Caps is remapped to Ctrl and its LED shows the xkb group, so the
+          # caps indicator would only ever be noise.
+          caps_lock.enabled = false;
+          avatar.enabled = false;
+          username.enabled = false;
+          now_playing.enabled = true;
+        };
       };
     };
 
