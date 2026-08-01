@@ -936,5 +936,11 @@ in
       enable = true;
       systemd.enable = true;
     };
+    # Quiet the file indexer. Release builds still `add_compile_definitions(DEBUG=0)`,
+    # but the server gates on `#if defined(DEBUG)` — true either way — so it forces
+    # VICINAE_FILE_INDEXER_LOG=debug onto the indexer unless the var is already set.
+    systemd.user.services.vicinae.Service.Environment = [
+      "VICINAE_FILE_INDEXER_LOG=warn"
+    ];
   };
 }
