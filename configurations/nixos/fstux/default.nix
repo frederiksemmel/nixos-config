@@ -68,6 +68,11 @@ in
 
   # time.timeZone = "Europe/Zurich";
   security.sudo-rs.enable = true;
+  # Veila is configured via home-manager, but PAM can only be set up system-wide.
+  security.pam.services.veila = { };
+  # Veila's battery widget reads the UPower display device over D-Bus; it has no
+  # sysfs fallback, so without this it just logs "name is not activatable".
+  services.upower.enable = true;
 
   programs.ssh.extraConfig = ''
     Host eu.nixbuild.net
