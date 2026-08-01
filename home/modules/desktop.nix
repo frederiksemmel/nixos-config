@@ -367,6 +367,7 @@ in
           avatar.enabled = false;
           username.enabled = false;
           now_playing.enabled = true;
+          eye.enabled = false;
         };
       };
     };
