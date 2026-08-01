@@ -98,7 +98,8 @@ in
       bzmenu
 
       # File & Data Management
-      cosmic-files
+      # nautilus (systemPackages in fstux) is the one GUI file manager: it owns
+      # org.freedesktop.FileManager1, which chromium's "show in files" calls.
       pcloud
       handlr-regex
 
@@ -135,6 +136,32 @@ in
       rustdesk-flutter
       anydesk
     ];
+
+    # One look for both file-picker code paths: xdg-desktop-portal-gtk and apps
+    # that call gtk_file_chooser_dialog_new themselves (onlyoffice). Leaving
+    # gtk3.bookmarks unset keeps ~/.config/gtk-3.0/bookmarks writable and shared.
+    gtk = {
+      enable = true;
+      # Not Cantarell or Adwaita Sans: fontconfig 2.18 tags both with the
+      # system-ui generic, chromium's own lookup then rejects them and its UI
+      # falls back to an unrelated font (NixOS/nixpkgs#541553). fc-match is
+      # unaffected. Inter is what Adwaita Sans derives from and survives it.
+      font = {
+        name = "Inter";
+        size = 11;
+      };
+      theme = {
+        name = "Adwaita";
+        package = pkgs.gnome-themes-extra;
+      };
+      iconTheme = {
+        name = "Adwaita";
+        package = pkgs.adwaita-icon-theme;
+      };
+      colorScheme = "dark";
+      # libadwaita (nautilus) only honours colorScheme; post-26.05 default.
+      gtk4.theme = null;
+    };
 
     home.file = {
       ".rclone_filter_spadesvision.txt".text = ''

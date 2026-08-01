@@ -213,6 +213,10 @@ in
       "org.freedesktop.impl.portal.Notification" = "gtk";
     };
   };
+  # Without a dconf backend GSettings uses the memory backend and libadwaita
+  # apps ignore the theme home manager writes to org/gnome/desktop/interface.
+  programs.dconf.enable = true;
+
   systemd.user.services.niri-flake-polkit.enable = false;
   systemd.user.services.polkit-gnome-authentication-agent-1 = {
     description = "polkit-gnome-authentication-agent-1";
@@ -242,6 +246,7 @@ in
     fira-code
     fira-code-symbols
     nerd-fonts.fira-code
+    inter # GTK UI font
   ];
   fonts.enableDefaultPackages = true;
 
