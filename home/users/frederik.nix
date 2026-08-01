@@ -11,6 +11,11 @@
     ../modules/ssh.nix
   ];
 
+  # Building the option docs leaks nixpkgs' store path into options.json without
+  # string context, which Determinate Nix warns about on every rebuild.
+  # https://github.com/nix-community/home-manager/issues/7935
+  manual.manpages.enable = false;
+
   profiles.dev.enable = true;
   profiles.desktop.enable = true;
   profiles.ssh.enable = true;
