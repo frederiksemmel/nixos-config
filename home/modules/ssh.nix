@@ -6,68 +6,26 @@
 }:
 let
   cfg = config.profiles.ssh;
-  entries = [
-    {
-      name = "spadesvision-bern";
-      pattern = "*bern*";
-      dir = "spadesvision";
-    }
-    {
-      name = "spadesvision-pfaeffikon";
-      pattern = "*pfaeffikon*";
-      dir = "spadesvision";
-    }
-    {
-      name = "spadesvision-zurich";
-      pattern = "*zurich*";
-      dir = "spadesvision";
-    }
-    {
-      name = "spadesvision-office";
-      pattern = "*office*";
-      dir = "spadesvision";
-    }
-    {
-      name = "spadesvision-badragaz";
-      pattern = "*badragaz*";
-      dir = "spadesvision";
-    }
-    {
-      name = "tcs";
-      pattern = "*tcs*";
-      dir = "tcs-jetson";
-    }
-    {
-      name = "demo";
-      pattern = "*demo-jetson*";
-      dir = "tcs-jetson";
-    }
-    {
-      name = "webdemo";
-      pattern = "*spadesvision.com";
-      dir = "webdemo";
-    }
-    {
-      name = "webdemo";
-      pattern = "*webdemo*";
-      dir = "webdemo";
-    }
-  ];
+  # host pattern -> directory under ~/.ssh/spadesvision holding its key pair
+  identityDirs = {
+    "*bern*" = "spadesvision";
+    "*pfaeffikon*" = "spadesvision";
+    "*zurich*" = "spadesvision";
+    "*office*" = "spadesvision";
+    "*badragaz*" = "spadesvision";
+    "*tcs*" = "tcs-jetson";
+    "*demo-jetson*" = "tcs-jetson";
+    "*spadesvision.com" = "webdemo";
+    "*webdemo*" = "webdemo";
+  };
 
-  asBlocks = lib.foldl' (
-    acc: e:
-    acc
-    // {
-      "${e.name}" = {
-        host = e.pattern;
-        identityFile = [
-          "~/.ssh/spadesvision/${e.dir}/id_${e.dir}_spadesvision"
-          "~/.ssh/spadesvision/${e.dir}/id_${e.dir}_root"
-        ];
-        identitiesOnly = true;
-      };
-    }
-  ) { };
+  identityBlocks = lib.mapAttrs (_pattern: dir: {
+    IdentityFile = [
+      "~/.ssh/spadesvision/${dir}/id_${dir}_spadesvision"
+      "~/.ssh/spadesvision/${dir}/id_${dir}_root"
+    ];
+    IdentitiesOnly = true;
+  }) identityDirs;
 in
 {
   options.profiles.ssh.enable = lib.mkEnableOption "personal ssh config (host aliases, identity files)";
@@ -76,22 +34,22 @@ in
     programs.ssh = {
       enable = true;
       enableDefaultConfig = false;
-      matchBlocks = {
-        "*".addKeysToAgent = "yes";
+      settings = {
+        "*".AddKeysToAgent = "yes";
         "github.com" = {
-          user = "git";
-          identityFile = "~/.ssh/id_github";
+          User = "git";
+          IdentityFile = "~/.ssh/id_github";
         };
         "git.sr.ht" = {
-          user = "git";
-          identityFile = "~/.ssh/id_sourcehut";
+          User = "git";
+          IdentityFile = "~/.ssh/id_sourcehut";
         };
         "beast" = {
-          user = "frederik";
-          identityFile = "~/.ssh/beast_login";
+          User = "frederik";
+          IdentityFile = "~/.ssh/beast_login";
         };
       }
-      // asBlocks entries;
+      // identityBlocks;
     };
   };
 }
