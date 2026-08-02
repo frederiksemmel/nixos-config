@@ -311,6 +311,25 @@ in
     };
     # Locking is handled by veila's own idle monitor, which takes a logind delay
     # inhibitor so the lock surface is up before the system actually suspends.
+    #
+    # Blanking, however, cannot be left to veila: it drives DPMS through
+    # zwlr_output_power_management_v1, which niri does not implement (see the
+    # note on lock.screen_off_seconds below). So we blank compositor-side
+    # instead, reproducing what veila's screen_off_seconds=60 was meant to do:
+    # veila locks at idle 600s, and the display goes dark 60s after that.
+    # No resumeCommand is needed -- niri calls activate_monitors() itself on the
+    # next input event -- but it is harmless, idempotent, and makes the intent
+    # explicit rather than relying on that behaviour staying true.
+    services.swayidle = {
+      enable = true;
+      timeouts = [
+        {
+          timeout = 660; # programs.veila.idle.lockAfter + 60
+          command = "${pkgs.niri-unstable}/bin/niri msg action power-off-monitors";
+          resumeCommand = "${pkgs.niri-unstable}/bin/niri msg action power-on-monitors";
+        }
+      ];
+    };
     services.mako = {
       enable = true;
       extraConfig = ''
@@ -354,8 +373,16 @@ in
 
         lock = {
           hide_cursor = true;
-          # Blank the displays a minute after locking.
-          screen_off_seconds = 60;
+          # MUST stay 0 on niri. Veila blanks via zwlr_output_power_management_v1,
+          # which niri does not implement, so this never worked -- but worse, the
+          # failure pegs a CPU core: once the delay expires, ScreenOffState::due_in
+          # returns Duration::ZERO forever (the power-off request silently no-ops,
+          # so outputs_powered_off is never set), and that zero becomes the
+          # curtain's calloop timeout -- a non-blocking dispatch in a tight loop.
+          # Measured: 105% CPU and 95 C package temp for an entire lock.
+          # To actually blank, drive niri's `power-off-monitors` from an idle
+          # timeout (swayidle) rather than asking veila to do it.
+          screen_off_seconds = 0;
         };
 
         # Widgets. Positions/colors come from normandy.
