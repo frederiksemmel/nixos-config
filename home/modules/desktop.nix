@@ -856,6 +856,7 @@ in
           "battery"
           "cpu"
           "memory"
+          "disk"
         ];
 
         backlight = {
@@ -909,10 +910,17 @@ in
           interval = 10;
         };
 
-        # Memory usage
+        # Memory usage: {used} is already in GiB
         memory = {
-          format = "MEM {used}%";
+          format = "MEM {used:0.1f}G";
           interval = 30;
+        };
+
+        # Free space on the root filesystem
+        disk = {
+          path = "/";
+          format = "DSK {percentage_free}%";
+          interval = 60;
         };
       };
 
