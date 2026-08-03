@@ -987,6 +987,8 @@ in
         gpu-context = "wayland";
         sub-scale = 0.7;
         keep-open = true;
+        # autoload the other files of the same type in the directory as a playlist
+        autocreate-playlist = "same";
         osd-status-msg = "\${playback-time/full} / \${duration} (\${percent-pos}%)\\nframe: \${estimated-frame-number} / \${estimated-frame-count}";
         sub-file-paths = "Subs";
       };
