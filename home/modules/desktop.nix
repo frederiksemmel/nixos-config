@@ -199,8 +199,11 @@ in
             desc: Lock
             cmd: ${config.programs.veila.package}/bin/veila lock
           "i":
-            desc: Inhibit Sleep
-            cmd: systemd-inhibit --what=handle-lid-switch sleep infinity
+            desc: Inhibit Sleep (5h)
+            cmd: systemd-inhibit --what=handle-lid-switch sleep 5h
+          "u":
+            desc: Uninhibit Sleep
+            cmd: pkill -x systemd-inhibit
       '';
       ".config/wlr-which-key/config_opener.yaml".text = ''
         ${wlr-common-config}
@@ -616,6 +619,13 @@ in
         window-close.enable = false;
         window-open.enable = false;
       };
+
+      ### Switch events
+      # Drop the power menu's sleep inhibit once the lid has been opened again:
+      # surviving one close is what it is for, and a forgotten one is what bites.
+      # niri sees the lid switch directly, so this needs no acpid and no logind
+      # D-Bus watcher, and it fires even while the session is locked.
+      switch-events.lid-open.action = config.lib.niri.actions.spawn "pkill" "-x" "systemd-inhibit";
 
       ### Keybindings
       binds =
