@@ -10,7 +10,7 @@
     disko.inputs.nixpkgs.follows = "nixpkgs";
     treefmt-nix.url = "github:numtide/treefmt-nix";
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
-    niri.url = "github:sodiboo/niri-flake";
+    niri.url = "github:epireyn/niri-flake";
     niri.inputs.nixpkgs.follows = "nixpkgs";
     # centerpiece.url = "github:friedow/centerpiece";
     # centerpiece.inputs.nixpkgs.follows = "nixpkgs";  # Not following because it fucking recompiles always
