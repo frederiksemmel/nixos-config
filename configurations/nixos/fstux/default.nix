@@ -27,8 +27,6 @@ in
     nixos-hardware.nixosModules.tuxedo-infinitybook-pro14-gen7
     determinate.nixosModules.default
     # tuxedo-nixos.nixosModules.default
-
-    ./authelia.nix
   ];
 
   nixpkgs.hostPlatform = "x86_64-linux";
@@ -368,14 +366,6 @@ in
   users.extraGroups.vboxusers.members = [ "frederik" ];
 
   systemd.network.wait-online.ignoredInterfaces = [ "vboxnet0" ];
-
-  # TODO remove. Temporary experiments for sv
-  services.autheliaDevice = {
-    enable = true;
-    deviceIP = "192.168.1.138";
-    tailscaleHostname = "100.103.136.118";
-    usersFile = ./users.yaml;
-  };
 
   system.stateVersion = "25.05";
 }
