@@ -31,7 +31,6 @@ in
 
   nixpkgs.hostPlatform = "x86_64-linux";
   nixpkgs.config.allowUnfree = true;
-  nixpkgs.overlays = [ flake.inputs.niri.overlays.niri ];
 
   home-manager.users.frederik = {
     imports = [ flake.self.homeModules.frederik ];
@@ -311,7 +310,6 @@ in
   # lemurs
   services.displayManager = {
     # lemurs.enable = true;
-    sessionPackages = with pkgs; [ niri-unstable ];
     # sddm = {
     #   enable = true;
     #   wayland.enable = true;
@@ -324,7 +322,8 @@ in
   # programs.sway.enable = true;
 
   programs.niri.enable = true;
-  programs.niri.package = pkgs.niri-unstable;
+  programs.niri.package = pkgs.niri;
+  niri-flake.cache.enable = false;
   # for pcloud
   programs.fuse.enable = true;
   programs.fuse.userAllowOther = true;

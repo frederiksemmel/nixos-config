@@ -328,8 +328,8 @@ in
       timeouts = [
         {
           timeout = 660; # programs.veila.idle.lockAfter + 60
-          command = "${pkgs.niri-unstable}/bin/niri msg action power-off-monitors";
-          resumeCommand = "${pkgs.niri-unstable}/bin/niri msg action power-on-monitors";
+          command = "${config.programs.niri.package}/bin/niri msg action power-off-monitors";
+          resumeCommand = "${config.programs.niri.package}/bin/niri msg action power-on-monitors";
         }
       ];
     };
@@ -545,6 +545,8 @@ in
     #     interval = "5min";
     #   };
     # };
+
+    programs.niri.package = lib.mkDefault pkgs.niri;
 
     programs.niri.settings = {
       "prefer-no-csd" = true;
