@@ -531,7 +531,7 @@ in
         # hold for the session unless the change is made below.
         settings = {
           model = "opus";
-          effortLevel = "xhigh";
+          effortLevel = "high";
           tui = "fullscreen";
           skipDangerousModePermissionPrompt = true;
 
