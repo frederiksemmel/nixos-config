@@ -43,7 +43,6 @@ in
   nix.registry.nixpkgs.flake = flake.inputs.nixpkgs;
   nix.channel.enable = false; # remove nix-channel related tools & configs, we use flakes instead.
   nix.settings.trusted-users = [
-    "root"
     "frederik"
   ];
 
@@ -53,8 +52,6 @@ in
   # https://github.com/NixOS/nix/issues/9574
   nix.settings = {
     nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
-    substituters = [ "https://install.determinate.systems" ];
-    trusted-public-keys = [ "cache.flakehub.com-3:hJuILl5sVK4iKm86JzgdXW12Y2Hwd5G07qKtHTOcDCM=" ];
     # build inputs are removed otherwise. It causes rebuilds of aarch64 opencv for example
     # if this is disabled. Other things I tried:
     # - Adding a gc root to the attributes inputDerivation, -> only direct build deps
