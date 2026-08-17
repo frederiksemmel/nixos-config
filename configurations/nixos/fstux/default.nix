@@ -325,18 +325,6 @@ in
   programs.fuse.enable = true;
   programs.fuse.userAllowOther = true;
 
-  services.mediamtx = {
-    enable = true;
-    allowVideoAccess = true;
-    settings = {
-      paths = {
-        all = {
-          source = "publisher";
-        };
-      };
-    };
-  };
-
   services.usbmuxd.enable = true;
 
   services.automatic-timezoned.enable = true;
