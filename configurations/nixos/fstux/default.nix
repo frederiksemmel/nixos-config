@@ -104,6 +104,7 @@ in
   boot.loader.efi.canTouchEfiVariables = true;
   boot.loader.systemd-boot.configurationLimit = 5;
   boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
+  boot.consoleLogLevel = 3;
   # boot.kernelParams = [ "console=tty2" ];
 
   hardware.graphics = {
