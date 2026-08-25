@@ -97,6 +97,7 @@ in
       iwmenu
       pwmenu
       bzmenu
+      mqttx
 
       # File & Data Management
       # nautilus (systemPackages in fstux) is the one GUI file manager: it owns
