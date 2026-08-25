@@ -554,6 +554,73 @@ in
           effortLevel = "high";
           tui = "fullscreen";
           skipDangerousModePermissionPrompt = true;
+          # The auto-mode twin of the line above: accept the opt-in dialog once,
+          # declaratively, instead of once per machine.
+          skipAutoPermissionPrompt = true;
+
+          permissions = {
+            # Auto mode has a classifier vet every call, so this allow list is
+            # about latency, not trust: these skip the round trip. Rules the CLI
+            # learns from a prompt still land in the project's
+            # .claude/settings.local.json, which stays writable.
+            defaultMode = "auto";
+
+            allow = [
+              # Looking around.
+              "Bash(ls:*)"
+              "Bash(cat:*)"
+              "Bash(head:*)"
+              "Bash(tail:*)"
+              "Bash(wc:*)"
+              "Bash(which:*)"
+              "Bash(grep:*)"
+              "Bash(rg:*)"
+              "Bash(fd:*)"
+              "Bash(find:*)"
+              "Bash(jq:*)"
+              # Reading history, never rewriting it.
+              "Bash(git status:*)"
+              "Bash(git diff:*)"
+              "Bash(git log:*)"
+              "Bash(git show:*)"
+              "Bash(git blame:*)"
+              "Bash(git branch:*)"
+              # The toolchains the repos build and check with.
+              "Bash(uv run:*)"
+              "Bash(ruff check:*)"
+              "Bash(ruff format:*)"
+              "Bash(ty check:*)"
+              "Bash(cargo build:*)"
+              "Bash(cargo check:*)"
+              "Bash(cargo clippy:*)"
+              "Bash(cargo test:*)"
+              "Bash(cargo fmt:*)"
+              "Bash(npm run:*)"
+              "Bash(nix eval:*)"
+              "Bash(gh pr view:*)"
+              "Bash(gh pr list:*)"
+              "Bash(gh issue view:*)"
+            ];
+
+            ask = [
+              # Outward-facing or hard to walk back.
+              "Bash(git push:*)"
+              "Bash(gh pr create:*)"
+              "Bash(gh pr merge:*)"
+              "Bash(sudo:*)"
+              "Bash(nixos-rebuild:*)"
+              "Bash(ssh:*)"
+            ];
+
+            deny = [
+              # Evaluates every host at once and fills RAM; check one named host
+              # or parse the changed files instead.
+              "Bash(nix flake check:*)"
+              "Read(//home/frederik/.ssh/**)"
+              "Read(//**/*.age)"
+              "Read(//**/.env)"
+            ];
+          };
 
           enabledPlugins = {
             "astral@astral-sh" = true;
