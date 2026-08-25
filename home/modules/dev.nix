@@ -600,15 +600,16 @@ in
               "Bash(gh pr view:*)"
               "Bash(gh pr list:*)"
               "Bash(gh issue view:*)"
+              "Bash(git push:*)"
+              "Bash(gh pr create:*)"
+              "Bash(gh pr merge:*)"
             ];
 
             ask = [
               # Outward-facing or hard to walk back.
-              "Bash(git push:*)"
-              "Bash(gh pr create:*)"
-              "Bash(gh pr merge:*)"
               "Bash(sudo:*)"
               "Bash(nixos-rebuild:*)"
+              "Bash(nh:*)"
               "Bash(ssh:*)"
             ];
 

@@ -14,7 +14,8 @@ let
     "*office*" = "spadesvision";
     "*badragaz*" = "spadesvision";
     "*tcs*" = "tcs-jetson";
-    "*demo-jetson*" = "tcs-jetson";
+    "sv-tcsjs-*" = "tcs-jetson";
+    "sv-demo-*" = "tcs-jetson";
     "*spadesvision.com" = "webdemo";
     "*webdemo*" = "webdemo";
   };
