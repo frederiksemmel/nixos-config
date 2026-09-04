@@ -36,6 +36,22 @@ let
     # Default is `false`.
     # inhibit_compositor_keyboard_shortcuts: true
   '';
+  wlsunsetToggle = pkgs.writeShellApplication {
+    name = "wlsunset-toggle";
+    runtimeInputs = with pkgs; [
+      libnotify
+      systemd
+    ];
+    text = ''
+      if systemctl --user is-active --quiet wlsunset; then
+        systemctl --user stop wlsunset
+        notify-send -a wlsunset "Night light off"
+      else
+        systemctl --user start wlsunset
+        notify-send -a wlsunset "Night light on"
+      fi
+    '';
+  };
   claudebar = pkgs.callPackage ../../packages/claudebar.nix { };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
   # Route audio over HDMI when the tv kanshi profile is applied. The card's
@@ -187,6 +203,9 @@ in
           "b":
             desc: Bluetooth Menu
             cmd: bzmenu -l fuzzel
+          "n":
+            desc: Toggle Night Light
+            cmd: ${lib.getExe wlsunsetToggle}
           "s":
             desc: Sleep
             cmd: systemctl suspend
