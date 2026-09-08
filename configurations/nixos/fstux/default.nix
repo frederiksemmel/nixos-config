@@ -51,6 +51,10 @@ in
   environment.etc."nix/inputs/nixpkgs".source = "${flake.inputs.nixpkgs}";
   # https://github.com/NixOS/nix/issues/9574
   nix.settings = {
+    experimental-features = [
+      "nix-command"
+      "flakes"
+    ];
     nix-path = lib.mkForce "nixpkgs=/etc/nix/inputs/nixpkgs";
     # build inputs are removed otherwise. It causes rebuilds of aarch64 opencv for example
     # if this is disabled. Other things I tried:
