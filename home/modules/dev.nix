@@ -9,7 +9,6 @@ let
   cfg = config.profiles.dev;
   inherit (pkgs.stdenv.hostPlatform) system;
   llm-agents = flake.inputs.llm-agents.packages.${system};
-  claude-notify = pkgs.callPackage ../../packages/claude-notify.nix { };
 in
 {
   imports = [
@@ -648,7 +647,7 @@ in
                 hooks = [
                   {
                     type = "command";
-                    command = lib.getExe claude-notify;
+                    command = lib.getExe pkgs.claude-notify;
                   }
                 ];
               }
@@ -660,7 +659,7 @@ in
                 hooks = [
                   {
                     type = "command";
-                    command = lib.getExe claude-notify;
+                    command = lib.getExe pkgs.claude-notify;
                   }
                 ];
               }

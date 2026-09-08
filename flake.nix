@@ -71,7 +71,11 @@
           };
 
           homeModules.frederik = ./home/users/frederik.nix;
-          homeModules.ubuntu = ./home/users/ubuntu.nix;
+
+          overlays.default = final: _prev: {
+            claudebar = final.callPackage ./packages/claudebar.nix { };
+            claude-notify = final.callPackage ./packages/claude-notify.nix { };
+          };
 
           homeConfigurations.frederik = withSystem "x86_64-linux" (
             { pkgs, ... }:
@@ -85,28 +89,20 @@
               ];
             }
           );
-
-          homeConfigurations.ubuntu = withSystem "x86_64-linux" (
-            { pkgs, ... }:
-            inputs.home-manager.lib.homeManagerConfiguration {
-              inherit pkgs;
-              extraSpecialArgs = specialArgs;
-              modules = [
-                self.homeModules.ubuntu
-                { home.stateVersion = "25.11"; }
-              ];
-            }
-          );
         };
 
         perSystem =
-          { system, ... }:
+          { pkgs, system, ... }:
           {
             _module.args.pkgs = import inputs.nixpkgs {
               inherit system;
               config = {
                 allowUnfree = true;
               };
+              overlays = [ self.overlays.default ];
+            };
+            packages = {
+              inherit (pkgs) claudebar claude-notify;
             };
             treefmt = {
               projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
