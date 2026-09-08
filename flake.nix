@@ -1,6 +1,5 @@
 {
   inputs = {
-    # Principle inputs (updated by `nix run .#update`)
     # nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable-small";
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
     home-manager.url = "github:nix-community/home-manager";
@@ -32,7 +31,6 @@
     mcp-servers-nix.inputs.nixpkgs.follows = "nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
-    nixos-unified.url = "github:srid/nixos-unified";
   };
 
   nixConfig = {
@@ -44,67 +42,79 @@
 
   outputs =
     inputs@{ self, ... }:
-    inputs.flake-parts.lib.mkFlake { inherit inputs; } {
-      systems = [
-        "x86_64-linux"
-        "aarch64-linux"
-      ];
-      imports = [
-        inputs.nixos-unified.flakeModules.default
-        inputs.treefmt-nix.flakeModule # `nix fmt`
-      ];
-
-      flake = {
-        # Configurations for Linux (NixOS) machines
-        nixosConfigurations."fstux" = self.nixos-unified.lib.mkLinuxSystem {
-          home-manager = true;
-        } ./configurations/nixos/fstux;
-
-        # home-manager configuration goes here.
-        homeModules.frederik = ./home/users/frederik.nix;
-        homeModules.ubuntu = ./home/users/ubuntu.nix;
-      };
-
-      perSystem =
-        {
-          self',
-          pkgs,
-          system,
-          ...
-        }:
-        {
-          _module.args.pkgs = import inputs.nixpkgs {
-            inherit system;
-            config = {
-              allowUnfree = true;
-            };
-          };
-          legacyPackages.homeConfigurations.frederik = self.nixos-unified.lib.mkHomeConfiguration pkgs (
-            { ... }:
-            {
-              imports = with inputs; [
-                self.homeModules.frederik
-                niri.homeModules.niri # need to do it separately because in fstux we do it via the nixosModule
-              ];
-              home.stateVersion = "25.05";
-            }
-          );
-          legacyPackages.homeConfigurations.ubuntu = self.nixos-unified.lib.mkHomeConfiguration pkgs (
-            { ... }:
-            {
-              imports = [
-                self.homeModules.ubuntu
-              ];
-              home.stateVersion = "25.11";
-            }
-          );
-          packages.default = self'.packages.activate;
-          treefmt = {
-            projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
-            programs = {
-              nixfmt.enable = true;
-            };
-          };
+    inputs.flake-parts.lib.mkFlake { inherit inputs; } (
+      { withSystem, ... }:
+      let
+        specialArgs = {
+          flake = { inherit self inputs; };
         };
-    };
+      in
+      {
+        systems = [
+          "x86_64-linux"
+          "aarch64-linux"
+        ];
+        imports = [
+          inputs.home-manager.flakeModules.home-manager
+          inputs.treefmt-nix.flakeModule # `nix fmt`
+        ];
+
+        flake = {
+          # Configurations for Linux (NixOS) machines
+          nixosConfigurations."fstux" = inputs.nixpkgs.lib.nixosSystem {
+            inherit specialArgs;
+            modules = [
+              ./configurations/nixos/fstux
+              inputs.home-manager.nixosModules.home-manager
+              { home-manager.extraSpecialArgs = specialArgs; }
+            ];
+          };
+
+          homeModules.frederik = ./home/users/frederik.nix;
+          homeModules.ubuntu = ./home/users/ubuntu.nix;
+
+          homeConfigurations.frederik = withSystem "x86_64-linux" (
+            { pkgs, ... }:
+            inputs.home-manager.lib.homeManagerConfiguration {
+              inherit pkgs;
+              extraSpecialArgs = specialArgs;
+              modules = [
+                self.homeModules.frederik
+                inputs.niri.homeModules.niri # need to do it separately because in fstux we do it via the nixosModule
+                { home.stateVersion = "25.05"; }
+              ];
+            }
+          );
+
+          homeConfigurations.ubuntu = withSystem "x86_64-linux" (
+            { pkgs, ... }:
+            inputs.home-manager.lib.homeManagerConfiguration {
+              inherit pkgs;
+              extraSpecialArgs = specialArgs;
+              modules = [
+                self.homeModules.ubuntu
+                { home.stateVersion = "25.11"; }
+              ];
+            }
+          );
+        };
+
+        perSystem =
+          { system, ... }:
+          {
+            _module.args.pkgs = import inputs.nixpkgs {
+              inherit system;
+              config = {
+                allowUnfree = true;
+              };
+            };
+            treefmt = {
+              projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
+              programs = {
+                nixfmt.enable = true;
+              };
+            };
+          };
+      }
+    );
 }
