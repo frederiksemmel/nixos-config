@@ -603,6 +603,7 @@ in
               "Bash(git push:*)"
               "Bash(gh pr create:*)"
               "Bash(gh pr merge:*)"
+              "Bash(ssh:*)"
             ];
 
             ask = [
@@ -610,7 +611,6 @@ in
               "Bash(sudo:*)"
               "Bash(nixos-rebuild:*)"
               "Bash(nh:*)"
-              "Bash(ssh:*)"
             ];
 
             deny = [
