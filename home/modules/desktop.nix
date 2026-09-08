@@ -8,7 +8,6 @@
 let
   cfg = config.profiles.desktop;
   handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
-    #!${pkgs.bash}/bin/bash
     ${lib.getExe pkgs.handlr-regex} open "$@"
   '';
   wlr-common-config = ''
@@ -52,8 +51,10 @@ let
       fi
     '';
   };
-  claudebar = pkgs.callPackage ../../packages/claudebar.nix { };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
+  toggleWaybar = pkgs.writeShellScriptBin "toggle-waybar" ''
+    ${lib.getExe pkgs.killall} -SIGUSR1 -r waybar
+  '';
   # Route audio over HDMI when the tv kanshi profile is applied. The card's
   # analog profile has a higher priority than the HDMI one, so wireplumber
   # never picks HDMI on its own.
@@ -65,9 +66,9 @@ let
       wireplumber
     ];
     text = ''
-      card="alsa_card.pci-0000_00_1f.3"
+      card="${cfg.hdmiAudio.card}"
       profile="output:hdmi-stereo+input:analog-stereo"
-      sink="alsa_output.pci-0000_00_1f.3.hdmi-stereo"
+      sink="alsa_output.${cfg.hdmiAudio.device}.hdmi-stereo"
 
       card_id=$(pw-dump | jq -r --arg n "$card" \
         'first(.[] | select(.info.props."device.name" == $n) | .id)')
@@ -101,6 +102,19 @@ in
       type = lib.types.str;
       default = "${config.home.homeDirectory}/wallpapers/longboard.jpg";
       description = "Wallpaper image used by the lock screen and other desktop services.";
+    };
+    hdmiAudio = {
+      device = lib.mkOption {
+        type = lib.types.str;
+        default = "pci-0000_00_1f.3";
+        description = "ALSA device id of the codec carrying HDMI output.";
+      };
+      card = lib.mkOption {
+        type = lib.types.str;
+        readOnly = true;
+        default = "alsa_card.${cfg.hdmiAudio.device}";
+        description = "Pipewire device.name of that codec, read by the host to target its profile-set.";
+      };
     };
   };
 
@@ -339,7 +353,7 @@ in
     # zwlr_output_power_management_v1, which niri does not implement (see the
     # note on lock.screen_off_seconds below). So we blank compositor-side
     # instead, reproducing what veila's screen_off_seconds=60 was meant to do:
-    # veila locks at idle 600s, and the display goes dark 60s after that.
+    # the display goes dark 60s after veila locks.
     # No resumeCommand is needed -- niri calls activate_monitors() itself on the
     # next input event -- but it is harmless, idempotent, and makes the intent
     # explicit rather than relying on that behaviour staying true.
@@ -347,7 +361,7 @@ in
       enable = true;
       timeouts = [
         {
-          timeout = 660; # programs.veila.idle.lockAfter + 60
+          timeout = config.programs.veila.idle.lockAfter + 60;
           command = "${config.programs.niri.package}/bin/niri msg action power-off-monitors";
           resumeCommand = "${config.programs.niri.package}/bin/niri msg action power-on-monitors";
         }
@@ -792,14 +806,7 @@ in
           "${mod}+Shift+F".action = fullscreen-window;
           "${mod}+Ctrl+F".action = expand-column-to-available-width;
           "${mod}+C".action = center-column;
-          "${mod}+B".action =
-            let
-              toggleWaybar = pkgs.writeShellScriptBin "toggle-waybar" ''
-                #!/usr/bin/env bash
-                ${lib.getExe pkgs.killall} -SIGUSR1 -r waybar
-              '';
-            in
-            spawn (lib.getExe toggleWaybar);
+          "${mod}+B".action = spawn (lib.getExe toggleWaybar);
 
           # Adjust dimensions
           "${mod}+Minus".action = set-column-width "-10%";
@@ -899,7 +906,7 @@ in
         # The usage endpoint is rate limited, so 300s is the lowest sane interval;
         # `pkill -RTMIN+13 waybar` forces a refresh.
         "custom/claudebar" = {
-          exec = "${lib.getExe claudebar} --format 'CLD {session_pct}% {session_reset}'";
+          exec = "${lib.getExe pkgs.claudebar} --format 'CLD {session_pct}% {session_reset}'";
           "return-type" = "json";
           interval = 300;
           signal = 13;

@@ -1,10 +1,13 @@
 {
   flake,
+  config,
   pkgs,
   lib,
   ...
 }:
 let
+  hm = config.home-manager.users.frederik;
+
   # The Intel HDMI codec exposes four HDMI PCMs, but the laptop only has one
   # HDMI port. ACP therefore builds a dozen "Digital Stereo/Surround (HDMI
   # 2/3/4)" card profiles that can never become available and just clutter
@@ -31,6 +34,7 @@ in
 
   nixpkgs.hostPlatform = "x86_64-linux";
   nixpkgs.config.allowUnfree = true;
+  nixpkgs.overlays = [ flake.self.overlays.default ];
 
   home-manager.users.frederik = {
     imports = [ flake.self.homeModules.frederik ];
@@ -68,10 +72,10 @@ in
   # time.timeZone = "Europe/Zurich";
   security.sudo-rs.enable = true;
   # Veila is configured via home-manager, but PAM can only be set up system-wide.
-  security.pam.services.veila = { };
+  security.pam.services.veila = lib.mkIf hm.programs.veila.enable { };
   # Veila's battery widget reads the UPower display device over D-Bus; it has no
   # sysfs fallback, so without this it just logs "name is not activatable".
-  services.upower.enable = true;
+  services.upower.enable = lib.mkIf (hm.programs.veila.settings.battery.enabled or false) true;
 
   programs.ssh.extraConfig = ''
     Host eu.nixbuild.net
@@ -215,7 +219,7 @@ in
   };
   # Without a dconf backend GSettings uses the memory backend and libadwaita
   # apps ignore the theme home manager writes to org/gnome/desktop/interface.
-  programs.dconf.enable = true;
+  programs.dconf.enable = lib.mkIf hm.gtk.enable true;
 
   systemd.user.services.niri-flake-polkit.enable = false;
   systemd.user.services.polkit-gnome-authentication-agent-1 = {
@@ -283,7 +287,7 @@ in
     wireplumber.extraConfig."51-single-hdmi" = {
       "monitor.alsa.rules" = [
         {
-          matches = [ { "device.name" = "alsa_card.pci-0000_00_1f.3"; } ];
+          matches = [ { "device.name" = hm.profiles.desktop.hdmiAudio.card; } ];
           actions.update-props = {
             "device.profile-set" = "${singleHdmiProfileSet}/single-hdmi.conf";
           };
