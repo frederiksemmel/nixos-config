@@ -38,6 +38,7 @@ in
   };
   home-manager.backupFileExtension = "backup";
   home-manager.useGlobalPkgs = true;
+  home-manager.useUserPackages = true;
 
   # make `nix run nixpkgs#nixpkgs` use the same nixpkgs as the one used by this flake.
   nix.registry.nixpkgs.flake = flake.inputs.nixpkgs;
