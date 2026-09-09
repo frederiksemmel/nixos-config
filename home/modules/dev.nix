@@ -61,6 +61,7 @@ in
 
       sad
       bat
+      mdcat
 
       # Containerization & Virtualization
       qemu
