@@ -69,8 +69,11 @@ in
     keep-outputs = true;
   };
 
+  age.secrets.nixci_netrc.file = ../../../secrets/nixci_netrc.age;
+  age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
+
   environment.etc."determinate/config.json".text = builtins.toJSON {
-    authentication.additionalNetrcSources = [ "${hm.home.homeDirectory}/.netrc" ];
+    authentication.additionalNetrcSources = [ config.age.secrets.nixci_netrc.path ];
   };
 
   # time.timeZone = "Europe/Zurich";
