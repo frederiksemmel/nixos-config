@@ -151,7 +151,7 @@ in
       # papers issues with saving and icons
       signal-desktop
       sqlitebrowser
-      # inlyne  # TODO enable when working again
+      inlyne
 
       # Desktop / Wayland utilities
       overskride
@@ -204,6 +204,18 @@ in
         enable_selector = true
         selector = "${lib.getExe pkgs.fuzzel} --dmenu"
         term_exec_args = '-e'
+      '';
+      ".config/inlyne/inlyne.toml".text = ''
+        theme = "Dark"
+        page-width = 1150
+        lines-to-scroll = 3.0
+
+        [font-options]
+        regular-font = "Inter"
+        monospace-font = "JetBrains Mono"
+
+        [dark-theme]
+        code-highlighter = "monokai-extended"
       '';
       ".config/wlr-which-key/config_power.yaml".text = ''
         ${wlr-common-config}
