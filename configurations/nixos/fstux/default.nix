@@ -47,15 +47,15 @@ in
   # make `nix run nixpkgs#nixpkgs` use the same nixpkgs as the one used by this flake.
   nix.registry.nixpkgs.flake = flake.inputs.nixpkgs;
   nix.channel.enable = false; # remove nix-channel related tools & configs, we use flakes instead.
-  nix.settings.trusted-users = [
-    "frederik"
-  ];
 
   # but NIX_PATH is still used by many useful tools, so we set it to the same value as the one used by this flake.
   # Make `nix repl '<nixpkgs>'` use the same nixpkgs as the one used by this flake.
   environment.etc."nix/inputs/nixpkgs".source = "${flake.inputs.nixpkgs}";
   # https://github.com/NixOS/nix/issues/9574
   nix.settings = {
+    trusted-users = [
+      "frederik"
+    ];
     experimental-features = [
       "nix-command"
       "flakes"
@@ -67,6 +67,10 @@ in
     # - Listing all build outputs -qR --include-outputs ... works, but I couldn't create a
     # single root that keeps all these things
     keep-outputs = true;
+  };
+
+  environment.etc."determinate/config.json".text = builtins.toJSON {
+    authentication.additionalNetrcSources = [ "${hm.home.homeDirectory}/.netrc" ];
   };
 
   # time.timeZone = "Europe/Zurich";
