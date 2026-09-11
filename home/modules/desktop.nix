@@ -444,6 +444,8 @@ in
     services.mako = {
       enable = true;
       extraConfig = ''
+        default-timeout=10000
+
         [app-name=Spotify]
         default-timeout=3000
 
