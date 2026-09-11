@@ -268,8 +268,57 @@ in
     settings = {
       # Disable USB autosuspend on both AC and battery
       USB_AUTOSUSPEND = "0";
+
+      # The three profiles the power menu's CPU submenu selects between. This
+      # i7-12700H runs intel_pstate in active mode, where "powersave" is the
+      # normal governor and the energy/performance preference does the steering;
+      # "performance" would peg every core. Every knob is spelled out for all
+      # three profiles because TLP only writes what it is told: leaving
+      # CPU_BOOST_ON_AC unset would strand no_turbo=1 after a visit to SAV.
+      CPU_SCALING_GOVERNOR_ON_AC = "powersave";
+      CPU_SCALING_GOVERNOR_ON_BAT = "powersave";
+      CPU_SCALING_GOVERNOR_ON_SAV = "powersave";
+
+      CPU_ENERGY_PERF_POLICY_ON_AC = "balance_performance";
+      CPU_ENERGY_PERF_POLICY_ON_BAT = "balance_power";
+      CPU_ENERGY_PERF_POLICY_ON_SAV = "power";
+
+      CPU_MIN_PERF_ON_AC = 0;
+      CPU_MIN_PERF_ON_BAT = 0;
+      CPU_MIN_PERF_ON_SAV = 0;
+      CPU_MAX_PERF_ON_AC = 100;
+      CPU_MAX_PERF_ON_BAT = 100;
+      CPU_MAX_PERF_ON_SAV = 50;
+
+      # Turbo is what spins the fans up; SAV caps the cores at their base clock.
+      CPU_BOOST_ON_AC = 1;
+      CPU_BOOST_ON_BAT = 1;
+      CPU_BOOST_ON_SAV = 0;
+      CPU_HWP_DYN_BOOST_ON_AC = 1;
+      CPU_HWP_DYN_BOOST_ON_BAT = 1;
+      CPU_HWP_DYN_BOOST_ON_SAV = 0;
     };
   };
+  # The power menu (Super+P, c) picks a TLP profile as the user; tlp itself
+  # needs root. Restricted to these four argument forms so the rule cannot be
+  # turned into a general root shell via `tlp discharge` and friends.
+  security.sudo-rs.extraRules = [
+    {
+      users = [ "frederik" ];
+      commands =
+        map
+          (arg: {
+            command = "/run/current-system/sw/bin/tlp ${arg}";
+            options = [ "NOPASSWD" ];
+          })
+          [
+            "performance"
+            "balanced"
+            "power-saver"
+            "start"
+          ];
+    }
+  ];
   services.devmon.enable = true;
   services.tailscale = {
     enable = true;
