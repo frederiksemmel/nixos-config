@@ -51,6 +51,53 @@ let
       fi
     '';
   };
+  # TLP 1.8+ carries three named profiles (performance/balanced/power-saver,
+  # configured through the _ON_AC/_ON_BAT/_ON_SAV suffixes of the host's
+  # services.tlp.settings). The named verbs deliberately *clear* TLP's manual
+  # mode -- only `tlp ac`/`tlp bat` latch it -- so a pick survives plugging and
+  # unplugging by way of smart switching instead: TLP_AUTO_SWITCH=2 keeps the
+  # current profile whenever it is not the power source's default. `tlp start`
+  # and boot both hand the machine back to the assigned profile. The host grants
+  # passwordless sudo for exactly these four invocations.
+  tlpProfile = pkgs.writeShellApplication {
+    name = "tlp-profile";
+    runtimeInputs = with pkgs; [
+      libnotify
+      procps
+    ];
+    text = ''
+      profile="$1"
+      if out=$(/run/wrappers/bin/sudo -n /run/current-system/sw/bin/tlp "$profile" 2>&1); then
+        if [ "$profile" = start ]; then
+          notify-send -a tlp "Power profile" "automatic"
+        else
+          notify-send -a tlp "Power profile" "$profile"
+        fi
+        pkill -RTMIN+14 waybar || true
+      else
+        notify-send -a tlp -u critical "Power profile" "tlp $profile failed: $out"
+      fi
+    '';
+  };
+  # `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr, which tlp leaves
+  # world-readable. It prints "<profile>/<CODE>", optionally followed by
+  # " (manual)" or " (default)"; the bar shows the short code.
+  tlpStatus = pkgs.writeShellApplication {
+    name = "tlp-status";
+    text = ''
+      mode=$(/run/current-system/sw/bin/tlp-stat -m) || mode="unknown/???"
+      code=''${mode#*/}
+      code=''${code%% *}
+      if [ "$(cat /sys/devices/system/cpu/intel_pstate/no_turbo)" = 1 ]; then
+        turbo=off
+      else
+        turbo=on
+      fi
+      maxpct=$(cat /sys/devices/system/cpu/intel_pstate/max_perf_pct)
+      printf '{"text":"PWR %s","tooltip":"%s\\nturbo %s, max %s%%","class":"%s"}\n' \
+        "$code" "$mode" "$turbo" "$maxpct" "''${code,,}"
+    '';
+  };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
   toggleWaybar = pkgs.writeShellScriptBin "toggle-waybar" ''
     ${lib.getExe pkgs.killall} -SIGUSR1 -r waybar
@@ -232,6 +279,21 @@ in
           "n":
             desc: Toggle Night Light
             cmd: ${lib.getExe wlsunsetToggle}
+          "c":
+            desc: CPU Profile
+            submenu:
+              "p":
+                desc: Performance
+                cmd: ${lib.getExe tlpProfile} performance
+              "b":
+                desc: Balanced
+                cmd: ${lib.getExe tlpProfile} balanced
+              "s":
+                desc: Power Saver (no turbo, half clock)
+                cmd: ${lib.getExe tlpProfile} power-saver
+              "a":
+                desc: Automatic (follow power source)
+                cmd: ${lib.getExe tlpProfile} start
           "s":
             desc: Sleep
             cmd: systemctl suspend
@@ -904,6 +966,7 @@ in
           "network"
           "backlight"
           "pulseaudio"
+          "custom/tlp"
           "battery"
           "cpu"
           "memory"
@@ -924,6 +987,19 @@ in
           signal = 13;
           tooltip = true;
           "on-click" = "xdg-open https://claude.ai/settings/usage";
+        };
+
+        # Active TLP profile. Nothing polls for it, so the interval is only a
+        # backstop against a change made outside the power menu; tlp-profile
+        # signals the bar directly.
+        "custom/tlp" = {
+          exec = lib.getExe tlpStatus;
+          "return-type" = "json";
+          interval = 60;
+          signal = 14;
+          tooltip = true;
+          "on-click" =
+            "wlr-which-key --initial-keys c ${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
         };
 
         pulseaudio = {
@@ -1015,6 +1091,11 @@ in
         #workspaces {
           margin-left: 0;
           min-width: 0;
+        }
+
+        /* Being throttled is easy to forget about; make it visible. */
+        #custom-tlp.sav {
+          color: #f0c674;
         }
       '';
     };
