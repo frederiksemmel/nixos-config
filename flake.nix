@@ -5,12 +5,14 @@
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware";
+    nixos-hardware.inputs.nixpkgs.follows = "nixpkgs";
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
     treefmt-nix.url = "github:numtide/treefmt-nix";
     treefmt-nix.inputs.nixpkgs.follows = "nixpkgs";
     niri.url = "github:epireyn/niri-flake";
     niri.inputs.nixpkgs.follows = "nixpkgs";
+    niri.inputs.nixpkgs-stable.follows = "nixpkgs";
     # centerpiece.url = "github:friedow/centerpiece";
     # centerpiece.inputs.nixpkgs.follows = "nixpkgs";  # Not following because it fucking recompiles always
     # centerpiece.inputs.treefmt-nix.follows = "treefmt-nix";
@@ -18,15 +20,16 @@
     agenix.url = "github:ryantm/agenix";
     agenix.inputs.nixpkgs.follows = "nixpkgs";
     agenix.inputs.home-manager.follows = "home-manager";
+    agenix.inputs.darwin.follows = "";
     veila.url = "github:naurissteins/Veila";
     veila.inputs.nixpkgs.follows = "nixpkgs";
     # tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
-    nix-gl-host.url = "github:numtide/nix-gl-host";
 
     # AI coding agents. Deliberately NOT following nixpkgs: the upstream binary
     # cache only has builds against their own nixpkgs pin.
     llm-agents.url = "github:numtide/llm-agents.nix";
+    llm-agents.inputs.flake-parts.follows = "flake-parts";
     mcp-servers-nix.url = "github:natsukium/mcp-servers-nix";
     mcp-servers-nix.inputs.nixpkgs.follows = "nixpkgs";
 
