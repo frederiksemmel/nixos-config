@@ -526,6 +526,32 @@ in
             close = "█";
           };
         };
+        plugins = {
+          inherit (pkgs.yaziPlugins) clipboard;
+        };
+        keymap.mgr.prepend_keymap = [
+          {
+            on = "y";
+            run = [
+              "yank"
+              "plugin clipboard -- --action=copy"
+            ];
+            desc = "Yank selected files (copy)";
+          }
+          {
+            on = "x";
+            run = [
+              "yank --cut"
+              "plugin clipboard -- --action=copy"
+            ];
+            desc = "Yank selected files (cut)";
+          }
+          {
+            on = "<C-p>";
+            run = "plugin clipboard -- --action=paste";
+            desc = "Paste files from system clipboard";
+          }
+        ];
       };
 
       bottom.enable = true;
