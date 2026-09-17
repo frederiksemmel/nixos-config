@@ -608,6 +608,7 @@ in
               "Bash(fd:*)"
               "Bash(find:*)"
               "Bash(jq:*)"
+              "Bash(sed -n:*)"
               # Reading history, never rewriting it.
               "Bash(git status:*)"
               "Bash(git diff:*)"
@@ -615,6 +616,15 @@ in
               "Bash(git show:*)"
               "Bash(git blame:*)"
               "Bash(git branch:*)"
+              "Bash(git rev-parse:*)"
+              "Bash(git ls-files:*)"
+              "Bash(git remote:*)"
+              "Bash(git worktree list:*)"
+              "Bash(git fetch:*)"
+              # Staging and committing: local, and the reflog keeps a way back.
+              "Bash(git add:*)"
+              "Bash(git commit:*)"
+              "Bash(git stash:*)"
               # The toolchains the repos build and check with.
               "Bash(uv run:*)"
               "Bash(ruff check:*)"
@@ -627,12 +637,22 @@ in
               "Bash(cargo fmt:*)"
               "Bash(npm run:*)"
               "Bash(nix eval:*)"
+              # Reading GitHub, including whatever gh grew no subcommand for.
               "Bash(gh pr view:*)"
               "Bash(gh pr list:*)"
-              "Bash(gh issue view:*)"
+              "Bash(gh pr diff:*)"
+              "Bash(gh pr checks:*)"
+              "Bash(gh issue:*)"
+              "Bash(gh api:*)"
+              "Bash(gh run view:*)"
+              "Bash(gh run list:*)"
+              "Bash(gh repo view:*)"
+              "Bash(gh search:*)"
+              # Outward-facing, but the round trip costs more than it catches.
               "Bash(git push:*)"
               "Bash(gh pr create:*)"
               "Bash(gh pr merge:*)"
+              # SSH because its super practical
               "Bash(ssh:*)"
             ];
 
