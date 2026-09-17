@@ -123,6 +123,10 @@ in
     mcp-servers.programs = {
       playwright.enable = true;
     };
+    mcp-servers.settings.servers.devenv = {
+      command = lib.getExe pkgs.devenv;
+      args = [ "mcp" ];
+    };
 
     fonts.fontconfig = {
       enable = true;
