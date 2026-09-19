@@ -123,10 +123,11 @@ in
     mcp-servers.programs = {
       playwright.enable = true;
     };
-    mcp-servers.settings.servers.devenv = {
-      command = lib.getExe pkgs.devenv;
-      args = [ "mcp" ];
-    };
+    # Disabled for now: devenv mcp hogs too much RAM.
+    # mcp-servers.settings.servers.devenv = {
+    #   command = lib.getExe pkgs.devenv;
+    #   args = [ "mcp" ];
+    # };
 
     fonts.fontconfig = {
       enable = true;
