@@ -392,6 +392,24 @@ in
 
   services.usbmuxd.enable = true;
 
+  zramSwap = {
+    enable = true;
+    algorithm = "zstd";
+    memoryPercent = 50;
+  };
+  boot.kernel.sysctl = {
+    "vm.swappiness" = 180;
+    "vm.page-cluster" = 0;
+    "vm.watermark_boost_factor" = 0;
+    "vm.watermark_scale_factor" = 125;
+  };
+
+  systemd.oomd = {
+    enableUserSlices = true;
+    settings.OOM.DefaultMemoryPressureDurationSec = "20s";
+  };
+  systemd.slices."-".sliceConfig.ManagedOOMSwap = "kill";
+
   services.automatic-timezoned.enable = true;
   services.tzupdate.enable = true;
   # A switch restarts iwd, so tzupdate can start while wifi is still down.
