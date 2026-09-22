@@ -129,6 +129,18 @@ in
     #   args = [ "mcp" ];
     # };
 
+    # Infinity (accounting) MCP, kept out of the shared registry above so no
+    # session loads it by default. Start one with the `claude-infinity` alias
+    # to get it, then run `/mcp` once per machine to do the OAuth dance.
+    xdg.configFile."mcp/infinity.json".source =
+      (pkgs.formats.json { }).generate "infinity-mcp.json"
+        {
+          mcpServers.infinity = {
+            type = "http";
+            url = "https://api.infinity.swiss/mcp";
+          };
+        };
+
     fonts.fontconfig = {
       enable = true;
       defaultFonts.monospace = [ "JetBrains Mono" ];
@@ -151,6 +163,7 @@ in
         };
         shellAliases = {
           ns = "exec (nix-search-tv print | fzf --preview 'nix-search-tv preview {}' --scheme history)";
+          claude-infinity = "claude --mcp-config ${config.xdg.configHome}/mcp/infinity.json";
         };
         settings = {
           completions.external = {
@@ -163,7 +176,7 @@ in
         };
         extraConfig = ''
           mkdir ~/.cache/devenv | ignore
-          devenv hook nu | save --force ~/.cache/devenv/hook.nu
+          devenv hook nu -- --no-tui | save --force ~/.cache/devenv/hook.nu
           source ~/.cache/devenv/hook.nu
 
           # Same completer as carapace's nushell integration, but returning null

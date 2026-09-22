@@ -522,6 +522,23 @@ in
       };
     };
 
+    # veilad spawns veila-curtain as a plain child, so the curtain inherits the
+    # daemon's environment rather than the session's. The veila module orders
+    # veilad after graphical-session.target only, which is not a barrier for
+    # WAYLAND_DISPLAY: niri publishes it with `systemctl --user import-environment`
+    # once its socket is up, and the manager hands each service the environment
+    # block as it was at spawn time. Start veilad before niri -- which happens
+    # whenever graphical-session.target is reached outside niri's own transaction,
+    # e.g. after niri is OOM-killed and the session restarts -- and it holds an
+    # environment with no WAYLAND_DISPLAY for its whole life, so every curtain
+    # dies with "Could not find wayland compositor" and locking silently fails.
+    # BindsTo pulls niri.service into veilad's start transaction so After can
+    # actually order against it.
+    systemd.user.services.veilad.Unit = {
+      After = [ "niri.service" ];
+      BindsTo = [ "niri.service" ];
+    };
+
     programs.sherlock = {
       enable = false;
       settings = {
@@ -731,13 +748,6 @@ in
         window-close.enable = false;
         window-open.enable = false;
       };
-
-      ### Switch events
-      # Drop the power menu's sleep inhibit once the lid has been opened again:
-      # surviving one close is what it is for, and a forgotten one is what bites.
-      # niri sees the lid switch directly, so this needs no acpid and no logind
-      # D-Bus watcher, and it fires even while the session is locked.
-      switch-events.lid-open.action = config.lib.niri.actions.spawn "pkill" "-x" "systemd-inhibit";
 
       ### Keybindings
       binds =
