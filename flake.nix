@@ -75,9 +75,16 @@
 
           homeModules.frederik = ./home/users/frederik.nix;
 
-          overlays.default = final: _prev: {
+          overlays.default = final: prev: {
             claudebar = final.callPackage ./packages/claudebar.nix { };
             claude-notify = final.callPackage ./packages/claude-notify.nix { };
+            # The viewer makes every recording streamed in from an SDK the active one,
+            # so it keeps jumping while several recordings stream in at once. The patch
+            # only opens such a recording in the recordings panel while another one is
+            # being shown. Upstream issue: rerun-io/rerun#12950.
+            rerun = prev.rerun.overrideAttrs (old: {
+              patches = (old.patches or [ ]) ++ [ ./packages/rerun-no-auto-switch.patch ];
+            });
           };
 
           homeConfigurations.frederik = withSystem "x86_64-linux" (
