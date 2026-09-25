@@ -69,6 +69,7 @@ in
       # Version Control & Collaboration
       git-interactive-rebase-tool
       git-graph
+      serie
       gitui
 
       # Networking & Communication
@@ -385,9 +386,71 @@ in
               args = [ "--stdio" ];
               config = {
                 harper-ls = {
-                  userDictPath = "~/dict.txt";
+                  userDictPath = "~/.config/harper-ls/dictionary.txt";
                   fileDictPath = "~/.harper/";
-                  linters.ToDoHyphen = false;
+                  # Per-project jargon goes in `.harper-dictionary.txt` at the
+                  # workspace root, which harper-ls picks up on its own.
+                  dialect = "american";
+                  # Kept in sync with harper.toml in the blackjackeye repo.
+                  linters = {
+                    LongSentences = false;
+                    SentenceCapitalization = false;
+                    UseTitleCase = false;
+                    CapitalizePersonalPronouns = false;
+                    OrthographicConsistency = false;
+                    Dashes = false;
+                    UnclosedQuotes = false;
+                    QuoteSpacing = false;
+                    UseEllipsisCharacter = false;
+                    EllipsisLength = false;
+                    NumericRangeEnDash = false;
+                    NoFrenchSpaces = false;
+                    ExpandAlgorithm = false;
+                    ExpandAlloc = false;
+                    ExpandArgument = false;
+                    ExpandBecause = false;
+                    ExpandConfiguration = false;
+                    ExpandControl = false;
+                    ExpandCoordinate = false;
+                    ExpandDecl = false;
+                    ExpandDependencies = false;
+                    ExpandDereference = false;
+                    ExpandDirectory = false;
+                    ExpandFavourite = false;
+                    ExpandForward = false;
+                    ExpandGovt = false;
+                    ExpandLegitimate = false;
+                    ExpandMemoryShorthands = false;
+                    ExpandMinimum = false;
+                    ExpandNotification = false;
+                    ExpandParameter = false;
+                    ExpandPeople = false;
+                    ExpandPerformance = false;
+                    ExpandPointer = false;
+                    ExpandPreference = false;
+                    ExpandPrevious = false;
+                    ExpandStandardInputAndOutput = false;
+                    ExpandThough = false;
+                    ExpandThrough = false;
+                    ExpandTimeShorthands = false;
+                    ExpandVulnerability = false;
+                    ExpandWith = false;
+                    ExpandWithout = false;
+                    SplitWords = false;
+                    CompoundNouns = false;
+                    MergeWords = false;
+                    DisjointPrefixes = false;
+                    PhrasalVerbAsCompoundNoun = false;
+                    WrongNegative = false;
+                    OxfordComma = false;
+                    ToDoHyphen = false;
+                    DiscourseMarkers = false;
+                    CommaFixes = false;
+                    MassNouns = false;
+                    QuantifierNumeralConflict = false;
+                    MissingTo = false;
+                    MissingPreposition = false;
+                  };
                 };
               };
             };
