@@ -1002,7 +1002,6 @@ in
         "modules-right" = [
           "custom/claudebar"
           "network"
-          "backlight"
           "pulseaudio"
           "custom/tlp"
           "battery"
@@ -1010,10 +1009,6 @@ in
           "memory"
           "disk"
         ];
-
-        backlight = {
-          format = "BRI {percent}%";
-        };
 
         # Claude plan usage: session % and time until the 5h window resets.
         # The usage endpoint is rate limited, so 300s is the lowest sane interval;
@@ -1045,8 +1040,8 @@ in
           format = "VOL {volume}% {icon}";
           format-icons = {
             default = "";
-            headphone = "headphone";
-            headset = "headset";
+            headphone = "HP";
+            headset = "HS";
           };
         };
 
