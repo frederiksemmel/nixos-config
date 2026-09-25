@@ -51,6 +51,29 @@ let
       fi
     '';
   };
+  usbcShareToggle = pkgs.writeShellApplication {
+    name = "usbc-share-toggle";
+    runtimeInputs = with pkgs; [
+      libnotify
+      systemd
+    ];
+    text = ''
+      if systemctl is-active --quiet usbc-share.service; then
+        verb=stop
+      else
+        verb=start
+      fi
+      if out=$(/run/wrappers/bin/sudo -n /run/current-system/sw/bin/systemctl "$verb" usbc-share.service 2>&1); then
+        if [ "$verb" = start ]; then
+          notify-send -a usbc-share "USB-C sharing on"
+        else
+          notify-send -a usbc-share "USB-C sharing off"
+        fi
+      else
+        notify-send -a usbc-share -u critical "USB-C sharing" "$verb failed: $out"
+      fi
+    '';
+  };
   # TLP 1.8+ carries three named profiles (performance/balanced/power-saver,
   # configured through the _ON_AC/_ON_BAT/_ON_SAV suffixes of the host's
   # services.tlp.settings). The named verbs deliberately *clear* TLP's manual
@@ -279,6 +302,9 @@ in
           "n":
             desc: Toggle Night Light
             cmd: ${lib.getExe wlsunsetToggle}
+          "t":
+            desc: Toggle USB-C Internet Sharing
+            cmd: ${lib.getExe usbcShareToggle}
           "c":
             desc: CPU Profile
             submenu:

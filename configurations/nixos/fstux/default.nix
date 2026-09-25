@@ -160,6 +160,54 @@ in
     };
   };
 
+  # Started from the power menu (Super+P, t): while active, a laptop plugged in
+  # over a Thunderbolt/USB4 USB-C cable or a USB Ethernet adapter gets a DHCP
+  # lease and is NATed out through whatever uplink this machine has. The
+  # .network file is dropped into /run so it sorts ahead of 10-usb-lan only
+  # while sharing is on.
+  systemd.services.usbc-share =
+    let
+      shareNetwork = pkgs.writeText "05-usbc-share.network" ''
+        [Match]
+        Name=thunderbolt* enp*u*
+
+        [Network]
+        Address=10.42.0.1/24
+        DHCPServer=yes
+        IPMasquerade=ipv4
+        IPv4Forwarding=yes
+
+        [DHCPServer]
+        PoolOffset=100
+        PoolSize=50
+        EmitDNS=yes
+        DNS=9.9.9.9 1.1.1.1
+      '';
+      target = "/run/systemd/network/05-usbc-share.network";
+    in
+    {
+      description = "Share internet over Thunderbolt or USB Ethernet";
+      path = [
+        pkgs.coreutils
+        config.systemd.package
+      ];
+      serviceConfig = {
+        Type = "oneshot";
+        RemainAfterExit = true;
+      };
+      script = ''
+        mkdir -p /run/systemd/network
+        ln -sf ${shareNetwork} ${target}
+        networkctl reload
+      '';
+      preStop = ''
+        rm -f ${target}
+        networkctl reload
+      '';
+    };
+  networking.firewall.interfaces."thunderbolt+".allowedUDPPorts = [ 67 ];
+  networking.firewall.interfaces."enp+".allowedUDPPorts = [ 67 ];
+
   networking.useDHCP = false;
   networking.wireless.iwd.enable = true;
   networking.firewall = {
@@ -316,6 +364,19 @@ in
             "balanced"
             "power-saver"
             "start"
+          ];
+    }
+    {
+      users = [ "frederik" ];
+      commands =
+        map
+          (verb: {
+            command = "/run/current-system/sw/bin/systemctl ${verb} usbc-share.service";
+            options = [ "NOPASSWD" ];
+          })
+          [
+            "start"
+            "stop"
           ];
     }
   ];
