@@ -1,8 +1,8 @@
-diff --git a/crates/viewer/re_viewer/src/app/logic.rs b/crates/viewer/re_viewer/src/app/logic.rs
+diff --git a/crates/top/re_viewer/src/app/logic.rs b/crates/top/re_viewer/src/app/logic.rs
 index 060f1ab..6ef63c2 100644
---- a/crates/viewer/re_viewer/src/app/logic.rs
-+++ b/crates/viewer/re_viewer/src/app/logic.rs
-@@ -525,8 +525,23 @@ impl App {
+--- a/crates/top/re_viewer/src/app/logic.rs
++++ b/crates/top/re_viewer/src/app/logic.rs
+@@ -520,8 +520,23 @@ impl App {
                  // updates the app-id when changing the recording.
                  match store_id.kind() {
                      StoreKind::Recording => {
