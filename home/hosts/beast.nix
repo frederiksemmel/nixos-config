@@ -13,6 +13,7 @@
     Service = {
       WorkingDirectory = "%h/repos/blackjackeye";
       ExecStart = "${lib.getExe config.programs.claude-code.finalPackage} remote-control";
+      StandardOutput = "null";
       Restart = "always";
       RestartSec = 10;
     };
