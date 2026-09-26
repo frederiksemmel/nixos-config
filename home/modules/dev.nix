@@ -212,6 +212,7 @@ in
           package.disabled = true;
           nodejs.disabled = true;
           python.disabled = true;
+          hostname.ssh_only = false;
           gcloud.format = "on [$symbol($project)]($style) ";
           gcloud.project_aliases.decent-decker-379914 = "bj";
           nix_shell.format = "via [$symbol$name](bold blue) ";
