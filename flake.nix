@@ -87,18 +87,28 @@
             });
           };
 
-          homeConfigurations.frederik = withSystem "x86_64-linux" (
-            { pkgs, ... }:
-            inputs.home-manager.lib.homeManagerConfiguration {
-              inherit pkgs;
-              extraSpecialArgs = specialArgs;
-              modules = [
-                self.homeModules.frederik
-                inputs.niri.homeModules.niri # need to do it separately because in fstux we do it via the nixosModule
-                { home.stateVersion = "25.05"; }
-              ];
-            }
-          );
+          homeConfigurations =
+            let
+              mkHome =
+                extraModules:
+                withSystem "x86_64-linux" (
+                  { pkgs, ... }:
+                  inputs.home-manager.lib.homeManagerConfiguration {
+                    inherit pkgs;
+                    extraSpecialArgs = specialArgs;
+                    modules = [
+                      self.homeModules.frederik
+                      inputs.niri.homeModules.niri # need to do it separately because in fstux we do it via the nixosModule
+                      { home.stateVersion = "25.05"; }
+                    ]
+                    ++ extraModules;
+                  }
+                );
+            in
+            {
+              frederik = mkHome [ ];
+              "frederik@beast" = mkHome [ ./home/hosts/beast.nix ];
+            };
         };
 
         perSystem =
