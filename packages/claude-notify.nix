@@ -21,10 +21,11 @@ writeShellApplication {
   # `set -u` is on, so every jq lookup has a `//` fallback: a payload missing an
   # optional field must never abort the hook.
   text = ''
-    # No session bus means no notification daemon to talk to, e.g. a session
-    # over SSH. Bail out quietly rather than writing notify-send errors into
-    # the terminal on every turn.
-    if [[ -z ''${DBUS_SESSION_BUS_ADDRESS-} ]]; then
+    # Over SSH the remote session bus has no notification daemon, and without a
+    # session bus there is nothing to talk to. Bail out quietly rather than
+    # writing notify-send errors into the terminal on every turn. Remote
+    # sessions notify through `preferredNotifChannel` instead.
+    if [[ -n ''${SSH_CONNECTION-} || -z ''${DBUS_SESSION_BUS_ADDRESS-} ]]; then
       exit 0
     fi
 
