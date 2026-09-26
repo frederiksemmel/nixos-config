@@ -78,7 +78,7 @@ writeShellApplication {
       --expire-time="$timeout" \
       --hint="string:x-canonical-private-synchronous:claude-code-$session" \
       "Claude Code · $project" \
-      "$body"
+      "$body" 2>/dev/null || true
   '';
 
   meta = {
