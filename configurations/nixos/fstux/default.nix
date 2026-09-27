@@ -210,6 +210,7 @@ in
 
   networking.useDHCP = false;
   networking.wireless.iwd.enable = true;
+  networking.wireless.iwd.settings.DriverQuirks.OweDisable = "iwlwifi";
   networking.firewall = {
     enable = true;
     allowedTCPPorts = [
