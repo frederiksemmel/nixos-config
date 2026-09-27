@@ -124,6 +124,10 @@ in
     mcp-servers.programs = {
       playwright.enable = true;
     };
+    mcp-servers.settings.servers.rerun = {
+      command = lib.getExe pkgs.rerun;
+      args = [ "viewer-mcp" ];
+    };
     # Disabled for now: devenv mcp hogs too much RAM.
     # mcp-servers.settings.servers.devenv = {
     #   command = lib.getExe pkgs.devenv;
