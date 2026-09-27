@@ -670,6 +670,11 @@ in
           # declaratively, instead of once per machine.
           skipAutoPermissionPrompt = true;
 
+          statusLine = {
+            type = "command";
+            command = "${pkgs.coreutils}/bin/uname -n";
+          };
+
           permissions = {
             # Auto mode has a classifier vet every call, so this allow list is
             # about latency, not trust: these skip the round trip. Rules the CLI
