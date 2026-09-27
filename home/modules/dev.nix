@@ -9,6 +9,17 @@ let
   cfg = config.profiles.dev;
   inherit (pkgs.stdenv.hostPlatform) system;
   llm-agents = flake.inputs.llm-agents.packages.${system};
+
+  hostLabels = lib.mapAttrs (host: icon: "${icon} ${host}") {
+    fstux = "💻";
+    beast = "🐉";
+  };
+  claudeStatusLine = pkgs.writeShellScript "claude-status-line" ''
+    host=$(${pkgs.coreutils}/bin/uname -n)
+    case $host in
+    ${lib.concatStrings (lib.mapAttrsToList (host: label: "  ${host}) host='${label}' ;;\n") hostLabels)}esac
+    printf '%s' "$host"
+  '';
 in
 {
   imports = [
@@ -217,6 +228,7 @@ in
           nodejs.disabled = true;
           python.disabled = true;
           hostname.ssh_only = false;
+          hostname.aliases = hostLabels;
           gcloud.format = "on [$symbol($project)]($style) ";
           gcloud.project_aliases.decent-decker-379914 = "bj";
           nix_shell.format = "via [$symbol$name](bold blue) ";
@@ -672,7 +684,7 @@ in
 
           statusLine = {
             type = "command";
-            command = "${pkgs.coreutils}/bin/uname -n";
+            command = "${claudeStatusLine}";
           };
 
           permissions = {
