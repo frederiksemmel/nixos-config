@@ -16,6 +16,7 @@ let
     "*tcs*" = "tcs-jetson";
     "sv-tcsjs-*" = "tcs-jetson";
     "sv-demo-*" = "tcs-jetson";
+    "169.254.1.123" = "tcs-jetson";
     "*spadesvision.com" = "webdemo";
     "*webdemo*" = "webdemo";
   };
@@ -49,6 +50,7 @@ in
           User = "frederik";
           IdentityFile = "~/.ssh/beast_login";
         };
+        "tcs-local".HostName = "169.254.1.123";
       }
       // identityBlocks;
     };
