@@ -477,6 +477,7 @@ in
   # A switch restarts iwd, so tzupdate can start while wifi is still down.
   systemd.services.tzupdate = {
     serviceConfig = {
+      Type = lib.mkForce "exec";
       Restart = "on-failure";
       RestartSec = "30s";
     };
