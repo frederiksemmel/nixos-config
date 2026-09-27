@@ -6,10 +6,13 @@
 }:
 let
   remoteControl = repo: {
-    Unit.Description = "Claude Code Remote Control in ~/repos/${repo}";
+    Unit = {
+      Description = "Claude Code Remote Control in ~/repos/${repo}";
+      X-SwitchMethod = "keep-old";
+    };
     Service = {
       WorkingDirectory = "%h/repos/${repo}";
-      ExecStart = "${lib.getExe config.programs.claude-code.finalPackage} remote-control --spawn=worktree";
+      ExecStart = "${lib.getExe config.programs.claude-code.finalPackage} remote-control --spawn=worktree --no-create-session-in-dir";
       StandardOutput = "null";
       Restart = "always";
       RestartSec = 10;
@@ -30,14 +33,35 @@ let
         | grep -Ev '^declare -x (PWD|OLDPWD|SHLVL|_)=' >> "$CLAUDE_ENV_FILE"
     '';
   };
+  repos = [
+    "blackjackeye"
+    "nixos-config"
+  ];
 in
 {
   programs.nushell.extraEnv = ''
     $env.SSH_AUTH_SOCK = $env.SSH_AUTH_SOCK? | default $"($env.XDG_RUNTIME_DIR)/gcr/ssh"
   '';
 
-  systemd.user.services.claude-remote-control-blackjackeye = remoteControl "blackjackeye";
-  systemd.user.services.claude-remote-control-nixos-config = remoteControl "nixos-config";
+  systemd.user.services = lib.listToAttrs (
+    map (repo: lib.nameValuePair "claude-remote-control-${repo}" (remoteControl repo)) repos
+  );
+
+  # remote-control refuses an untrusted workspace, and the trust flag lives in the
+  # CLI-written ~/.claude.json, so it is set in place rather than declared.
+  home.activation.claudeTrustRepos = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+    f="$HOME/.claude.json"
+    if [ -f "$f" ]; then
+      tmp=$(mktemp)
+      ${lib.getExe pkgs.jq} '${
+        lib.concatMapStrings (
+          repo: ''.projects["${config.home.homeDirectory}/repos/${repo}"].hasTrustDialogAccepted = true | ''
+        ) repos
+      }.' "$f" > "$tmp"
+      run cp "$tmp" "$f"
+      rm "$tmp"
+    fi
+  '';
 
   programs.claude-code.settings.hooks.SessionStart = [
     {
