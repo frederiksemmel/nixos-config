@@ -1,5 +1,9 @@
 { config, lib, ... }:
 {
+  programs.nushell.extraEnv = ''
+    $env.SSH_AUTH_SOCK = $env.SSH_AUTH_SOCK? | default $"($env.XDG_RUNTIME_DIR)/gcr/ssh"
+  '';
+
   systemd.user.services.claude-remote-control = {
     Unit.Description = "Claude Code Remote Control in ~/repos/blackjackeye";
     Service = {
