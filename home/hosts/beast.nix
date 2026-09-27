@@ -3,6 +3,8 @@
     $env.SSH_AUTH_SOCK = $env.SSH_AUTH_SOCK? | default $"($env.XDG_RUNTIME_DIR)/gcr/ssh"
   '';
 
+  services.pueue.enable = true;
+
   services.shpool = {
     enable = true;
     settings = {
