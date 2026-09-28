@@ -14,12 +14,53 @@ let
     fstux = "💻";
     beast = "🐉";
   };
-  claudeStatusLine = pkgs.writeShellScript "claude-status-line" ''
-    host=$(${pkgs.coreutils}/bin/uname -n)
-    case $host in
-    ${lib.concatStrings (lib.mapAttrsToList (host: label: "  ${host}) host='${label}' ;;\n") hostLabels)}esac
-    printf '%s' "$host"
-  '';
+  claudeStatusLine = pkgs.writeShellApplication {
+    name = "claude-status-line";
+    runtimeInputs = with pkgs; [
+      coreutils
+      git
+      jq
+    ];
+    text = ''
+      host=$(uname -n)
+      case $host in
+      ${lib.concatStrings (lib.mapAttrsToList (host: label: "  ${host}) host='${label}' ;;\n") hostLabels)}esac
+
+      IFS=$'\x1f' read -r dir model effort ctx title transcript < <(jq -r '[
+        .workspace.current_dir // .cwd,
+        .model.display_name // "",
+        .effort.level // "",
+        (.context_window.used_percentage // "" | tostring | split(".")[0]),
+        .session_name // "",
+        .transcript_path // ""
+      ] | join("\u001f")')
+      if [[ -z $title && -f $transcript ]]; then
+        title=$(grep -E '"type":"(custom|ai)-title"' "$transcript" | jq -rs '
+          (map(select(.type == "custom-title")) | last | .customTitle)
+          // (map(select(.type == "ai-title")) | last | .aiTitle)
+          // ""
+        ') || true
+      fi
+
+      dim=$'\e[2m' bold=$'\e[1m' italic=$'\e[3m' blue=$'\e[34m' magenta=$'\e[35m' cyan=$'\e[36m' reset=$'\e[0m'
+      sep=" ''${dim}·''${reset} "
+
+      line="''${bold}$host''${reset}$sep''${blue}$(basename "$dir")''${reset}"
+      if branch=$(git -C "$dir" --no-optional-locks branch --show-current 2>/dev/null) && [[ -n $branch ]]; then
+        line+=" ''${magenta}⎇ $branch''${reset}"
+      fi
+      line+="''${title:+$sep''${italic}''${cyan}$title''${reset}}"
+      line+="$sep$model''${effort:+ ''${dim}$effort''${reset}}"
+      if [[ -n $ctx ]]; then
+        if ((ctx >= 80)); then color=$'\e[31m'
+        elif ((ctx >= 50)); then color=$'\e[33m'
+        else color=$'\e[32m'
+        fi
+        line+="$sep''${color}$ctx% ctx''${reset}"
+      fi
+      printf '%s' "$line"
+    '';
+  };
 in
 {
   imports = [
@@ -684,7 +725,7 @@ in
 
           statusLine = {
             type = "command";
-            command = "${claudeStatusLine}";
+            command = lib.getExe claudeStatusLine;
           };
 
           permissions = {
