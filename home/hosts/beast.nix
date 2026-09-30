@@ -1,4 +1,9 @@
-{ lib, pkgs, ... }:
+{
+  config,
+  lib,
+  pkgs,
+  ...
+}:
 let
   # Keeps one untouched `claude --remote-control` session in a detached shpool
   # session named rc-<n>, so one is always waiting in the app. A session counts
@@ -86,6 +91,23 @@ in
     };
     Service = {
       ExecStart = lib.getExe claude-rc-spare;
+      Restart = "always";
+      RestartSec = 10;
+    };
+    Install.WantedBy = [ "default.target" ];
+  };
+
+  # nixos-config uses the server mode instead, so sessions can be spawned from
+  # the app, each in its own worktree.
+  systemd.user.services.claude-remote-control-nixos-config = {
+    Unit = {
+      Description = "Claude Code Remote Control server in ~/repos/nixos-config";
+      X-SwitchMethod = "keep-old";
+    };
+    Service = {
+      WorkingDirectory = "%h/repos/nixos-config";
+      ExecStart = "${lib.getExe config.programs.claude-code.finalPackage} remote-control --remote-control-session-name-prefix nixos-config --spawn=worktree --no-create-session-in-dir";
+      StandardOutput = "null";
       Restart = "always";
       RestartSec = 10;
     };
