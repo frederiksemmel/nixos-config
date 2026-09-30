@@ -717,6 +717,7 @@ in
         settings = {
           model = "opus";
           effortLevel = "high";
+          modelSettings.claude-opus-5-5.effortLevel = "high";
           tui = "fullscreen";
           skipDangerousModePermissionPrompt = true;
           # The auto-mode twin of the line above: accept the opt-in dialog once,
