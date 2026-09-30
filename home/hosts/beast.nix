@@ -92,19 +92,84 @@ in
   };
 
   programs.nushell.extraConfig = ''
+    def shpool-session-name [pid] {
+      open --raw $"/proc/($pid)/environ" | split row (char nul) | where $it starts-with "SHPOOL_SESSION_NAME=" | first | str substring 20..
+    }
+
+    def shpool-sessions [] {
+      let sessions = shpool list --json | from json | get sessions
+      let daemon = ^pgrep -u $env.USER -x shpool | lines | first
+      let shells = ^pgrep -P $daemon | lines | each {|pid|
+        try {
+          let fg = open --raw $"/proc/($pid)/stat" | split row ") " | last | split row " " | get 5
+          { name: (shpool-session-name $pid), fg: $fg }
+        }
+      } | compact
+      let claudes = glob $"($env.HOME)/.claude/sessions/*.json" | each {|f|
+        try {
+          let s = open $f
+          let transcript = $"($env.HOME)/.claude/projects/($s.cwd | str replace --all --regex '[^A-Za-z0-9]' '-')/($s.sessionId).jsonl"
+          let titles = try { ^grep -E '"type":"(custom|ai)-title"' $transcript | lines | each { from json } } catch { [] }
+          let prompt = try {
+            ^grep -m1 '"type":"user"' $transcript | from json | get message.content
+            | if ($in | describe | str starts-with "string") { $in } else { $in | where type == "text" | get text | str join " " }
+            | lines | str trim | compact --empty
+            | where {|l| not ($l starts-with "<" or $l starts-with "Another Claude session sent a message") }
+            | first
+          } catch { null }
+          let title = $titles | where type == "custom-title" | get -o customTitle | last
+            | default ($titles | where type == "ai-title" | get -o aiTitle | last)
+            | default $prompt
+            | default "spare"
+          { name: (shpool-session-name $s.pid), title: $title, status: $s.status, cwd: $s.cwd }
+        }
+      } | compact
+      $sessions | each {|s|
+        let claude = $claudes | where name == $s.name | get -o 0
+        let fg = $shells | where name == $s.name | get -o 0.fg
+        let cwd = if $claude != null { $claude.cwd } else if $fg != null { try { $"/proc/($fg)/cwd" | path expand } } else { null }
+        let what = if $claude != null {
+          $"claude: ($claude.title) \(($claude.status)\)"
+        } else if $fg != null {
+          open --raw $"/proc/($fg)/cmdline" | split row (char nul) | compact --empty | each { path basename } | str join " "
+        } else { "" }
+        let last = [$s.last_connected_at_unix_ms $s.last_disconnected_at_unix_ms] | math max
+        {
+          name: $s.name
+          status: ($s.status | str lowercase)
+          last: $last
+          ago: ($last * 1_000_000 | into datetime | date humanize)
+          dir: ($cwd | default "")
+          what: $what
+        }
+      } | sort-by last --reverse
+    }
+
     if $nu.is-interactive and ($env.SSH_CONNECTION? != null) and ($env.SHPOOL_SESSION_NAME? == null) {
-      let sessions = shpool list --json | from json | get sessions | sort-by last_connected_at_unix_ms --reverse
+      let sessions = shpool-sessions
       let new = "new session"
       let choice = if ($sessions | is-empty) { $new } else {
+        let name_w = $sessions.name | str length | math max
+        let dir_w = $sessions.dir | path basename | str length | math max
+        let cols = (term size).columns - 4
         $sessions
-        | each {|s| $"($s.name) \(($s.status | str lowercase)\)" }
+        | each {|s|
+          [
+            ($s.name | fill -w $name_w)
+            ($s.status | str replace "disconnected" "detached" | fill -w 8)
+            ($s.ago | str replace " ago" "" | fill -w 14)
+            ($s.dir | path basename | fill -w $dir_w)
+            $s.what
+          ] | str join "  " | str substring ..<$cols
+        }
         | append $new
-        | input list "shpool session (esc for a plain shell)"
+        | input list --fuzzy "shpool session (type to filter, esc for a plain shell)"
       }
       if $choice == $new {
         let taken = $sessions.name
-        let name = 1..(($taken | length) + 1) | each {|i| $"s($i)" } | where {|n| $n not-in $taken } | first
-        exec shpool attach $name
+        let default = 1..(($taken | length) + 1) | each {|i| $"s($i)" } | where {|n| $n not-in $taken } | first
+        let name = input $"session name \(enter for ($default)\): " | str trim | str replace --all --regex '\s+' '-'
+        exec shpool attach (if ($name | is-empty) { $default } else { $name })
       } else if $choice != null {
         exec shpool attach --force ($choice | split row " " | first)
       }
