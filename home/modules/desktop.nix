@@ -74,6 +74,45 @@ let
       fi
     '';
   };
+  usbEjectAll = pkgs.writeShellApplication {
+    name = "usb-eject-all";
+    runtimeInputs = with pkgs; [
+      coreutils
+      gawk
+      libnotify
+      udisks
+      util-linux
+    ];
+    text = ''
+      eject() {
+        local name fstype mountpoint
+        while read -r name fstype mountpoint; do
+          if [ -n "$mountpoint" ]; then
+            udisksctl unmount --no-user-interaction -b "$name" || return 1
+          fi
+          if [ "$fstype" = crypto_LUKS ] && [ "$(lsblk -nro NAME "$name" | wc -l)" -gt 1 ]; then
+            udisksctl lock --no-user-interaction -b "$name" || return 1
+          fi
+        done < <(lsblk -rnpo NAME,FSTYPE,MOUNTPOINT "$1" | tac)
+        udisksctl power-off --no-user-interaction -b "$1"
+      }
+
+      mapfile -t disks < <(lsblk -dnbpo NAME,TRAN,SIZE | awk '$2 == "usb" && $3 > 0 { print $1 }')
+      if [ ''${#disks[@]} -eq 0 ]; then
+        notify-send -a usb-eject "No USB drives"
+        exit 0
+      fi
+      for disk in "''${disks[@]}"; do
+        label=$(lsblk -dno MODEL "$disk" | xargs)
+        label="''${label:-$disk}"
+        if out=$(eject "$disk" 2>&1); then
+          notify-send -a usb-eject "Ejected $label"
+        else
+          notify-send -a usb-eject -u critical "Eject $label failed" "$out"
+        fi
+      done
+    '';
+  };
   # TLP 1.8+ carries three named profiles (performance/balanced/power-saver,
   # configured through the _ON_AC/_ON_BAT/_ON_SAV suffixes of the host's
   # services.tlp.settings). The named verbs deliberately *clear* TLP's manual
@@ -305,6 +344,9 @@ in
           "t":
             desc: Toggle USB-C Internet Sharing
             cmd: ${lib.getExe usbcShareToggle}
+          "e":
+            desc: Eject USB Drives
+            cmd: ${lib.getExe usbEjectAll}
           "c":
             desc: CPU Profile
             submenu:
