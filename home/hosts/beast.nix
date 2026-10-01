@@ -134,7 +134,7 @@ in
         } else if $fg != null {
           open --raw $"/proc/($fg)/cmdline" | split row (char nul) | compact --empty | each { path basename } | str join " "
         } else { "" }
-        let last = [$s.last_connected_at_unix_ms $s.last_disconnected_at_unix_ms] | math max
+        let last = [$s.started_at_unix_ms $s.last_connected_at_unix_ms $s.last_disconnected_at_unix_ms] | compact | math max
         {
           name: $s.name
           status: ($s.status | str lowercase)
