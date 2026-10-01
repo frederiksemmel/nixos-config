@@ -17,6 +17,7 @@ let
         names=$(shpool list --json | jq -r '.sessions[].name | select(startswith("rc-"))')
         fresh=0
         for name in $names; do
+          grep -qszxF "SHPOOL_SESSION_NAME=$name" /proc/[0-9]*/environ || continue
           used=0
           for f in "$HOME"/.claude/sessions/*.json; do
             pid=$(jq -r .pid "$f" 2>/dev/null) || continue
