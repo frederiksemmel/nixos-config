@@ -8,6 +8,8 @@ let
   # Keeps one untouched `claude --remote-control` session in a detached shpool
   # session named rc-<n>, so one is always waiting in the app. A session counts
   # as used once its transcript has a user message; then another is started.
+  # Also drops shpool sessions whose process has exited, e.g. after /exit: shpool
+  # keeps those listed, and `shpool kill` only removes one with a live process.
   claude-rc-spare = pkgs.writeShellApplication {
     name = "claude-rc-spare";
     runtimeInputs = with pkgs; [
@@ -19,10 +21,15 @@ let
     text = ''
       dir="$HOME/repos/blackjackeye"
       while true; do
+        for name in $(shpool list --json | jq -r '.sessions[].name'); do
+          if ! grep -qszxF "SHPOOL_SESSION_NAME=$name" /proc/[0-9]*/environ; then
+            shpool attach --background --cmd "sleep 60" "$name"
+            shpool kill "$name"
+          fi
+        done
         names=$(shpool list --json | jq -r '.sessions[].name | select(startswith("rc-"))')
         fresh=0
         for name in $names; do
-          grep -qszxF "SHPOOL_SESSION_NAME=$name" /proc/[0-9]*/environ || continue
           used=0
           for f in "$HOME"/.claude/sessions/*.json; do
             pid=$(jq -r .pid "$f" 2>/dev/null) || continue
@@ -85,7 +92,7 @@ in
 
   systemd.user.services.claude-rc-spare = {
     Unit = {
-      Description = "Keeps one fresh Claude Code Remote Control session in shpool";
+      Description = "Reaps exited shpool sessions and keeps one fresh Claude Code Remote Control session";
       Requires = [ "shpool.socket" ];
       After = [ "shpool.socket" ];
     };
@@ -168,15 +175,15 @@ in
       } | sort-by last --reverse
     }
 
-    if $nu.is-interactive and ($env.SSH_CONNECTION? != null) and ($env.SHPOOL_SESSION_NAME? == null) {
+    def shpool-pick [] {
       let sessions = shpool-sessions
       let new = "new session"
-      let choice = if ($sessions | is-empty) { $new } else {
+      let kill = "kill sessions…"
+      let lines = if ($sessions | is-empty) { [] } else {
         let name_w = $sessions.name | str length | math max
         let dir_w = $sessions.dir | path basename | str length | math max
         let cols = (term size).columns - 4
-        $sessions
-        | each {|s|
+        $sessions | each {|s|
           [
             ($s.name | fill -w $name_w)
             ($s.status | str replace "disconnected" "detached" | fill -w 8)
@@ -185,10 +192,18 @@ in
             $s.what
           ] | str join "  " | str substring ..<$cols
         }
-        | append $new
-        | input list --fuzzy "shpool session (type to filter, esc for a plain shell)"
       }
-      if $choice == $new {
+      let choice = if ($lines | is-empty) { $new } else {
+        $lines | append [$new $kill] | input list --fuzzy "shpool session (type to filter, esc for a plain shell)"
+      }
+      if $choice == $kill {
+        $lines
+        | input list --fuzzy --multi "kill which sessions (tab marks, enter kills, esc cancels)"
+        | default []
+        | each {|l| shpool kill ($l | split row " " | first) }
+        | ignore
+        shpool-pick
+      } else if $choice == $new {
         let taken = $sessions.name
         let default = 1..(($taken | length) + 1) | each {|i| $"s($i)" } | where {|n| $n not-in $taken } | first
         let name = input $"session name \(enter for ($default)\): " | str trim | str replace --all --regex '\s+' '-'
@@ -196,6 +211,10 @@ in
       } else if $choice != null {
         exec shpool attach --force ($choice | split row " " | first)
       }
+    }
+
+    if $nu.is-interactive and ($env.SSH_CONNECTION? != null) and ($env.SHPOOL_SESSION_NAME? == null) {
+      shpool-pick
     }
   '';
 }
