@@ -123,6 +123,7 @@ in
       git-graph
       serie
       gitui
+      (callPackage ../../packages/muxdiff.nix { })
 
       # Networking & Communication
       bluetui
