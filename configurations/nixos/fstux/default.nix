@@ -162,9 +162,10 @@ in
 
   # Started from the power menu (Super+P, t): while active, a laptop plugged in
   # over a Thunderbolt/USB4 USB-C cable or a USB Ethernet adapter gets a DHCP
-  # lease and is NATed out through whatever uplink this machine has. The
-  # .network file is dropped into /run so it sorts ahead of 10-usb-lan only
-  # while sharing is on.
+  # lease and is NATed out through whatever uplink this machine has. IPv4LL stays
+  # on so static-IP devices without DHCP stay reachable at their 169.254 mDNS
+  # address. The .network file is dropped into /run so it sorts ahead of
+  # 10-usb-lan only while sharing is on.
   systemd.services.usbc-share =
     let
       shareNetwork = pkgs.writeText "05-usbc-share.network" ''
@@ -173,6 +174,7 @@ in
 
         [Network]
         Address=10.42.0.1/24
+        LinkLocalAddressing=yes
         DHCPServer=yes
         IPMasquerade=ipv4
         IPv4Forwarding=yes
