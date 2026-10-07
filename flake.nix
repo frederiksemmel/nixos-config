@@ -78,6 +78,7 @@
           overlays.default = final: prev: {
             claudebar = final.callPackage ./packages/claudebar.nix { };
             claude-notify = final.callPackage ./packages/claude-notify.nix { };
+            workspace-mcp = final.callPackage ./packages/workspace-mcp.nix { };
             # The viewer makes every recording streamed in from an SDK the active one,
             # so it keeps jumping while several recordings stream in at once. The patch
             # only opens such a recording in the recordings panel while another one is
