@@ -24,7 +24,9 @@ let
     text = ''
       host=$(uname -n)
       case $host in
-      ${lib.concatStrings (lib.mapAttrsToList (host: label: "  ${host}) host='${label}' ;;\n") hostLabels)}esac
+      ${
+        lib.concatStrings (lib.mapAttrsToList (host: label: "  ${host}) host='${label}' ;;\n") hostLabels)
+      }esac
 
       IFS=$'\x1f' read -r dir model effort ctx title transcript < <(jq -r '[
         .workspace.current_dir // .cwd,
@@ -181,6 +183,32 @@ in
       command = lib.getExe pkgs.rerun;
       args = [ "viewer-mcp" ];
     };
+    # Figma's hosted MCP; run `/mcp` once per machine to do the OAuth dance.
+    mcp-servers.settings.servers.figma.url = "https://mcp.figma.com/mcp";
+    # Google Docs/Sheets/Slides editing. The secret is the Desktop-app OAuth
+    # client JSON from Google Cloud; the first tool call opens the consent page.
+    age.secrets.workspace_mcp_client_secret = {
+      file = ../../secrets/workspace_mcp_client_secret.age;
+      path = "${config.xdg.configHome}/workspace-mcp/client_secret.json";
+    };
+    mcp-servers.settings.servers.google-workspace = {
+      command = lib.getExe pkgs.workspace-mcp;
+      args = [
+        "--single-user"
+        "--tool-tier"
+        "complete"
+        "--tools"
+        "docs"
+        "sheets"
+        "slides"
+        "drive"
+      ];
+      env = {
+        GOOGLE_CLIENT_SECRET_PATH = config.age.secrets.workspace_mcp_client_secret.path;
+        WORKSPACE_MCP_CREDENTIALS_DIR = "${config.xdg.stateHome}/workspace-mcp";
+        WORKSPACE_MCP_PORT = "8917";
+      };
+    };
     # Disabled for now: devenv mcp hogs too much RAM.
     # mcp-servers.settings.servers.devenv = {
     #   command = lib.getExe pkgs.devenv;
@@ -190,14 +218,12 @@ in
     # Infinity (accounting) MCP, kept out of the shared registry above so no
     # session loads it by default. Start one with the `claude-infinity` alias
     # to get it, then run `/mcp` once per machine to do the OAuth dance.
-    xdg.configFile."mcp/infinity.json".source =
-      (pkgs.formats.json { }).generate "infinity-mcp.json"
-        {
-          mcpServers.infinity = {
-            type = "http";
-            url = "https://api.infinity.swiss/mcp";
-          };
-        };
+    xdg.configFile."mcp/infinity.json".source = (pkgs.formats.json { }).generate "infinity-mcp.json" {
+      mcpServers.infinity = {
+        type = "http";
+        url = "https://api.infinity.swiss/mcp";
+      };
+    };
 
     fonts.fontconfig = {
       enable = true;
@@ -796,6 +822,8 @@ in
               "Bash(gh pr merge:*)"
               # SSH because its super practical
               "Bash(ssh:*)"
+              # Google Docs/Sheets/Slides/Drive on the work account.
+              "mcp__plugin_hm_google-workspace"
             ];
 
             ask = [
@@ -803,6 +831,9 @@ in
               "Bash(sudo:*)"
               "Bash(nixos-rebuild:*)"
               "Bash(nh:*)"
+              # Change who a company file is shared with.
+              "mcp__plugin_hm_google-workspace__manage_drive_access"
+              "mcp__plugin_hm_google-workspace__set_drive_file_permissions"
             ];
 
             deny = [
