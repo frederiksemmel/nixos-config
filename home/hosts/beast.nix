@@ -56,6 +56,34 @@ let
       done
     '';
   };
+
+  devenvEnv = pkgs.writeShellApplication {
+    name = "claude-devenv-env";
+    runtimeInputs = [ pkgs.devenv ];
+    text = ''
+      [ -z "''${DEVENV_ROOT:-}" ] || exit 0
+      cd "$CLAUDE_PROJECT_DIR"
+      [ -f devenv.nix ] || exit 0
+      devenv shell -- bash -c 'export -p' \
+        | grep '^declare -x ' \
+        | grep -Ev '^declare -x (PWD|OLDPWD|SHLVL|_)=' >> "$CLAUDE_ENV_FILE"
+    '';
+  };
+
+  remoteControl = repo: {
+    Unit = {
+      Description = "Claude Code Remote Control server in ~/repos/${repo}";
+      X-SwitchMethod = "keep-old";
+    };
+    Service = {
+      WorkingDirectory = "%h/repos/${repo}";
+      ExecStart = "${lib.getExe config.programs.claude-code.finalPackage} remote-control --remote-control-session-name-prefix ${repo} --spawn=worktree --no-create-session-in-dir";
+      StandardOutput = "null";
+      Restart = "always";
+      RestartSec = 10;
+    };
+    Install.WantedBy = [ "default.target" ];
+  };
 in
 {
   programs.nushell.extraEnv = ''
@@ -104,22 +132,27 @@ in
     Install.WantedBy = [ "default.target" ];
   };
 
-  # nixos-config uses the server mode instead, so sessions can be spawned from
-  # the app, each in its own worktree.
-  systemd.user.services.claude-remote-control-nixos-config = {
-    Unit = {
-      Description = "Claude Code Remote Control server in ~/repos/nixos-config";
-      X-SwitchMethod = "keep-old";
-    };
-    Service = {
-      WorkingDirectory = "%h/repos/nixos-config";
-      ExecStart = "${lib.getExe config.programs.claude-code.finalPackage} remote-control --remote-control-session-name-prefix nixos-config --spawn=worktree --no-create-session-in-dir";
-      StandardOutput = "null";
-      Restart = "always";
-      RestartSec = 10;
-    };
-    Install.WantedBy = [ "default.target" ];
-  };
+  # Remote Control servers, so sessions can be spawned from the app, each in its
+  # own worktree. They run beside the blackjackeye spare above.
+  systemd.user.services.claude-remote-control-nixos-config = remoteControl "nixos-config";
+  systemd.user.services.claude-remote-control-blackjackeye = remoteControl "blackjackeye";
+
+  # Server-spawned sessions don't start inside devenv shell, so their worktree's
+  # devenv environment is snapshotted once; Claude sources CLAUDE_ENV_FILE before
+  # every Bash call.
+  programs.claude-code.settings.hooks.SessionStart = [
+    {
+      matcher = "startup";
+      hooks = [
+        {
+          type = "command";
+          command = lib.getExe devenvEnv;
+          # The first shell in a fresh worktree builds the venv and the sv-rs extensions.
+          timeout = 1800;
+        }
+      ];
+    }
+  ];
 
   programs.nushell.extraConfig = ''
     def shpool-session-name [pid] {
