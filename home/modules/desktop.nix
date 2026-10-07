@@ -525,8 +525,8 @@ in
     services.awww.enable = true;
     services.wlsunset = {
       enable = true;
-      latitude = 47.37;
-      longitude = 8.5417;
+      sunrise = "07:00";
+      sunset = "19:00";
       temperature.night = 3000;
     };
 
