@@ -126,6 +126,7 @@ in
     };
     Service = {
       ExecStart = lib.getExe claude-rc-spare;
+      Environment = [ "TERM=foot" ];
       Restart = "always";
       RestartSec = 10;
     };
