@@ -266,6 +266,8 @@ in
       overskride
       rerun
       pass-wayland
+      bitwarden-desktop
+      bitwarden-cli
       wl-clipboard
       xdg-utils
       xwayland-satellite
@@ -663,12 +665,9 @@ in
       enable = true;
       commandLineArgs = [ "--enable-features=TouchpadOverscrollHistoryNavigation" ];
       package = (pkgs.chromium.override { enableWideVine = true; });
-      # NOTE pass extension needs native python app, not easy on nixos
-      # extensions = [
-      #   {
-      #     id = "oblajhnjmknenodebpekmkliopipoolo";
-      #   }
-      # ];
+      extensions = [
+        { id = "nngceckbapebfimnlniiiahkandclblb"; } # bitwarden
+      ];
     };
     programs.firefox = {
       enable = true;
