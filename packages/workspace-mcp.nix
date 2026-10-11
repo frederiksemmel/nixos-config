@@ -49,6 +49,13 @@ python3Packages.buildPythonApplication rec {
     urllib3
   ];
 
+  makeWrapperArgs = [
+    "--unset"
+    "NIX_PYTHONPATH"
+    "--unset"
+    "PYTHONPATH"
+  ];
+
   pythonImportsCheck = [
     "main"
     "gdocs.docs_tools"
