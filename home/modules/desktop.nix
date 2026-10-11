@@ -252,7 +252,7 @@ in
       pwvucontrol
 
       # Productivity & Document Tools
-      zotero
+      flake.inputs.nixpkgs-old-zotero.legacyPackages.${pkgs.stdenv.hostPlatform.system}.zotero
       xournalpp
       # libreoffice
       # ungoogled-chromium
