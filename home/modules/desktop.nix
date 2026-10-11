@@ -538,6 +538,7 @@ in
     # `security.pam.services.veila` lives in the host config.
     programs.veila = {
       enable = true;
+      package = pkgs.veila;
       service.enable = true;
       idle = {
         enable = true;
