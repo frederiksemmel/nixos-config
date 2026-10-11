@@ -19,8 +19,6 @@
     # centerpiece.inputs.home-manager.follows = "home-manager";
     agenix.url = "github:ryantm/agenix";
     agenix.inputs.nixpkgs.follows = "nixpkgs";
-    agenix.inputs.home-manager.follows = "home-manager";
-    agenix.inputs.darwin.follows = "";
     veila.url = "github:naurissteins/Veila";
     veila.inputs.nixpkgs.follows = "nixpkgs";
     # tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
