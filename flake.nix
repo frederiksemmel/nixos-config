@@ -80,10 +80,11 @@
             workspace-mcp = final.callPackage ./packages/workspace-mcp.nix { };
             # The viewer makes every recording streamed in from an SDK the active one,
             # so it keeps jumping while several recordings stream in at once. The patch
-            # only opens such a recording in the recordings panel while another one is
-            # being shown. Upstream issue: rerun-io/rerun#12950.
+            # adds a "Switch to newly streamed recordings" setting; with it off, such a
+            # recording only shows up in the recordings panel while another one is being
+            # shown. Upstream issue: rerun-io/rerun#12950.
             rerun = prev.rerun.overrideAttrs (old: {
-              patches = (old.patches or [ ]) ++ [ ./packages/rerun-no-auto-switch.patch ];
+              patches = (old.patches or [ ]) ++ [ ./packages/rerun-streamed-recordings-setting.patch ];
             });
           };
 
