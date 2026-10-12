@@ -664,6 +664,11 @@ in
         };
       };
 
+      gh = {
+        enable = true;
+        settings.git_protocol = "ssh";
+      };
+
       # Delta syntax-highlighting
       delta = {
         enable = true;
