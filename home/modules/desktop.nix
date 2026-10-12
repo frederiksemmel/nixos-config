@@ -143,21 +143,30 @@ let
   };
   # `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr, which tlp leaves
   # world-readable. It prints "<profile>/<CODE>", optionally followed by
-  # " (manual)" or " (default)"; the bar shows the short code.
+  # " (manual)" or " (default)"; the bar shows the short code, and only when
+  # it differs from the power source's own profile (AC on mains, BAT on
+  # battery). An empty text hides the module.
   tlpStatus = pkgs.writeShellApplication {
     name = "tlp-status";
     text = ''
       mode=$(/run/current-system/sw/bin/tlp-stat -m) || mode="unknown/???"
       code=''${mode#*/}
       code=''${code%% *}
+      if [ "$(cat /sys/class/power_supply/AC0/online)" = 1 ]; then
+        source_code=AC
+      else
+        source_code=BAT
+      fi
       if [ "$(cat /sys/devices/system/cpu/intel_pstate/no_turbo)" = 1 ]; then
         turbo=off
       else
         turbo=on
       fi
       maxpct=$(cat /sys/devices/system/cpu/intel_pstate/max_perf_pct)
-      printf '{"text":"PWR %s","tooltip":"%s\\nturbo %s, max %s%%","class":"%s"}\n' \
-        "$code" "$mode" "$turbo" "$maxpct" "''${code,,}"
+      text="PWR $code"
+      [ "$code" = "$source_code" ] && text=""
+      printf '{"text":"%s","tooltip":"%s\\nturbo %s, max %s%%","class":"%s"}\n' \
+        "$text" "$mode" "$turbo" "$maxpct" "''${code,,}"
     '';
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
@@ -1063,46 +1072,74 @@ in
       systemd.enable = true;
       package = pkgs.waybar;
 
-      # Broad stroke customization
       settings.mainBar = {
-        # Positioning and size
         position = "bottom";
         layer = "overlay";
         height = 26;
+        spacing = 0;
 
-        spacing = 20;
-
-        # Choose only the modules you care about
         modules-left = [
           "niri/workspaces"
+          "niri/window"
         ];
-        "modules-center" = [ "clock" ];
-        "modules-right" = [
-          "custom/claudebar"
-          "network"
-          "pulseaudio"
-          "custom/tlp"
-          "battery"
+        modules-right = [
           "cpu"
           "memory"
           "disk"
+          "custom/tlp"
+          "custom/claudebar"
+          "network"
+          "pulseaudio"
+          "battery"
+          "tray"
+          "clock"
         ];
 
-        # Claude plan usage: session % and time until the 5h window resets.
-        # The usage endpoint is rate limited, so 300s is the lowest sane interval;
-        # `pkill -RTMIN+13 waybar` forces a refresh.
-        "custom/claudebar" = {
-          exec = "${lib.getExe pkgs.claudebar} --format 'CLD {session_pct}% {session_reset}'";
-          "return-type" = "json";
-          interval = 300;
-          signal = 13;
-          tooltip = true;
-          "on-click" = "xdg-open https://claude.ai/settings/usage";
+        "niri/window" = {
+          format = "{title}";
+          max-length = 80;
+          separate-outputs = true;
         };
 
-        # Active TLP profile. Nothing polls for it, so the interval is only a
-        # backstop against a change made outside the power menu; tlp-profile
-        # signals the bar directly.
+        # CPU, memory and disk have an empty normal format, which hides them
+        # until they cross a threshold.
+        cpu = {
+          format = "";
+          format-warning = "CPU {usage}%";
+          format-critical = "CPU {usage}%";
+          states = {
+            warning = 70;
+            critical = 90;
+          };
+          interval = 10;
+        };
+
+        memory = {
+          format = "";
+          format-warning = "MEM {used:0.1f}G";
+          format-critical = "MEM {used:0.1f}G";
+          states = {
+            warning = 75;
+            critical = 90;
+          };
+          interval = 30;
+        };
+
+        disk = {
+          path = "/";
+          format = "";
+          format-warning = "DSK {free} free";
+          format-critical = "DSK {free} free";
+          states = {
+            warning = 85;
+            critical = 95;
+          };
+          interval = 60;
+        };
+
+        # Active TLP profile, shown only when it is not the power source's own.
+        # Nothing polls for it, so the interval is only a backstop against a
+        # change made outside the power menu; tlp-profile signals the bar directly.
         "custom/tlp" = {
           exec = lib.getExe tlpStatus;
           "return-type" = "json";
@@ -1113,100 +1150,136 @@ in
             "wlr-which-key --initial-keys c ${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
         };
 
-        pulseaudio = {
-          format-muted = "VOL MUTED";
-          format = "VOL {volume}% {icon}";
-          format-icons = {
-            default = "";
-            headphone = "HP";
-            headset = "HS";
-          };
-        };
-
-        # Example: override only the clock format
-        clock = {
-          format = "{:%Y-%m-%d %H:%M}";
+        # Claudio plan usage: session % and time until the 5h window resets.
+        # The usage endpoint is rate limited, so 300s is the lowest sane interval;
+        # `pkill -RTMIN+13 waybar` forces a refresh.
+        "custom/claudebar" = {
+          exec = "${lib.getExe pkgs.claudebar} --format 'Claudio {session_pct}% · {session_reset}'";
+          "return-type" = "json";
+          interval = 300;
+          signal = 13;
           tooltip = true;
-          interval = 60;
+          "on-click" = "xdg-open https://claude.ai/settings/usage";
         };
 
-        # Example: simple battery display
-        battery = {
-          format = "BAT {capacity}%";
-          "critical-threshold" = 15;
-          interval = 30;
-        };
-
-        # Network: show SSID and strength on wlan0
         network = {
           interface = "wlan0";
-          "format-wifi" = "{essid} ({signalStrength}%)";
-        };
-        # CPU load
-        cpu = {
-          format = "CPU {usage}%";
-          interval = 10;
+          format-wifi = "{essid}";
+          format-disconnected = "offline";
+          tooltip-format-wifi = "{essid} ({signalStrength}%)\n{ipaddr}";
         };
 
-        # Memory usage: {used} is already in GiB
-        memory = {
-          format = "MEM {used:0.1f}G";
+        pulseaudio = {
+          format = "VOL {volume}%";
+          format-muted = "VOL muted";
+        };
+
+        battery = {
+          format = "BAT {capacity}%";
+          format-charging = "CHG {capacity}%";
+          states = {
+            warning = 30;
+            critical = 15;
+          };
           interval = 30;
         };
 
-        # Free space on the root filesystem
-        disk = {
-          path = "/";
-          format = "DSK {percentage_free}%";
+        tray = {
+          icon-size = 16;
+          spacing = 8;
+        };
+
+        clock = {
+          format = "{:%a %d %b  %H:%M}";
+          tooltip-format = "<tt>{calendar}</tt>";
           interval = 60;
         };
       };
 
-      # Inject minimal custom CSS; other styles use Waybar defaults
       style = ''
         * {
           border: none;
-          border-radius: 4px;
-          /* `ttf-font-awesome` is required to be installed for icons */
-          font-family: "monospace", JetBrains Mono;
-
-          /* adjust font-size value to your liking: */
+          border-radius: 0;
+          font-family: "JetBrains Mono", monospace;
           font-size: 12px;
-
           min-height: 0;
         }
+
         window#waybar {
-          background: rgba(30, 30, 30, 1.0);
+          background: #000000;
           color: #ffffff;
+        }
+
+        tooltip {
+          background: #000000;
+          border: 2px solid #505050;
         }
 
         #workspaces button {
           color: #ffffff;
-          box-shadow: inset 0 -3px transparent;
+          padding: 0 7px;
           min-width: 0;
         }
 
         #workspaces button:hover {
-          background: rgba(0, 0, 0, 0.9);
-          box-shadow: inset 0 -3px #ffffff;
+          background: #1a1a1a;
         }
 
         #workspaces button.focused {
-          background-color: #64727d;
+          background: #505050;
         }
 
         #workspaces button.urgent {
-          background-color: #eb4d4b;
+          background: #e06c75;
         }
 
-        #workspaces {
-          margin-left: 0;
-          min-width: 0;
+        #window {
+          color: #8a8a8a;
+          padding: 0 12px;
         }
 
-        /* Being throttled is easy to forget about; make it visible. */
+        #cpu,
+        #memory,
+        #disk,
+        #tray,
+        #clock {
+          padding: 0 9px;
+        }
+
+        #custom-tlp,
+        #custom-claudebar,
+        #network,
+        #pulseaudio,
+        #battery {
+          background: #161616;
+          border-radius: 3px;
+          padding: 0 8px;
+          margin: 4px 3px;
+        }
+
+        #custom-claudebar {
+          color: #d97757;
+        }
+
+        #clock {
+          font-weight: bold;
+        }
+
+        #cpu.warning,
+        #memory.warning,
+        #disk.warning,
+        #battery.warning:not(.charging),
+        #network.disconnected,
+        #pulseaudio.muted,
         #custom-tlp.sav {
-          color: #f0c674;
+          color: #e5c07b;
+        }
+
+        #cpu.critical,
+        #memory.critical,
+        #disk.critical,
+        #battery.critical:not(.charging) {
+          color: #e06c75;
         }
       '';
     };
