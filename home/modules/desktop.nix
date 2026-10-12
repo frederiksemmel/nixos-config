@@ -7,6 +7,32 @@
 }:
 let
   cfg = config.profiles.desktop;
+  wallpapers = pkgs.linkFarm "surf-wallpapers" (
+    map (w: {
+      name = "${w.id}.jpg";
+      path = pkgs.fetchurl {
+        inherit (w) url hash;
+        name = "surf-${w.id}.jpg";
+      };
+    }) (import ../wallpapers.nix)
+  );
+  wallpaperLink = "${config.xdg.stateHome}/wallpaper";
+  # Shows a random wallpaper other than the current one and points
+  # wallpaperLink at it, so the lock screen follows.
+  wallpaperNext = pkgs.writeShellApplication {
+    name = "wallpaper-next";
+    runtimeInputs = [
+      config.services.awww.package
+      pkgs.coreutils
+    ];
+    text = ''
+      current=$(readlink ${wallpaperLink} || true)
+      mapfile -t candidates < <(printf '%s\n' ${wallpapers}/*.jpg | grep -vxF -- "$current" || true)
+      next=$(printf '%s\n' "''${candidates[@]}" | shuf -n 1)
+      awww img --transition-type fade --transition-duration 2 "$next"
+      ln -sfn "$next" ${wallpaperLink}
+    '';
+  };
   handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
     ${lib.getExe pkgs.handlr-regex} open "$@"
   '';
@@ -218,7 +244,7 @@ in
     enable = lib.mkEnableOption "graphical desktop (niri, waybar, GUI apps)";
     wallpaper = lib.mkOption {
       type = lib.types.str;
-      default = "${config.home.homeDirectory}/wallpapers/longboard.jpg";
+      default = wallpaperLink;
       description = "Wallpaper image used by the lock screen and other desktop services.";
     };
     hdmiAudio = {
@@ -239,6 +265,7 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = with pkgs; [
       (lib.hiPrio handlr-xdg-open)
+      wallpaperNext
 
       # Networking & Communication
       transmission_4-gtk
@@ -571,6 +598,36 @@ in
       '';
     };
     services.awww.enable = true;
+
+    # Repoints the link when it is missing or targets a wallpaper set from an
+    # older generation.
+    home.activation.wallpaperLink = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      case "$(readlink ${wallpaperLink} || true)" in
+        ${wallpapers}/*) ;;
+        *) run mkdir -p ${config.xdg.stateHome} && run ln -sfn ${wallpapers}/${(builtins.head (import ../wallpapers.nix)).id}.jpg ${wallpaperLink} ;;
+      esac
+    '';
+
+    systemd.user.services.wallpaper-next = {
+      Unit = {
+        Description = "Switch to the next surf wallpaper";
+        After = [ "awww.service" ];
+        Requires = [ "awww.service" ];
+        ConditionEnvironment = "WAYLAND_DISPLAY";
+      };
+      Service = {
+        Type = "oneshot";
+        ExecStart = lib.getExe wallpaperNext;
+      };
+    };
+    systemd.user.timers.wallpaper-next = {
+      Unit = {
+        Description = "Rotate the surf wallpaper every 30 minutes";
+        PartOf = [ "graphical-session.target" ];
+      };
+      Timer.OnCalendar = "*:0/30";
+      Install.WantedBy = [ "graphical-session.target" ];
+    };
     services.wlsunset = {
       enable = true;
       sunrise = "07:00";
