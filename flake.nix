@@ -86,6 +86,14 @@
             rerun = prev.rerun.overrideAttrs (old: {
               patches = (old.patches or [ ]) ++ [ ./packages/rerun-streamed-recordings-setting.patch ];
             });
+            # Determinate Nix emits activity type 10113, which nom 2.2.0 rejects with a
+            # ParseNixJSONMessageError per message. Drop once nixpkgs ships a nom release
+            # with maralorn/nix-output-monitor#321.
+            nix-output-monitor = prev.nix-output-monitor.overrideAttrs (old: {
+              patches = (old.patches or [ ]) ++ [
+                ./packages/nix-output-monitor-unknown-activity-types.patch
+              ];
+            });
           };
 
           homeConfigurations =
