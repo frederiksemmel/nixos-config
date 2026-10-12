@@ -349,7 +349,7 @@ in
             close = "${lib.getExe pkgs.fyi} --close \${id}";
           };
           colors-dark = {
-            background = "000000";
+            background = "161616";
             regular2 = "50a14f"; # green: a more "greener" but muted tone
             bright2 = "98c379"; # bright green: complements the normal green with a softer, bright appearance
           };
