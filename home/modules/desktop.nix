@@ -174,14 +174,13 @@ let
       fi
     '';
   };
-  # Bar cells for the machine: CPU, memory, disk and the TLP profile, each only
-  # once it needs attention. Prints nothing and exits 1 when none does, which
-  # hides the cell. `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr,
+  # Bar cell for the machine: CPU, memory and disk, coloured once they cross a
+  # threshold, plus the TLP profile when it is not the default. `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr,
   # which tlp leaves world-readable, and prints "<profile>/<CODE>"; the profile
   # shows only when it differs from the power source's own (AC on mains, BAT
   # on battery).
-  barAlerts = pkgs.writeShellApplication {
-    name = "bar-alerts";
+  barSystem = pkgs.writeShellApplication {
+    name = "bar-system";
     runtimeInputs = with pkgs; [
       coreutils
       gawk
@@ -204,15 +203,15 @@ let
       t2=$((a + b + c + i2))
       cpu=$((100 * ((t2 - t1) - (i2 - i1)) / (t2 - t1 > 0 ? t2 - t1 : 1)))
       l=$(level "$cpu" 70 90)
-      ((l)) && cell CPU "$(printf '%3d%%' "$cpu")" "$l"
+      cell CPU "$(printf '%3d%%' "$cpu")" "$l"
 
       read -r total avail < <(awk '/^MemTotal/ { t = $2 } /^MemAvailable/ { a = $2 } END { print t, a }' /proc/meminfo)
       l=$(level $((100 * (total - avail) / total)) 75 90)
-      ((l)) && cell MEM "$(awk -v k=$((total - avail)) 'BEGIN { printf "%4.1fG", k / 1048576 }')" "$l"
+      cell MEM "$(awk -v k=$((total - avail)) 'BEGIN { printf "%4.1fG", k / 1048576 }')" "$l"
 
       dsk=$(df --output=pcent / | tail -1 | tr -dc 0-9)
       l=$(level "$dsk" 85 95)
-      ((l)) && cell DSK "$(printf '%3d%%' "$dsk")" "$l"
+      cell DSK "$(printf '%3d%%' "$dsk")" "$l"
 
       mode=$(/run/current-system/sw/bin/tlp-stat -m) || mode="unknown/???"
       code=''${mode#*/}
@@ -225,9 +224,8 @@ let
         cell PWR "$code" "$l"
       fi
 
-      ((''${#cells[@]})) || exit 1
       printf '%s' "''${cells[0]}"
-      printf '   %s' "''${cells[@]:1}"
+      printf '    %s' "''${cells[@]:1}"
       echo
     '';
   };
@@ -1269,13 +1267,12 @@ in
     xdg.configFile."ironbar/config.json".text =
       let
         label = text: "<span color='#8a8a8a'>${text}</span>";
-        alerts = lib.getExe barAlerts;
       in
       builtins.toJSON {
         name = "main";
         position = "bottom";
         layer = "overlay";
-        height = 26;
+        height = 30;
         anchor_to_edges = true;
 
         # The machine on the left, ahead of the window title so it never
@@ -1289,9 +1286,7 @@ in
           {
             type = "label";
             class = "cell";
-            label = "{{5000:${alerts}}}";
-            show_if = "${alerts} > /dev/null";
-            transition_type = "none";
+            label = "{{5000:${lib.getExe barSystem}}}";
           }
           {
             type = "focused";
@@ -1381,7 +1376,7 @@ in
       }
 
       .widget {
-        padding: 0 9px;
+        padding: 0 14px;
       }
 
       .cell {
@@ -1393,7 +1388,7 @@ in
       }
 
       .workspaces .item {
-        padding: 0 7px;
+        padding: 0 11px;
       }
 
       .workspaces .item:hover {
