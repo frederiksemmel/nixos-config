@@ -1435,6 +1435,7 @@ in
     programs.vicinae = {
       enable = true;
       systemd.enable = true;
+      settings.tray.enabled = false;
     };
     # Quiet the file indexer. Release builds still `add_compile_definitions(DEBUG=0)`,
     # but the server gates on `#if defined(DEBUG)` — true either way — so it forces
