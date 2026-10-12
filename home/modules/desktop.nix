@@ -419,6 +419,20 @@ in
           "Utility"
         ];
       };
+      linear = {
+        name = "Linear";
+        genericName = "Issue Tracker";
+        exec = "chromium --app=https://linear.app";
+        terminal = false;
+        icon = pkgs.fetchurl {
+          url = "https://linear.app/static/apple-touch-icon.png";
+          hash = "sha256-PSLVOQeCAkXsFySklU0+GAtw8hslUml5hrPxQaZzDvc=";
+        };
+        categories = [
+          "Development"
+          "Office"
+        ];
+      };
     };
 
     # NOTE this was an attempt to make ly work. But somehow graphical-session.target starts way to early
