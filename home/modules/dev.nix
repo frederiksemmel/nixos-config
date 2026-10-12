@@ -185,6 +185,8 @@ in
     };
     # Figma's hosted MCP; run `/mcp` once per machine to do the OAuth dance.
     mcp-servers.settings.servers.figma.url = "https://mcp.figma.com/mcp";
+    # Linear's hosted MCP; same `/mcp` OAuth dance as Figma.
+    mcp-servers.settings.servers.linear.url = "https://mcp.linear.app/mcp";
     # Google Docs/Sheets/Slides editing. The secret is the Desktop-app OAuth
     # client JSON from Google Cloud; the first tool call opens the consent page.
     age.secrets.workspace_mcp_client_secret = {
