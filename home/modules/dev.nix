@@ -165,6 +165,7 @@ in
       EDITOR = "hx";
       TERM = "foot";
       NIXOS_OZONE_WL = "1";
+      GLAMOUR_STYLE = "dark";
     };
     systemd.user.sessionVariables = {
       EDITOR = "hx";
@@ -264,6 +265,8 @@ in
           mkdir ~/.cache/devenv | ignore
           devenv hook nu -- --no-tui | save --force ~/.cache/devenv/hook.nu
           source ~/.cache/devenv/hook.nu
+
+          $env.GPG_TTY = (tty)
 
           # Same completer as carapace's nushell integration, but returning null
           # instead of an empty list so nushell falls back to file completion for
