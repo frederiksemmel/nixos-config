@@ -39,6 +39,7 @@ in
   home-manager.users.frederik = {
     imports = [ flake.self.homeModules.frederik ];
     home.stateVersion = "25.05";
+    profiles.bitwarden.sshAgent.enable = true;
   };
   home-manager.backupFileExtension = "backup";
   home-manager.useGlobalPkgs = true;
@@ -86,6 +87,7 @@ in
   # Veila's battery widget reads the UPower display device over D-Bus; it has no
   # sysfs fallback, so without this it just logs "name is not activatable".
   services.upower.enable = lib.mkIf (hm.programs.veila.settings.battery.enabled or false) true;
+  services.gnome.gcr-ssh-agent.enable = lib.mkIf hm.profiles.bitwarden.sshAgent.enable false;
 
   programs.ssh.extraConfig = ''
     Host eu.nixbuild.net
@@ -502,14 +504,17 @@ in
     startLimitBurst = 5;
   };
 
-  environment.systemPackages = with pkgs; [
-    libimobiledevice
-    ifuse # optional, to mount using 'ifuse'
-    fuse3 # for pcloud
+  environment.systemPackages =
+    with pkgs;
+    [
+      libimobiledevice
+      ifuse # optional, to mount using 'ifuse'
+      fuse3 # for pcloud
 
-    nautilus
-    zenity
-  ];
+      nautilus
+      zenity
+    ]
+    ++ lib.optional hm.profiles.bitwarden.enable bitwarden-desktop;
 
   # In /etc/nixos/configuration.nix
   virtualisation.docker = {

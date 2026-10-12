@@ -9,6 +9,7 @@
     ../modules/dev.nix
     ../modules/desktop.nix
     ../modules/ssh.nix
+    ../modules/bitwarden.nix
   ];
 
   # Building the option docs leaks nixpkgs' store path into options.json without
@@ -19,6 +20,7 @@
   profiles.dev.enable = true;
   profiles.desktop.enable = true;
   profiles.ssh.enable = true;
+  profiles.bitwarden.enable = true;
 
   home.username = "frederik";
   home.homeDirectory = "/home/${config.home.username}";
