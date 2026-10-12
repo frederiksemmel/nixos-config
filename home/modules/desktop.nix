@@ -70,10 +70,10 @@ let
     text = ''
       if systemctl --user is-active --quiet wlsunset; then
         systemctl --user stop wlsunset
-        notify-send -a wlsunset "Night light off"
+        notify-send -a wlsunset -i weather-clear "Night light off"
       else
         systemctl --user start wlsunset
-        notify-send -a wlsunset "Night light on"
+        notify-send -a wlsunset -i weather-clear-night "Night light on"
       fi
     '';
   };
@@ -91,12 +91,12 @@ let
       fi
       if out=$(/run/wrappers/bin/sudo -n /run/current-system/sw/bin/systemctl "$verb" usbc-share.service 2>&1); then
         if [ "$verb" = start ]; then
-          notify-send -a usbc-share "USB-C sharing on"
+          notify-send -a usbc-share -i video-display "USB-C sharing on"
         else
-          notify-send -a usbc-share "USB-C sharing off"
+          notify-send -a usbc-share -i video-display "USB-C sharing off"
         fi
       else
-        notify-send -a usbc-share -u critical "USB-C sharing" "$verb failed: $out"
+        notify-send -a usbc-share -i video-display -u critical "USB-C sharing" "$verb failed: $out"
       fi
     '';
   };
@@ -125,16 +125,16 @@ let
 
       mapfile -t disks < <(lsblk -dnbpo NAME,TRAN,SIZE | awk '$2 == "usb" && $3 > 0 { print $1 }')
       if [ ''${#disks[@]} -eq 0 ]; then
-        notify-send -a usb-eject "No USB drives"
+        notify-send -a usb-eject -i drive-removable-media "No USB drives"
         exit 0
       fi
       for disk in "''${disks[@]}"; do
         label=$(lsblk -dno MODEL "$disk" | xargs)
         label="''${label:-$disk}"
         if out=$(eject "$disk" 2>&1); then
-          notify-send -a usb-eject "Ejected $label"
+          notify-send -a usb-eject -i drive-removable-media "Ejected $label"
         else
-          notify-send -a usb-eject -u critical "Eject $label failed" "$out"
+          notify-send -a usb-eject -i drive-removable-media -u critical "Eject $label failed" "$out"
         fi
       done
     '';
@@ -157,13 +157,13 @@ let
       profile="$1"
       if out=$(/run/wrappers/bin/sudo -n /run/current-system/sw/bin/tlp "$profile" 2>&1); then
         if [ "$profile" = start ]; then
-          notify-send -a tlp "Power profile" "automatic"
+          notify-send -a tlp -i preferences-system-power "Power profile" "automatic"
         else
-          notify-send -a tlp "Power profile" "$profile"
+          notify-send -a tlp -i preferences-system-power "Power profile" "$profile"
         fi
         pkill -RTMIN+14 waybar || true
       else
-        notify-send -a tlp -u critical "Power profile" "tlp $profile failed: $out"
+        notify-send -a tlp -i preferences-system-power -u critical "Power profile" "tlp $profile failed: $out"
       fi
     '';
   };
@@ -584,15 +584,45 @@ in
     };
     services.mako = {
       enable = true;
+      # Terminal look: monospace, black, square, and the grey of niri's focus
+      # ring; stacked top-right. Papirus only supplies
+      # notification icons (it has light variants for dark backgrounds); GTK
+      # keeps Adwaita. hicolor comes last so apps' own icons still resolve.
       extraConfig = ''
+        font=JetBrains Mono 9
+        anchor=top-right
+        background-color=#000000
+        text-color=#ffffff
+        border-size=2
+        border-color=#505050
+        border-radius=0
+        padding=10,12
+        margin=6
+        width=380
+        icon-path=${pkgs.papirus-icon-theme}/share/icons/Papirus-Dark:${pkgs.papirus-icon-theme}/share/icons/Papirus:${config.home.profileDirectory}/share/icons/hicolor:/run/current-system/sw/share/icons/hicolor
+        max-icon-size=32
+        format=<span foreground="#888888">%a</span>\n<b>%s</b>\n%b
         default-timeout=10000
+
+        [urgency=low]
+        text-color=#9a9a9a
+
+        [urgency=critical]
+        border-color=#e06c75
+        default-timeout=0
 
         [app-name=Spotify]
         default-timeout=3000
 
-        [app-name=claude-code]
+        [app-name=Claudio]
+        border-color=#98c379
+        format=<b>%s</b>\n%b
+
+        [app-name=Claudio urgency=normal]
+        border-color=#e5c07b
+
+        [app-name=Claudio urgency=critical]
         border-color=#d97757
-        border-size=2
       '';
     };
     services.awww.enable = true;
