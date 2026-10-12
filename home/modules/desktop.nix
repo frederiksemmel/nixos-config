@@ -302,8 +302,6 @@ in
       overskride
       rerun
       pass-wayland
-      bitwarden-desktop
-      bitwarden-cli
       wl-clipboard
       xdg-utils
       xwayland-satellite

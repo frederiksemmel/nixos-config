@@ -6,6 +6,8 @@
 }:
 let
   cfg = config.profiles.ssh;
+  bitwardenAgent = config.profiles.bitwarden.sshAgent.enable;
+  identity = path: if bitwardenAgent then "${path}.pub" else path;
   # host pattern -> directory under ~/.ssh/spadesvision holding its key pair
   identityDirs = {
     "*bern*" = "spadesvision";
@@ -22,7 +24,7 @@ let
   };
 
   identityBlocks = lib.mapAttrs (_pattern: dir: {
-    IdentityFile = [
+    IdentityFile = map identity [
       "~/.ssh/spadesvision/${dir}/id_${dir}_spadesvision"
       "~/.ssh/spadesvision/${dir}/id_${dir}_root"
     ];
@@ -37,18 +39,18 @@ in
       enable = true;
       enableDefaultConfig = false;
       settings = {
-        "*".AddKeysToAgent = "yes";
+        "*".AddKeysToAgent = if bitwardenAgent then "no" else "yes";
         "github.com" = {
           User = "git";
-          IdentityFile = "~/.ssh/id_github";
+          IdentityFile = identity "~/.ssh/id_github";
         };
         "git.sr.ht" = {
           User = "git";
-          IdentityFile = "~/.ssh/id_sourcehut";
+          IdentityFile = identity "~/.ssh/id_sourcehut";
         };
         "beast" = {
           User = "frederik";
-          IdentityFile = "~/.ssh/beast_login";
+          IdentityFile = identity "~/.ssh/beast_login";
         };
         "tcs-local".HostName = "169.254.1.123";
       }
