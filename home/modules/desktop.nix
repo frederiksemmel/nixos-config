@@ -23,7 +23,8 @@ let
       ''
         mkdir $out
         for f in ${wallpapers}/*.jpg; do
-          magick "$f" -resize 960x -blur 0x16 -modulate 70 -quality 85 "$out/$(basename "$f")"
+          magick "$f" -resize 720x -blur 0x12 -filter Lanczos -resize 2880x -modulate 70 \
+            -attenuate 0.06 +noise Gaussian -quality 90 "$out/$(basename "$f")"
         done
       '';
   wallpaperLink = "${config.xdg.stateHome}/wallpaper";
@@ -1272,7 +1273,7 @@ in
         name = "main";
         position = "bottom";
         layer = "overlay";
-        height = 30;
+        height = 26;
         anchor_to_edges = true;
 
         # The machine on the left, ahead of the window title so it never
