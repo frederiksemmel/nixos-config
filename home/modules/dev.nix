@@ -813,6 +813,7 @@ in
               "Bash(cargo fmt:*)"
               "Bash(npm run:*)"
               "Bash(nix eval:*)"
+              "Bash(nh os build:*)"
               # Reading GitHub, including whatever gh grew no subcommand for.
               "Bash(gh pr view:*)"
               "Bash(gh pr list:*)"
