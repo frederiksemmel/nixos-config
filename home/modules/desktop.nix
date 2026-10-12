@@ -149,10 +149,7 @@ let
   # passwordless sudo for exactly these four invocations.
   tlpProfile = pkgs.writeShellApplication {
     name = "tlp-profile";
-    runtimeInputs = with pkgs; [
-      libnotify
-      procps
-    ];
+    runtimeInputs = [ pkgs.libnotify ];
     text = ''
       profile="$1"
       if out=$(/run/wrappers/bin/sudo -n /run/current-system/sw/bin/tlp "$profile" 2>&1); then
@@ -161,44 +158,94 @@ let
         else
           notify-send -a tlp -i preferences-system-power "Power profile" "$profile"
         fi
-        pkill -RTMIN+14 waybar || true
       else
         notify-send -a tlp -i preferences-system-power -u critical "Power profile" "tlp $profile failed: $out"
       fi
     '';
   };
-  # `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr, which tlp leaves
-  # world-readable. It prints "<profile>/<CODE>", optionally followed by
-  # " (manual)" or " (default)"; the bar shows the short code, and only when
-  # it differs from the power source's own profile (AC on mains, BAT on
-  # battery). An empty text hides the module.
-  tlpStatus = pkgs.writeShellApplication {
-    name = "tlp-status";
+  # Bar cells for the machine: CPU, memory, disk and the TLP profile, each only
+  # once it needs attention. Prints nothing and exits 1 when none does, which
+  # hides the cell. `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr,
+  # which tlp leaves world-readable, and prints "<profile>/<CODE>"; the profile
+  # shows only when it differs from the power source's own (AC on mains, BAT
+  # on battery).
+  barAlerts = pkgs.writeShellApplication {
+    name = "bar-alerts";
+    runtimeInputs = with pkgs; [
+      coreutils
+      gawk
+    ];
     text = ''
+      dim='#8a8a8a'
+      colors=('#ffffff' '#e5c07b' '#e06c75')
+      cells=()
+      cell() {
+        cells+=("<span color=\"$dim\">$1</span> <span color=\"''${colors[$3]}\">$2</span>")
+      }
+      level() {
+        if (($1 >= $3)); then echo 2; elif (($1 >= $2)); then echo 1; else echo 0; fi
+      }
+
+      read -r _ a b c i1 _ < /proc/stat
+      t1=$((a + b + c + i1))
+      sleep 0.5
+      read -r _ a b c i2 _ < /proc/stat
+      t2=$((a + b + c + i2))
+      cpu=$((100 * ((t2 - t1) - (i2 - i1)) / (t2 - t1 > 0 ? t2 - t1 : 1)))
+      l=$(level "$cpu" 70 90)
+      ((l)) && cell CPU "$(printf '%3d%%' "$cpu")" "$l"
+
+      read -r total avail < <(awk '/^MemTotal/ { t = $2 } /^MemAvailable/ { a = $2 } END { print t, a }' /proc/meminfo)
+      l=$(level $((100 * (total - avail) / total)) 75 90)
+      ((l)) && cell MEM "$(awk -v k=$((total - avail)) 'BEGIN { printf "%4.1fG", k / 1048576 }')" "$l"
+
+      dsk=$(df --output=pcent / | tail -1 | tr -dc 0-9)
+      l=$(level "$dsk" 85 95)
+      ((l)) && cell DSK "$(printf '%3d%%' "$dsk")" "$l"
+
       mode=$(/run/current-system/sw/bin/tlp-stat -m) || mode="unknown/???"
       code=''${mode#*/}
       code=''${code%% *}
-      if [ "$(cat /sys/class/power_supply/AC0/online)" = 1 ]; then
-        source_code=AC
-      else
-        source_code=BAT
+      source_code=BAT
+      [ "$(cat /sys/class/power_supply/AC0/online)" = 1 ] && source_code=AC
+      if [ "$code" != "$source_code" ]; then
+        l=0
+        [ "$code" = SAV ] && l=1
+        cell PWR "$code" "$l"
       fi
-      if [ "$(cat /sys/devices/system/cpu/intel_pstate/no_turbo)" = 1 ]; then
-        turbo=off
-      else
-        turbo=on
-      fi
-      maxpct=$(cat /sys/devices/system/cpu/intel_pstate/max_perf_pct)
-      text="PWR $code"
-      [ "$code" = "$source_code" ] && text=""
-      printf '{"text":"%s","tooltip":"%s\\nturbo %s, max %s%%","class":"%s"}\n' \
-        "$text" "$mode" "$turbo" "$maxpct" "''${code,,}"
+
+      ((''${#cells[@]})) || exit 1
+      printf '%s' "''${cells[0]}"
+      printf '   %s' "''${cells[@]:1}"
+      echo
+    '';
+  };
+  barNet = pkgs.writeShellApplication {
+    name = "bar-net";
+    runtimeInputs = with pkgs; [
+      gawk
+      gnused
+      iwd
+    ];
+    text = ''
+      ssid=$(iwctl station wlan0 show 2>/dev/null \
+        | sed 's/\x1b\[[0-9;]*m//g' \
+        | awk '/Connected network/ { $1 = $2 = ""; sub(/^ +/, ""); sub(/ +$/, ""); print }')
+      echo "<span color='#8a8a8a'>NET</span> ''${ssid:-offline}"
+    '';
+  };
+  # claudebar speaks waybar's JSON; its text already carries pango colours.
+  barClaude = pkgs.writeShellApplication {
+    name = "bar-claude";
+    runtimeInputs = [
+      pkgs.claudebar
+      pkgs.jq
+    ];
+    text = ''
+      claudebar --format 'Claudio {session_pct}% · {session_reset}' | jq -r .text
     '';
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
-  toggleWaybar = pkgs.writeShellScriptBin "toggle-waybar" ''
-    ${lib.getExe pkgs.killall} -SIGUSR1 -r waybar
-  '';
   # Route audio over HDMI when the tv kanshi profile is applied. The card's
   # analog profile has a higher priority than the HDMI one, so wireplumber
   # never picks HDMI on its own.
@@ -241,7 +288,7 @@ in
   ];
 
   options.profiles.desktop = {
-    enable = lib.mkEnableOption "graphical desktop (niri, waybar, GUI apps)";
+    enable = lib.mkEnableOption "graphical desktop (niri, ironbar, GUI apps)";
     wallpaper = lib.mkOption {
       type = lib.types.str;
       default = wallpaperLink;
@@ -266,6 +313,7 @@ in
     home.packages = with pkgs; [
       (lib.hiPrio handlr-xdg-open)
       wallpaperNext
+      ironbar
 
       # Networking & Communication
       transmission_4-gtk
@@ -1105,7 +1153,7 @@ in
           "${mod}+Shift+F".action = fullscreen-window;
           "${mod}+Ctrl+F".action = expand-column-to-available-width;
           "${mod}+C".action = center-column;
-          "${mod}+B".action = spawn (lib.getExe toggleWaybar);
+          "${mod}+B".action = spawn "ironbar" "bar" "main" "toggle-visible";
 
           # Adjust dimensions
           "${mod}+Minus".action = set-column-width "-10%";
@@ -1166,244 +1214,187 @@ in
       ];
     };
 
-    # Enable Waybar service
-    programs.waybar = {
-      enable = true;
-      systemd.enable = true;
-      package = pkgs.waybar;
-
-      settings.mainBar =
-        let
-          label = text: "<span color='#8a8a8a'>${text}</span>";
-        in
-        {
-          position = "bottom";
-          layer = "overlay";
-          height = 26;
-          spacing = 0;
-
-          # The machine on the left, ahead of the window title so it never shifts;
-          # everything you act on on the right.
-          modules-left = [
-            "niri/workspaces"
-            "cpu"
-            "memory"
-            "disk"
-            "custom/tlp"
-            "niri/window"
-          ];
-          modules-right = [
-            "custom/claudebar"
-            "group/connectivity"
-            "tray"
-            "clock"
-          ];
-
-          "niri/window" = {
-            format = "{title}";
-            max-length = 80;
-            separate-outputs = true;
-          };
-
-          "group/connectivity" = {
-            orientation = "horizontal";
-            modules = [
-              "network"
-              "pulseaudio"
-              "battery"
-            ];
-          };
-
-          # CPU, memory and disk have an empty normal format, which hides them
-          # until they cross a threshold.
-          cpu = {
-            format = "";
-            format-warning = "${label "CPU"} {usage:3}%";
-            format-critical = "${label "CPU"} {usage:3}%";
-            states = {
-              warning = 70;
-              critical = 90;
-            };
-            interval = 10;
-          };
-
-          memory = {
-            format = "";
-            format-warning = "${label "MEM"} {used:4.1f}G";
-            format-critical = "${label "MEM"} {used:4.1f}G";
-            states = {
-              warning = 75;
-              critical = 90;
-            };
-            interval = 30;
-          };
-
-          disk = {
-            path = "/";
-            format = "";
-            format-warning = "${label "DSK"} {percentage_used:3}%";
-            format-critical = "${label "DSK"} {percentage_used:3}%";
-            states = {
-              warning = 85;
-              critical = 95;
-            };
-            interval = 60;
-          };
-
-          # Active TLP profile, shown only when it is not the power source's own.
-          # Nothing polls for it, so the interval is only a backstop against a
-          # change made outside the power menu; tlp-profile signals the bar directly.
-          "custom/tlp" = {
-            exec = lib.getExe tlpStatus;
-            "return-type" = "json";
-            interval = 60;
-            signal = 14;
-            tooltip = true;
-            "on-click" =
-              "wlr-which-key --initial-keys c ${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
-          };
-
-          # Claudio plan usage: session % and time until the 5h window resets.
-          # The usage endpoint is rate limited, so 300s is the lowest sane interval;
-          # `pkill -RTMIN+13 waybar` forces a refresh.
-          "custom/claudebar" = {
-            exec = "${lib.getExe pkgs.claudebar} --format 'Claudio {session_pct}% · {session_reset}'";
-            "return-type" = "json";
-            interval = 300;
-            signal = 13;
-            tooltip = true;
-            "on-click" = "xdg-open https://claude.ai/settings/usage";
-          };
-
-          network = {
-            interface = "wlan0";
-            format-wifi = "${label "NET"} {essid}";
-            format-disconnected = "${label "NET"} offline";
-            tooltip-format-wifi = "{essid} ({signalStrength}%)\n{ipaddr}";
-          };
-
-          pulseaudio = {
-            format = "${label "VOL"} {volume}%";
-            format-muted = "${label "VOL"} muted";
-          };
-
-          battery = {
-            format = "${label "BAT"} {capacity}%";
-            format-charging = "${label "CHG"} {capacity}%";
-            states = {
-              warning = 30;
-              critical = 15;
-            };
-            interval = 30;
-          };
-
-          tray = {
-            icon-size = 16;
-            spacing = 8;
-          };
-
-          clock = {
-            format = "{:%a %d %b  %H:%M}";
-            tooltip-format = "<tt>{calendar}</tt>";
-            interval = 60;
-          };
-        };
-
-      style = ''
-        * {
-          border: none;
-          border-radius: 0;
-          font-family: "JetBrains Mono", monospace;
-          font-size: 12px;
-          min-height: 0;
-        }
-
-        window#waybar {
-          background: #000000;
-          color: #ffffff;
-        }
-
-        tooltip {
-          background: #000000;
-          border: 2px solid #505050;
-        }
-
-        #workspaces button {
-          color: #ffffff;
-          padding: 0 7px;
-          min-width: 0;
-        }
-
-        #workspaces button:hover {
-          background: #1a1a1a;
-        }
-
-        #workspaces button.focused {
-          background: #505050;
-        }
-
-        #workspaces button.urgent {
-          background: #e06c75;
-        }
-
-        #cpu,
-        #memory,
-        #disk,
-        #custom-tlp,
-        #custom-claudebar,
-        #network,
-        #pulseaudio,
-        #battery,
-        #tray,
-        #clock {
-          padding: 0 9px;
-        }
-
-        /* Each cell on the left, and each group on the right, opens with a
-           divider. Hidden system cells take theirs with them. */
-        #cpu,
-        #memory,
-        #disk,
-        #custom-tlp,
-        #custom-claudebar,
-        #connectivity,
-        #tray,
-        #clock {
-          border-left: 1px solid #2e2e2e;
-        }
-
-        #custom-claudebar {
-          color: #d97757;
-        }
-
-        #clock {
-          font-weight: bold;
-        }
-
-        #window {
-          color: #8a8a8a;
-          padding: 0 12px;
-          border-left: 1px solid #2e2e2e;
-        }
-
-        #cpu.warning,
-        #memory.warning,
-        #disk.warning,
-        #battery.warning:not(.charging),
-        #network.disconnected,
-        #pulseaudio.muted,
-        #custom-tlp.sav {
-          color: #e5c07b;
-        }
-
-        #cpu.critical,
-        #memory.critical,
-        #disk.critical,
-        #battery.critical:not(.charging) {
-          color: #e06c75;
-        }
-      '';
+    # Ironbar rather than waybar: it is GTK4, which draws at the 1.75 output
+    # scale directly, where GTK3 draws at 2 and niri downscales it soft.
+    systemd.user.services.ironbar = {
+      Unit = {
+        Description = "Ironbar";
+        PartOf = [ "graphical-session.target" ];
+        After = [ "graphical-session.target" ];
+        X-Restart-Triggers = [ config.xdg.configFile."ironbar/config.json".source ];
+      };
+      Service = {
+        ExecStart = lib.getExe pkgs.ironbar;
+        Restart = "on-failure";
+      };
+      Install.WantedBy = [ "graphical-session.target" ];
     };
+
+    xdg.configFile."ironbar/config.json".text =
+      let
+        label = text: "<span color='#8a8a8a'>${text}</span>";
+        alerts = lib.getExe barAlerts;
+      in
+      builtins.toJSON {
+        name = "main";
+        position = "bottom";
+        layer = "overlay";
+        height = 26;
+        anchor_to_edges = true;
+
+        # The machine on the left, ahead of the window title so it never
+        # shifts; everything you act on on the right. A `cell` opens with a
+        # divider.
+        start = [
+          {
+            type = "workspaces";
+            sort = "index";
+          }
+          {
+            type = "label";
+            class = "cell";
+            label = "{{5000:${alerts}}}";
+            show_if = "${alerts} > /dev/null";
+            transition_type = "none";
+          }
+          {
+            type = "focused";
+            class = "cell";
+            show_icon = false;
+            truncate = {
+              mode = "end";
+              max_length = 80;
+            };
+          }
+        ];
+        end = [
+          # Claudio plan usage. The usage endpoint is rate limited, so five
+          # minutes is the lowest sane interval.
+          {
+            type = "script";
+            class = "cell";
+            cmd = lib.getExe barClaude;
+            interval = 300000;
+            on_click_left = "xdg-open https://claude.ai/settings/usage";
+          }
+          {
+            type = "script";
+            class = "cell";
+            cmd = lib.getExe barNet;
+            interval = 10000;
+            on_click_left = "iwmenu -l fuzzel";
+          }
+          {
+            type = "volume";
+            format = "${label "VOL"} {percentage}%";
+            mute_format = "${label "VOL"} muted";
+            show_sources = false;
+          }
+          {
+            type = "battery";
+            format = "${label "BAT"} {percentage}%";
+            show_icon = false;
+            use_default_profiles = false;
+            profiles = {
+              warning.when = {
+                percent = 30;
+                charging = false;
+              };
+              critical.when = {
+                percent = 15;
+                charging = false;
+              };
+            };
+          }
+          {
+            type = "tray";
+            class = "cell";
+            icon_size = 16;
+          }
+          {
+            type = "clock";
+            class = "cell";
+            format = "%a %d %b  %H:%M";
+            format_popup = "%A %d %B %Y";
+          }
+        ];
+      };
+
+    xdg.configFile."ironbar/style.css".text = ''
+      * {
+        font-family: "JetBrains Mono", monospace;
+        font-size: 12px;
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
+        text-shadow: none;
+        min-height: 0;
+      }
+
+      .background,
+      #bar {
+        background: #000000;
+        color: #ffffff;
+      }
+
+      button {
+        background: none;
+        color: #ffffff;
+        padding: 0;
+        margin: 0;
+      }
+
+      .widget {
+        padding: 0 9px;
+      }
+
+      .cell {
+        border-left: 1px solid #2e2e2e;
+      }
+
+      .workspaces {
+        padding: 0;
+      }
+
+      .workspaces .item {
+        padding: 0 7px;
+      }
+
+      .workspaces .item:hover {
+        background: #1a1a1a;
+      }
+
+      .workspaces .item.focused {
+        background: #505050;
+      }
+
+      .workspaces .item.urgent {
+        background: #e06c75;
+      }
+
+      .focused .label {
+        color: #8a8a8a;
+      }
+
+      .clock {
+        font-weight: bold;
+      }
+
+      .battery.warning {
+        color: #e5c07b;
+      }
+
+      .battery.critical {
+        color: #e06c75;
+      }
+
+      .popup {
+        background: #000000;
+        border: 2px solid #505050;
+        padding: 10px;
+        color: #ffffff;
+      }
+    '';
 
     programs.imv = {
       enable = true;
