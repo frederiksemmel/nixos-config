@@ -16,6 +16,16 @@ let
       };
     }) (import ../wallpapers.nix)
   );
+  # Blurred, dimmed copies for niri's overview backdrop, drawn by a second awww
+  # daemon behind the workspaces.
+  wallpapersBlurred =
+    pkgs.runCommand "surf-wallpapers-blurred" { nativeBuildInputs = [ pkgs.imagemagick ]; }
+      ''
+        mkdir $out
+        for f in ${wallpapers}/*.jpg; do
+          magick "$f" -resize 960x -blur 0x16 -modulate 70 -quality 85 "$out/$(basename "$f")"
+        done
+      '';
   wallpaperLink = "${config.xdg.stateHome}/wallpaper";
   # Shows a random wallpaper other than the current one and points
   # wallpaperLink at it, so the lock screen follows.
@@ -30,6 +40,7 @@ let
       mapfile -t candidates < <(printf '%s\n' ${wallpapers}/*.jpg | grep -vxF -- "$current" || true)
       next=$(printf '%s\n' "''${candidates[@]}" | shuf -n 1)
       awww img --transition-type fade --transition-duration 2 "$next"
+      awww img --namespace backdrop --transition-type fade --transition-duration 2 "${wallpapersBlurred}/$(basename "$next")"
       ln -sfn "$next" ${wallpaperLink}
     '';
   };
@@ -695,11 +706,32 @@ in
       esac
     '';
 
+    systemd.user.services.awww-backdrop = {
+      Unit = {
+        Description = "awww-daemon for the overview backdrop";
+        PartOf = [ "graphical-session.target" ];
+        After = [ "graphical-session.target" ];
+        ConditionEnvironment = "WAYLAND_DISPLAY";
+      };
+      Service = {
+        ExecStart = "${config.services.awww.package}/bin/awww-daemon --namespace backdrop";
+        Restart = "always";
+        RestartSec = 10;
+      };
+      Install.WantedBy = [ "graphical-session.target" ];
+    };
+
     systemd.user.services.wallpaper-next = {
       Unit = {
         Description = "Switch to the next surf wallpaper";
-        After = [ "awww.service" ];
-        Requires = [ "awww.service" ];
+        After = [
+          "awww.service"
+          "awww-backdrop.service"
+        ];
+        Requires = [
+          "awww.service"
+          "awww-backdrop.service"
+        ];
         ConditionEnvironment = "WAYLAND_DISPLAY";
       };
       Service = {
@@ -934,6 +966,12 @@ in
 
     programs.niri.settings = {
       "prefer-no-csd" = true;
+      layer-rules = [
+        {
+          matches = [ { namespace = "^awww-daemonbackdrop$"; } ];
+          place-within-backdrop = true;
+        }
+      ];
       cursor = {
         inherit (config.home.pointerCursor) size;
         theme = config.home.pointerCursor.name;
@@ -1214,8 +1252,6 @@ in
       ];
     };
 
-    # Ironbar rather than waybar: it is GTK4, which draws at the 1.75 output
-    # scale directly, where GTK3 draws at 2 and niri downscales it soft.
     systemd.user.services.ironbar = {
       Unit = {
         Description = "Ironbar";
