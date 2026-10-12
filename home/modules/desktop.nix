@@ -406,6 +406,9 @@ in
           "e":
             desc: Eject USB Drives
             cmd: ${lib.getExe usbEjectAll}
+          "p":
+            desc: Next Wallpaper
+            cmd: systemctl --user start wallpaper-next.service
           "c":
             desc: CPU Profile
             submenu:
@@ -1157,129 +1160,142 @@ in
       systemd.enable = true;
       package = pkgs.waybar;
 
-      settings.mainBar = {
-        position = "bottom";
-        layer = "overlay";
-        height = 26;
-        spacing = 0;
+      settings.mainBar =
+        let
+          label = text: "<span color='#8a8a8a'>${text}</span>";
+        in
+        {
+          position = "bottom";
+          layer = "overlay";
+          height = 26;
+          spacing = 0;
 
-        modules-left = [
-          "niri/workspaces"
-          "niri/window"
-        ];
-        modules-right = [
-          "cpu"
-          "memory"
-          "disk"
-          "custom/tlp"
-          "custom/claudebar"
-          "network"
-          "pulseaudio"
-          "battery"
-          "tray"
-          "clock"
-        ];
+          # The machine on the left, ahead of the window title so it never shifts;
+          # everything you act on on the right.
+          modules-left = [
+            "niri/workspaces"
+            "cpu"
+            "memory"
+            "disk"
+            "custom/tlp"
+            "niri/window"
+          ];
+          modules-right = [
+            "custom/claudebar"
+            "group/connectivity"
+            "tray"
+            "clock"
+          ];
 
-        "niri/window" = {
-          format = "{title}";
-          max-length = 80;
-          separate-outputs = true;
-        };
-
-        # CPU, memory and disk have an empty normal format, which hides them
-        # until they cross a threshold.
-        cpu = {
-          format = "";
-          format-warning = "CPU {usage}%";
-          format-critical = "CPU {usage}%";
-          states = {
-            warning = 70;
-            critical = 90;
+          "niri/window" = {
+            format = "{title}";
+            max-length = 80;
+            separate-outputs = true;
           };
-          interval = 10;
-        };
 
-        memory = {
-          format = "";
-          format-warning = "MEM {used:0.1f}G";
-          format-critical = "MEM {used:0.1f}G";
-          states = {
-            warning = 75;
-            critical = 90;
+          "group/connectivity" = {
+            orientation = "horizontal";
+            modules = [
+              "network"
+              "pulseaudio"
+              "battery"
+            ];
           };
-          interval = 30;
-        };
 
-        disk = {
-          path = "/";
-          format = "";
-          format-warning = "DSK {free} free";
-          format-critical = "DSK {free} free";
-          states = {
-            warning = 85;
-            critical = 95;
+          # CPU, memory and disk have an empty normal format, which hides them
+          # until they cross a threshold.
+          cpu = {
+            format = "";
+            format-warning = "${label "CPU"} {usage:3}%";
+            format-critical = "${label "CPU"} {usage:3}%";
+            states = {
+              warning = 70;
+              critical = 90;
+            };
+            interval = 10;
           };
-          interval = 60;
-        };
 
-        # Active TLP profile, shown only when it is not the power source's own.
-        # Nothing polls for it, so the interval is only a backstop against a
-        # change made outside the power menu; tlp-profile signals the bar directly.
-        "custom/tlp" = {
-          exec = lib.getExe tlpStatus;
-          "return-type" = "json";
-          interval = 60;
-          signal = 14;
-          tooltip = true;
-          "on-click" =
-            "wlr-which-key --initial-keys c ${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
-        };
-
-        # Claudio plan usage: session % and time until the 5h window resets.
-        # The usage endpoint is rate limited, so 300s is the lowest sane interval;
-        # `pkill -RTMIN+13 waybar` forces a refresh.
-        "custom/claudebar" = {
-          exec = "${lib.getExe pkgs.claudebar} --format 'Claudio {session_pct}% · {session_reset}'";
-          "return-type" = "json";
-          interval = 300;
-          signal = 13;
-          tooltip = true;
-          "on-click" = "xdg-open https://claude.ai/settings/usage";
-        };
-
-        network = {
-          interface = "wlan0";
-          format-wifi = "{essid}";
-          format-disconnected = "offline";
-          tooltip-format-wifi = "{essid} ({signalStrength}%)\n{ipaddr}";
-        };
-
-        pulseaudio = {
-          format = "VOL {volume}%";
-          format-muted = "VOL muted";
-        };
-
-        battery = {
-          format = "BAT {capacity}%";
-          format-charging = "CHG {capacity}%";
-          states = {
-            warning = 30;
-            critical = 15;
+          memory = {
+            format = "";
+            format-warning = "${label "MEM"} {used:4.1f}G";
+            format-critical = "${label "MEM"} {used:4.1f}G";
+            states = {
+              warning = 75;
+              critical = 90;
+            };
+            interval = 30;
           };
-          interval = 30;
-        };
 
-        tray = {
-          icon-size = 16;
-          spacing = 8;
-        };
+          disk = {
+            path = "/";
+            format = "";
+            format-warning = "${label "DSK"} {percentage_used:3}%";
+            format-critical = "${label "DSK"} {percentage_used:3}%";
+            states = {
+              warning = 85;
+              critical = 95;
+            };
+            interval = 60;
+          };
 
-        clock = {
-          format = "{:%a %d %b  %H:%M}";
-          tooltip-format = "<tt>{calendar}</tt>";
-          interval = 60;
+          # Active TLP profile, shown only when it is not the power source's own.
+          # Nothing polls for it, so the interval is only a backstop against a
+          # change made outside the power menu; tlp-profile signals the bar directly.
+          "custom/tlp" = {
+            exec = lib.getExe tlpStatus;
+            "return-type" = "json";
+            interval = 60;
+            signal = 14;
+            tooltip = true;
+            "on-click" =
+              "wlr-which-key --initial-keys c ${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
+          };
+
+          # Claudio plan usage: session % and time until the 5h window resets.
+          # The usage endpoint is rate limited, so 300s is the lowest sane interval;
+          # `pkill -RTMIN+13 waybar` forces a refresh.
+          "custom/claudebar" = {
+            exec = "${lib.getExe pkgs.claudebar} --format 'Claudio {session_pct}% · {session_reset}'";
+            "return-type" = "json";
+            interval = 300;
+            signal = 13;
+            tooltip = true;
+            "on-click" = "xdg-open https://claude.ai/settings/usage";
+          };
+
+          network = {
+            interface = "wlan0";
+            format-wifi = "${label "NET"} {essid}";
+            format-disconnected = "${label "NET"} offline";
+            tooltip-format-wifi = "{essid} ({signalStrength}%)\n{ipaddr}";
+          };
+
+          pulseaudio = {
+            format = "${label "VOL"} {volume}%";
+            format-muted = "${label "VOL"} muted";
+          };
+
+          battery = {
+            format = "${label "BAT"} {capacity}%";
+            format-charging = "${label "CHG"} {capacity}%";
+            states = {
+              warning = 30;
+              critical = 15;
+            };
+            interval = 30;
+          };
+
+          tray = {
+            icon-size = 16;
+            spacing = 8;
+          };
+
+          clock = {
+            format = "{:%a %d %b  %H:%M}";
+            tooltip-format = "<tt>{calendar}</tt>";
+            interval = 60;
+          };
         };
-      };
 
       style = ''
         * {
@@ -1318,28 +1334,30 @@ in
           background: #e06c75;
         }
 
-        #window {
-          color: #8a8a8a;
-          padding: 0 12px;
-        }
-
         #cpu,
         #memory,
         #disk,
+        #custom-tlp,
+        #custom-claudebar,
+        #network,
+        #pulseaudio,
+        #battery,
         #tray,
         #clock {
           padding: 0 9px;
         }
 
+        /* Each cell on the left, and each group on the right, opens with a
+           divider. Hidden system cells take theirs with them. */
+        #cpu,
+        #memory,
+        #disk,
         #custom-tlp,
         #custom-claudebar,
-        #network,
-        #pulseaudio,
-        #battery {
-          background: #161616;
-          border-radius: 3px;
-          padding: 0 8px;
-          margin: 4px 3px;
+        #connectivity,
+        #tray,
+        #clock {
+          border-left: 1px solid #2e2e2e;
         }
 
         #custom-claudebar {
@@ -1348,6 +1366,12 @@ in
 
         #clock {
           font-weight: bold;
+        }
+
+        #window {
+          color: #8a8a8a;
+          padding: 0 12px;
+          border-left: 1px solid #2e2e2e;
         }
 
         #cpu.warning,
