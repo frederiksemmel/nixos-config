@@ -552,7 +552,6 @@ in
     # `security.pam.services.veila` lives in the host config.
     programs.veila = {
       enable = true;
-      package = pkgs.veila;
       service.enable = true;
       idle = {
         enable = true;
@@ -607,19 +606,19 @@ in
       };
     };
 
-    # veilad spawns veila-curtain as a plain child, so the curtain inherits the
+    # The veila daemon spawns veila-curtain as a plain child, so the curtain inherits the
     # daemon's environment rather than the session's. The veila module orders
-    # veilad after graphical-session.target only, which is not a barrier for
+    # veila.service after graphical-session.target only, which is not a barrier for
     # WAYLAND_DISPLAY: niri publishes it with `systemctl --user import-environment`
     # once its socket is up, and the manager hands each service the environment
-    # block as it was at spawn time. Start veilad before niri -- which happens
+    # block as it was at spawn time. Start veila before niri -- which happens
     # whenever graphical-session.target is reached outside niri's own transaction,
     # e.g. after niri is OOM-killed and the session restarts -- and it holds an
     # environment with no WAYLAND_DISPLAY for its whole life, so every curtain
     # dies with "Could not find wayland compositor" and locking silently fails.
-    # BindsTo pulls niri.service into veilad's start transaction so After can
+    # BindsTo pulls niri.service into veila's start transaction so After can
     # actually order against it.
-    systemd.user.services.veilad.Unit = {
+    systemd.user.services.veila.Unit = {
       After = [ "niri.service" ];
       BindsTo = [ "niri.service" ];
     };
