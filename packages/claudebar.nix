@@ -26,6 +26,13 @@ stdenvNoCC.mkDerivation (finalAttrs: {
   nativeBuildInputs = [ makeWrapper ];
   buildInputs = [ bashNonInteractive ];
 
+  postPatch = ''
+    substituteInPlace claudebar \
+      --replace-fail 'notify-send -u normal' 'notify-send -a Claudio -u normal' \
+      --replace-fail '"Claude Usage"' '"Claudio usage"' \
+      --replace-fail '_tip_title="Claude ''${plan}"' '_tip_title="Claudio ''${plan}"'
+  '';
+
   dontBuild = true;
 
   installFlags = [ "PREFIX=${placeholder "out"}" ];
