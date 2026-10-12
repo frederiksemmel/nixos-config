@@ -340,6 +340,14 @@ in
       gtk4.theme = null;
     };
 
+    home.pointerCursor = {
+      enable = true;
+      name = "Adwaita";
+      package = pkgs.adwaita-icon-theme;
+      size = 24;
+      gtk.enable = true;
+    };
+
     xdg.mimeApps = {
       enable = true;
       defaultApplications =
@@ -878,6 +886,10 @@ in
 
     programs.niri.settings = {
       "prefer-no-csd" = true;
+      cursor = {
+        inherit (config.home.pointerCursor) size;
+        theme = config.home.pointerCursor.name;
+      };
       ### Inputs
       input.focus-follows-mouse.enable = true;
       input.touchpad = {
