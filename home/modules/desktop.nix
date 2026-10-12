@@ -306,6 +306,29 @@ in
       gtk4.theme = null;
     };
 
+    xdg.mimeApps = {
+      enable = true;
+      defaultApplications =
+        let
+          browser = "chromium-browser.desktop";
+        in
+        {
+          "x-scheme-handler/http" = browser;
+          "x-scheme-handler/https" = browser;
+          "x-scheme-handler/about" = browser;
+          "x-scheme-handler/unknown" = browser;
+          "text/html" = browser;
+          "application/xhtml+xml" = browser;
+          "x-scheme-handler/claude-cli" = "claude-code-url-handler.desktop";
+          "inode/directory" = "org.gnome.Nautilus.desktop";
+          "application/pdf" = "org.gnome.Evince.desktop";
+          "image/*" = "imv.desktop";
+          "video/*" = "mpv.desktop";
+          "audio/*" = "mpv.desktop";
+        };
+    };
+    xdg.configFile."mimeapps.list".force = true;
+
     home.file = {
       ".rclone_filter_spadesvision.txt".text = ''
         - Marketing/Material für Swisscasino Video/**
