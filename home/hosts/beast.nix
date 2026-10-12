@@ -77,6 +77,7 @@ let
     };
     Service = {
       WorkingDirectory = "%h/repos/${repo}";
+      ExecStartPre = "${pkgs.systemd}/lib/systemd/systemd-networkd-wait-online --timeout=0";
       ExecStart = "${lib.getExe config.programs.claude-code.finalPackage} remote-control --remote-control-session-name-prefix ${repo} --spawn=worktree --no-create-session-in-dir";
       StandardOutput = "null";
       Restart = "always";
@@ -89,6 +90,23 @@ in
   programs.nushell.extraEnv = ''
     $env.SSH_AUTH_SOCK = $env.SSH_AUTH_SOCK? | default $"($env.XDG_RUNTIME_DIR)/gcr/ssh"
   '';
+
+  nix.package = pkgs.nix;
+  nix.settings = {
+    builders = "ssh://eu.nixbuild.net x86_64-linux,aarch64-linux - 100 4 benchmark,big-parallel";
+    builders-use-substitutes = true;
+    substituters = [
+      "https://cache.nixos.org"
+      "https://niri.cachix.org"
+      "https://nix-community.cachix.org"
+    ];
+    trusted-public-keys = [
+      "cache.nixos.org-1:6NCHdD59X431o0gWypbMrAURkbJ16ZPMQFGspcDShjY="
+      "niri.cachix.org-1:Wv0OmO7PsuocRKzfDoJ3mulSl7Z6oezYhGhR+3W2964="
+      "nix-community.cachix.org-1:mB9FSh9qf2dCimDSUo8Zy7bkq5CX+/rkCWyvRCYg3Fs="
+    ];
+  };
+  xdg.configFile."nix/nix.conf".force = true;
 
   services.pueue.enable = true;
 
