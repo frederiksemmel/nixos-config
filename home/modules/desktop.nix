@@ -1447,6 +1447,7 @@ in
     programs.vicinae = {
       enable = true;
       systemd.enable = true;
+      mutableSettings = true;
       settings.tray.enabled = false;
     };
     # Quiet the file indexer. Release builds still `add_compile_definitions(DEBUG=0)`,
