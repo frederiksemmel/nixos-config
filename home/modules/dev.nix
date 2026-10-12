@@ -330,6 +330,7 @@ in
         settings = {
           main = {
             font = "monospace:size=10";
+            selection-target = "both";
           };
           mouse = {
             hide-when-typing = "yes";
