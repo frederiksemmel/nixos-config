@@ -67,6 +67,9 @@ in
     # - Listing all build outputs -qR --include-outputs ... works, but I couldn't create a
     # single root that keeps all these things
     keep-outputs = true;
+    extra-substituters = [ "https://cache.nix-ci.com" ];
+    extra-trusted-public-keys = [ "nix-ci:g3xV5BDTLtIBZr/A00IU1x0EtKKlb7YLgBN2SgYgM6A=" ];
+    builders-use-substitutes = true;
   };
 
   age.secrets.nixci_netrc.file = ../../../secrets/nixci_netrc.age;
@@ -103,6 +106,18 @@ in
   nix = {
     distributedBuilds = true;
     buildMachines = [
+      {
+        hostName = "eu.nixbuild.net";
+        system = "x86_64-linux";
+        maxJobs = 100;
+        speedFactor = 4;
+        supportedFeatures = [
+          "benchmark"
+          "big-parallel"
+          "kvm"
+          "nixos-test"
+        ];
+      }
       {
         hostName = "eu.nixbuild.net";
         system = "aarch64-linux";
