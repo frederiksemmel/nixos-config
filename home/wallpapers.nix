@@ -22,11 +22,6 @@
     hash = "sha256-M7HA4moJvWuMgpnzdl+zw4wO9EqSxci8rQfdLcH5vVo=";
   }
   {
-    id = "EZSlp_sVXzM";
-    url = "https://images.unsplash.com/photo-1461503312594-019be44dd599?w=3840&q=85&fm=jpg&fit=max";
-    hash = "sha256-GvFEMoX8d+gLnfkjxDzGwrW0cY2EThEqz9IxkeeRovQ=";
-  }
-  {
     id = "uanoYn1AmPs";
     url = "https://images.unsplash.com/photo-1454123253751-1fe2b9e0c10d?w=3840&q=85&fm=jpg&fit=max";
     hash = "sha256-s7bmd9JscbfJVXDeiIJw+DaQCqYMR3y3OPWlzFoUzfE=";
