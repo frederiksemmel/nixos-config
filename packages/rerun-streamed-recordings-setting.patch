@@ -1,0 +1,88 @@
+diff --git a/crates/top/re_viewer/src/app/logic.rs b/crates/top/re_viewer/src/app/logic.rs
+index 56728cc..f6cac44 100644
+--- a/crates/top/re_viewer/src/app/logic.rs
++++ b/crates/top/re_viewer/src/app/logic.rs
+@@ -520,8 +520,26 @@ impl App {
+                 // updates the app-id when changing the recording.
+                 match store_id.kind() {
+                     StoreKind::Recording => {
+-                        re_log::trace!("Opening a new recording: '{store_id:?}'");
+-                        self.make_store_active_and_highlight(store_hub, egui_ctx, store_id);
++                        let is_sdk_stream =
++                            matches!(channel_source, LogSource::Sdk | LogSource::MessageProxy(_));
++                        let is_showing_other_recording = self
++                            .state
++                            .navigation
++                            .current()
++                            .recording_id()
++                            .is_some_and(|id| id != store_id && store_hub.entity_db(id).is_some());
++                        if is_sdk_stream
++                            && is_showing_other_recording
++                            && !self.app_options().switch_to_streamed_recordings
++                        {
++                            re_log::trace!(
++                                "Opening a new recording without switching to it: '{store_id:?}'"
++                            );
++                            store_hub.set_opened(store_id, true);
++                        } else {
++                            re_log::trace!("Opening a new recording: '{store_id:?}'");
++                            self.make_store_active_and_highlight(store_hub, egui_ctx, store_id);
++                        }
+                     }
+                     StoreKind::Blueprint => {
+                         // We wait with activating blueprints until they are fully loaded,
+diff --git a/crates/top/re_viewer/src/ui/settings_screen.rs b/crates/top/re_viewer/src/ui/settings_screen.rs
+index 5e7121b..dfc1f55 100644
+--- a/crates/top/re_viewer/src/ui/settings_screen.rs
++++ b/crates/top/re_viewer/src/ui/settings_screen.rs
+@@ -85,6 +85,7 @@ fn settings_screen_ui_impl(ui: &mut egui::Ui, app_options: &mut AppOptions, keep
+         check_for_updates_on_startup,
+         custom_window_decorations,
+         include_rerun_examples_button_in_recordings_panel,
++        switch_to_streamed_recordings,
+         show_picking_debug_overlay: _, // not yet exposed
+         inspect_blueprint_timeline: _, // not yet exposed
+         blueprint_gc: _,               // not yet exposed
+@@ -129,6 +130,16 @@ fn settings_screen_ui_impl(ui: &mut egui::Ui, app_options: &mut AppOptions, keep
+         "Show 'Rerun examples' button",
+     );
+ 
++    ui.re_checkbox(
++        switch_to_streamed_recordings,
++        "Switch to newly streamed recordings",
++    )
++    .on_hover_text(
++        "Show a recording as soon as it starts streaming in from an SDK. \
++        When disabled, it is only added to the recordings panel while \
++        another recording is being shown.",
++    );
++
+     ui.re_checkbox(
+         visualizer_limits_enabled,
+         "Limit number of primitives in a view",
+diff --git a/crates/viewer_support/re_viewer_context/src/app_options.rs b/crates/viewer_support/re_viewer_context/src/app_options.rs
+index 088111b..cf513bf 100644
+--- a/crates/viewer_support/re_viewer_context/src/app_options.rs
++++ b/crates/viewer_support/re_viewer_context/src/app_options.rs
+@@ -41,6 +41,12 @@ pub struct AppOptions {
+     #[serde(alias = "include_welcome_screen_button_in_recordings_panel")]
+     pub include_rerun_examples_button_in_recordings_panel: bool,
+ 
++    /// Switch to a recording as soon as it starts streaming in from an SDK?
++    ///
++    /// If false, such a recording is only added to the recordings panel while another
++    /// recording is being shown.
++    pub switch_to_streamed_recordings: bool,
++
+     /// Displays an overlay for debugging picking.
+     pub show_picking_debug_overlay: bool,
+ 
+@@ -114,6 +120,8 @@ impl AppOptions {
+ 
+             include_rerun_examples_button_in_recordings_panel: true,
+ 
++            switch_to_streamed_recordings: true,
++
+             show_picking_debug_overlay: false,
+ 
+             inspect_blueprint_timeline: false,
