@@ -43,14 +43,17 @@ in
         "github.com" = {
           User = "git";
           IdentityFile = identity "~/.ssh/id_github";
+          IdentitiesOnly = true;
         };
         "git.sr.ht" = {
           User = "git";
           IdentityFile = identity "~/.ssh/id_sourcehut";
+          IdentitiesOnly = true;
         };
         "beast" = {
           User = "frederik";
           IdentityFile = identity "~/.ssh/beast_login";
+          IdentitiesOnly = true;
         };
         "tcs-local".HostName = "169.254.1.123";
       }
