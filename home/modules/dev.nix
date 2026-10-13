@@ -896,6 +896,8 @@ in
             repo = "astral-sh/claude-code-plugins";
           };
 
+          preferredNotifChannel = "notifications_disabled";
+
           hooks =
             let
               notify = {
