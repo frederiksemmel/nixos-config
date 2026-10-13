@@ -139,7 +139,13 @@ in
   # Menu stays hidden; hold Space during boot (or `systemctl reboot --boot-loader-menu=30`) to pick a generation.
   boot.loader.timeout = 0;
   boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
-  boot.plymouth.enable = true;
+  boot.plymouth = {
+    enable = true;
+    themePackages = [ pkgs.plymouth-spades-vision ];
+    theme = "spades-vision";
+    # The HiDPI auto scale would upscale the frames, which are rendered at native size.
+    extraConfig = "DeviceScale=1";
+  };
   boot.consoleLogLevel = 3;
   boot.initrd.verbose = false;
   boot.kernelParams = [
