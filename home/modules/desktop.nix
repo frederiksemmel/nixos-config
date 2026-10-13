@@ -255,7 +255,13 @@ let
       pkgs.jq
     ];
     text = ''
-      claudebar --format 'Claudio {session_pct}% · {session_reset}' | jq -r .text
+      out=$(claudebar --format 'Claudio {session_pct}% · {session_reset}')
+      if [ "''${1:-}" = tooltip ]; then
+        # ironbar sets tooltips as plain text, not pango markup.
+        jq -r '.tooltip | gsub("<[^>]*>"; "") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&amp;"; "&")' <<<"$out"
+      else
+        jq -r .text <<<"$out"
+      fi
     '';
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
@@ -1321,6 +1327,7 @@ in
             class = "cell";
             cmd = lib.getExe barClaude;
             interval = 300000;
+            tooltip = "{{300000:${lib.getExe barClaude} tooltip}}";
             on_click_left = "xdg-open https://claude.ai/settings/usage";
           }
           {
