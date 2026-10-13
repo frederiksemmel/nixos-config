@@ -349,9 +349,24 @@ in
             close = "${lib.getExe pkgs.fyi} --close \${id}";
           };
           colors-dark = {
-            background = "111111";
+            background = "1a1a1a";
+            foreground = "d4d4d4";
+            regular0 = "2a2a2a";
+            regular1 = "e06c75";
             regular2 = "50a14f"; # green: a more "greener" but muted tone
+            regular3 = "e5c07b";
+            regular4 = "61afef";
+            regular5 = "c678dd";
+            regular6 = "56b6c2";
+            regular7 = "c8c8c8";
+            bright0 = "6e6e6e";
+            bright1 = "ea858b";
             bright2 = "98c379"; # bright green: complements the normal green with a softer, bright appearance
+            bright3 = "f0d197";
+            bright4 = "82c0f5";
+            bright5 = "d39ae6";
+            bright6 = "7ccbd4";
+            bright7 = "e8e8e8";
           };
         };
       };
