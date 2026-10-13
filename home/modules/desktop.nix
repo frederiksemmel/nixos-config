@@ -1250,6 +1250,14 @@ in
           matches = [ { "app-id" = "rerun"; } ];
           "default-column-width".proportion = 1.0;
         }
+        {
+          matches = [ { "app-id" = "(?i)^bitwarden$"; } ];
+          "open-floating" = true;
+          "open-maximized" = false;
+          "open-focused" = true;
+          "default-column-width".fixed = 960;
+          "default-window-height".fixed = 680;
+        }
         # {
         #   matches = [ { "title" = "centerpiece"; } ];
         #   "open-floating" = true;
