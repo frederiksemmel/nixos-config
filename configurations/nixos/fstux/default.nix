@@ -20,6 +20,39 @@ let
     ' ${pkgs.pipewire}/share/alsa-card-profile/mixer/profile-sets/default.conf \
       > $out/single-hdmi.conf
   '';
+
+  greeter = pkgs.callPackage ../../../packages/greeter {
+    niri = config.programs.niri.package;
+    wallpaper =
+      let
+        w = builtins.head (import ../../../home/wallpapers.nix);
+      in
+      pkgs.fetchurl {
+        inherit (w) url hash;
+        name = "surf-${w.id}.jpg";
+      };
+    user = "frederik";
+    host = config.networking.hostName;
+    session = {
+      name = "niri";
+      command = [ (lib.getExe' config.programs.niri.package "niri-session") ];
+      desktopNames = [ "niri" ];
+    };
+    input = with hm.programs.niri.settings.input; ''
+      keyboard {
+          xkb {
+              layout "${keyboard.xkb.layout}"
+              options "${keyboard.xkb.options}"
+          }
+          repeat-delay ${toString keyboard.repeat-delay}
+          repeat-rate ${toString keyboard.repeat-rate}
+      }
+      touchpad {
+          ${lib.optionalString touchpad.tap "tap"}
+          ${lib.optionalString touchpad.natural-scroll "natural-scroll"}
+      }
+    '';
+  };
 in
 {
   imports = with flake.inputs; [
@@ -448,35 +481,10 @@ in
     };
   };
 
-  # programs.regreet.enable = true;
-
-  # greetd
-  # services.greetd = {
-  #   enable = true;
-  #   settings = {
-  #     default_session = {
-  #       command = ''
-  #         ${pkgs.tuigreet}/bin/tuigreet \
-  #           --time \
-  #           --remember \
-  #           --cmd ${pkgs.niri-unstable}/bin/niri-session
-  #       '';
-  #       user = "greeter";
-  #     };
-  #   };
-  # };
-
-  # lemurs
-  services.displayManager = {
-    # lemurs.enable = true;
-    # sddm = {
-    #   enable = true;
-    #   wayland.enable = true;
-    # };
-
-    ly.enable = true;
+  services.greetd = {
+    enable = true;
+    settings.default_session.command = lib.getExe greeter;
   };
-  systemd.services.display-manager.environment.XDG_CURRENT_DESKTOP = "X-NIXOS-SYSTEMD-AWARE";
 
   # programs.sway.enable = true;
 
