@@ -78,6 +78,7 @@
             claudebar = final.callPackage ./packages/claudebar.nix { };
             claude-notify = final.callPackage ./packages/claude-notify.nix { };
             workspace-mcp = final.callPackage ./packages/workspace-mcp.nix { };
+            plymouth-spades-vision = final.callPackage ./packages/plymouth-spades-vision { };
             # The viewer makes every recording streamed in from an SDK the active one,
             # so it keeps jumping while several recordings stream in at once. The patch
             # adds a "Switch to newly streamed recordings" setting; with it off, such a
