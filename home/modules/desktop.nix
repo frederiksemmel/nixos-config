@@ -526,7 +526,22 @@ in
             cmd: handlr launch text/html
           "f":
             desc: Files
-            cmd: handlr launch x-scheme-handler/file
+            cmd: handlr launch inode/directory
+          "l":
+            desc: Linear
+            cmd: chromium --app=https://linear.app
+          "r":
+            desc: Rerun
+            cmd: rerun
+          "m":
+            desc: MQTTX
+            cmd: mqttx
+          "b":
+            desc: Bitwarden
+            cmd: bitwarden
+          "a":
+            desc: Audio Mixer
+            cmd: pwvucontrol
       '';
     };
 
