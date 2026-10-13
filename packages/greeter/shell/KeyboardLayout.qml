@@ -11,13 +11,13 @@ Singleton {
 
     property var names: []
     property int index: 0
-    // "English (US, intl., with dead keys)" -> "US intl"
+    // "English (US)" -> "US", "English (US, intl., with dead keys)" -> "INT",
+    // "English (Colemak)" -> "COL"
     readonly property string label: {
         const name = names[index] ?? "";
         const inner = name.match(/\(([^)]*)\)/);
-        if (!inner)
-            return name;
-        return inner[1].split(",").slice(0, 2).map(s => s.trim().replace(/\.$/, "")).join(" ");
+        const parts = (inner ? inner[1] : name).split(",").map(s => s.trim());
+        return parts[parts.length > 1 ? 1 : 0].replace(/[^A-Za-z]/g, "").slice(0, 3).toUpperCase();
     }
 
     Process {
