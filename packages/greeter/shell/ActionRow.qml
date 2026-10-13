@@ -9,39 +9,47 @@ Item {
     signal activated
     signal hovered
 
-    height: 44
+    height: 38
 
     Rectangle {
         anchors.fill: parent
-        anchors.leftMargin: 8
-        anchors.rightMargin: 8
-        radius: 8
+        anchors.leftMargin: 6
+        anchors.rightMargin: 6
+        radius: 6
         color: row.selected ? Theme.selection : "transparent"
     }
 
     Rectangle {
-        id: iconBox
+        id: icon
 
-        x: 20
+        x: 16
         anchors.verticalCenter: parent.verticalCenter
-        width: 26
-        height: 26
-        radius: 6
-        color: Qt.rgba(1, 1, 1, 0.06)
+        width: 20
+        height: 20
+        radius: 5
+        gradient: Gradient {
+            GradientStop {
+                position: 0
+                color: Qt.lighter(row.action.color, 1.25)
+            }
+            GradientStop {
+                position: 1
+                color: row.action.color
+            }
+        }
 
         Image {
             anchors.centerIn: parent
             source: Qt.resolvedUrl(`icons/${row.action.icon}.svg`)
-            sourceSize.width: 16
-            sourceSize.height: 16
+            sourceSize.width: 12
+            sourceSize.height: 12
         }
     }
 
     Text {
         id: title
 
-        anchors.left: iconBox.right
-        anchors.leftMargin: 12
+        x: 48
         anchors.verticalCenter: parent.verticalCenter
         text: row.action.title
         color: Theme.text
@@ -54,19 +62,19 @@ Item {
         anchors.leftMargin: 8
         anchors.verticalCenter: parent.verticalCenter
         text: row.action.subtitle ?? ""
-        color: Theme.dim
+        color: Theme.muted
         font.family: Theme.font
         font.pixelSize: 14
     }
 
     Text {
         anchors.right: parent.right
-        anchors.rightMargin: 20
+        anchors.rightMargin: 14
         anchors.verticalCenter: parent.verticalCenter
         text: row.action.accessory ?? ""
-        color: Theme.faint
+        color: Theme.muted
         font.family: Theme.font
-        font.pixelSize: 12
+        font.pixelSize: 13
     }
 
     MouseArea {

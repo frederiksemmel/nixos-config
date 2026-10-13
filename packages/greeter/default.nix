@@ -5,6 +5,9 @@
   writeShellScript,
   writeShellScriptBin,
   imagemagick,
+  makeFontsConf,
+  google-fonts,
+  dejavu_fonts,
   quickshell,
   niri,
   systemd,
@@ -19,6 +22,14 @@
   input ? "",
 }:
 let
+  # Outfit is the UI font vicinae bundles.
+  fonts = makeFontsConf {
+    fontDirectories = [
+      (google-fonts.override { fonts = [ "Outfit" ]; })
+      dejavu_fonts
+    ];
+  };
+
   background = runCommand "greeter-background.jpg" { nativeBuildInputs = [ imagemagick ]; } ''
     magick ${wallpaper} -resize 960x -blur 0x10 -filter Lanczos -resize 3840x -modulate 60 \
       -attenuate 0.05 +noise Gaussian -quality 92 jpg:$out
@@ -104,5 +115,6 @@ in
 writeShellScriptBin "greeter" ''
   # The greeter user's home is /var/empty.
   export XDG_CACHE_HOME="$XDG_RUNTIME_DIR/cache"
+  export FONTCONFIG_FILE=${fonts}
   exec ${lib.getExe niri} --config ${niriConfig}
 ''
