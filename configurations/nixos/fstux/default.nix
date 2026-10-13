@@ -136,8 +136,19 @@ in
   boot.loader.systemd-boot.enable = true;
   boot.loader.efi.canTouchEfiVariables = true;
   boot.loader.systemd-boot.configurationLimit = 5;
+  # Menu stays hidden; hold Space during boot (or `systemctl reboot --boot-loader-menu=30`) to pick a generation.
+  boot.loader.timeout = 0;
   boot.binfmt.emulatedSystems = [ "aarch64-linux" ];
+  boot.plymouth.enable = true;
   boot.consoleLogLevel = 3;
+  boot.initrd.verbose = false;
+  boot.kernelParams = [
+    "quiet"
+    "udev.log_level=3"
+    "rd.udev.log_level=3"
+    "systemd.show_status=auto"
+    "rd.systemd.show_status=auto"
+  ];
   # boot.kernelParams = [ "console=tty2" ];
 
   hardware.graphics = {
