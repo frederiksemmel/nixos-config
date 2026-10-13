@@ -50,14 +50,17 @@ let
   '';
   wlr-common-config = ''
     # Theming
-    font: monospace
+    # A pixel size: wlr-which-key measures text at scale 1 but draws it hinted
+    # at the output scale, and at 13px the drawn glyphs are no wider than the
+    # measured ones, so the longest line keeps its right padding.
+    font: JetBrains Mono 13px
     background: "#000000ff"
     color: "#ffffff"
-    # border: "#8ec07c"
-    separator: " ➜ "
-    border_width: 0
+    border: "#505050ff"
+    separator: '<span color="#505050">  │  </span>'
+    border_width: 2
     corner_r: 0
-    padding: 15 # Defaults to corner_r
+    padding: 18 # Defaults to corner_r
     # rows_per_column: 5 # No limit by default
     # column_padding: 25 # Defaults to padding
 
@@ -1471,7 +1474,90 @@ in
       enable = true;
       systemd.enable = true;
       mutableSettings = true;
-      settings.tray.enabled = false;
+      settings = {
+        tray.enabled = false;
+        theme.dark.name = "terminal";
+        font.normal.family = "JetBrains Mono";
+        launcher_window = {
+          opacity = 1;
+          material = "none";
+          rounding = 0;
+          client_side_decorations = {
+            border_width = 2;
+            shadow_size = 0;
+          };
+          clock.format = "HH:mm";
+        };
+      };
+      # The bar's look: black, flat, dim labels, One Dark accents.
+      themes.terminal = {
+        meta = {
+          version = 1;
+          name = "Terminal";
+          description = "Black and flat, like the bar";
+          variant = "dark";
+          inherits = "vicinae-dark";
+        };
+        colors = {
+          core = {
+            background = "#000000";
+            foreground = "#ffffff";
+            secondary_background = "#000000";
+            border = "#2e2e2e";
+            accent = "#e5c07b";
+            accent_foreground = "#000000";
+          };
+          main_window.border = "#505050";
+          settings_window.border = "#505050";
+          accents = {
+            blue = "#61afef";
+            green = "#98c379";
+            magenta = "#c678dd";
+            orange = "#d97757";
+            purple = "#c678dd";
+            red = "#e06c75";
+            yellow = "#e5c07b";
+            cyan = "#56b6c2";
+          };
+          text = {
+            muted = "#8a8a8a";
+            placeholder = "#5c5c5c";
+            danger = "#e06c75";
+            success = "#98c379";
+            selection = {
+              background = "#505050";
+              foreground = "#ffffff";
+            };
+          };
+          input = {
+            border = "#2e2e2e";
+            border_focus = "#505050";
+            border_error = "#e06c75";
+          };
+          button.primary = {
+            background = "#1a1a1a";
+            foreground = "#ffffff";
+          };
+          list.item = {
+            hover = {
+              foreground = "#ffffff";
+              secondary_foreground = "#8a8a8a";
+            };
+            selection = {
+              background = "#2e2e2e";
+              foreground = "#ffffff";
+              secondary_background = "#2e2e2e";
+              secondary_foreground = "#8a8a8a";
+            };
+          };
+          grid.item.background = "#0d0d0d";
+          scrollbars.background = "#2e2e2e";
+          loading = {
+            bar = "#e5c07b";
+            spinner = "#ffffff";
+          };
+        };
+      };
     };
     # Quiet the file indexer. Release builds still `add_compile_definitions(DEBUG=0)`,
     # but the server gates on `#if defined(DEBUG)` — true either way — so it forces
