@@ -1032,6 +1032,9 @@ in
 
       ### Visuals
       layout.gaps = 0; # disables the default 16px gap :contentReference[oaicite:0]{index=0}
+      # Shown until awww draws the wallpaper; niri's default is a mid grey.
+      layout.background-color = "#000000";
+      overview.backdrop-color = "#000000";
       # layout.border = {
       #   enable = true;
       #   width = 2;
