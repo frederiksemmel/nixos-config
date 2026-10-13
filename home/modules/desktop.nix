@@ -1307,7 +1307,7 @@ in
       builtins.toJSON {
         name = "main";
         position = "bottom";
-        layer = "overlay";
+        layer = "bottom";
         height = 26;
         anchor_to_edges = true;
 
