@@ -23,6 +23,7 @@ let
 
   greeter = pkgs.callPackage ../../../packages/greeter {
     niri = config.programs.niri.package;
+    veila = hm.programs.veila.package;
     wallpaper =
       let
         w = builtins.head (import ../../../home/wallpapers.nix);
@@ -32,9 +33,7 @@ let
         name = "surf-${w.id}.jpg";
       };
     user = "frederik";
-    host = config.networking.hostName;
     session = {
-      name = "niri";
       command = [ (lib.getExe' config.programs.niri.package "niri-session") ];
       desktopNames = [ "niri" ];
     };

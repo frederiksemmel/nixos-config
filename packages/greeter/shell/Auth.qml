@@ -18,8 +18,6 @@ Singleton {
     property bool messageIsError: false
     property bool busy: false
     property bool leaving: false
-    // Highlighted row of the action list, shared so every screen shows the same.
-    property int selected: 0
 
     property var pending: null
 
@@ -43,6 +41,7 @@ Singleton {
         if (password === "")
             return;
         pending = password;
+        password = "";
         busy = true;
         show("", false);
         Greetd.createSession(Config.user);
@@ -91,7 +90,7 @@ Singleton {
             auth.prompt = "";
             auth.password = "";
             auth.busy = false;
-            auth.show(message.includes("AUTH_ERR") ? "Wrong password" : message, true);
+            auth.show(message.includes("AUTH_ERR") ? "Authentication failed" : message, true);
             auth.rejected();
         }
 
