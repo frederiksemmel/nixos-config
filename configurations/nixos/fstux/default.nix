@@ -178,6 +178,12 @@ in
     # The HiDPI auto scale would upscale the frames, which are rendered at native size.
     extraConfig = "DeviceScale=1";
   };
+  # Leave the last splash frame on screen until the greeter's niri takes over
+  # the display, instead of clearing back to the text console in between.
+  systemd.services.plymouth-quit.serviceConfig.ExecStart = [
+    ""
+    "-${lib.getExe' config.boot.plymouth.package "plymouth"} quit --retain-splash"
+  ];
   boot.consoleLogLevel = 3;
   boot.initrd.verbose = false;
   boot.kernelParams = [

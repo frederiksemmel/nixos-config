@@ -115,6 +115,12 @@ let
           xwayland-satellite {
               off
           }
+          layout {
+              background-color "#000000"
+          }
+          overview {
+              backdrop-color "#000000"
+          }
           prefer-no-csd
           screenshot-path null
         '';
@@ -129,5 +135,5 @@ writeShellScriptBin "greeter" ''
   # The greeter user's home is /var/empty.
   export XDG_CACHE_HOME="$XDG_RUNTIME_DIR/cache"
   export FONTCONFIG_FILE=${fonts}
-  exec ${lib.getExe niri} --config ${niriConfig}
+  exec ${systemd}/bin/systemd-cat --identifier=greeter ${lib.getExe niri} --config ${niriConfig}
 ''
