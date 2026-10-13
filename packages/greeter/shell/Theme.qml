@@ -3,18 +3,22 @@ pragma Singleton
 import QtQuick
 import Quickshell
 
+// vicinae-dark, as vicinae renders it over a blurred backdrop.
 Singleton {
-    readonly property color panel: Qt.rgba(0.086, 0.086, 0.094, 0.9)
-    readonly property color footer: Qt.rgba(0.063, 0.063, 0.071, 0.9)
-    readonly property color border: Qt.rgba(1, 1, 1, 0.08)
-    readonly property color selection: Qt.rgba(1, 1, 1, 0.07)
-    readonly property color text: "#ececec"
-    readonly property color dim: "#8a8a8a"
-    readonly property color faint: "#5c5c5c"
-    readonly property color error: "#e06c75"
-    readonly property color accent: "#98c379"
+    readonly property color panel: Qt.rgba(30 / 255, 31 / 255, 36 / 255, 0.88)
+    readonly property color footer: Qt.rgba(20 / 255, 21 / 255, 26 / 255, 0.92)
+    readonly property color border: "#33343c"
+    readonly property color selection: Qt.rgba(1, 1, 1, 0.08)
+    readonly property color chip: Qt.rgba(1, 1, 1, 0.05)
+    readonly property color text: "#e7e5e4"
+    readonly property color muted: "#a8a29e"
+    readonly property color placeholder: "#78716c"
+    readonly property color danger: "#d0654b"
+    readonly property color accent: "#b8944e"
+    readonly property color green: "#3a9c61"
+    readonly property color yellow: "#c9a76e"
+    readonly property color red: "#b9543b"
 
-    readonly property string font: "Inter"
-    readonly property string mono: "JetBrains Mono"
-    readonly property int radius: 12
+    readonly property string font: "Outfit"
+    readonly property int radius: 10
 }

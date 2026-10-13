@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 
 Item {
@@ -9,18 +10,21 @@ Item {
             title: "Log in",
             subtitle: Config.sessionName,
             accessory: "Session",
-            icon: "login"
+            icon: "login",
+            color: Theme.green
         },
         {
             title: "Restart",
             accessory: "Power",
             icon: "restart",
+            color: Theme.yellow,
             command: Config.reboot
         },
         {
             title: "Shut down",
             accessory: "Power",
             icon: "poweroff",
+            color: Theme.red,
             command: Config.poweroff
         }
     ]
@@ -60,43 +64,51 @@ Item {
     }
 
     Column {
-        id: content
-
         anchors.centerIn: parent
         anchors.verticalCenterOffset: -height * 0.08
-        spacing: 36
+        spacing: 40
 
         Column {
             anchors.horizontalCenter: parent.horizontalCenter
-            spacing: 4
+            spacing: 2
 
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: Qt.formatTime(clock.date, "HH:mm")
                 color: Theme.text
                 font.family: Theme.font
-                font.pixelSize: 88
+                font.pixelSize: 96
                 font.weight: Font.Light
             }
 
             Text {
                 anchors.horizontalCenter: parent.horizontalCenter
                 text: Qt.formatDate(clock.date, "dddd, d MMMM")
-                color: Qt.rgba(1, 1, 1, 0.7)
+                color: Theme.text
+                opacity: 0.75
                 font.family: Theme.font
-                font.pixelSize: 17
+                font.pixelSize: 18
             }
         }
 
         Item {
-            width: 600
+            width: 770
             height: panel.height
+
+            RectangularShadow {
+                anchors.fill: panel
+                radius: panel.radius
+                blur: 24
+                spread: 0
+                offset.y: 6
+                color: Qt.rgba(0, 0, 0, 0.45)
+            }
 
             Rectangle {
                 id: panel
 
                 width: parent.width
-                height: search.height + list.height + footer.height + 2
+                height: search.height + 1 + list.height + footer.height + 1
                 radius: Theme.radius
                 color: Theme.panel
                 border.color: Theme.border
@@ -105,7 +117,6 @@ Item {
                 SequentialAnimation {
                     id: shake
 
-                    loops: 1
                     NumberAnimation { target: panel; property: "x"; to: -12; duration: 50 }
                     NumberAnimation { target: panel; property: "x"; to: 10; duration: 70 }
                     NumberAnimation { target: panel; property: "x"; to: -6; duration: 70 }
@@ -124,42 +135,21 @@ Item {
                     id: search
 
                     width: parent.width
-                    height: 64
-
-                    Rectangle {
-                        id: avatar
-
-                        x: 20
-                        anchors.verticalCenter: parent.verticalCenter
-                        width: 30
-                        height: 30
-                        radius: 15
-                        color: Qt.rgba(1, 1, 1, 0.1)
-
-                        Text {
-                            anchors.centerIn: parent
-                            text: Config.user.charAt(0).toUpperCase()
-                            color: Theme.text
-                            font.family: Theme.font
-                            font.pixelSize: 14
-                            font.weight: Font.DemiBold
-                        }
-                    }
+                    height: 60
 
                     TextInput {
                         id: input
 
-                        anchors.left: avatar.right
-                        anchors.leftMargin: 14
-                        anchors.right: layoutChip.left
-                        anchors.rightMargin: 14
+                        x: 16
+                        width: parent.width - 32
                         anchors.verticalCenter: parent.verticalCenter
                         text: Auth.password
                         echoMode: Auth.prompt !== "" && Auth.promptEcho ? TextInput.Normal : TextInput.Password
                         passwordCharacter: "•"
                         readOnly: Auth.busy || Auth.leaving
                         color: Theme.text
-                        selectionColor: Qt.rgba(1, 1, 1, 0.2)
+                        selectionColor: Theme.accent
+                        selectedTextColor: "#0f1014"
                         font.family: Theme.font
                         font.pixelSize: 17
                         focus: true
@@ -192,32 +182,9 @@ Item {
                         Text {
                             anchors.verticalCenter: parent.verticalCenter
                             visible: input.text === ""
-                            text: Auth.prompt || `Password for ${Config.user}`
-                            color: Theme.faint
+                            text: Auth.prompt || `Password for ${Config.user}…`
+                            color: Theme.placeholder
                             font: input.font
-                        }
-                    }
-
-                    Rectangle {
-                        id: layoutChip
-
-                        anchors.right: parent.right
-                        anchors.rightMargin: 20
-                        anchors.verticalCenter: parent.verticalCenter
-                        visible: KeyboardLayout.label !== ""
-                        width: layoutText.implicitWidth + 16
-                        height: 22
-                        radius: 5
-                        color: Qt.rgba(1, 1, 1, 0.06)
-
-                        Text {
-                            id: layoutText
-
-                            anchors.centerIn: parent
-                            text: KeyboardLayout.label
-                            color: Theme.dim
-                            font.family: Theme.mono
-                            font.pixelSize: 11
                         }
                     }
                 }
@@ -226,7 +193,8 @@ Item {
                     id: rule
 
                     anchors.top: search.bottom
-                    width: parent.width
+                    x: 1
+                    width: parent.width - 2
                     height: 1
                     color: Theme.border
                     clip: true
@@ -235,7 +203,7 @@ Item {
                         id: progress
 
                         visible: Auth.busy
-                        width: parent.width * 0.25
+                        width: parent.width * 0.3
                         height: 1
                         color: Theme.accent
 
@@ -255,18 +223,18 @@ Item {
 
                     anchors.top: rule.bottom
                     width: parent.width
-                    topPadding: 6
-                    bottomPadding: 8
+                    topPadding: 4
+                    bottomPadding: 6
 
                     Text {
-                        x: 20
-                        height: 28
+                        x: 16
+                        height: 30
                         verticalAlignment: Text.AlignVCenter
                         text: `${Config.user}@${Config.host}`
-                        color: Theme.dim
+                        color: Theme.muted
                         font.family: Theme.font
-                        font.pixelSize: 12
-                        font.weight: Font.Medium
+                        font.pixelSize: 13
+                        font.weight: Font.DemiBold
                     }
 
                     Repeater {
@@ -306,7 +274,7 @@ Item {
                     Image {
                         id: lockIcon
 
-                        x: 19
+                        x: 15
                         anchors.verticalCenter: parent.verticalCenter
                         source: Qt.resolvedUrl("icons/lock.svg")
                         sourceSize.width: 14
@@ -315,19 +283,19 @@ Item {
 
                     Text {
                         anchors.left: lockIcon.right
-                        anchors.leftMargin: 8
-                        anchors.right: hint.left
+                        anchors.leftMargin: 9
+                        anchors.right: hints.left
                         anchors.rightMargin: 16
                         anchors.verticalCenter: parent.verticalCenter
                         text: Auth.message || (Auth.busy ? "Authenticating…" : "Locked")
-                        color: Auth.messageIsError ? Theme.error : Theme.dim
+                        color: Auth.messageIsError ? Theme.danger : Theme.muted
                         elide: Text.ElideRight
                         font.family: Theme.font
-                        font.pixelSize: 12
+                        font.pixelSize: 13
                     }
 
                     Row {
-                        id: hint
+                        id: hints
 
                         anchors.right: parent.right
                         anchors.rightMargin: 14
@@ -339,24 +307,36 @@ Item {
                             text: root.actions[Auth.selected].title
                             color: Theme.text
                             font.family: Theme.font
-                            font.pixelSize: 12
+                            font.pixelSize: 13
                             font.weight: Font.Medium
                         }
 
-                        Rectangle {
+                        KeyChip {
                             anchors.verticalCenter: parent.verticalCenter
-                            width: 22
-                            height: 20
-                            radius: 4
-                            color: Qt.rgba(1, 1, 1, 0.08)
+                            icon: "return"
+                        }
 
-                            Text {
-                                anchors.centerIn: parent
-                                text: "↵"
-                                color: Theme.dim
-                                font.family: Theme.font
-                                font.pixelSize: 12
-                            }
+                        Rectangle {
+                            visible: KeyboardLayout.label !== ""
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 1
+                            height: 14
+                            color: Theme.border
+                        }
+
+                        Text {
+                            visible: KeyboardLayout.label !== ""
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: "Layout"
+                            color: Theme.muted
+                            font.family: Theme.font
+                            font.pixelSize: 13
+                        }
+
+                        KeyChip {
+                            visible: KeyboardLayout.label !== ""
+                            anchors.verticalCenter: parent.verticalCenter
+                            label: KeyboardLayout.label
                         }
                     }
                 }
