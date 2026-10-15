@@ -83,15 +83,12 @@ in
       nix-output-monitor
       nixd
       nix-tree
-      nixos-generators
       nvd
-      vulnix
       nil
       nix-index
       nix-search-tv
       fzf
       nix-diff
-      nix-bundle
       elfutils
 
       # Development & Formatting Tools
