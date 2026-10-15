@@ -1,0 +1,11 @@
+--- a/notify.c
++++ b/notify.c
+@@ -645,7 +645,7 @@
+                 "trying to close notification \"%s\" by sending SIGINT to %u",
+                 id, notif->pid);
+ 
+-            if (notif->pid == 0) {
++            if (notif->pid <= 0) {
+                 LOG_WARN(
+                     "cannot close notification \"%s\": no helper process running",
+                     id);

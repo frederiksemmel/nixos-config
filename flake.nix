@@ -95,6 +95,12 @@
                 ./packages/nix-output-monitor-unknown-activity-types.patch
               ];
             });
+            # When its notification helper fails to start, foot keeps -1 as the
+            # helper's pid and closes the notification with kill(-1, SIGINT), which
+            # interrupts every process of the user, niri included.
+            foot = prev.foot.overrideAttrs (old: {
+              patches = (old.patches or [ ]) ++ [ ./packages/foot-notify-close-pid.patch ];
+            });
           };
 
           homeConfigurations =
