@@ -72,6 +72,13 @@ in
   options.profiles.dev.enable = lib.mkEnableOption "development tools, shells, editors";
 
   config = lib.mkIf cfg.enable {
+    # foot switches [colors-dark]/[colors-light] on SIGUSR1/SIGUSR2; the server
+    # passes it on to its clients.
+    theme.files."foot.ini" = p: "initial-color-theme=${p.name}\n";
+    theme.onSwitch = ''
+      live pkill --signal "$([ "$mode" = dark ] && echo USR1 || echo USR2)" -x foot
+    '';
+
     home.packages = with pkgs; [
       # Nix stuff
       cachix
@@ -328,9 +335,12 @@ in
         enable = true;
         server.enable = true;
         settings = {
+          # The included file sets initial-color-theme, so new windows open in
+          # the current mode; it must not be set here as well.
           main = {
             font = "monospace:size=10";
             selection-target = "both";
+            include = lib.mkIf config.theme.enable "${config.theme.dir}/current/foot.ini";
           };
           mouse = {
             hide-when-typing = "yes";
@@ -345,26 +355,8 @@ in
             command-action-argument = "--action \${action-name}:\${action-label}";
             close = "${lib.getExe pkgs.fyi} --close \${id}";
           };
-          colors-dark = {
-            background = "1a1a1a";
-            foreground = "d4d4d4";
-            regular0 = "2a2a2a";
-            regular1 = "e06c75";
-            regular2 = "50a14f"; # green: a more "greener" but muted tone
-            regular3 = "e5c07b";
-            regular4 = "61afef";
-            regular5 = "c678dd";
-            regular6 = "56b6c2";
-            regular7 = "c8c8c8";
-            bright0 = "6e6e6e";
-            bright1 = "ea858b";
-            bright2 = "98c379"; # bright green: complements the normal green with a softer, bright appearance
-            bright3 = "f0d197";
-            bright4 = "82c0f5";
-            bright5 = "d39ae6";
-            bright6 = "7ccbd4";
-            bright7 = "e8e8e8";
-          };
+          colors-dark = config.theme.palettes.dark.terminal;
+          colors-light = config.theme.palettes.light.terminal;
         };
       };
 
@@ -894,6 +886,8 @@ in
           };
 
           preferredNotifChannel = "notifications_disabled";
+          # Follows foot's background, which the dark/light switch flips.
+          theme = "auto";
 
           hooks =
             let

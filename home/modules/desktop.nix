@@ -48,16 +48,16 @@ let
   handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
     ${lib.getExe pkgs.handlr-regex} open "$@"
   '';
-  wlr-common-config = ''
+  wlr-common-config = p: ''
     # Theming
     # A pixel size: wlr-which-key measures text at scale 1 but draws it hinted
     # at the output scale, and at 13px the drawn glyphs are no wider than the
     # measured ones, so the longest line keeps its right padding.
     font: JetBrains Mono 13px
-    background: "#000000ff"
-    color: "#ffffff"
-    border: "#505050ff"
-    separator: '<span color="#505050">  │  </span>'
+    background: "${p.bg}ff"
+    color: "${p.fg}"
+    border: "${p.focus}ff"
+    separator: '<span color="${p.focus}">  │  </span>'
     border_width: 2
     corner_r: 0
     padding: 18 # Defaults to corner_r
@@ -178,6 +178,20 @@ let
       fi
     '';
   };
+  # The current mode's colours as shell variables. The bar scripts rerun every
+  # few seconds, so they pick up a switch on their next run.
+  shellPalette =
+    names:
+    let
+      assign = p: lib.concatMapStringsSep " " (n: "${n}='${p.${n}}'") names;
+    in
+    ''
+      if [ "$(cat ${config.theme.dir}/mode 2>/dev/null)" = light ]; then
+        ${assign config.theme.palettes.light}
+      else
+        ${assign config.theme.palettes.dark}
+      fi
+    '';
   # Bar cell for the machine: CPU, memory and disk, coloured once they cross a
   # threshold, plus the TLP profile when it is not the default. `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr,
   # which tlp leaves world-readable, and prints "<profile>/<CODE>"; the profile
@@ -190,11 +204,16 @@ let
       gawk
     ];
     text = ''
-      dim='#8a8a8a'
-      colors=('#ffffff' '#e5c07b' '#e06c75')
+      ${shellPalette [
+        "muted"
+        "fg"
+        "yellow"
+        "red"
+      ]}
+      colors=("$fg" "$yellow" "$red")
       cells=()
       cell() {
-        cells+=("<span color=\"$dim\">$1</span> <span color=\"''${colors[$3]}\">$2</span>")
+        cells+=("<span color=\"$muted\">$1</span> <span color=\"''${colors[$3]}\">$2</span>")
       }
       level() {
         if (($1 >= $3)); then echo 2; elif (($1 >= $2)); then echo 1; else echo 0; fi
@@ -244,7 +263,8 @@ let
       ssid=$(iwctl station wlan0 show 2>/dev/null \
         | sed 's/\x1b\[[0-9;]*m//g' \
         | awk '/Connected network/ { $1 = $2 = ""; sub(/^ +/, ""); sub(/ +$/, ""); print }')
-      echo "<span color='#8a8a8a'>NET</span> ''${ssid:-offline}"
+      ${shellPalette [ "muted" ]}
+      echo "<span color='$muted'>NET</span> ''${ssid:-offline}"
     '';
   };
   # claudebar speaks waybar's JSON; its text already carries pango colours.
@@ -255,7 +275,14 @@ let
       pkgs.jq
     ];
     text = ''
-      out=$(claudebar --format 'Claudio {session_pct}% · {session_reset}')
+      ${shellPalette [
+        "green"
+        "yellow"
+        "orange"
+        "red"
+      ]}
+      out=$(claudebar --format 'Claudio {session_pct}% · {session_reset}' \
+        --color-low "$green" --color-mid "$yellow" --color-high "$orange" --color-critical "$red")
       if [ "''${1:-}" = tooltip ]; then
         # ironbar sets tooltips as plain text, not pango markup.
         jq -r '.tooltip | gsub("<[^>]*>"; "") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&amp;"; "&")' <<<"$out"
@@ -263,6 +290,153 @@ let
         jq -r .text <<<"$out"
       fi
     '';
+  };
+  ironbarCss = p: ''
+    * {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 12px;
+      border: none;
+      border-radius: 0;
+      box-shadow: none;
+      text-shadow: none;
+      min-height: 0;
+    }
+
+    .background,
+    #bar {
+      background: ${p.bg};
+      color: ${p.fg};
+    }
+
+    button {
+      background: none;
+      color: ${p.fg};
+      padding: 0;
+      margin: 0;
+    }
+
+    .widget {
+      padding: 0 7px;
+    }
+
+    .cell {
+      margin-left: 11px;
+      padding-left: 18px;
+      border-left: 1px solid ${p.focus};
+    }
+
+    .workspaces {
+      padding: 0;
+    }
+
+    .workspaces .item {
+      padding: 0 7px;
+    }
+
+    .workspaces .item:hover {
+      background: ${p.bgAlt};
+    }
+
+    .workspaces .item.focused {
+      background: ${p.focus};
+    }
+
+    .workspaces .item.urgent {
+      background: ${p.red};
+    }
+
+    .focused .label {
+      color: ${p.muted};
+    }
+
+    .clock {
+      font-weight: bold;
+    }
+
+    .battery.warning {
+      color: ${p.yellow};
+    }
+
+    .battery.critical {
+      color: ${p.red};
+    }
+
+    .popup {
+      background: ${p.bg};
+      border: 2px solid ${p.focus};
+      padding: 10px;
+      color: ${p.fg};
+    }
+  '';
+  vicinaeTheme = p: {
+    meta = {
+      version = 1;
+      name = if p.name == "dark" then "Terminal" else "Terminal Light";
+      description = "Flat, like the bar";
+      variant = p.name;
+      inherits = "vicinae-${p.name}";
+    };
+    colors = {
+      core = {
+        background = p.bg;
+        foreground = p.fg;
+        secondary_background = p.bg;
+        border = p.border;
+        accent = p.yellow;
+        accent_foreground = p.bg;
+      };
+      main_window.border = p.focus;
+      settings_window.border = p.focus;
+      accents = {
+        inherit (p)
+          blue
+          green
+          magenta
+          orange
+          red
+          yellow
+          cyan
+          ;
+        purple = p.magenta;
+      };
+      text = {
+        inherit (p) muted;
+        placeholder = p.faint;
+        danger = p.red;
+        success = p.green;
+        selection = {
+          background = p.focus;
+          foreground = p.fg;
+        };
+      };
+      input = {
+        inherit (p) border;
+        border_focus = p.focus;
+        border_error = p.red;
+      };
+      button.primary = {
+        background = p.bgAlt;
+        foreground = p.fg;
+      };
+      list.item = {
+        hover = {
+          foreground = p.fg;
+          secondary_foreground = p.muted;
+        };
+        selection = {
+          background = p.border;
+          foreground = p.fg;
+          secondary_background = p.border;
+          secondary_foreground = p.muted;
+        };
+      };
+      grid.item.background = p.surface;
+      scrollbars.background = p.border;
+      loading = {
+        bar = p.yellow;
+        spinner = p.fg;
+      };
+    };
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
   # Route audio over HDMI when the tv kanshi profile is applied. The card's
@@ -329,10 +503,21 @@ in
   };
 
   config = lib.mkIf cfg.enable {
+    theme.enable = true;
+    theme.onSwitch = ''
+      cat "$files/ironbar.css" > ${config.theme.dir}/ironbar.css
+      live ${config.services.mako.package}/bin/makoctl reload
+      live ${lib.getExe config.programs.niri.package} msg action load-config-file
+      live ${lib.getExe pkgs.dconf} write /org/gnome/desktop/interface/color-scheme "'prefer-$mode'"
+      live ${lib.getExe pkgs.dconf} write /org/gnome/desktop/interface/gtk-theme \
+        "'$([ "$mode" = dark ] && echo Adwaita-dark || echo Adwaita)'"
+    '';
+
     home.packages = with pkgs; [
       (lib.hiPrio handlr-xdg-open)
       wallpaperNext
       ironbar
+      gnome-themes-extra # Adwaita-dark for GTK 3
 
       # Networking & Communication
       transmission_4-gtk
@@ -394,16 +579,13 @@ in
         name = "Inter";
         size = 11;
       };
-      theme = {
-        name = "Adwaita";
-        package = pkgs.gnome-themes-extra;
-      };
+      # No theme or colorScheme: both would pin dconf keys on every activation.
+      # The dark/light switch writes gtk-theme and color-scheme instead.
       iconTheme = {
         name = "Adwaita";
         package = pkgs.adwaita-icon-theme;
       };
-      colorScheme = "dark";
-      # libadwaita (nautilus) only honours colorScheme; post-26.05 default.
+      # libadwaita (nautilus) only honours color-scheme; post-26.05 default.
       gtk4.theme = null;
     };
 
@@ -460,90 +642,94 @@ in
         [dark-theme]
         code-highlighter = "monokai-extended"
       '';
-      ".config/wlr-which-key/config_power.yaml".text = ''
-        ${wlr-common-config}
-        menu:
-          "w":
-            desc: Wifi Menu
-            cmd: iwmenu -l fuzzel
-          "a":
-            desc: Audio Menu
-            cmd: pwmenu -l fuzzel -m output-devices
-          "b":
-            desc: Bluetooth Menu
-            cmd: bzmenu -l fuzzel
-          "n":
-            desc: Toggle Night Light
-            cmd: ${lib.getExe wlsunsetToggle}
-          "t":
-            desc: Toggle USB-C Internet Sharing
-            cmd: ${lib.getExe usbcShareToggle}
-          "e":
-            desc: Eject USB Drives
-            cmd: ${lib.getExe usbEjectAll}
-          "p":
-            desc: Next Wallpaper
-            cmd: systemctl --user start wallpaper-next.service
-          "c":
-            desc: CPU Profile
-            submenu:
-              "p":
-                desc: Performance
-                cmd: ${lib.getExe tlpProfile} performance
-              "b":
-                desc: Balanced
-                cmd: ${lib.getExe tlpProfile} balanced
-              "s":
-                desc: Power Saver (no turbo, half clock)
-                cmd: ${lib.getExe tlpProfile} power-saver
-              "a":
-                desc: Automatic (follow power source)
-                cmd: ${lib.getExe tlpProfile} start
-          "s":
-            desc: Sleep
-            cmd: systemctl suspend
-          "r":
-            desc: Reboot
-            cmd: reboot
-          "o":
-            desc: Off
-            cmd: poweroff
-          "l":
-            desc: Lock
-            cmd: ${config.programs.veila.package}/bin/veila lock
-          "i":
-            desc: Inhibit Sleep (5h)
-            cmd: systemd-inhibit --what=handle-lid-switch sleep 5h
-          "u":
-            desc: Uninhibit Sleep
-            cmd: pkill -x systemd-inhibit
-      '';
-      ".config/wlr-which-key/config_opener.yaml".text = ''
-        ${wlr-common-config}
-        menu:
-          "w":
-            desc: Browser
-            cmd: handlr launch text/html
-          "f":
-            desc: Files
-            cmd: handlr launch inode/directory
-          "l":
-            desc: Linear
-            cmd: chromium --app=https://linear.app
-          "r":
-            desc: Rerun
-            cmd: rerun
-          "m":
-            desc: MQTTX
-            cmd: mqttx
-          "b":
-            desc: Bitwarden
-            cmd: bitwarden
-          "a":
-            desc: Audio Mixer
-            cmd: pwvucontrol
-      '';
     };
+
+    theme.files."which-key-power.yaml" = p: ''
+      ${wlr-common-config p}
+      menu:
+        "w":
+          desc: Wifi Menu
+          cmd: iwmenu -l fuzzel
+        "a":
+          desc: Audio Menu
+          cmd: pwmenu -l fuzzel -m output-devices
+        "b":
+          desc: Bluetooth Menu
+          cmd: bzmenu -l fuzzel
+        "n":
+          desc: Toggle Night Light
+          cmd: ${lib.getExe wlsunsetToggle}
+        "t":
+          desc: Toggle USB-C Internet Sharing
+          cmd: ${lib.getExe usbcShareToggle}
+        "e":
+          desc: Eject USB Drives
+          cmd: ${lib.getExe usbEjectAll}
+        "p":
+          desc: Next Wallpaper
+          cmd: systemctl --user start wallpaper-next.service
+        "c":
+          desc: CPU Profile
+          submenu:
+            "p":
+              desc: Performance
+              cmd: ${lib.getExe tlpProfile} performance
+            "b":
+              desc: Balanced
+              cmd: ${lib.getExe tlpProfile} balanced
+            "s":
+              desc: Power Saver (no turbo, half clock)
+              cmd: ${lib.getExe tlpProfile} power-saver
+            "a":
+              desc: Automatic (follow power source)
+              cmd: ${lib.getExe tlpProfile} start
+        "s":
+          desc: Sleep
+          cmd: systemctl suspend
+        "r":
+          desc: Reboot
+          cmd: reboot
+        "o":
+          desc: Off
+          cmd: poweroff
+        "l":
+          desc: Lock
+          cmd: ${config.programs.veila.package}/bin/veila lock
+        "i":
+          desc: Inhibit Sleep (5h)
+          cmd: systemd-inhibit --what=handle-lid-switch sleep 5h
+        "u":
+          desc: Uninhibit Sleep
+          cmd: pkill -x systemd-inhibit
+        "d":
+          desc: Dark / Light
+          cmd: darkman toggle
+    '';
+    theme.files."which-key-opener.yaml" = p: ''
+      ${wlr-common-config p}
+      menu:
+        "w":
+          desc: Browser
+          cmd: handlr launch text/html
+        "f":
+          desc: Files
+          cmd: handlr launch inode/directory
+        "l":
+          desc: Linear
+          cmd: chromium --app=https://linear.app
+        "r":
+          desc: Rerun
+          cmd: rerun
+        "m":
+          desc: MQTTX
+          cmd: mqttx
+        "b":
+          desc: Bitwarden
+          cmd: bitwarden
+        "a":
+          desc: Audio Mixer
+          cmd: pwvucontrol
+    '';
 
     # Icon= is a theme name, and nixpkgs' rerun installs no icon at all, so the
     # lookup failed and launchers drew their fallback glyph. recursive, because
@@ -681,43 +867,56 @@ in
       # ring; stacked top-right. Papirus only supplies
       # notification icons (it has light variants for dark backgrounds); GTK
       # keeps Adwaita. hicolor comes last so apps' own icons still resolve.
-      extraConfig = ''
+      # All of it lives in the theme, since criteria sections can't be split
+      # around an include.
+      extraConfig = "include=${config.theme.dir}/current/mako";
+    };
+    theme.files.mako =
+      p:
+      let
+        papirus = "${pkgs.papirus-icon-theme}/share/icons";
+        icons =
+          if p.name == "dark" then
+            "${papirus}/Papirus-Dark:${papirus}/Papirus"
+          else
+            "${papirus}/Papirus:${papirus}/Papirus-Dark";
+      in
+      ''
         font=JetBrains Mono 9
         anchor=top-right
-        background-color=#000000
-        text-color=#ffffff
+        background-color=${p.bg}
+        text-color=${p.fg}
         border-size=2
-        border-color=#505050
+        border-color=${p.focus}
         border-radius=0
         padding=10,12
         margin=6
         width=380
-        icon-path=${pkgs.papirus-icon-theme}/share/icons/Papirus-Dark:${pkgs.papirus-icon-theme}/share/icons/Papirus:${config.home.profileDirectory}/share/icons/hicolor:/run/current-system/sw/share/icons/hicolor
+        icon-path=${icons}:${config.home.profileDirectory}/share/icons/hicolor:/run/current-system/sw/share/icons/hicolor
         max-icon-size=32
-        format=<span foreground="#888888">%a</span>\n<b>%s</b>\n%b
+        format=<span foreground="${p.muted}">%a</span>\n<b>%s</b>\n%b
         default-timeout=10000
 
         [urgency=low]
-        text-color=#9a9a9a
+        text-color=${p.muted}
 
         [urgency=critical]
-        border-color=#e06c75
+        border-color=${p.red}
         default-timeout=0
 
         [app-name=Spotify]
         default-timeout=3000
 
         [app-name=Claudio]
-        border-color=#98c379
+        border-color=${p.green}
         format=<b>%s</b>\n%b
 
         [app-name=Claudio urgency=normal]
-        border-color=#e5c07b
+        border-color=${p.yellow}
 
         [app-name=Claudio urgency=critical]
-        border-color=#d97757
+        border-color=${p.orange}
       '';
-    };
     services.awww.enable = true;
 
     # Repoints the link when it is missing or targets a wallpaper set from an
@@ -887,24 +1086,28 @@ in
     programs.fuzzel = {
       enable = true;
       settings = {
-        # COLORS (all in RRGGBBAA)
-        colors.background = "000000ff"; # black background :contentReference[oaicite:0]{index=0}
-        colors.text = "ffffffff"; # white text for unselected entries :contentReference[oaicite:1]{index=1}
-        # colors.border = "ffffffff";
-
-        # keep the selection colors consistent (black bg + white fg)
-        colors.selection = "000000ff";
-        colors.selection-text = "ffffffff";
-
-        # matching substrings in both normal and selected entries
-        colors.match = "ffffffff";
-        colors.selection-match = "ffffffff";
+        main.include = "${config.theme.dir}/current/fuzzel.ini";
 
         # BORDER
         border.radius = 0; # disable rounded corners (default is 10) :contentReference[oaicite:2]{index=2}
         border.width = 0; # 1px border
       };
     };
+    # fuzzel colours are RRGGBBAA.
+    theme.files."fuzzel.ini" =
+      p:
+      let
+        c = color: "${lib.removePrefix "#" color}ff";
+      in
+      ''
+        [colors]
+        background=${c p.bg}
+        text=${c p.fg}
+        selection=${c p.bg}
+        selection-text=${c p.fg}
+        match=${c p.fg}
+        selection-match=${c p.fg}
+      '';
 
     programs.chromium = {
       enable = true;
@@ -987,6 +1190,30 @@ in
 
     programs.niri.package = lib.mkDefault pkgs.niri;
 
+    # settings.includes would land at the top, where the settings after it
+    # override the colours. At option-default priority this merges with the
+    # rendered settings and follows them.
+    programs.niri.config = lib.mkOptionDefault [
+      {
+        name = "include";
+        arguments = [ "${config.theme.dir}/current/niri.kdl" ];
+        properties.optional = true;
+      }
+    ];
+    # background-color shows until awww draws the wallpaper.
+    theme.files."niri.kdl" = p: ''
+      layout {
+          background-color "${p.bg}"
+          focus-ring {
+              active-color "${p.focus}"
+              inactive-color "${p.bg}"
+          }
+      }
+      overview {
+          backdrop-color "${p.bg}"
+      }
+    '';
+
     programs.niri.settings = {
       "prefer-no-csd" = true;
       layer-rules = [
@@ -1053,20 +1280,21 @@ in
 
       ### Visuals
       layout.gaps = 0; # disables the default 16px gap :contentReference[oaicite:0]{index=0}
-      # Shown until awww draws the wallpaper; niri's default is a mid grey.
-      layout.background-color = "#000000";
-      overview.backdrop-color = "#000000";
       # layout.border = {
       #   enable = true;
       #   width = 2;
       #   inactive.color = "#000000";
       #   active.color = "#505050";
       # };
+      # The dark colours hold until niri.kdl from the theme, included last,
+      # overrides them; without them niri falls back to its blue.
+      layout.background-color = config.theme.palettes.dark.bg;
+      overview.backdrop-color = config.theme.palettes.dark.bg;
       layout.focus-ring = {
         enable = true;
-        width = 2;
-        inactive.color = "#000000";
-        active.color = "#505050";
+        width = 1;
+        active.color = config.theme.palettes.dark.focus;
+        inactive.color = config.theme.palettes.dark.bg;
       };
       # Turn off only the window-close animation
       animations = {
@@ -1088,10 +1316,8 @@ in
           "${mod}+Return".action = spawn "foot";
           "${mod}+D".action = spawn "vicinae" "toggle";
           "${mod}+Shift+D".action = spawn "fuzzel";
-          "${mod}+P".action =
-            spawn "wlr-which-key" "${config.home.homeDirectory}/.config/wlr-which-key/config_power.yaml";
-          "${mod}+O".action =
-            spawn "wlr-which-key" "${config.home.homeDirectory}/.config/wlr-which-key/config_opener.yaml";
+          "${mod}+P".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-power.yaml";
+          "${mod}+O".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-opener.yaml";
 
           # Volume controls
           "XF86AudioRaiseVolume".allow-when-locked = true;
@@ -1295,6 +1521,15 @@ in
       };
       Service = {
         ExecStart = lib.getExe pkgs.ironbar;
+        # Retries until ironbar's IPC socket is up.
+        ExecStartPost = toString (
+          pkgs.writeShellScript "ironbar-theme" ''
+            for _ in {1..50}; do
+              ${lib.getExe pkgs.ironbar} style load-css ${config.theme.dir}/ironbar.css && exit 0
+              ${pkgs.coreutils}/bin/sleep 0.1
+            done
+          ''
+        );
         Restart = "on-failure";
       };
       Install.WantedBy = [ "graphical-session.target" ];
@@ -1302,7 +1537,8 @@ in
 
     xdg.configFile."ironbar/config.json".text =
       let
-        label = text: "<span color='#8a8a8a'>${text}</span>";
+        # Dimmed by alpha rather than a colour, so it holds in both modes.
+        label = text: "<span alpha='55%'>${text}</span>";
       in
       builtins.toJSON {
         name = "main";
@@ -1383,83 +1619,10 @@ in
         ];
       };
 
-    xdg.configFile."ironbar/style.css".text = ''
-      * {
-        font-family: "JetBrains Mono", monospace;
-        font-size: 12px;
-        border: none;
-        border-radius: 0;
-        box-shadow: none;
-        text-shadow: none;
-        min-height: 0;
-      }
-
-      .background,
-      #bar {
-        background: #000000;
-        color: #ffffff;
-      }
-
-      button {
-        background: none;
-        color: #ffffff;
-        padding: 0;
-        margin: 0;
-      }
-
-      .widget {
-        padding: 0 7px;
-      }
-
-      .cell {
-        margin-left: 11px;
-        padding-left: 18px;
-        border-left: 1px solid #505050;
-      }
-
-      .workspaces {
-        padding: 0;
-      }
-
-      .workspaces .item {
-        padding: 0 7px;
-      }
-
-      .workspaces .item:hover {
-        background: #1a1a1a;
-      }
-
-      .workspaces .item.focused {
-        background: #505050;
-      }
-
-      .workspaces .item.urgent {
-        background: #e06c75;
-      }
-
-      .focused .label {
-        color: #8a8a8a;
-      }
-
-      .clock {
-        font-weight: bold;
-      }
-
-      .battery.warning {
-        color: #e5c07b;
-      }
-
-      .battery.critical {
-        color: #e06c75;
-      }
-
-      .popup {
-        background: #000000;
-        border: 2px solid #505050;
-        padding: 10px;
-        color: #ffffff;
-      }
-    '';
+    # The dark sheet is the base; ExecStartPost loads the current mode's copy
+    # over it, and ironbar reloads that copy whenever theme-apply rewrites it.
+    xdg.configFile."ironbar/style.css".text = ironbarCss config.theme.palettes.dark;
+    theme.files."ironbar.css" = ironbarCss;
 
     programs.imv = {
       enable = true;
@@ -1507,6 +1670,7 @@ in
       settings = {
         tray.enabled = false;
         theme.dark.name = "terminal";
+        theme.light.name = "terminal-light";
         font.normal.family = "JetBrains Mono";
         launcher_window = {
           opacity = 1;
@@ -1519,74 +1683,10 @@ in
           clock.format = "HH:mm";
         };
       };
-      # The bar's look: black, flat, dim labels, One Dark accents.
-      themes.terminal = {
-        meta = {
-          version = 1;
-          name = "Terminal";
-          description = "Black and flat, like the bar";
-          variant = "dark";
-          inherits = "vicinae-dark";
-        };
-        colors = {
-          core = {
-            background = "#000000";
-            foreground = "#ffffff";
-            secondary_background = "#000000";
-            border = "#2e2e2e";
-            accent = "#e5c07b";
-            accent_foreground = "#000000";
-          };
-          main_window.border = "#505050";
-          settings_window.border = "#505050";
-          accents = {
-            blue = "#61afef";
-            green = "#98c379";
-            magenta = "#c678dd";
-            orange = "#d97757";
-            purple = "#c678dd";
-            red = "#e06c75";
-            yellow = "#e5c07b";
-            cyan = "#56b6c2";
-          };
-          text = {
-            muted = "#8a8a8a";
-            placeholder = "#5c5c5c";
-            danger = "#e06c75";
-            success = "#98c379";
-            selection = {
-              background = "#505050";
-              foreground = "#ffffff";
-            };
-          };
-          input = {
-            border = "#2e2e2e";
-            border_focus = "#505050";
-            border_error = "#e06c75";
-          };
-          button.primary = {
-            background = "#1a1a1a";
-            foreground = "#ffffff";
-          };
-          list.item = {
-            hover = {
-              foreground = "#ffffff";
-              secondary_foreground = "#8a8a8a";
-            };
-            selection = {
-              background = "#2e2e2e";
-              foreground = "#ffffff";
-              secondary_background = "#2e2e2e";
-              secondary_foreground = "#8a8a8a";
-            };
-          };
-          grid.item.background = "#0d0d0d";
-          scrollbars.background = "#2e2e2e";
-          loading = {
-            bar = "#e5c07b";
-            spinner = "#ffffff";
-          };
-        };
+      # The bar's look: flat, dim labels, One Dark / One Light accents.
+      themes = {
+        terminal = vicinaeTheme config.theme.palettes.dark;
+        terminal-light = vicinaeTheme config.theme.palettes.light;
       };
     };
     # Quiet the file indexer. Release builds still `add_compile_definitions(DEBUG=0)`,
