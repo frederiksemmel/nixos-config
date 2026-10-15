@@ -6,6 +6,7 @@
 {
   imports = with flake.inputs; [
     agenix.homeManagerModules.default
+    ../modules/theme.nix
     ../modules/dev.nix
     ../modules/desktop.nix
     ../modules/ssh.nix
