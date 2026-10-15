@@ -1414,7 +1414,7 @@ in
       .cell {
         margin-left: 11px;
         padding-left: 18px;
-        border-left: 1px solid #2e2e2e;
+        border-left: 1px solid #505050;
       }
 
       .workspaces {
