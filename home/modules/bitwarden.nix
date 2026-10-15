@@ -47,7 +47,8 @@ in
             After = [ "graphical-session.target" ];
           };
           Service = {
-            ExecStart = lib.getExe' pkgs.bitwarden-desktop "bitwarden";
+            # Starts with the window hidden; launching bitwarden again shows it.
+            ExecStart = "${lib.getExe' pkgs.bitwarden-desktop "bitwarden"} --autostart";
             Restart = "on-failure";
           };
           Install.WantedBy = [ "graphical-session.target" ];

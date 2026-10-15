@@ -1277,6 +1277,7 @@ in
       environment = {
         QT_QPA_PLATFORM = "wayland";
       };
+      hotkey-overlay.skip-at-startup = true;
 
       ### Visuals
       layout.gaps = 0; # disables the default 16px gap :contentReference[oaicite:0]{index=0}
