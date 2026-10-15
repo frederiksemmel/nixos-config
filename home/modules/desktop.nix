@@ -207,15 +207,15 @@ let
       t2=$((a + b + c + i2))
       cpu=$((100 * ((t2 - t1) - (i2 - i1)) / (t2 - t1 > 0 ? t2 - t1 : 1)))
       l=$(level "$cpu" 70 90)
-      cell CPU "$(printf '%3d%%' "$cpu")" "$l"
+      cell CPU "$(printf '%-4s' "$cpu%")" "$l"
 
       read -r total avail < <(awk '/^MemTotal/ { t = $2 } /^MemAvailable/ { a = $2 } END { print t, a }' /proc/meminfo)
       l=$(level $((100 * (total - avail) / total)) 75 90)
-      cell MEM "$(awk -v k=$((total - avail)) 'BEGIN { printf "%4.1fG", k / 1048576 }')" "$l"
+      cell MEM "$(awk -v k=$((total - avail)) 'BEGIN { printf "%-5s", sprintf("%.1fG", k / 1048576) }')" "$l"
 
       dsk=$(df --output=pcent / | tail -1 | tr -dc 0-9)
       l=$(level "$dsk" 85 95)
-      cell DSK "$(printf '%3d%%' "$dsk")" "$l"
+      cell DSK "$(printf '%-4s' "$dsk%")" "$l"
 
       mode=$(/run/current-system/sw/bin/tlp-stat -m) || mode="unknown/???"
       code=''${mode#*/}
@@ -229,7 +229,7 @@ let
       fi
 
       printf '%s' "''${cells[0]}"
-      printf '    %s' "''${cells[@]:1}"
+      printf '  %s' "''${cells[@]:1}"
       echo
     '';
   };
@@ -1375,11 +1375,6 @@ in
             };
           }
           {
-            type = "tray";
-            class = "cell";
-            icon_size = 16;
-          }
-          {
             type = "clock";
             class = "cell";
             format = "%a %d %b  %H:%M";
@@ -1413,10 +1408,12 @@ in
       }
 
       .widget {
-        padding: 0 14px;
+        padding: 0 7px;
       }
 
       .cell {
+        margin-left: 11px;
+        padding-left: 18px;
         border-left: 1px solid #2e2e2e;
       }
 
@@ -1425,7 +1422,7 @@ in
       }
 
       .workspaces .item {
-        padding: 0 11px;
+        padding: 0 7px;
       }
 
       .workspaces .item:hover {
