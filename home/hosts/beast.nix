@@ -191,7 +191,7 @@ in
         try {
           let s = open $f
           let transcript = $"($env.HOME)/.claude/projects/($s.cwd | str replace --all --regex '[^A-Za-z0-9]' '-')/($s.sessionId).jsonl"
-          let titles = try { ^grep -E '"type":"(custom|ai)-title"' $transcript | lines | each { from json } } catch { [] }
+          let titles = try { ^grep -E '"type":"(custom|ai)-title"' $transcript | lines | each { from json } | collect } catch { [] }
           let prompt = try {
             ^grep -m1 '"type":"user"' $transcript | from json | get message.content
             | if ($in | describe | str starts-with "string") { $in } else { $in | where type == "text" | get text | str join " " }
