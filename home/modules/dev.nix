@@ -275,12 +275,13 @@ in
           # Same completer as carapace's nushell integration, but returning null
           # instead of an empty list so nushell falls back to file completion for
           # arguments carapace has no spec for (e.g. `nu some_script.nu <TAB>`).
-          $env.config.completions.external.completer = {|spans|
+          $env.config.completions.external.completer = {|place|
             load-env {
               CARAPACE_SHELL_BUILTINS: (help commands | where category != "" | get name | each { split row " " | first } | uniq | str join "\n")
               CARAPACE_SHELL_FUNCTIONS: (help commands | where category == "" | get name | each { split row " " | first } | uniq | str join "\n")
             }
 
+            let spans = $place.command
             let expanded_alias = scope aliases | where name == $spans.0 | $in.0?.expansion?
             let spans = if $expanded_alias != null {
               $spans | skip 1 | prepend ($expanded_alias | split row " " | take 1)
