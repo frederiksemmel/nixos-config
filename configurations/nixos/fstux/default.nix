@@ -468,6 +468,7 @@ in
   services.devmon.enable = true;
   services.tailscale = {
     enable = true;
+    extraSetFlags = [ "--ssh" ];
   };
   services.mullvad-vpn.enable = true;
   services.udev.extraRules = ''
