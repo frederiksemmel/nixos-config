@@ -330,6 +330,9 @@ in
     ];
     hashedPassword = "$6$sBbqKGdIHSuqH2HL$voX0LJZaG/qu7y.0QUQYGSsadiHf99esXblI196WQNpvkeJf/P9L1BSoLJkCza/KQ/vCsibYteEHXXn0nMO7R0";
     shell = pkgs.nushell;
+    openssh.authorizedKeys.keys = [
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIErLh2FCUO2ngFF79rahr6tWw12PkDxE6NRs8aJTT9y6 frederik@beast-to-fstux"
+    ];
   };
 
   users.users.root.hashedPassword = "$6$TFVUB5p/gECWeZMb$GauIqbzHXTRitc6GHwlSGAzkfEpHqMoEnpu7dMK7.4gKNY4RIX3J2gBICORN4xeatkonTzKo0Q2wmyS4SQt7J.";
@@ -466,10 +469,17 @@ in
     }
   ];
   services.devmon.enable = true;
-  services.tailscale = {
+  services.tailscale.enable = true;
+  services.openssh = {
     enable = true;
-    extraSetFlags = [ "--ssh" ];
+    openFirewall = false;
+    settings = {
+      PasswordAuthentication = false;
+      KbdInteractiveAuthentication = false;
+      PermitRootLogin = "no";
+    };
   };
+  networking.firewall.interfaces.tailscale0.allowedTCPPorts = [ 22 ];
   services.mullvad-vpn.enable = true;
   services.udev.extraRules = ''
     #Enable user access to all basler cameras
