@@ -70,6 +70,7 @@ in
 
   nixpkgs.hostPlatform = "x86_64-linux";
   nixpkgs.config.allowUnfree = true;
+  nixpkgs.config.permittedInsecurePackages = [ "firefox-esr-140-bin-unwrapped-140.17.0esr" ];
   nixpkgs.overlays = [ flake.self.overlays.default ];
 
   home-manager.users.frederik = {
