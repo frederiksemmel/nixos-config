@@ -1649,7 +1649,10 @@ in
         autocreate-playlist = "same";
         osd-status-msg = "\${playback-time/full} / \${duration} (\${percent-pos}%)\\nframe: \${estimated-frame-number} / \${estimated-frame-count}";
         sub-file-paths = "Subs";
+        save-position-on-quit = true;
+        write-filename-in-watch-later-config = true;
       };
+      scripts = [ pkgs.mpvScripts.memo ];
       bindings = {
         # increase subtitle font size
         "ALT+k" = "add sub-scale +0.1";
