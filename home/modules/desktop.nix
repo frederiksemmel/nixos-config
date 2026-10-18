@@ -193,10 +193,10 @@ let
       fi
     '';
   # Bar cell for the machine: CPU, memory and disk, coloured once they cross a
-  # threshold, plus the TLP profile when it is not the default. `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr,
-  # which tlp leaves world-readable, and prints "<profile>/<CODE>"; the profile
-  # shows only when it differs from the power source's own (AC on mains, BAT
-  # on battery).
+  # threshold, plus the TLP profile when it is not the automatic one.
+  # `tlp-stat -m` needs no root: it reads /run/tlp/last_pwr, which tlp leaves
+  # world-readable, and prints "<profile>/<CODE>"; the profile shows only when
+  # its code differs from the power source's own (AC on mains, BAT on battery).
   barSystem = pkgs.writeShellApplication {
     name = "bar-system";
     runtimeInputs = with pkgs; [
@@ -237,6 +237,7 @@ let
       cell DSK "$(printf '%-4s' "$dsk%")" "$l"
 
       mode=$(/run/current-system/sw/bin/tlp-stat -m) || mode="unknown/???"
+      profile=''${mode%%/*}
       code=''${mode#*/}
       code=''${code%% *}
       source_code=BAT
@@ -244,7 +245,7 @@ let
       if [ "$code" != "$source_code" ]; then
         l=0
         [ "$code" = SAV ] && l=1
-        cell PWR "$code" "$l"
+        cell PWR "$profile" "$l"
       fi
 
       printf '%s' "''${cells[0]}"
