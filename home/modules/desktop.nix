@@ -1118,11 +1118,6 @@ in
         { id = "nngceckbapebfimnlniiiahkandclblb"; } # bitwarden
       ];
     };
-    programs.firefox = {
-      enable = true;
-      configPath = "${config.xdg.configHome}/mozilla/firefox";
-    };
-
     # programs.centerpiece = {
     #   enable = true;
     #   config = {
