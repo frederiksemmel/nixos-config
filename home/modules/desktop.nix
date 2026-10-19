@@ -730,6 +730,12 @@ in
         "a":
           desc: Audio Mixer
           cmd: pwvucontrol
+        "v":
+          desc: Resume Video
+          cmd: mpv --idle=once --force-window --input-commands='script-binding memo-last'
+        "h":
+          desc: Video History
+          cmd: mpv --idle=once --force-window --input-commands='script-binding memo-history'
     '';
 
     # Icon= is a theme name, and nixpkgs' rerun installs no icon at all, so the
