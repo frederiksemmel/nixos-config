@@ -178,6 +178,77 @@ let
       fi
     '';
   };
+  # Two-way sync of the spadesvision shared drive with ~/spadesvision. Failures
+  # and conflicts always notify. A run requested from the power menu finds the
+  # id of its "Syncing" notification in spadesvisionSyncRequest and replaces it
+  # with the result.
+  spadesvisionDir = "${config.home.homeDirectory}/spadesvision";
+  spadesvisionSyncRequest = "\"$XDG_RUNTIME_DIR\"/spadesvision-sync.notify-id";
+  spadesvisionSync = pkgs.writeShellApplication {
+    name = "spadesvision-sync";
+    runtimeInputs = with pkgs; [
+      config.programs.rclone.package
+      coreutils
+      findutils
+      getent
+      gnugrep
+      gnused
+      libnotify
+    ];
+    text = ''
+      notify() {
+        local id=""
+        if [ -f ${spadesvisionSyncRequest} ]; then
+          id=$(cat ${spadesvisionSyncRequest})
+          rm -f ${spadesvisionSyncRequest}
+        fi
+        notify-send -a rclone -i folder-remote ''${id:+-r "$id"} "$@"
+      }
+
+      if ! getent hosts www.googleapis.com >/dev/null; then
+        [ -f ${spadesvisionSyncRequest} ] && notify "Spadesvision sync skipped" "Offline"
+        exit 0
+      fi
+
+      log=$(mktemp)
+      started=$(mktemp)
+      trap 'rm -f "$log" "$started"' EXIT
+
+      if ! rclone bisync spadesvision:/ ${spadesvisionDir} \
+        --filter-from ${config.home.homeDirectory}/.rclone_filter_spadesvision.txt \
+        --fast-list --create-empty-src-dirs \
+        --compare size,modtime,checksum --slow-hash-sync-only \
+        --drive-skip-gdocs --drive-chunk-size 64Mi \
+        --resilient --recover --max-lock 15m \
+        --transfers 8 --checkers 16 \
+        --color NEVER -v 2>&1 | tee "$log"; then
+        notify -u critical "Spadesvision sync failed" \
+          "$(grep -E 'ERROR|CRITICAL' "$log" | tail -n 3 | sed -E 's/^.*(ERROR|CRITICAL) *: *//')"
+        exit 1
+      fi
+
+      conflicts=$(find ${spadesvisionDir} -cnewer "$started" -name '*.conflict[0-9]*' -printf '%P\n')
+      if [ -n "$conflicts" ]; then
+        notify -u critical "Spadesvision sync: conflicts" "$conflicts"
+      elif [ -f ${spadesvisionSyncRequest} ]; then
+        summary=$(sed -nE \
+          -e 's/.*Path1: +[0-9]+ changes: +/From Drive: /p' \
+          -e 's/.*Path2: +[0-9]+ changes: +/From local: /p' "$log" | tr -s ' ')
+        notify "Spadesvision synced" "''${summary:-No changes}"
+      fi
+    '';
+  };
+  spadesvisionSyncNow = pkgs.writeShellApplication {
+    name = "spadesvision-sync-now";
+    runtimeInputs = with pkgs; [
+      libnotify
+      systemd
+    ];
+    text = ''
+      notify-send -p -a rclone -i folder-remote "Spadesvision sync" "Syncing…" > ${spadesvisionSyncRequest}
+      systemctl --user start --no-block spadesvision-sync.service
+    '';
+  };
   # The current mode's colours as shell variables. The bar scripts rerun every
   # few seconds, so they pick up a switch on their next run.
   shellPalette =
@@ -669,6 +740,9 @@ in
         "p":
           desc: Next Wallpaper
           cmd: systemctl --user start wallpaper-next.service
+        "g":
+          desc: Sync Spadesvision Drive
+          cmd: ${lib.getExe spadesvisionSyncNow}
         "c":
           desc: CPU Profile
           submenu:
@@ -974,6 +1048,33 @@ in
         PartOf = [ "graphical-session.target" ];
       };
       Timer.OnCalendar = "*:0/30";
+      Install.WantedBy = [ "graphical-session.target" ];
+    };
+    systemd.user.services.spadesvision-sync = {
+      Unit = {
+        Description = "Bisync the spadesvision shared drive with ~/spadesvision";
+        After = [
+          "agenix.service"
+          "rclone-config.service"
+        ];
+        Wants = [ "rclone-config.service" ];
+      };
+      Service = {
+        Type = "oneshot";
+        ExecStart = lib.getExe spadesvisionSync;
+        Nice = 10;
+        IOSchedulingClass = "idle";
+      };
+    };
+    systemd.user.timers.spadesvision-sync = {
+      Unit = {
+        Description = "Bisync the spadesvision shared drive every hour";
+        PartOf = [ "graphical-session.target" ];
+      };
+      Timer = {
+        OnCalendar = "hourly";
+        Persistent = true;
+      };
       Install.WantedBy = [ "graphical-session.target" ];
     };
     services.wlsunset = {
