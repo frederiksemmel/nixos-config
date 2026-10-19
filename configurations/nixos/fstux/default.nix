@@ -215,7 +215,10 @@ in
     tailor-gui.enable = true;
   };
   # hardware.tuxedo-control-center.enable = true;
-  hardware.bluetooth.enable = true; # enables support for Bluetooth
+  hardware.bluetooth = {
+    enable = true;
+    settings.General.FastConnectable = true;
+  };
 
   # hardware.logitech.wireless.enable = true;
   # hardware.logitech.wireless.enableGraphical = true;

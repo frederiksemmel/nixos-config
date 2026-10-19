@@ -115,6 +115,28 @@ let
       fi
     '';
   };
+  airpodsToggle = pkgs.writeShellApplication {
+    name = "airpods-toggle";
+    runtimeInputs = with pkgs; [
+      bluez
+      gnugrep
+      libnotify
+    ];
+    text = ''
+      mac=34:0E:22:67:03:38
+      connected() { bluetoothctl info "$mac" | grep -q "Connected: yes"; }
+
+      if connected; then verb=disconnect; else verb=connect; fi
+      id=$(notify-send -p -a bluetooth -i audio-headphones "AirPods" "''${verb^}ing…")
+      out=$(bluetoothctl --timeout 15 "$verb" "$mac" 2>&1) || true
+      if connected; then now=connect; else now=disconnect; fi
+      if [ "$now" = "$verb" ]; then
+        notify-send -r "$id" -a bluetooth -i audio-headphones "AirPods" "''${verb^}ed"
+      else
+        notify-send -r "$id" -a bluetooth -i audio-headphones -u critical "AirPods" "$verb failed: $(tail -n 1 <<<"$out")"
+      fi
+    '';
+  };
   usbEjectAll = pkgs.writeShellApplication {
     name = "usb-eject-all";
     runtimeInputs = with pkgs; [
@@ -728,6 +750,9 @@ in
         "b":
           desc: Bluetooth Menu
           cmd: bzmenu -l fuzzel
+        "h":
+          desc: Toggle AirPods
+          cmd: ${lib.getExe airpodsToggle}
         "n":
           desc: Toggle Night Light
           cmd: ${lib.getExe wlsunsetToggle}
