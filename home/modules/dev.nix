@@ -708,6 +708,32 @@ in
         enableNushellIntegration = true;
         settings = {
           sort-by = "natural";
+          opener = {
+            zathura = [
+              {
+                run = "zathura %s";
+                desc = "Zathura";
+                orphan = true;
+              }
+            ];
+            evince = [
+              {
+                run = "evince %s";
+                desc = "Evince";
+                orphan = true;
+              }
+            ];
+          };
+          open.prepend_rules = [
+            {
+              mime = "application/pdf";
+              use = [
+                "zathura"
+                "evince"
+                "reveal"
+              ];
+            }
+          ];
         };
         theme = {
           indicator.padding = {
