@@ -613,7 +613,7 @@ in
           "application/xhtml+xml" = browser;
           "x-scheme-handler/claude-cli" = "claude-code-url-handler.desktop";
           "inode/directory" = "org.gnome.Nautilus.desktop";
-          "application/pdf" = "org.gnome.Evince.desktop";
+          "application/pdf" = "org.pwmt.zathura.desktop";
           "image/*" = "imv.desktop";
           "video/*" = "mpv.desktop";
           "audio/*" = "mpv.desktop";
