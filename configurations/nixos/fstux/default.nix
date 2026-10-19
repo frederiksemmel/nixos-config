@@ -189,13 +189,12 @@ in
     ""
     "-${lib.getExe' config.boot.plymouth.package "plymouth"} quit --retain-splash"
   ];
-  systemd.services.greetd.serviceConfig.ExecStartPre =
-    "-${pkgs.writeShellScript "blank-fbdev" ''
-      fb=/sys/class/graphics/fb0
-      [ -e $fb ] || exit 0
-      height=$(${pkgs.coreutils}/bin/cut -d, -f2 $fb/virtual_size)
-      ${pkgs.coreutils}/bin/head -c $(( $(${pkgs.coreutils}/bin/cat $fb/stride) * height )) /dev/zero > /dev/fb0
-    ''}";
+  systemd.services.greetd.serviceConfig.ExecStartPre = "-${pkgs.writeShellScript "blank-fbdev" ''
+    fb=/sys/class/graphics/fb0
+    [ -e $fb ] || exit 0
+    height=$(${pkgs.coreutils}/bin/cut -d, -f2 $fb/virtual_size)
+    ${pkgs.coreutils}/bin/head -c $(( $(${pkgs.coreutils}/bin/cat $fb/stride) * height )) /dev/zero > /dev/fb0
+  ''}";
   boot.consoleLogLevel = 3;
   boot.initrd.verbose = false;
   boot.kernelParams = [
