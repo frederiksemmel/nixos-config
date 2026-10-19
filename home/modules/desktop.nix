@@ -1501,6 +1501,13 @@ in
           "default-column-width".proportion = 1.0;
         }
         {
+          matches = [
+            { "app-id" = "^chrome-linear\\.app__"; }
+            { "app-id" = "^dev\\.zed\\.Zed$"; }
+          ];
+          "default-column-width".proportion = 1.0;
+        }
+        {
           matches = [ { "app-id" = "(?i)^bitwarden$"; } ];
           "open-floating" = true;
           "open-maximized" = false;
