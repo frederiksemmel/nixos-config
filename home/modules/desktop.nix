@@ -53,7 +53,7 @@ let
     # A pixel size: wlr-which-key measures text at scale 1 but draws it hinted
     # at the output scale, and at 13px the drawn glyphs are no wider than the
     # measured ones, so the longest line keeps its right padding.
-    font: JetBrains Mono 13px
+    font: ${p.font} 13px
     background: "${p.bg}ff"
     color: "${p.fg}"
     border: "${p.focus}ff"
@@ -387,7 +387,7 @@ let
   };
   ironbarCss = p: ''
     * {
-      font-family: "JetBrains Mono", monospace;
+      font-family: "${p.font}", monospace;
       font-size: 12px;
       border: none;
       border-radius: 0;
@@ -605,6 +605,9 @@ in
       live ${lib.getExe pkgs.dconf} write /org/gnome/desktop/interface/color-scheme "'prefer-$mode'"
       live ${lib.getExe pkgs.dconf} write /org/gnome/desktop/interface/gtk-theme \
         "'$([ "$mode" = dark ] && echo Adwaita-dark || echo Adwaita)'"
+      live ${lib.getExe pkgs.dconf} write /org/gnome/desktop/interface/monospace-font-name "'$family 11'"
+      # vicinae does not notice `current` moving under its import.
+      [ "$font" = "$previous_font" ] || live ${pkgs.systemd}/bin/systemctl --user try-restart vicinae.service
     '';
 
     home.packages = with pkgs; [
@@ -724,19 +727,21 @@ in
         selector = "${lib.getExe pkgs.fuzzel} --dmenu"
         term_exec_args = '-e'
       '';
-      ".config/inlyne/inlyne.toml".text = ''
-        theme = "Dark"
-        page-width = 1150
-        lines-to-scroll = 3.0
-
-        [font-options]
-        regular-font = "Inter"
-        monospace-font = "JetBrains Mono"
-
-        [dark-theme]
-        code-highlighter = "monokai-extended"
-      '';
+      ".config/inlyne/inlyne.toml".source =
+        config.lib.file.mkOutOfStoreSymlink "${config.theme.dir}/current/inlyne.toml";
     };
+    theme.files."inlyne.toml" = p: ''
+      theme = "Dark"
+      page-width = 1150
+      lines-to-scroll = 3.0
+
+      [font-options]
+      regular-font = "Inter"
+      monospace-font = "${p.font}"
+
+      [dark-theme]
+      code-highlighter = "monokai-extended"
+    '';
 
     theme.files."which-key-power.yaml" = p: ''
       ${wlr-common-config p}
@@ -804,6 +809,15 @@ in
         "d":
           desc: Dark / Light
           cmd: darkman toggle
+        "f":
+          desc: Font
+          submenu:
+            "j":
+              desc: JetBrains Mono
+              cmd: theme-font jetbrains
+            "n":
+              desc: Nordwand Mono
+              cmd: theme-font nordwand
     '';
     theme.files."which-key-opener.yaml" = p: ''
       ${wlr-common-config p}
@@ -989,7 +1003,7 @@ in
             "${papirus}/Papirus:${papirus}/Papirus-Dark";
       in
       ''
-        font=JetBrains Mono 9
+        font=${p.font} 9
         anchor=top-right
         background-color=${p.bg}
         text-color=${p.fg}
@@ -1234,6 +1248,9 @@ in
         c = color: "${lib.removePrefix "#" color}ff";
       in
       ''
+        [main]
+        font=${p.font}
+
         [colors]
         background=${c p.bg}
         text=${c p.fg}
@@ -1759,7 +1776,9 @@ in
 
     # The dark sheet is the base; ExecStartPost loads the current mode's copy
     # over it, and ironbar reloads that copy whenever theme-apply rewrites it.
-    xdg.configFile."ironbar/style.css".text = ironbarCss config.theme.palettes.dark;
+    xdg.configFile."ironbar/style.css".text = ironbarCss (
+      config.theme.palettes.dark // { font = config.theme.fonts.${config.theme.defaultFont}; }
+    );
     theme.files."ironbar.css" = ironbarCss;
 
     programs.imv = {
@@ -1812,7 +1831,7 @@ in
         tray.enabled = false;
         theme.dark.name = "terminal";
         theme.light.name = "terminal-light";
-        font.normal.family = "JetBrains Mono";
+        imports = [ "${config.theme.dir}/current/vicinae.json" ];
         launcher_window = {
           opacity = 1;
           material = "none";
@@ -1830,6 +1849,7 @@ in
         terminal-light = vicinaeTheme config.theme.palettes.light;
       };
     };
+    theme.files."vicinae.json" = p: builtins.toJSON { font.normal.family = p.font; };
     # Quiet the file indexer. Release builds still `add_compile_definitions(DEBUG=0)`,
     # but the server gates on `#if defined(DEBUG)` — true either way — so it forces
     # VICINAE_FILE_INDEXER_LOG=debug onto the indexer unless the var is already set.

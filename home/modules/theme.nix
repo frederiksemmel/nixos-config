@@ -89,15 +89,20 @@ let
     };
   };
 
-  # Every registered file, rendered once per mode into one directory.
+  # Every registered file, rendered once per mode and font into one directory.
+  # Each render sees the mode's palette with the font's family as `font`.
   filesFor =
-    mode:
-    pkgs.linkFarm "theme-${mode}" (
+    mode: font:
+    pkgs.linkFarm "theme-${mode}-${font}" (
       lib.mapAttrsToList (name: render: {
         inherit name;
-        path = pkgs.writeText "theme-${mode}-${name}" (render cfg.palettes.${mode});
+        path = pkgs.writeText "theme-${mode}-${font}-${name}" (
+          render (cfg.palettes.${mode} // { font = cfg.fonts.${font}; })
+        );
       }) cfg.files
     );
+
+  fontKeys = lib.attrNames cfg.fonts;
 
   apply = pkgs.writeShellApplication {
     name = "theme-apply";
@@ -107,18 +112,46 @@ let
     ];
     text = ''
       mode=''${1:-}
-      case "$mode" in
-        dark) files=${filesFor "dark"} ;;
-        light) files=${filesFor "light"} ;;
-        *) echo "usage: theme-apply dark|light" >&2; exit 2 ;;
+      previous_font=$(cat ${dir}/font 2>/dev/null || true)
+      case "$previous_font" in
+        ${lib.concatStringsSep "|" fontKeys}) ;;
+        *) previous_font=${cfg.defaultFont} ;;
+      esac
+      font=''${2:-$previous_font}
+      case "$mode-$font" in
+        ${lib.concatStrings (
+          lib.mapCartesianProduct
+            (
+              { mode, font }:
+              "${mode}-${font}) files=${filesFor mode font} family=${lib.escapeShellArg cfg.fonts.${font}} ;;\n"
+            )
+            {
+              mode = [
+                "dark"
+                "light"
+              ];
+              font = fontKeys;
+            }
+        )}
+        *) echo "usage: theme-apply dark|light [${lib.concatStringsSep "|" fontKeys}]" >&2; exit 2 ;;
       esac
       mkdir -p ${dir}
       ln -sfn "$files" ${dir}/current
       echo "$mode" > ${dir}/mode
+      echo "$font" > ${dir}/font
       # Live apps are told best-effort: during activation there may be no
       # session to tell.
       live() { timeout 5 "$@" >/dev/null 2>&1 || true; }
       ${cfg.onSwitch}
+    '';
+  };
+
+  # Switches the font and keeps the mode.
+  font = pkgs.writeShellApplication {
+    name = "theme-font";
+    runtimeInputs = [ pkgs.coreutils ];
+    text = ''
+      exec ${lib.getExe apply} "$(cat ${dir}/mode 2>/dev/null || echo dark)" "''${1:?usage: theme-font ${lib.concatStringsSep "|" fontKeys}}"
     '';
   };
 in
@@ -138,17 +171,33 @@ in
       default = dir;
       readOnly = true;
       description = ''
-        Where the switch keeps its state: `mode`, and `current`, a link to the
-        active mode's rendering of {option}`theme.files`.
+        Where the switch keeps its state: `mode`, `font`, and `current`, a link
+        to the active mode and font's rendering of {option}`theme.files`.
       '';
+    };
+
+    fonts = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = {
+        jetbrains = "JetBrains Mono";
+        nordwand = "Nordwand Mono";
+      };
+      description = "Monospace families the switch offers, by key.";
+    };
+
+    defaultFont = lib.mkOption {
+      type = lib.types.str;
+      default = "jetbrains";
+      description = "Key of the font used until another is chosen.";
     };
 
     files = lib.mkOption {
       type = lib.types.attrsOf (lib.types.functionTo lib.types.lines);
       default = { };
       description = ''
-        Files rendered for each mode and reachable as `''${theme.dir}/current/<name>`.
-        Each is a function of the palette.
+        Files rendered for each mode and font and reachable as
+        `''${theme.dir}/current/<name>`. Each is a function of the palette,
+        which carries the font's family as `font`.
       '';
     };
 
@@ -156,14 +205,35 @@ in
       type = lib.types.lines;
       default = "";
       description = ''
-        Shell run after every switch, with `$mode` and `$files` set. Wrap
-        commands that talk to the session in `live`.
+        Shell run after every switch, with `$mode`, `$font`, `$family`,
+        `$previous_font` and `$files` set. Wrap commands that talk to the
+        session in `live`.
       '';
     };
   };
 
   config = lib.mkIf cfg.enable {
-    home.packages = [ apply ];
+    home.packages = [
+      apply
+      font
+    ];
+
+    # Apps that ask fontconfig for `monospace` get the current font. Ahead of
+    # home-manager's 52-hm-default-fonts.conf, whose family then follows it.
+    theme.files."fontconfig.conf" = p: ''
+      <?xml version="1.0"?>
+      <!DOCTYPE fontconfig SYSTEM "urn:fontconfig:fonts.dtd">
+      <fontconfig>
+        <alias binding="same">
+          <family>monospace</family>
+          <prefer>
+            <family>${p.font}</family>
+          </prefer>
+        </alias>
+      </fontconfig>
+    '';
+    xdg.configFile."fontconfig/conf.d/51-theme-monospace.conf".source =
+      config.lib.file.mkOutOfStoreSymlink "${dir}/current/fontconfig.conf";
 
     services.darkman = {
       enable = true;

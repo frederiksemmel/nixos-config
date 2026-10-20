@@ -384,6 +384,7 @@ in
 
   fonts.packages = with pkgs; [
     jetbrains-mono
+    nordwand-mono
     source-code-pro
     inconsolata
     iosevka
