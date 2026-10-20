@@ -936,10 +936,11 @@ in
           profile.outputs = [
             {
               criteria = "eDP-1";
-              position = "456,1441";
+              position = "202,1153";
             }
             {
               criteria = "DP-3";
+              scale = 1.25;
               position = "0,0";
             }
           ];
@@ -1378,9 +1379,10 @@ in
         };
       };
       outputs."Dell Inc. DELL U2721DE B0GC623" = {
+        scale = 1.25;
         position = {
           x = 0;
-          y = -1440 - 1;
+          y = -1152 - 1;
         };
       };
       outputs."Samsung Electric Company SAMSUNG 0x01000E00" = {
