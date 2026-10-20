@@ -235,6 +235,7 @@ in
     fonts.fontconfig = {
       enable = true;
       defaultFonts.monospace = [ "JetBrains Mono" ];
+      subpixelRendering = "rgb";
     };
 
     programs = {
@@ -339,7 +340,7 @@ in
           # The included file sets initial-color-theme, so new windows open in
           # the current mode; it must not be set here as well.
           main = {
-            font = "monospace:size=10";
+            font = "monospace:size=11";
             selection-target = "both";
             include = lib.mkIf config.theme.enable "${config.theme.dir}/current/foot.ini";
           };
