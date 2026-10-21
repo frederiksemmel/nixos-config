@@ -95,9 +95,56 @@ let
       ssh-add -l >/dev/null 2>&1 && exit 1
       rbw list --fields id,type | awk -F '\t' '$2 == "SSH Key" { print $1 }' \
         | while read -r id; do
-          rbw get --field private_key "$id" | ssh-add -q -t ${toString sshKeyLifetime} - || true
+          rbw get --field private_key "$id" | ssh-add -q -c -t ${toString sshKeyLifetime} - || true
         done
       exit 1
+    '';
+  };
+
+  # ssh-agent runs this before each use of a key added with `ssh-add -c` and
+  # passes "Allow use of key <comment>?\nKey fingerprint <fp>."; exit 0
+  # allows. The agent never learns the destination, so the clients connected
+  # to its socket are looked up and shown with their parent process.
+  sshAskpass = pkgs.writeShellApplication {
+    name = "ssh-askpass-fuzzel";
+    runtimeInputs = [
+      pkgs.fuzzel
+      pkgs.iproute2
+      pkgs.procps
+    ];
+    text = ''
+      pids=$(ss -xpH | awk -v sock="$XDG_RUNTIME_DIR/${config.services.ssh-agent.socket}" '
+        $5 == sock { peer[$8] }
+        { users[$6] = $9 }
+        END {
+          for (inode in peer)
+            if (match(users[inode], /pid=[0-9]+/)) print substr(users[inode], RSTART + 4, RLENGTH - 4)
+        }')
+      callers=""
+      for pid in $pids; do
+        cmd=$(tr '\0' ' ' <"/proc/$pid/cmdline" | sed 's|^/[^ ]*/||') || continue
+        parent=$(ps -o args= -p "$(ps -o ppid= -p "$pid" | tr -d ' ')" | sed 's|^/[^ ]*/||' || true)
+        callers+=$'\n'"by: $cmd"$'\n'"from: $parent"
+      done
+      choice=$(printf 'Allow\nDeny\n' | fuzzel --dmenu --mesg "ssh-agent · $1$callers") || exit 1
+      [ "$choice" = Allow ]
+    '';
+  };
+
+  # veila sets logind's LockedHint whenever it locks, also right before
+  # suspend; PrepareForSleep covers a suspend without a lock.
+  sshAgentClear = pkgs.writeShellApplication {
+    name = "ssh-agent-clear-on-lock";
+    runtimeInputs = [
+      pkgs.glib
+      pkgs.openssh
+    ];
+    text = ''
+      gdbus monitor --system --dest org.freedesktop.login1 | while read -r line; do
+        case "$line" in
+          *"'LockedHint': <true>"* | *"PrepareForSleep (true,)"*) ssh-add -D >/dev/null 2>&1 || true ;;
+        esac
+      done
     '';
   };
 in
@@ -143,6 +190,29 @@ in
         services.ssh-agent = {
           enable = true;
           defaultMaximumIdentityLifetime = sshKeyLifetime;
+        };
+        # Started with the graphical session so its confirm prompts get
+        # WAYLAND_DISPLAY.
+        systemd.user.services.ssh-agent = {
+          Unit = {
+            PartOf = [ "graphical-session.target" ];
+            After = [ "graphical-session.target" ];
+          };
+          Service.Environment = [ "SSH_ASKPASS=${lib.getExe sshAskpass}" ];
+          Install.WantedBy = lib.mkForce [ "graphical-session.target" ];
+        };
+        systemd.user.services.ssh-agent-clear = {
+          Unit = {
+            Description = "Empty ssh-agent when the session locks or suspends";
+            PartOf = [ "graphical-session.target" ];
+            After = [ "ssh-agent.service" ];
+          };
+          Service = {
+            ExecStart = lib.getExe sshAgentClear;
+            Environment = [ "SSH_AUTH_SOCK=%t/${config.services.ssh-agent.socket}" ];
+            Restart = "on-failure";
+          };
+          Install.WantedBy = [ "graphical-session.target" ];
         };
         programs.ssh.settings.rbw-ssh-add.header = "Match exec \"${lib.getExe rbwSshAdd}\"";
       })
