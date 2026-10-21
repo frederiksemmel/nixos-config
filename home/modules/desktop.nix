@@ -1440,6 +1440,16 @@ in
 
       ### Visuals
       layout.gaps = 0; # disables the default 16px gap :contentReference[oaicite:0]{index=0}
+      layout.preset-column-widths = map (p: { proportion = p; }) [
+        0.25
+        0.5
+        0.75
+      ];
+      layout.preset-window-heights = map (p: { proportion = p; }) [
+        0.25
+        0.5
+        0.75
+      ];
       # layout.border = {
       #   enable = true;
       #   width = 2;
