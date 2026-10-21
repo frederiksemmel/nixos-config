@@ -55,7 +55,34 @@ let
   # The --launcher-command of iwmenu, pwmenu and bzmenu; only iwmenu fills in
   # {password_flag:...}.
   yofiMenu = "yofi -p '{placeholder}' dialog";
-  yofiIwmenu = "yofi -p '{placeholder}' {password_flag:--password} dialog";
+  yofiIwmenu = "yofi -p '{placeholder}' {password_flag:--password --config-file ${config.theme.dir}/current/yofi-prompt.toml} dialog";
+  # A password prompt has no list, so its window is only the input row.
+  yofiConfig = height: p: ''
+    width = 560
+    height = ${toString height}
+    font = "${p.font}"
+    font_size = 15
+    font_color = "${p.fg}"
+    bg_color = "${p.bg}"
+    bg_border_color = "${p.focus}"
+    bg_border_width = 2.0
+    corner_radius = "0"
+
+    [input_text]
+    font_color = "${p.fg}"
+    prompt_color = "${p.faint}"
+    bg_color = "${p.bgAlt}"
+    corner_radius = "0"
+    margin = "12"
+    padding = "6 8"
+
+    [list_items]
+    font_color = "${p.muted}"
+    selected_font_color = "${p.fg}"
+    match_color = "${p.yellow}"
+    margin = "8 18"
+    hide_actions = true
+  '';
   wlr-common-config = p: ''
     # Theming
     # A pixel size: wlr-which-key measures text at scale 1 but draws it hinted
@@ -1251,32 +1278,8 @@ in
 
     xdg.configFile."yofi/yofi.config".source =
       config.lib.file.mkOutOfStoreSymlink "${config.theme.dir}/current/yofi.toml";
-    theme.files."yofi.toml" = p: ''
-      width = 560
-      height = 380
-      font = "${p.font}"
-      font_size = 15
-      font_color = "${p.fg}"
-      bg_color = "${p.bg}"
-      bg_border_color = "${p.focus}"
-      bg_border_width = 2.0
-      corner_radius = "0"
-
-      [input_text]
-      font_color = "${p.fg}"
-      prompt_color = "${p.faint}"
-      bg_color = "${p.bgAlt}"
-      corner_radius = "0"
-      margin = "12"
-      padding = "6 8"
-
-      [list_items]
-      font_color = "${p.muted}"
-      selected_font_color = "${p.fg}"
-      match_color = "${p.yellow}"
-      margin = "8 18"
-      hide_actions = true
-    '';
+    theme.files."yofi.toml" = yofiConfig 380;
+    theme.files."yofi-prompt.toml" = yofiConfig 56;
 
     programs.chromium = {
       enable = true;
