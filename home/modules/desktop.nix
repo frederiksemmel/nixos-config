@@ -1679,8 +1679,8 @@ in
           "open-floating" = true;
           "open-maximized" = false;
           "open-focused" = true;
-          "default-column-width".fixed = 960;
-          "default-window-height".fixed = 680;
+          "default-column-width".fixed = 1120;
+          "default-window-height".fixed = 800;
         }
         # {
         #   matches = [ { "title" = "centerpiece"; } ];
