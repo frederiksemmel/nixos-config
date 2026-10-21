@@ -45,7 +45,11 @@ let
       ln -sfn "$next" ${wallpaperLink}
     '';
   };
+  # Electron apps export CHROME_DESKTOP=<their desktop file>, and a Chromium
+  # started from one of their links takes it as its Wayland app-id, so it
+  # matched the floating bitwarden window rule.
   handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
+    unset CHROME_DESKTOP
     ${lib.getExe pkgs.handlr-regex} open "$@"
   '';
   wlr-common-config = p: ''
