@@ -17,10 +17,16 @@ let
     runtimeInputs = [ pkgs.yofi ];
     text = ''
       echo "OK"
+      label=""
       desc=""
       error=""
       while IFS= read -r line; do
         case "$line" in
+          "SETPROMPT "*)
+            label=''${line#SETPROMPT }
+            label=''${label//__/_}
+            echo "OK"
+            ;;
           "SETDESC "*)
             desc=''${line#SETDESC }
             echo "OK"
@@ -30,11 +36,12 @@ let
             echo "OK"
             ;;
           GETPIN)
-            prompt="rbw · $desc"
+            prompt="rbw · $desc · $label"
             if [ -n "$error" ]; then
               prompt="$error · $prompt"
             fi
-            pin=$(yofi --password -p "$prompt" dialog </dev/null || true)
+            pin=$(yofi --password --config-file "${config.theme.dir}/current/yofi-prompt.toml" \
+              -p "$prompt" dialog </dev/null || true)
             if [ -n "$pin" ]; then
               printf 'D %s\nOK\n' "''${pin//%/%25}"
             else
