@@ -641,6 +641,7 @@ in
       xournalpp
       # libreoffice
       gridcraft
+      wordcraft
       # ungoogled-chromium
       evince
       # papers issues with saving and icons
@@ -700,6 +701,8 @@ in
       defaultApplications =
         let
           browser = "chromium-browser.desktop";
+          spreadsheet = "ai.storyteller.gridcraft.desktop";
+          document = "ai.storyteller.wordcraft.desktop";
         in
         {
           "x-scheme-handler/http" = browser;
@@ -711,6 +714,14 @@ in
           "x-scheme-handler/claude-cli" = "claude-code-url-handler.desktop";
           "inode/directory" = "org.gnome.Nautilus.desktop";
           "application/pdf" = "org.pwmt.zathura.desktop";
+          "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" = spreadsheet;
+          "application/vnd.ms-excel.sheet.macroEnabled.12" = spreadsheet;
+          "application/vnd.ms-excel.sheet.binary.macroEnabled.12" = spreadsheet;
+          "application/vnd.ms-excel" = spreadsheet;
+          "application/vnd.oasis.opendocument.spreadsheet" = spreadsheet;
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document" = document;
+          "application/vnd.oasis.opendocument.text" = document;
+          "application/rtf" = document;
           "image/*" = "imv.desktop";
           "video/*" = "mpv.desktop";
           "audio/*" = "mpv.desktop";
