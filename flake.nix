@@ -101,6 +101,31 @@
             foot = prev.foot.overrideAttrs (old: {
               patches = (old.patches or [ ]) ++ [ ./packages/foot-notify-close-pid.patch ];
             });
+            # The tuxedo-drivers Makefile pastes $(MAKEFLAGS) into a shell command, so
+            # the kernel's `cmd_sign=…kmodigest$(space)$@` flag reaches bash as `$$(space)`
+            # and the build dies with a syntax error. A plain $(MAKE) still hands the
+            # sub-make every flag. That sub-make then runs depmod into $out, whose
+            # modules.* index files collide with the kernel's in the merged module
+            # tree, so they are deleted. Drop once nixpkgs fixes tuxedo-drivers.
+            linuxPackages = prev.linuxPackages.extend (
+              lpFinal: lpPrev: {
+                tuxedo-drivers = lpPrev.tuxedo-drivers.overrideAttrs (old: {
+                  postPatch = (old.postPatch or "") + ''
+                    substituteInPlace Makefile \
+                      --replace-fail 'make -C $(KDIR) M=$(PWD) $(MAKEFLAGS)' '$(MAKE) -C $(KDIR) M=$(PWD)'
+                  '';
+                  postInstall = (old.postInstall or "") + ''
+                    rm $out/lib/modules/*/modules.*
+                  '';
+                });
+                # The merged module tree wants a kmodigest .cer next to every external
+                # module, and the VirtualBox modules are built without signing. Drop
+                # once NixOS/nixpkgs#575381 lands.
+                virtualbox = lpPrev.virtualbox.overrideAttrs (old: {
+                  makeFlags = lpFinal.kernelModuleMakeFlags ++ old.makeFlags ++ [ "VBOX_ALLOW_MODULE_SIGNING=1" ];
+                });
+              }
+            );
           };
 
           homeConfigurations =
