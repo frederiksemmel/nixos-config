@@ -6,14 +6,136 @@
 }:
 let
   cfg = config.profiles.bitwarden;
-  socket = "${config.home.homeDirectory}/.bitwarden-ssh-agent.sock";
   bw = lib.getExe' pkgs.bitwarden-cli "bw";
   server = "https://vault.bitwarden.eu";
+  keyLifetime = 3600;
+
+  # Speaks just enough of the Assuan protocol for rbw: it sends SETTITLE,
+  # SETPROMPT, SETDESC, maybe SETERROR, then GETPIN, and closes stdin.
+  rbwPinentry = pkgs.writeShellApplication {
+    name = "rbw-pinentry";
+    runtimeInputs = [ pkgs.yofi ];
+    text = ''
+      echo "OK"
+      desc=""
+      error=""
+      while IFS= read -r line; do
+        case "$line" in
+          "SETDESC "*)
+            desc=''${line#SETDESC }
+            echo "OK"
+            ;;
+          "SETERROR "*)
+            error=''${line#SETERROR }
+            echo "OK"
+            ;;
+          GETPIN)
+            prompt="rbw · $desc"
+            if [ -n "$error" ]; then
+              prompt="$error · $prompt"
+            fi
+            pin=$(yofi --password -p "$prompt" dialog </dev/null || true)
+            if [ -n "$pin" ]; then
+              printf 'D %s\nOK\n' "''${pin//%/%25}"
+            else
+              echo "ERR 83886179 Operation cancelled"
+            fi
+            ;;
+          BYE)
+            echo "OK"
+            exit 0
+            ;;
+          *) echo "OK" ;;
+        esac
+      done
+    '';
+  };
+
+  rbwMenu = pkgs.writeShellApplication {
+    name = "rbw-menu";
+    runtimeInputs = [
+      pkgs.rbw
+      pkgs.yofi
+      pkgs.wl-clipboard
+      pkgs.wtype
+      pkgs.libnotify
+    ];
+    text = ''
+      rbw unlocked 2>/dev/null || rbw unlock
+      rbw sync 2>/dev/null &
+
+      entries=$(rbw list --fields id,name,user,type | awk -F '\t' '$4 == "Login"')
+      choice=$(awk -F '\t' '{ print ($3 == "" ? $2 : $2 "  ·  " $3) }' <<<"$entries" \
+        | yofi -p Bitwarden dialog || true)
+      [ -n "$choice" ] || exit 0
+      id=$(awk -F '\t' -v c="$choice" '($3 == "" ? $2 : $2 "  ·  " $3) == c { print $1; exit }' <<<"$entries")
+      [ -n "$id" ] || exit 0
+
+      action=$(printf '%s\n' \
+        "Copy password" \
+        "Copy username" \
+        "Copy TOTP" \
+        "Type username, tab, password" \
+        "Type password" \
+        | yofi -p "$choice" dialog || true)
+
+      copy() {
+        local secret
+        secret=$(rbw get --field "$1" "$id") || {
+          notify-send -a rbw "Bitwarden" "No $1 for $choice"
+          exit 1
+        }
+        printf '%s' "$secret" | wl-copy --sensitive
+        notify-send -a rbw -t 2000 "Bitwarden" "Copied $1 of $choice, cleared in 30s"
+        (
+          sleep 30
+          [ "$(wl-paste --no-newline 2>/dev/null)" = "$secret" ] && wl-copy --clear
+        ) >/dev/null 2>&1 &
+        disown
+      }
+
+      case "$action" in
+        "Copy password") copy password ;;
+        "Copy username") copy username ;;
+        "Copy TOTP") copy totp ;;
+        "Type username, tab, password")
+          sleep 0.2
+          wtype -- "$(rbw get --field username "$id")"
+          wtype -k Tab
+          wtype -- "$(rbw get "$id")"
+          ;;
+        "Type password")
+          sleep 0.2
+          wtype -- "$(rbw get "$id")"
+          ;;
+      esac
+    '';
+  };
+
+  # ssh runs this through `Match exec` on every connection. With the agent
+  # empty it unlocks rbw and loads every SSH key in the vault; it never
+  # matches, so the block itself sets nothing.
+  rbwSshAdd = pkgs.writeShellApplication {
+    name = "rbw-ssh-add";
+    runtimeInputs = [
+      pkgs.rbw
+      pkgs.openssh
+    ];
+    text = ''
+      ssh-add -l >/dev/null 2>&1 && exit 1
+      rbw unlocked 2>/dev/null || rbw unlock || exit 1
+      rbw list --fields id,type | awk -F '\t' '$2 == "SSH Key" { print $1 }' \
+        | while IFS= read -r id; do
+          rbw get --field private_key "$id" | ssh-add -q -t ${toString keyLifetime} - || true
+        done
+      exit 1
+    '';
+  };
 in
 {
   options.profiles.bitwarden = {
     enable = lib.mkEnableOption "Bitwarden desktop and CLI";
-    sshAgent.enable = lib.mkEnableOption "the Bitwarden desktop app as the SSH agent";
+    sshAgent.enable = lib.mkEnableOption "ssh-agent loaded with the vault's SSH keys through rbw";
   };
 
   config = lib.mkIf cfg.enable (
@@ -22,6 +144,7 @@ in
         home.packages = [
           pkgs.bitwarden-desktop
           pkgs.bitwarden-cli
+          rbwMenu
         ];
         home.activation.bitwardenServer = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
           status=$(${bw} status 2>/dev/null || true)
@@ -36,23 +159,23 @@ in
             $env.BW_SESSION = (bw unlock --raw)
           }
         '';
+        programs.rbw = {
+          enable = true;
+          settings = {
+            email = "frederiksemmel@gmail.com";
+            base_url = server;
+            lock_timeout = keyLifetime;
+            pinentry = rbwPinentry;
+          };
+        };
       }
       (lib.mkIf cfg.sshAgent.enable {
-        home.sessionVariables.SSH_AUTH_SOCK = socket;
-        systemd.user.sessionVariables.SSH_AUTH_SOCK = socket;
-        systemd.user.services.bitwarden = {
-          Unit = {
-            Description = "Bitwarden desktop (SSH agent)";
-            PartOf = [ "graphical-session.target" ];
-            After = [ "graphical-session.target" ];
-          };
-          Service = {
-            # Starts with the window hidden; launching bitwarden again shows it.
-            ExecStart = "${lib.getExe' pkgs.bitwarden-desktop "bitwarden"} --autostart";
-            Restart = "on-failure";
-          };
-          Install.WantedBy = [ "graphical-session.target" ];
+        home.packages = [ rbwSshAdd ];
+        services.ssh-agent = {
+          enable = true;
+          defaultMaximumIdentityLifetime = keyLifetime;
         };
+        programs.ssh.settings.rbw-ssh-add.header = "Match exec \"${lib.getExe rbwSshAdd}\"";
       })
     ]
   );

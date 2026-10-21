@@ -52,6 +52,10 @@ let
     unset CHROME_DESKTOP
     ${lib.getExe pkgs.handlr-regex} open "$@"
   '';
+  # The --launcher-command of iwmenu, pwmenu and bzmenu; only iwmenu fills in
+  # {password_flag:...}.
+  yofiMenu = "yofi -p '{placeholder}' dialog";
+  yofiIwmenu = "yofi -p '{placeholder}' {password_flag:--password} dialog";
   wlr-common-config = p: ''
     # Theming
     # A pixel size: wlr-which-key measures text at scale 1 but draws it hinted
@@ -618,6 +622,7 @@ in
       (lib.hiPrio handlr-xdg-open)
       wallpaperNext
       ironbar
+      yofi
       gnome-themes-extra # Adwaita-dark for GTK 3
 
       # Networking & Communication
@@ -740,7 +745,7 @@ in
       '';
       ".config/handlr/handlr.toml".text = ''
         enable_selector = true
-        selector = "${lib.getExe pkgs.fuzzel} --dmenu"
+        selector = "${lib.getExe pkgs.yofi} dialog"
         term_exec_args = '-e'
       '';
       ".config/inlyne/inlyne.toml".source =
@@ -764,13 +769,13 @@ in
       menu:
         "w":
           desc: Wifi Menu
-          cmd: iwmenu -l fuzzel
+          cmd: iwmenu -l custom --launcher-command "${yofiIwmenu}"
         "a":
           desc: Audio Menu
-          cmd: pwmenu -l fuzzel -m output-devices
+          cmd: pwmenu -l custom --launcher-command "${yofiMenu}" -m output-devices
         "b":
           desc: Bluetooth Menu
-          cmd: bzmenu -l fuzzel
+          cmd: bzmenu -l custom --launcher-command "${yofiMenu}"
         "h":
           desc: Toggle AirPods
           cmd: ${lib.getExe airpodsToggle}
@@ -855,7 +860,7 @@ in
           cmd: mqttx
         "b":
           desc: Bitwarden
-          cmd: bitwarden
+          cmd: rbw-menu
         "a":
           desc: Audio Mixer
           cmd: pwvucontrol
@@ -911,9 +916,6 @@ in
     # systemd.user.services.waybar.Unit.Requisite = [ "graphical-session.target" ];
     # systemd.user.services.swayidle.Unit.Requisite = [ "graphical-session.target" ];
 
-    services.walker = {
-      enable = true;
-    };
     services.kanshi = {
       enable = true;
       settings = [
@@ -1247,34 +1249,34 @@ in
       enable = true;
     };
 
-    programs.fuzzel = {
-      enable = true;
-      settings = {
-        main.include = "${config.theme.dir}/current/fuzzel.ini";
+    xdg.configFile."yofi/yofi.config".source =
+      config.lib.file.mkOutOfStoreSymlink "${config.theme.dir}/current/yofi.toml";
+    theme.files."yofi.toml" = p: ''
+      width = 560
+      height = 380
+      font = "${p.font}"
+      font_size = 15
+      font_color = "${p.fg}"
+      bg_color = "${p.bg}"
+      bg_border_color = "${p.focus}"
+      bg_border_width = 2.0
+      corner_radius = "0"
 
-        # BORDER
-        border.radius = 0; # disable rounded corners (default is 10) :contentReference[oaicite:2]{index=2}
-        border.width = 0; # 1px border
-      };
-    };
-    # fuzzel colours are RRGGBBAA.
-    theme.files."fuzzel.ini" =
-      p:
-      let
-        c = color: "${lib.removePrefix "#" color}ff";
-      in
-      ''
-        [main]
-        font=${p.font}
+      [input_text]
+      font_color = "${p.fg}"
+      prompt_color = "${p.faint}"
+      bg_color = "${p.bgAlt}"
+      corner_radius = "0"
+      margin = "12"
+      padding = "6 8"
 
-        [colors]
-        background=${c p.bg}
-        text=${c p.fg}
-        selection=${c p.bg}
-        selection-text=${c p.fg}
-        match=${c p.fg}
-        selection-match=${c p.fg}
-      '';
+      [list_items]
+      font_color = "${p.muted}"
+      selected_font_color = "${p.fg}"
+      match_color = "${p.yellow}"
+      margin = "8 18"
+      hide_actions = true
+    '';
 
     programs.chromium = {
       enable = true;
@@ -1489,7 +1491,7 @@ in
           # Launchers
           "${mod}+Return".action = spawn "foot";
           "${mod}+D".action = spawn "vicinae" "toggle";
-          "${mod}+Shift+D".action = spawn "fuzzel";
+          "${mod}+Shift+D".action = spawn "yofi" "apps";
           "${mod}+P".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-power.yaml";
           "${mod}+O".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-opener.yaml";
 
@@ -1767,7 +1769,7 @@ in
             class = "cell";
             cmd = lib.getExe barNet;
             interval = 10000;
-            on_click_left = "iwmenu -l fuzzel";
+            on_click_left = "iwmenu -l custom --launcher-command \"${yofiIwmenu}\"";
           }
           {
             type = "volume";
