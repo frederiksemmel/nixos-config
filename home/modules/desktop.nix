@@ -640,6 +640,7 @@ in
       zotero
       xournalpp
       # libreoffice
+      gridcraft
       # ungoogled-chromium
       evince
       # papers issues with saving and icons
