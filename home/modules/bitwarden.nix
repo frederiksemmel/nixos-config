@@ -8,7 +8,7 @@ let
   cfg = config.profiles.bitwarden;
   bw = lib.getExe' pkgs.bitwarden-cli "bw";
   server = "https://vault.bitwarden.eu";
-  keyLifetime = 3600;
+  sshKeyLifetime = 24 * 3600;
 
   # Speaks just enough of the Assuan protocol for rbw: it sends SETTITLE,
   # SETPROMPT, SETDESC, maybe SETERROR, then GETPIN, and closes stdin.
@@ -126,7 +126,7 @@ let
       rbw unlocked 2>/dev/null || rbw unlock || exit 1
       rbw list --fields id,type | awk -F '\t' '$2 == "SSH Key" { print $1 }' \
         | while IFS= read -r id; do
-          rbw get --field private_key "$id" | ssh-add -q -t ${toString keyLifetime} - || true
+          rbw get --field private_key "$id" | ssh-add -q -t ${toString sshKeyLifetime} - || true
         done
       exit 1
     '';
@@ -164,7 +164,7 @@ in
           settings = {
             email = "frederiksemmel@gmail.com";
             base_url = server;
-            lock_timeout = keyLifetime;
+            lock_timeout = 3600;
             pinentry = rbwPinentry;
           };
         };
@@ -173,7 +173,7 @@ in
         home.packages = [ rbwSshAdd ];
         services.ssh-agent = {
           enable = true;
-          defaultMaximumIdentityLifetime = keyLifetime;
+          defaultMaximumIdentityLifetime = sshKeyLifetime;
         };
         programs.ssh.settings.rbw-ssh-add.header = "Match exec \"${lib.getExe rbwSshAdd}\"";
       })
