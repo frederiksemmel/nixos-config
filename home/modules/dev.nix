@@ -855,7 +855,7 @@ in
               "Bash(cargo fmt:*)"
               "Bash(npm run:*)"
               "Bash(nix eval:*)"
-              "Bash(nh os build:*)"
+              "Bash(nh:*)"
               # Reading GitHub, including whatever gh grew no subcommand for.
               "Bash(gh pr view:*)"
               "Bash(gh pr list:*)"
@@ -881,7 +881,7 @@ in
               # Outward-facing or hard to walk back.
               "Bash(sudo:*)"
               "Bash(nixos-rebuild:*)"
-              "Bash(nh:*)"
+              "Bash(nh os switch:*)"
               # Change who a company file is shared with.
               "mcp__plugin_hm_google-workspace__manage_drive_access"
               "mcp__plugin_hm_google-workspace__set_drive_file_permissions"
