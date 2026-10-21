@@ -56,6 +56,11 @@ in
           IdentitiesOnly = true;
         };
         "tcs-local".HostName = "169.254.1.123";
+        "tcssa-wpj" = {
+          User = "warre";
+          IdentityFile = identity "~/.ssh/id_spadesvision_warren";
+          IdentitiesOnly = true;
+        };
       }
       // identityBlocks;
     };
