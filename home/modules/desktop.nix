@@ -52,37 +52,6 @@ let
     unset CHROME_DESKTOP
     ${lib.getExe pkgs.handlr-regex} open "$@"
   '';
-  # The --launcher-command of iwmenu, pwmenu and bzmenu; only iwmenu fills in
-  # {password_flag:...}.
-  yofiMenu = "yofi -p '{placeholder}' dialog";
-  yofiIwmenu = "yofi -p '{placeholder}' {password_flag:--password --config-file ${config.theme.dir}/current/yofi-prompt.toml} dialog";
-  # A password prompt has no list, so its window is only the input row.
-  yofiConfig = height: p: ''
-    width = 560
-    height = ${toString height}
-    font = "${p.font}"
-    font_size = 15
-    font_color = "${p.fg}"
-    bg_color = "${p.bg}"
-    bg_border_color = "${p.focus}"
-    bg_border_width = 2.0
-    corner_radius = "0"
-
-    [input_text]
-    font_color = "${p.fg}"
-    prompt_color = "${p.faint}"
-    bg_color = "${p.bgAlt}"
-    corner_radius = "0"
-    margin = "12"
-    padding = "6 8"
-
-    [list_items]
-    font_color = "${p.muted}"
-    selected_font_color = "${p.fg}"
-    match_color = "${p.yellow}"
-    margin = "8 18"
-    hide_actions = true
-  '';
   wlr-common-config = p: ''
     # Theming
     # A pixel size: wlr-which-key measures text at scale 1 but draws it hinted
@@ -649,7 +618,6 @@ in
       (lib.hiPrio handlr-xdg-open)
       wallpaperNext
       ironbar
-      yofi
       gnome-themes-extra # Adwaita-dark for GTK 3
 
       # Networking & Communication
@@ -772,7 +740,7 @@ in
       '';
       ".config/handlr/handlr.toml".text = ''
         enable_selector = true
-        selector = "${lib.getExe pkgs.yofi} dialog"
+        selector = "${lib.getExe pkgs.fuzzel} --dmenu"
         term_exec_args = '-e'
       '';
       ".config/inlyne/inlyne.toml".source =
@@ -796,13 +764,13 @@ in
       menu:
         "w":
           desc: Wifi Menu
-          cmd: iwmenu -l custom --launcher-command "${yofiIwmenu}"
+          cmd: iwmenu -l fuzzel
         "a":
           desc: Audio Menu
-          cmd: pwmenu -l custom --launcher-command "${yofiMenu}" -m output-devices
+          cmd: pwmenu -l fuzzel -m output-devices
         "b":
           desc: Bluetooth Menu
-          cmd: bzmenu -l custom --launcher-command "${yofiMenu}"
+          cmd: bzmenu -l fuzzel
         "h":
           desc: Toggle AirPods
           cmd: ${lib.getExe airpodsToggle}
@@ -1276,10 +1244,46 @@ in
       enable = true;
     };
 
-    xdg.configFile."yofi/yofi.config".source =
-      config.lib.file.mkOutOfStoreSymlink "${config.theme.dir}/current/yofi.toml";
-    theme.files."yofi.toml" = yofiConfig 380;
-    theme.files."yofi-prompt.toml" = yofiConfig 56;
+    programs.fuzzel = {
+      enable = true;
+      settings = {
+        main = {
+          include = "${config.theme.dir}/current/fuzzel.ini";
+          keyboard-focus = "on-demand";
+          exit-on-keyboard-focus-loss = "no";
+          width = 50;
+          horizontal-pad = 18;
+          vertical-pad = 12;
+        };
+        border = {
+          width = 2;
+          radius = 0;
+        };
+      };
+    };
+    # fuzzel colours are RRGGBBAA.
+    theme.files."fuzzel.ini" =
+      p:
+      let
+        c = color: "${lib.removePrefix "#" color}ff";
+      in
+      ''
+        [main]
+        font=${p.font}:size=11
+
+        [colors]
+        background=${c p.bg}
+        text=${c p.muted}
+        message=${c p.muted}
+        prompt=${c p.faint}
+        placeholder=${c p.faint}
+        input=${c p.fg}
+        match=${c p.yellow}
+        selection=${c p.focus}
+        selection-text=${c p.fg}
+        selection-match=${c p.yellow}
+        border=${c p.focus}
+      '';
 
     programs.chromium = {
       enable = true;
@@ -1494,7 +1498,7 @@ in
           # Launchers
           "${mod}+Return".action = spawn "foot";
           "${mod}+D".action = spawn "vicinae" "toggle";
-          "${mod}+Shift+D".action = spawn "yofi" "apps";
+          "${mod}+Shift+D".action = spawn "fuzzel";
           "${mod}+P".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-power.yaml";
           "${mod}+O".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-opener.yaml";
 
@@ -1772,7 +1776,7 @@ in
             class = "cell";
             cmd = lib.getExe barNet;
             interval = 10000;
-            on_click_left = "iwmenu -l custom --launcher-command \"${yofiIwmenu}\"";
+            on_click_left = "iwmenu -l fuzzel";
           }
           {
             type = "volume";

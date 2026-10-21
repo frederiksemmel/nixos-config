@@ -14,7 +14,7 @@ let
   # waits for an OK to each and a D line with the password.
   rbwPinentry = pkgs.writeShellApplication {
     name = "rbw-pinentry";
-    runtimeInputs = [ pkgs.yofi ];
+    runtimeInputs = [ pkgs.fuzzel ];
     text = ''
       echo OK
       label="" desc="" error=""
@@ -24,8 +24,8 @@ let
           SETDESC) desc=$arg ;;
           SETERROR) error="$arg · " ;;
           GETPIN)
-            pin=$(yofi --password --config-file "${config.theme.dir}/current/yofi-prompt.toml" \
-              -p "''${error}rbw · $desc · $label" dialog </dev/null || true)
+            pin=$(fuzzel --dmenu --password --prompt-only "$label: " \
+              --mesg "''${error}rbw · $desc" </dev/null || true)
             if [ -z "$pin" ]; then
               echo "ERR 83886179 Operation cancelled"
               exit 0
@@ -42,22 +42,21 @@ let
     name = "rbw-menu";
     runtimeInputs = [
       pkgs.rbw
-      pkgs.yofi
+      pkgs.fuzzel
       pkgs.wl-clipboard
       pkgs.wtype
       pkgs.libnotify
     ];
     text = ''
-      # "<name>  ·  <user>\t<id>" for every login
-      entries=$(rbw list --fields id,name,user,type \
-        | awk -F '\t' '$4 == "Login" { print ($3 == "" ? $2 : $2 "  ·  " $3) "\t" $1 }')
-      choice=$(cut -f1 <<<"$entries" | yofi -p Bitwarden dialog) || exit 0
-      id=$(awk -F '\t' -v c="$choice" '$1 == c { print $2; exit }' <<<"$entries")
-      [ -n "$id" ] || exit 0
+      # "<name>  ·  <user>\t<id>" for every login; fuzzel shows the first column
+      picked=$(rbw list --fields id,name,user,type \
+        | awk -F '\t' '$4 == "Login" { print ($3 == "" ? $2 : $2 "  ·  " $3) "\t" $1 }' \
+        | fuzzel --dmenu --with-nth 1 --placeholder Bitwarden) || exit 0
+      IFS=$'\t' read -r choice id <<<"$picked"
 
       action=$(printf '%s\n' "Copy password" "Copy username" "Copy TOTP" \
         "Type username, tab, password" "Type password" \
-        | yofi -p "$choice" dialog) || exit 0
+        | fuzzel --dmenu --mesg "$choice") || exit 0
 
       copy() {
         local secret
