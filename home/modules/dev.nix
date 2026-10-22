@@ -184,6 +184,7 @@ in
     mcp-servers.programs = {
       playwright.enable = true;
     };
+    mcp-servers.settings.servers.playwright.args = [ "--headless" ];
     mcp-servers.settings.servers.rerun = {
       command = lib.getExe pkgs.rerun;
       args = [ "viewer-mcp" ];
