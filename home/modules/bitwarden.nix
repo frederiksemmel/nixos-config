@@ -106,6 +106,11 @@ let
     '';
   };
 
+  # Keys allowed with "Allow until lock" are remembered here, like the
+  # Bitwarden agent's "remember until vault is locked"; emptied together with
+  # the agent on lock and suspend.
+  sshApprovals = "$XDG_RUNTIME_DIR/ssh-agent-approved";
+
   # ssh-agent runs this before each use of a key added with `ssh-add -c` and
   # passes "Allow use of key <comment>?\nKey fingerprint <fp>."; exit 0
   # allows. The agent never learns the destination, so the clients connected
@@ -118,6 +123,12 @@ let
       pkgs.procps
     ];
     text = ''
+      fingerprint=$(printf '%s\n' "$1" | sed -n 's/^Key fingerprint \(.*\)\.$/\1/p')
+      approval="${sshApprovals}/$(printf '%s' "$fingerprint" | tr '/+' '_-')"
+      if [ -n "$fingerprint" ] && [ -e "$approval" ]; then
+        exit 0
+      fi
+
       pids=$(ss -xpH | awk -v sock="$XDG_RUNTIME_DIR/${config.services.ssh-agent.socket}" '
         $5 == sock { peer[$8] }
         { users[$6] = $9 }
@@ -131,8 +142,18 @@ let
         parent=$(ps -o args= -p "$(ps -o ppid= -p "$pid" | tr -d ' ')" | sed 's|^/[^ ]*/||' || true)
         callers+=$'\n'"by: $cmd"$'\n'"from: $parent"
       done
-      choice=$(printf 'Allow\nDeny\n' | fuzzel --dmenu --mesg "ssh-agent · $1$callers") || exit 1
-      [ "$choice" = Allow ]
+      choice=$(printf 'Allow until lock\nAllow once\nDeny\n' \
+        | fuzzel --dmenu --mesg "ssh-agent · $1$callers") || exit 1
+      case "$choice" in
+        "Allow until lock")
+          if [ -n "$fingerprint" ]; then
+            [ -d "${sshApprovals}" ] || mkdir -m 700 "${sshApprovals}"
+            touch "$approval"
+          fi
+          ;;
+        "Allow once") ;;
+        *) exit 1 ;;
+      esac
     '';
   };
 
@@ -147,7 +168,10 @@ let
     text = ''
       gdbus monitor --system --dest org.freedesktop.login1 | while read -r line; do
         case "$line" in
-          *"'LockedHint': <true>"* | *"PrepareForSleep (true,)"*) ssh-add -D >/dev/null 2>&1 || true ;;
+          *"'LockedHint': <true>"* | *"PrepareForSleep (true,)"*)
+            ssh-add -D >/dev/null 2>&1 || true
+            rm -rf "${sshApprovals}"
+            ;;
         esac
       done
     '';
@@ -204,6 +228,8 @@ in
             After = [ "graphical-session.target" ];
           };
           Service.Environment = [ "SSH_ASKPASS=${lib.getExe sshAskpass}" ];
+          # A fresh agent holds no keys, so no approval carries over.
+          Service.ExecStartPre = "${lib.getExe' pkgs.coreutils "rm"} -rf %t/ssh-agent-approved";
           Install.WantedBy = lib.mkForce [ "graphical-session.target" ];
         };
         systemd.user.services.ssh-agent-clear = {
