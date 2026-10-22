@@ -96,7 +96,7 @@ let
       rbw list --fields id,name,type | awk -F '\t' '$3 == "SSH Key" { print $1 "\t" $2 }' \
         | while IFS=$'\t' read -r id name; do
           case "$name" in
-            "ssh id_github") confirm=() ;;
+            "ssh id_github" | "ssh beast_login") confirm=() ;;
             *) confirm=(-c) ;;
           esac
           rbw get --field private_key "$id" \
