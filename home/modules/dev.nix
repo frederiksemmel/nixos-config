@@ -184,7 +184,12 @@ in
     mcp-servers.programs = {
       playwright.enable = true;
     };
-    mcp-servers.settings.servers.playwright.args = [ "--headless" ];
+    # --isolated keeps the browser profile in memory: parallel Claude sessions and subagents
+    # otherwise share one on-disk profile and collide on its lock.
+    mcp-servers.settings.servers.playwright.args = [
+      "--headless"
+      "--isolated"
+    ];
     mcp-servers.settings.servers.rerun = {
       command = lib.getExe pkgs.rerun;
       args = [ "viewer-mcp" ];
