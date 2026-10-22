@@ -93,9 +93,14 @@ let
     ];
     text = ''
       ssh-add -l >/dev/null 2>&1 && exit 1
-      rbw list --fields id,type | awk -F '\t' '$2 == "SSH Key" { print $1 }' \
-        | while read -r id; do
-          rbw get --field private_key "$id" | ssh-add -q -c -t ${toString sshKeyLifetime} - || true
+      rbw list --fields id,name,type | awk -F '\t' '$3 == "SSH Key" { print $1 "\t" $2 }' \
+        | while IFS=$'\t' read -r id name; do
+          case "$name" in
+            "ssh id_github") confirm=() ;;
+            *) confirm=(-c) ;;
+          esac
+          rbw get --field private_key "$id" \
+            | ssh-add -q "''${confirm[@]}" -t ${toString sshKeyLifetime} - || true
         done
       exit 1
     '';
