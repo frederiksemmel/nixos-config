@@ -93,6 +93,7 @@ let
     ];
     text = ''
       ssh-add -l >/dev/null 2>&1 && exit 1
+      rm -f "${sshApprovals}"
       rbw list --fields id,name,type | awk -F '\t' '$3 == "SSH Key" { print $1 "\t" $2 }' \
         | while IFS=$'\t' read -r id name; do
           case "$name" in
@@ -106,15 +107,18 @@ let
     '';
   };
 
-  # Keys allowed with "Allow until lock" are remembered here, like the
-  # Bitwarden agent's "remember until vault is locked"; emptied together with
-  # the agent on lock and suspend.
-  sshApprovals = "$XDG_RUNTIME_DIR/ssh-agent-approved";
+  # "<fingerprint> <destination>" per line, for keys approved since the agent
+  # was last filled.
+  sshApprovals = "$XDG_RUNTIME_DIR/ssh-agent-approvals";
 
   # ssh-agent runs this before each use of a key added with `ssh-add -c` and
   # passes "Allow use of key <comment>?\nKey fingerprint <fp>."; exit 0
-  # allows. The agent never learns the destination, so the clients connected
-  # to its socket are looked up and shown with their parent process.
+  # allows. Like Bitwarden's "remember until vault is locked", an Allow holds
+  # for that key and destination until the agent is emptied. The agent never
+  # learns the destination, so it is read off the ssh clients connected to its
+  # socket; a request is approved silently only when every connected client is
+  # remembered, and ssh-keygen and other non-ssh callers count as "local".
+  # Agent forwarding is never remembered.
   sshAskpass = pkgs.writeShellApplication {
     name = "ssh-askpass-fuzzel";
     runtimeInputs = [
@@ -123,11 +127,55 @@ let
       pkgs.procps
     ];
     text = ''
-      fingerprint=$(printf '%s\n' "$1" | sed -n 's/^Key fingerprint \(.*\)\.$/\1/p')
-      approval="${sshApprovals}/$(printf '%s' "$fingerprint" | tr '/+' '_-')"
-      if [ -n "$fingerprint" ] && [ -e "$approval" ]; then
-        exit 0
-      fi
+      fp=''${1##*Key fingerprint }
+      fp=''${fp%%.*}
+
+      # host[:port] an ssh command line connects to, "-" when it forwards the
+      # agent, "local" for anything that is not ssh
+      destination() {
+        local -a argv
+        local i=1 a opt val host="" port=""
+        mapfile -d "" argv <"/proc/$1/cmdline" || return 1
+        if [ "''${argv[0]##*/}" != ssh ]; then
+          echo local
+          return
+        fi
+        while [ -z "$host" ] && [ "$i" -lt "''${#argv[@]}" ]; do
+          a=''${argv[i]}
+          i=$((i + 1))
+          case "$a" in
+            --) host=''${argv[i]:--} ;;
+            -?*)
+              a=''${a#-}
+              while [ -n "$a" ]; do
+                opt=''${a:0:1} a=''${a:1}
+                case "$opt" in
+                  A) host=- ;;
+                  [BbcDEeFIiJLlmOoPpQRSWw])
+                    val=$a a=""
+                    if [ -z "$val" ]; then
+                      val=''${argv[i]:-}
+                      i=$((i + 1))
+                    fi
+                    case "$opt:''${val,,}" in
+                      p:*) port=$val ;;
+                      o:forwardagent*yes) host=- ;;
+                    esac
+                    ;;
+                esac
+              done
+              ;;
+            *) host=$a ;;
+          esac
+        done
+        if [ "$host" = - ] || [ -z "$host" ]; then
+          echo -
+          return
+        fi
+        host=''${host#ssh://}
+        host=''${host#*@}
+        echo "$host''${port:+:$port}"
+      }
 
       pids=$(ss -xpH | awk -v sock="$XDG_RUNTIME_DIR/${config.services.ssh-agent.socket}" '
         $5 == sock { peer[$8] }
@@ -136,24 +184,31 @@ let
           for (inode in peer)
             if (match(users[inode], /pid=[0-9]+/)) print substr(users[inode], RSTART + 4, RLENGTH - 4)
         }')
-      callers=""
+      callers="" dests=()
       for pid in $pids; do
         cmd=$(tr '\0' ' ' <"/proc/$pid/cmdline" | sed 's|^/[^ ]*/||') || continue
+        dests+=("$(destination "$pid" || echo -)")
         parent=$(ps -o args= -p "$(ps -o ppid= -p "$pid" | tr -d ' ')" | sed 's|^/[^ ]*/||' || true)
         callers+=$'\n'"by: $cmd"$'\n'"from: $parent"
       done
-      choice=$(printf 'Allow until lock\nAllow once\nDeny\n' \
-        | fuzzel --dmenu --mesg "ssh-agent · $1$callers") || exit 1
-      case "$choice" in
-        "Allow until lock")
-          if [ -n "$fingerprint" ]; then
-            [ -d "${sshApprovals}" ] || mkdir -m 700 "${sshApprovals}"
-            touch "$approval"
-          fi
-          ;;
-        "Allow once") ;;
-        *) exit 1 ;;
-      esac
+
+      remembered=''${#dests[@]}
+      for dest in "''${dests[@]}"; do
+        if [ "$dest" = - ] || ! grep -qxF "$fp $dest" "${sshApprovals}" 2>/dev/null; then
+          remembered=0
+        fi
+      done
+      [ "$remembered" -gt 0 ] && exit 0
+
+      note=""
+      if [ "''${#dests[@]}" -eq 1 ] && [ "''${dests[0]}" != - ]; then
+        note=$'\n'"Allow is remembered for ''${dests[0]} until lock"
+      fi
+      choice=$(printf 'Allow\nDeny\n' | fuzzel --dmenu --mesg "ssh-agent · $1$callers$note") || exit 1
+      [ "$choice" = Allow ] || exit 1
+      if [ -n "$note" ]; then
+        echo "$fp ''${dests[0]}" >>"${sshApprovals}"
+      fi
     '';
   };
 
@@ -170,7 +225,7 @@ let
         case "$line" in
           *"'LockedHint': <true>"* | *"PrepareForSleep (true,)"*)
             ssh-add -D >/dev/null 2>&1 || true
-            rm -rf "${sshApprovals}"
+            rm -f "${sshApprovals}"
             ;;
         esac
       done
@@ -228,8 +283,6 @@ in
             After = [ "graphical-session.target" ];
           };
           Service.Environment = [ "SSH_ASKPASS=${lib.getExe sshAskpass}" ];
-          # A fresh agent holds no keys, so no approval carries over.
-          Service.ExecStartPre = "${lib.getExe' pkgs.coreutils "rm"} -rf %t/ssh-agent-approved";
           Install.WantedBy = lib.mkForce [ "graphical-session.target" ];
         };
         systemd.user.services.ssh-agent-clear = {
