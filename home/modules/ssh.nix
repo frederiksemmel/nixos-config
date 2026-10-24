@@ -41,9 +41,6 @@ in
       settings = {
         "*" = {
           AddKeysToAgent = if bitwardenAgent then "no" else "yes";
-          # Without a pty ssh sends no TERM and bash on the far side defaults it to "dumb", which
-          # then sticks to anything started there, e.g. a shpool session. Hosts whose sshd doesn't
-          # AcceptEnv these ignore them.
           SendEnv = [
             "TERM"
             "COLORTERM"
