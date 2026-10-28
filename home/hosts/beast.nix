@@ -208,7 +208,8 @@ in
             | default ($titles | where type == "ai-title" | get -o aiTitle | last)
             | default $prompt
             | default "spare"
-          { name: (shpool-session-name $s.pid), title: $title, status: $s.status, cwd: $s.cwd }
+          let label = if ($s.name? | is-empty) or $s.name == $title { $title } else { $"($s.name) · ($title)" }
+          { name: (shpool-session-name $s.pid), label: $label, status: $s.status, cwd: $s.cwd }
         }
       } | compact
       $sessions | each {|s|
@@ -216,7 +217,7 @@ in
         let fg = $shells | where name == $s.name | get -o 0.fg
         let cwd = if $claude != null { $claude.cwd } else if $fg != null { try { $"/proc/($fg)/cwd" | path expand } } else { null }
         let what = if $claude != null {
-          $"claude: ($claude.title) \(($claude.status)\)"
+          $"claude: ($claude.label) \(($claude.status)\)"
         } else if $fg != null {
           open --raw $"/proc/($fg)/cmdline" | split row (char nul) | compact --empty | each { path basename } | str join " "
         } else { "" }
