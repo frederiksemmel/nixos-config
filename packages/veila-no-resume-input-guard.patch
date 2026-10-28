@@ -1,0 +1,16 @@
+--- a/crates/daemon/src/app/sleep.rs
++++ b/crates/daemon/src/app/sleep.rs
+@@ -103,13 +103,6 @@
+ }
+ 
+ async fn prepare_for_sleep(runtime: &mut AppRuntime) {
+-    if runtime.state.is_active()
+-        && let Some(control_socket_path) = control_socket_path(&runtime.active)
+-        && let Err(error) =
+-            process::request_curtain_arm_resume_input_guard(control_socket_path).await
+-    {
+-        tracing::warn!("failed to arm curtain resume input guard before sleep: {error:#}");
+-    }
+     runtime.fingerprint.pause_for_sleep().await;
+     runtime
+         .fingerprint

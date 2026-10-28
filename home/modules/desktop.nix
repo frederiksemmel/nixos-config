@@ -1143,6 +1143,11 @@ in
     # `security.pam.services.veila` lives in the host config.
     programs.veila = {
       enable = true;
+      package =
+        flake.inputs.veila.packages.${pkgs.stdenv.hostPlatform.system}.default.overrideAttrs
+          (old: {
+            patches = (old.patches or [ ]) ++ [ ../../packages/veila-no-resume-input-guard.patch ];
+          });
       service.enable = true;
       idle = {
         enable = true;
