@@ -208,19 +208,20 @@ in
             | default ($titles | where type == "ai-title" | get -o aiTitle | last)
             | default $prompt
             | default "spare"
-          let label = if ($s.name? | is-empty) or $s.name == $title { $title } else { $"($s.name) · ($title)" }
-          { name: (shpool-session-name $s.pid), label: $label, status: $s.status, cwd: $s.cwd }
+          { name: (shpool-session-name $s.pid), cname: ($s.name? | default ""), title: $title, status: $s.status, cwd: $s.cwd }
         }
       } | compact
       $sessions | each {|s|
         let claude = $claudes | where name == $s.name | get -o 0
         let fg = $shells | where name == $s.name | get -o 0.fg
         let cwd = if $claude != null { $claude.cwd } else if $fg != null { try { $"/proc/($fg)/cwd" | path expand } } else { null }
-        let what = if $claude != null {
-          $"claude: ($claude.label) \(($claude.status)\)"
-        } else if $fg != null {
-          open --raw $"/proc/($fg)/cmdline" | split row (char nul) | compact --empty | each { path basename } | str join " "
-        } else { "" }
+        let cmd = if $fg != null { open --raw $"/proc/($fg)/cmdline" | split row (char nul) | compact --empty | each { path basename } | str join " " } else { "" }
+        let title = if $claude != null {
+          $"($claude.title) \(($claude.status)\)"
+        } else if ($cmd | is-empty) or ($cmd starts-with "-") { $s.name } else { $"($s.name): ($cmd)" }
+        let ids = if $claude == null { "" } else {
+          [$s.name $claude.cname] | where {|n| ($n | is-not-empty) and $n != $claude.title } | uniq | str join " "
+        }
         let last = [$s.started_at_unix_ms $s.last_connected_at_unix_ms $s.last_disconnected_at_unix_ms] | compact | math max
         {
           name: $s.name
@@ -228,7 +229,8 @@ in
           last: $last
           ago: ($last * 1_000_000 | into datetime | date humanize)
           dir: ($cwd | default "")
-          what: $what
+          title: $title
+          ids: $ids
         }
       } | sort-by last --reverse
     }
@@ -238,36 +240,38 @@ in
       let new = "new session"
       let kill = "kill sessions…"
       let lines = if ($sessions | is-empty) { [] } else {
-        let name_w = $sessions.name | str length | math max
-        let dir_w = $sessions.dir | path basename | str length | math max
+        let title_w = [($sessions.title | str length | math max) 40] | math min
+        let ids_w = $sessions.ids | str length | math max
         let cols = (term size).columns - 4
         $sessions | each {|s|
           [
-            ($s.name | fill -w $name_w)
-            ($s.status | str replace "disconnected" "detached" | fill -w 8)
+            ($s.title | str substring ..<$title_w | fill -w $title_w)
+            ($s.ids | fill -w $ids_w)
             ($s.ago | str replace " ago" "" | fill -w 14)
-            ($s.dir | path basename | fill -w $dir_w)
-            $s.what
+            ($s.status | str replace "disconnected" "detached" | fill -w 8)
+            ($s.dir | path basename)
           ] | str join "  " | str substring ..<$cols
         }
       }
-      let choice = if ($lines | is-empty) { $new } else {
-        $lines | append [$new $kill] | input list --fuzzy "shpool session (type to filter, esc for a plain shell)"
+      let n = $sessions | length
+      let choice = if ($lines | is-empty) { $n } else {
+        $lines | append [$new $kill] | input list --fuzzy --index "shpool session (type to filter, esc for a plain shell)"
       }
-      if $choice == $kill {
+      if $choice == null {
+      } else if $choice < $n {
+        exec shpool attach --force ($sessions | get $choice | get name)
+      } else if $choice > $n {
         $lines
-        | input list --fuzzy --multi "kill which sessions (tab marks, enter kills, esc cancels)"
+        | input list --fuzzy --multi --index "kill which sessions (tab marks, enter kills, esc cancels)"
         | default []
-        | each {|l| shpool kill ($l | split row " " | first) }
+        | each {|i| shpool kill ($sessions | get $i | get name) }
         | ignore
         shpool-pick
-      } else if $choice == $new {
+      } else {
         let taken = $sessions.name
         let default = 1..(($taken | length) + 1) | each {|i| $"s($i)" } | where {|n| $n not-in $taken } | first
         let name = input $"session name \(enter for ($default)\): " | str trim | str replace --all --regex '\s+' '-'
         exec shpool attach (if ($name | is-empty) { $default } else { $name })
-      } else if $choice != null {
-        exec shpool attach --force ($choice | split row " " | first)
       }
     }
 
