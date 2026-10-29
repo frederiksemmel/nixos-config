@@ -21,12 +21,8 @@ python3Packages.buildPythonApplication rec {
     wheel
   ];
 
-  # Upstream's floors are security bumps a few patch releases ahead of nixpkgs.
-  pythonRelaxDeps = [
-    "pyjwt"
-    "pypdf"
-    "urllib3"
-  ];
+  # Upstream's floors are dependabot security bumps that run ahead of nixpkgs.
+  pythonRelaxDeps = true;
 
   dependencies = with python3Packages; [
     cryptography
