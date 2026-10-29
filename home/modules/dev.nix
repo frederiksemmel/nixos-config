@@ -262,6 +262,7 @@ in
         shellAliases = {
           ns = "exec (nix-search-tv print | fzf --preview 'nix-search-tv preview {}' --scheme history)";
           claude-infinity = "claude --mcp-config ${config.xdg.configHome}/mcp/infinity.json";
+          git-graph = "^git-graph -f '%h%d %as %s'";
         };
         settings = {
           completions.external = {
