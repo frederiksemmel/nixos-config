@@ -580,7 +580,7 @@ in
   # virtualisation.virtualbox.guest.enable = true;
   users.extraGroups.vboxusers.members = [ "frederik" ];
 
-  systemd.network.wait-online.ignoredInterfaces = [ "vboxnet0" ];
+  systemd.network.wait-online.enable = false;
 
   system.stateVersion = "25.05";
 }
