@@ -198,30 +198,6 @@ in
     mcp-servers.settings.servers.figma.url = "https://mcp.figma.com/mcp";
     # Linear's hosted MCP; same `/mcp` OAuth dance as Figma.
     mcp-servers.settings.servers.linear.url = "https://mcp.linear.app/mcp";
-    # Google Docs/Sheets/Slides editing. The secret is the Desktop-app OAuth
-    # client JSON from Google Cloud; the first tool call opens the consent page.
-    age.secrets.workspace_mcp_client_secret = {
-      file = ../../secrets/workspace_mcp_client_secret.age;
-      path = "${config.xdg.configHome}/workspace-mcp/client_secret.json";
-    };
-    mcp-servers.settings.servers.google-workspace = {
-      command = lib.getExe pkgs.workspace-mcp;
-      args = [
-        "--single-user"
-        "--tool-tier"
-        "complete"
-        "--tools"
-        "docs"
-        "sheets"
-        "slides"
-        "drive"
-      ];
-      env = {
-        GOOGLE_CLIENT_SECRET_PATH = config.age.secrets.workspace_mcp_client_secret.path;
-        WORKSPACE_MCP_CREDENTIALS_DIR = "${config.xdg.stateHome}/workspace-mcp";
-        WORKSPACE_MCP_PORT = "8917";
-      };
-    };
     # Disabled for now: devenv mcp hogs too much RAM.
     # mcp-servers.settings.servers.devenv = {
     #   command = lib.getExe pkgs.devenv;
@@ -880,8 +856,8 @@ in
               "Bash(gh pr merge:*)"
               # SSH because its super practical
               "Bash(ssh:*)"
-              # Google Docs/Sheets/Slides/Drive on the work account.
-              "mcp__plugin_hm_google-workspace"
+              # Google Drive through the claude.ai connector.
+              "mcp__claude_ai_Google_Drive"
             ];
 
             ask = [
@@ -890,8 +866,7 @@ in
               "Bash(nixos-rebuild:*)"
               "Bash(nh os switch:*)"
               # Change who a company file is shared with.
-              "mcp__plugin_hm_google-workspace__manage_drive_access"
-              "mcp__plugin_hm_google-workspace__set_drive_file_permissions"
+              "mcp__claude_ai_Google_Drive__share_file"
             ];
 
             deny = [
