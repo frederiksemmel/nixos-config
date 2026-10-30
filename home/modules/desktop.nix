@@ -1373,16 +1373,8 @@ in
 
     programs.niri.package = lib.mkDefault pkgs.niri;
 
-    # settings.includes would land at the top, where the settings after it
-    # override the colours. At option-default priority this merges with the
-    # rendered settings and follows them.
-    programs.niri.config = lib.mkOptionDefault [
-      {
-        name = "include";
-        arguments = [ "${config.theme.dir}/current/niri.kdl" ];
-        properties.optional = true;
-      }
-    ];
+    # Included after the settings so its colours override theirs.
+    programs.niri.settings.includes = lib.mkAfter [ "${config.theme.dir}/current/niri.kdl" ];
     # background-color shows until awww draws the wallpaper.
     theme.files."niri.kdl" = p: ''
       layout {
@@ -1399,6 +1391,8 @@ in
 
     programs.niri.settings = {
       "prefer-no-csd" = true;
+      # Windows pick their own initial width unless a window rule sets one.
+      layout.default-column-width = { };
       layer-rules = [
         {
           matches = [ { namespace = "^awww-daemonbackdrop$"; } ];
