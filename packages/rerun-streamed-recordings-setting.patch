@@ -1,8 +1,8 @@
 diff --git a/crates/top/re_viewer/src/app/logic.rs b/crates/top/re_viewer/src/app/logic.rs
-index 56728cc..f6cac44 100644
+index d73db7d..63dbdd5 100644
 --- a/crates/top/re_viewer/src/app/logic.rs
 +++ b/crates/top/re_viewer/src/app/logic.rs
-@@ -520,8 +520,26 @@ impl App {
+@@ -530,8 +530,26 @@ impl App {
                  // updates the app-id when changing the recording.
                  match store_id.kind() {
                      StoreKind::Recording => {
@@ -32,20 +32,20 @@ index 56728cc..f6cac44 100644
                      StoreKind::Blueprint => {
                          // We wait with activating blueprints until they are fully loaded,
 diff --git a/crates/top/re_viewer/src/ui/settings_screen.rs b/crates/top/re_viewer/src/ui/settings_screen.rs
-index 5e7121b..dfc1f55 100644
+index 4d61b78..ae8525c 100644
 --- a/crates/top/re_viewer/src/ui/settings_screen.rs
 +++ b/crates/top/re_viewer/src/ui/settings_screen.rs
-@@ -85,6 +85,7 @@ fn settings_screen_ui_impl(ui: &mut egui::Ui, app_options: &mut AppOptions, keep
+@@ -98,6 +98,7 @@ fn settings_screen_ui_impl(
          check_for_updates_on_startup,
          custom_window_decorations,
-         include_rerun_examples_button_in_recordings_panel,
+         enable_welcome_screen,
 +        switch_to_streamed_recordings,
          show_picking_debug_overlay: _, // not yet exposed
          inspect_blueprint_timeline: _, // not yet exposed
          blueprint_gc: _,               // not yet exposed
-@@ -129,6 +130,16 @@ fn settings_screen_ui_impl(ui: &mut egui::Ui, app_options: &mut AppOptions, keep
-         "Show 'Rerun examples' button",
-     );
+@@ -143,6 +144,16 @@ fn settings_screen_ui_impl(
+             .on_hover_text("Show the Rerun examples when no data is loaded.");
+     }
  
 +    ui.re_checkbox(
 +        switch_to_streamed_recordings,
@@ -61,12 +61,12 @@ index 5e7121b..dfc1f55 100644
          visualizer_limits_enabled,
          "Limit number of primitives in a view",
 diff --git a/crates/viewer_support/re_viewer_context/src/app_options.rs b/crates/viewer_support/re_viewer_context/src/app_options.rs
-index 088111b..cf513bf 100644
+index 11de7a6..0b778a5 100644
 --- a/crates/viewer_support/re_viewer_context/src/app_options.rs
 +++ b/crates/viewer_support/re_viewer_context/src/app_options.rs
-@@ -41,6 +41,12 @@ pub struct AppOptions {
-     #[serde(alias = "include_welcome_screen_button_in_recordings_panel")]
-     pub include_rerun_examples_button_in_recordings_panel: bool,
+@@ -46,6 +46,12 @@ pub struct AppOptions {
+     )]
+     pub enable_welcome_screen: bool,
  
 +    /// Switch to a recording as soon as it starts streaming in from an SDK?
 +    ///
@@ -77,9 +77,9 @@ index 088111b..cf513bf 100644
      /// Displays an overlay for debugging picking.
      pub show_picking_debug_overlay: bool,
  
-@@ -114,6 +120,8 @@ impl AppOptions {
+@@ -119,6 +125,8 @@ impl AppOptions {
  
-             include_rerun_examples_button_in_recordings_panel: true,
+             enable_welcome_screen: true,
  
 +            switch_to_streamed_recordings: true,
 +
