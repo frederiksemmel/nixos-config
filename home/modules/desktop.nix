@@ -536,11 +536,12 @@ let
     };
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
-  # Route audio over HDMI when the tv kanshi profile is applied. The card's
-  # analog profile has a higher priority than the HDMI one, so wireplumber
-  # never picks HDMI on its own.
-  tvAudio = pkgs.writeShellApplication {
-    name = "tv-audio";
+  # Route audio over HDMI (`audio-output hdmi`) when the tv kanshi profile is
+  # applied, and over the built-in speakers (`audio-output analog`) for every
+  # other profile. Wireplumber restores the last chosen card profile, so it
+  # never switches between the two on its own.
+  audioOutput = pkgs.writeShellApplication {
+    name = "audio-output";
     runtimeInputs = with pkgs; [
       jq
       pipewire
@@ -548,7 +549,7 @@ let
     ];
     text = ''
       card="${cfg.hdmiAudio.card}"
-      profile="output:hdmi-stereo+input:analog-stereo"
+      profile="output:$1-stereo+input:analog-stereo"
       sink="alsa_output.${cfg.hdmiAudio.device}.hdmi-stereo"
 
       card_id=$(pw-dump | jq -r --arg n "$card" \
@@ -556,6 +557,10 @@ let
       profile_index=$(pw-dump "$card_id" | jq -r --arg p "$profile" \
         'first(.[0].info.params.EnumProfile[] | select(.name == $p) | .index)')
       wpctl set-profile "$card_id" "$profile_index"
+
+      if [ "$1" != hdmi ]; then
+        exit 0
+      fi
 
       # The sink node only shows up once the profile switch has settled.
       sink_id=""
@@ -925,6 +930,7 @@ in
               criteria = "eDP-1";
             }
           ];
+          profile.exec = [ "${lib.getExe audioOutput} analog" ];
         }
         {
           profile.name = "mobile";
@@ -938,6 +944,7 @@ in
               position = "0,0";
             }
           ];
+          profile.exec = [ "${lib.getExe audioOutput} analog" ];
         }
         {
           # TV above the laptop, horizontally centered on it:
@@ -955,7 +962,7 @@ in
               position = "1097,2160";
             }
           ];
-          profile.exec = [ (lib.getExe tvAudio) ];
+          profile.exec = [ "${lib.getExe audioOutput} hdmi" ];
         }
         {
           profile.name = "office";
@@ -970,6 +977,7 @@ in
               position = "0,0";
             }
           ];
+          profile.exec = [ "${lib.getExe audioOutput} analog" ];
         }
       ];
     };
