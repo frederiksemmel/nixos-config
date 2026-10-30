@@ -196,7 +196,6 @@ in
     ${pkgs.coreutils}/bin/head -c $(( $(${pkgs.coreutils}/bin/cat $fb/stride) * height )) /dev/zero > /dev/fb0
   ''}";
   boot.consoleLogLevel = 3;
-  boot.initrd.verbose = false;
   boot.kernelParams = [
     "quiet"
     "udev.log_level=3"
