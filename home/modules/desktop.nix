@@ -46,8 +46,7 @@ let
     '';
   };
   # Electron apps export CHROME_DESKTOP=<their desktop file>, and a Chromium
-  # started from one of their links takes it as its Wayland app-id, so it
-  # matched the floating bitwarden window rule.
+  # started from one of their links takes it as its Wayland app-id.
   handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
     unset CHROME_DESKTOP
     ${lib.getExe pkgs.handlr-regex} open "$@"
@@ -1691,14 +1690,6 @@ in
             { "app-id" = "^dev\\.zed\\.Zed$"; }
           ];
           "default-column-width".proportion = 1.0;
-        }
-        {
-          matches = [ { "app-id" = "(?i)^bitwarden$"; } ];
-          "open-floating" = true;
-          "open-maximized" = false;
-          "open-focused" = true;
-          "default-column-width".fixed = 1120;
-          "default-window-height".fixed = 800;
         }
         # {
         #   matches = [ { "title" = "centerpiece"; } ];
