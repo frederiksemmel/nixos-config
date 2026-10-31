@@ -203,76 +203,137 @@ let
       fi
     '';
   };
-  # Two-way sync of the spadesvision shared drive with ~/spadesvision. Failures
-  # and conflicts always notify. A run requested from the power menu finds the
-  # id of its "Syncing" notification in spadesvisionSyncRequest and replaces it
-  # with the result.
-  spadesvisionDir = "${config.home.homeDirectory}/spadesvision";
-  spadesvisionSyncRequest = "\"$XDG_RUNTIME_DIR\"/spadesvision-sync.notify-id";
-  spadesvisionSync = pkgs.writeShellApplication {
-    name = "spadesvision-sync";
-    runtimeInputs = with pkgs; [
-      config.programs.rclone.package
-      coreutils
-      findutils
-      getent
-      gnugrep
-      gnused
-      libnotify
+  # Two-way sync of an rclone remote with a local directory, run by a timer.
+  # Failures and conflicts always notify. A run requested from the power menu
+  # finds the id of its "Syncing" notification in the request file and replaces
+  # it with the result.
+  mkBisync =
+    {
+      name,
+      title,
+      remote,
+      remoteLabel,
+      dir,
+      host,
+      flags ? [ ],
+      onCalendar,
+    }:
+    let
+      request = "\"$XDG_RUNTIME_DIR\"/${name}-sync.notify-id";
+      sync = pkgs.writeShellApplication {
+        name = "${name}-sync";
+        runtimeInputs = with pkgs; [
+          config.programs.rclone.package
+          coreutils
+          findutils
+          getent
+          gnugrep
+          gnused
+          libnotify
+        ];
+        text = ''
+          notify() {
+            local id=""
+            if [ -f ${request} ]; then
+              id=$(cat ${request})
+              rm -f ${request}
+            fi
+            notify-send -a rclone -i folder-remote ''${id:+-r "$id"} "$@"
+          }
+
+          if ! getent hosts ${host} >/dev/null; then
+            [ -f ${request} ] && notify "${title} sync skipped" "Offline"
+            exit 0
+          fi
+
+          log=$(mktemp)
+          started=$(mktemp)
+          trap 'rm -f "$log" "$started"' EXIT
+
+          if ! rclone bisync ${remote} ${dir} \
+            ${lib.concatMapStrings (f: "${f} \\\n") flags}--fast-list --create-empty-src-dirs \
+            --compare size,modtime,checksum --slow-hash-sync-only \
+            --resilient --recover --max-lock 15m \
+            --transfers 8 --checkers 16 \
+            --color NEVER -v 2>&1 | tee "$log"; then
+            notify -u critical "${title} sync failed" \
+              "$(grep -E 'ERROR|CRITICAL' "$log" | tail -n 3 | sed -E 's/^.*(ERROR|CRITICAL) *: *//')"
+            exit 1
+          fi
+
+          conflicts=$(find ${dir} -cnewer "$started" -name '*.conflict[0-9]*' -printf '%P\n')
+          if [ -n "$conflicts" ]; then
+            notify -u critical "${title} sync: conflicts" "$conflicts"
+          elif [ -f ${request} ]; then
+            summary=$(sed -nE \
+              -e 's/.*Path1: +[0-9]+ changes: +/From ${remoteLabel}: /p' \
+              -e 's/.*Path2: +[0-9]+ changes: +/From local: /p' "$log" | tr -s ' ')
+            notify "${title} synced" "''${summary:-No changes}"
+          fi
+        '';
+      };
+    in
+    {
+      syncNow = pkgs.writeShellApplication {
+        name = "${name}-sync-now";
+        runtimeInputs = with pkgs; [
+          libnotify
+          systemd
+        ];
+        text = ''
+          notify-send -p -a rclone -i folder-remote "${title} sync" "Syncing…" > ${request}
+          systemctl --user start --no-block ${name}-sync.service
+        '';
+      };
+      service = {
+        Unit = {
+          Description = "Bisync ${remote} with ${dir}";
+          After = [
+            "agenix.service"
+            "rclone-config.service"
+          ];
+          Wants = [ "rclone-config.service" ];
+        };
+        Service = {
+          Type = "oneshot";
+          ExecStart = lib.getExe sync;
+          Nice = 10;
+          IOSchedulingClass = "idle";
+        };
+      };
+      timer = {
+        Unit = {
+          Description = "Bisync ${remote} with ${dir} (${onCalendar})";
+          PartOf = [ "graphical-session.target" ];
+        };
+        Timer = {
+          OnCalendar = onCalendar;
+          Persistent = true;
+        };
+        Install.WantedBy = [ "graphical-session.target" ];
+      };
+    };
+  spadesvisionSync = mkBisync {
+    name = "spadesvision";
+    title = "Spadesvision";
+    remote = "spadesvision:/";
+    remoteLabel = "Drive";
+    dir = "${config.home.homeDirectory}/spadesvision";
+    host = "www.googleapis.com";
+    flags = [
+      "--filter-from ${config.home.homeDirectory}/.rclone_filter_spadesvision.txt"
+      "--drive-skip-gdocs --drive-chunk-size 64Mi"
     ];
-    text = ''
-      notify() {
-        local id=""
-        if [ -f ${spadesvisionSyncRequest} ]; then
-          id=$(cat ${spadesvisionSyncRequest})
-          rm -f ${spadesvisionSyncRequest}
-        fi
-        notify-send -a rclone -i folder-remote ''${id:+-r "$id"} "$@"
-      }
-
-      if ! getent hosts www.googleapis.com >/dev/null; then
-        [ -f ${spadesvisionSyncRequest} ] && notify "Spadesvision sync skipped" "Offline"
-        exit 0
-      fi
-
-      log=$(mktemp)
-      started=$(mktemp)
-      trap 'rm -f "$log" "$started"' EXIT
-
-      if ! rclone bisync spadesvision:/ ${spadesvisionDir} \
-        --filter-from ${config.home.homeDirectory}/.rclone_filter_spadesvision.txt \
-        --fast-list --create-empty-src-dirs \
-        --compare size,modtime,checksum --slow-hash-sync-only \
-        --drive-skip-gdocs --drive-chunk-size 64Mi \
-        --resilient --recover --max-lock 15m \
-        --transfers 8 --checkers 16 \
-        --color NEVER -v 2>&1 | tee "$log"; then
-        notify -u critical "Spadesvision sync failed" \
-          "$(grep -E 'ERROR|CRITICAL' "$log" | tail -n 3 | sed -E 's/^.*(ERROR|CRITICAL) *: *//')"
-        exit 1
-      fi
-
-      conflicts=$(find ${spadesvisionDir} -cnewer "$started" -name '*.conflict[0-9]*' -printf '%P\n')
-      if [ -n "$conflicts" ]; then
-        notify -u critical "Spadesvision sync: conflicts" "$conflicts"
-      elif [ -f ${spadesvisionSyncRequest} ]; then
-        summary=$(sed -nE \
-          -e 's/.*Path1: +[0-9]+ changes: +/From Drive: /p' \
-          -e 's/.*Path2: +[0-9]+ changes: +/From local: /p' "$log" | tr -s ' ')
-        notify "Spadesvision synced" "''${summary:-No changes}"
-      fi
-    '';
+    onCalendar = "hourly";
   };
-  spadesvisionSyncNow = pkgs.writeShellApplication {
-    name = "spadesvision-sync-now";
-    runtimeInputs = with pkgs; [
-      libnotify
-      systemd
-    ];
-    text = ''
-      notify-send -p -a rclone -i folder-remote "Spadesvision sync" "Syncing…" > ${spadesvisionSyncRequest}
-      systemctl --user start --no-block spadesvision-sync.service
-    '';
+  scansSync = mkBisync {
+    name = "scans";
+    title = "Scans";
+    remote = "pcloud:Scans";
+    remoteLabel = "pCloud";
+    dir = "${config.home.homeDirectory}/Scans";
+    host = "eapi.pcloud.com";
+    onCalendar = "*:0/15";
   };
   # The current mode's colours as shell variables. The bar scripts rerun every
   # few seconds, so they pick up a switch on their next run.
@@ -634,7 +695,6 @@ in
       # File & Data Management
       # nautilus (systemPackages in fstux) is the one GUI file manager: it owns
       # org.freedesktop.FileManager1, which chromium's "show in files" calls.
-      pcloud
       handlr-regex
 
       # Audio & Video
@@ -792,7 +852,10 @@ in
           cmd: systemctl --user start wallpaper-next.service
         "g":
           desc: Sync Spadesvision Drive
-          cmd: ${lib.getExe spadesvisionSyncNow}
+          cmd: ${lib.getExe spadesvisionSync.syncNow}
+        "f":
+          desc: Sync pCloud Scans
+          cmd: ${lib.getExe scansSync.syncNow}
         "c":
           desc: CPU Profile
           submenu:
@@ -1110,33 +1173,10 @@ in
       Timer.OnCalendar = "*:0/30";
       Install.WantedBy = [ "graphical-session.target" ];
     };
-    systemd.user.services.spadesvision-sync = {
-      Unit = {
-        Description = "Bisync the spadesvision shared drive with ~/spadesvision";
-        After = [
-          "agenix.service"
-          "rclone-config.service"
-        ];
-        Wants = [ "rclone-config.service" ];
-      };
-      Service = {
-        Type = "oneshot";
-        ExecStart = lib.getExe spadesvisionSync;
-        Nice = 10;
-        IOSchedulingClass = "idle";
-      };
-    };
-    systemd.user.timers.spadesvision-sync = {
-      Unit = {
-        Description = "Bisync the spadesvision shared drive every hour";
-        PartOf = [ "graphical-session.target" ];
-      };
-      Timer = {
-        OnCalendar = "hourly";
-        Persistent = true;
-      };
-      Install.WantedBy = [ "graphical-session.target" ];
-    };
+    systemd.user.services.spadesvision-sync = spadesvisionSync.service;
+    systemd.user.timers.spadesvision-sync = spadesvisionSync.timer;
+    systemd.user.services.scans-sync = scansSync.service;
+    systemd.user.timers.scans-sync = scansSync.timer;
     services.wlsunset = {
       enable = true;
       sunrise = "07:00";
