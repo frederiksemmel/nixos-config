@@ -935,9 +935,8 @@ in
     '';
 
     # Icon= is a theme name, and nixpkgs' rerun installs no icon at all, so the
-    # lookup failed and launchers drew their fallback glyph. recursive, because
-    # ~/.local/share/icons/hicolor also holds unmanaged icons (pcloud's
-    # AppImage) that a whole-directory symlink would displace.
+    # lookup failed and launchers drew their fallback glyph. recursive, so apps
+    # can still install unmanaged icons into ~/.local/share/icons/hicolor.
     xdg.dataFile."icons/hicolor" = {
       source = "${rerun-icon}/share/icons/hicolor";
       recursive = true;
