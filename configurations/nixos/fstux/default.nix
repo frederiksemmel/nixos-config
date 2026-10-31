@@ -521,9 +521,8 @@ in
   programs.niri.enable = true;
   programs.niri.package = pkgs.niri;
   niri-flake.cache.enable = false;
-  # for pcloud
+  # for the rclone mount of pCloud
   programs.fuse.enable = true;
-  programs.fuse.userAllowOther = true;
 
   services.usbmuxd.enable = true;
 
@@ -563,7 +562,6 @@ in
     [
       libimobiledevice
       ifuse # optional, to mount using 'ifuse'
-      fuse3 # for pcloud
 
       nautilus
       zenity

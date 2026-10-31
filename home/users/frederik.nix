@@ -35,6 +35,7 @@
   age.secrets = {
     spadesvision_gdrive_token.file = ../../secrets/spadesvision_gdrive_token.age;
     spadesvision_gdrive_client_secret.file = ../../secrets/spadesvision_gdrive_client_secret.age;
+    pcloud_token.file = ../../secrets/pcloud_token.age;
   };
   age.identityPaths = [ "${config.home.homeDirectory}/.ssh/id_github" ];
 
@@ -49,6 +50,24 @@
     secrets = {
       client_secret = config.age.secrets.spadesvision_gdrive_client_secret.path;
       token = config.age.secrets.spadesvision_gdrive_token.path;
+    };
+  };
+
+  # The whole account as an on-demand drive: files download only when opened,
+  # into a size-capped cache. ~/Scans alone is kept locally, by scans-sync.
+  programs.rclone.remotes.pcloud = {
+    config = {
+      type = "pcloud";
+      hostname = "eapi.pcloud.com";
+    };
+    secrets.token = config.age.secrets.pcloud_token.path;
+    mounts."" = {
+      enable = true;
+      mountPoint = "${config.home.homeDirectory}/pcloud";
+      options = {
+        vfs-cache-max-size = "10G";
+        vfs-cache-max-age = "720h";
+      };
     };
   };
 }

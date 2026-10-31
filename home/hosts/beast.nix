@@ -113,6 +113,8 @@ in
   };
   xdg.configFile."nix/nix.conf".force = true;
 
+  programs.rclone.remotes.pcloud.mounts."".enable = lib.mkForce false;
+
   services.pueue.enable = true;
 
   services.shpool = {

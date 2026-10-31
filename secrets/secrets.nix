@@ -5,6 +5,7 @@ in
 {
   "spadesvision_gdrive_token.age".publicKeys = [ frederik ];
   "spadesvision_gdrive_client_secret.age".publicKeys = [ frederik ];
+  "pcloud_token.age".publicKeys = [ frederik ];
   "nixci_netrc.age".publicKeys = [
     frederik
     fstux
