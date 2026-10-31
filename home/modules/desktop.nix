@@ -332,7 +332,7 @@ let
     remote = "pcloud:Scans";
     remoteLabel = "pCloud";
     dir = "${config.home.homeDirectory}/Scans";
-    host = "eapi.pcloud.com";
+    host = "api.pcloud.com";
     onCalendar = "*:0/15";
   };
   # The current mode's colours as shell variables. The bar scripts rerun every
