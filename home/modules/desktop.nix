@@ -799,7 +799,7 @@ in
 
     home.file = {
       ".rclone_filter_spadesvision.txt".text = ''
-        - Marketing/Material für Swisscasino Video/**
+        - Marketing/Material für */**
         - Development/Jetson Server Dev/*Releases*/**
       '';
       ".config/handlr/handlr.toml".text = ''
