@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+mapfile -d '' -t files < <(git diff --cached --name-only -z --diff-filter=ACMR)
+[ "${#files[@]}" -gt 0 ] || exit 0
+
+tmp="$(mktemp -d)"
+trap 'rm -rf "$tmp"' EXIT
+
+if ! treefmt="$(nix formatter build --no-link 2>"$tmp/nix.log")"; then
+  cat "$tmp/nix.log" >&2
+  exit 1
+fi
+
+unformatted=()
+for f in "${files[@]}"; do
+  git show ":$f" >"$tmp/staged"
+  if ! "$treefmt" --quiet --stdin "$f" <"$tmp/staged" >"$tmp/formatted" ||
+    ! cmp -s "$tmp/staged" "$tmp/formatted"; then
+    unformatted+=("$f")
+  fi
+done
+
+if [ "${#unformatted[@]}" -gt 0 ]; then
+  echo "pre-commit: staged content is not formatted; run 'nix fmt' and stage the result:" >&2
+  printf '  %s\n' "${unformatted[@]}" >&2
+  exit 1
+fi
