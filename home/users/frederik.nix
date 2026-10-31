@@ -1,8 +1,6 @@
 {
   flake,
   config,
-  lib,
-  pkgs,
   ...
 }:
 {
@@ -11,6 +9,7 @@
     ../modules/theme.nix
     ../modules/dev.nix
     ../modules/desktop.nix
+    ../modules/cloud.nix
     ../modules/ssh.nix
     ../modules/bitwarden.nix
   ];
@@ -22,6 +21,7 @@
 
   profiles.dev.enable = true;
   profiles.desktop.enable = true;
+  profiles.cloud.enable = true;
   profiles.ssh.enable = true;
   profiles.bitwarden.enable = true;
 
@@ -34,51 +34,5 @@
     email = "frederiksemmel@gmail.com";
   };
 
-  age.secrets = {
-    spadesvision_gdrive_token.file = ../../secrets/spadesvision_gdrive_token.age;
-    spadesvision_gdrive_client_secret.file = ../../secrets/spadesvision_gdrive_client_secret.age;
-    pcloud_token.file = ../../secrets/pcloud_token.age;
-  };
   age.identityPaths = [ "${config.home.homeDirectory}/.ssh/id_github" ];
-
-  programs.rclone.remotes.spadesvision = {
-    config = {
-      type = "drive";
-      client_id = "113233231770-v4b6rfq5ajc3imv0vs0g3fnbl2q8rd84.apps.googleusercontent.com";
-      scope = "drive";
-      team_drive = "0AH2EQdMAdZriUk9PVA";
-      root_folder_id = "";
-    };
-    secrets = {
-      client_secret = config.age.secrets.spadesvision_gdrive_client_secret.path;
-      token = config.age.secrets.spadesvision_gdrive_token.path;
-    };
-  };
-
-  # The whole account as an on-demand drive: files download only when opened,
-  # into a size-capped cache. ~/Scans alone is kept locally, by scans-sync.
-  programs.rclone.remotes.pcloud = {
-    config = {
-      type = "pcloud";
-      hostname = "api.pcloud.com";
-    };
-    secrets.token = config.age.secrets.pcloud_token.path;
-    mounts."" = {
-      enable = true;
-      mountPoint = "${config.home.homeDirectory}/pcloud";
-      options = {
-        vfs-cache-max-size = "10G";
-        vfs-cache-max-age = "720h";
-      };
-    };
-  };
-
-  systemd.user.services."rclone-mount:@pcloud" =
-    lib.mkIf config.programs.rclone.remotes.pcloud.mounts."".enable
-      {
-        Service.ExecStartPre = lib.mkForce [
-          "-/run/wrappers/bin/fusermount3 -uz ${config.home.homeDirectory}/pcloud"
-          "${lib.getExe' pkgs.coreutils "mkdir"} -p ${config.home.homeDirectory}/pcloud"
-        ];
-      };
 }
