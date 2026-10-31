@@ -1,6 +1,5 @@
 {
   config,
-  pkgs,
   lib,
   ...
 }:
@@ -8,36 +7,30 @@ let
   cfg = config.profiles.ssh;
   bitwardenAgent = config.profiles.bitwarden.sshAgent.enable;
   identity = path: if bitwardenAgent then "${path}.pub" else path;
-  # host pattern -> directory under ~/.ssh/spadesvision holding its key pair
-  identityDirs = {
-    "*bern*" = "spadesvision";
-    "*pfaeffikon*" = "spadesvision";
-    "*zurich*" = "spadesvision";
-    "*office*" = "spadesvision";
-    "*badragaz*" = "spadesvision";
-    "*tcs*" = "tcs-jetson";
-    "sv-tcsjs-*" = "tcs-jetson";
-    "sv-demo-*" = "tcs-jetson";
-    "169.254.1.123" = "tcs-jetson";
-    "*spadesvision.com" = "webdemo";
-    "*webdemo*" = "webdemo";
-  };
-
-  identityBlocks = lib.mapAttrs (_pattern: dir: {
-    IdentityFile = map identity [
-      "~/.ssh/spadesvision/${dir}/id_${dir}_spadesvision"
-      "~/.ssh/spadesvision/${dir}/id_${dir}_root"
-    ];
-    IdentitiesOnly = true;
-  }) identityDirs;
+  # The Spades Vision host blocks name customer sites, so they live in an
+  # agenix secret. Its two variants differ only in IdentityFile naming the key
+  # (spadesvision_ssh_config.age) or its .pub (spadesvision_ssh_config_agent.age),
+  # like `identity` does; edit both together.
+  spadesvisionConfig = "${config.home.homeDirectory}/.ssh/spadesvision_config";
 in
 {
   options.profiles.ssh.enable = lib.mkEnableOption "personal ssh config (host aliases, identity files)";
 
   config = lib.mkIf cfg.enable {
+    age.secrets.spadesvision_ssh_config = {
+      file =
+        if bitwardenAgent then
+          ../../secrets/spadesvision_ssh_config_agent.age
+        else
+          ../../secrets/spadesvision_ssh_config.age;
+      path = spadesvisionConfig;
+    };
+
     programs.ssh = {
       enable = true;
       enableDefaultConfig = false;
+      # ssh skips an Include whose file is missing, e.g. before agenix ran.
+      includes = [ spadesvisionConfig ];
       settings = {
         "*" = {
           AddKeysToAgent = if bitwardenAgent then "no" else "yes";
@@ -61,14 +54,7 @@ in
           IdentityFile = identity "~/.ssh/beast_login";
           IdentitiesOnly = true;
         };
-        "tcs-local".HostName = "169.254.1.123";
-        "tcssa-wpj" = {
-          User = "warre";
-          IdentityFile = identity "~/.ssh/id_spadesvision_warren";
-          IdentitiesOnly = true;
-        };
-      }
-      // identityBlocks;
+      };
     };
   };
 }
