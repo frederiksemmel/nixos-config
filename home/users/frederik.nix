@@ -58,7 +58,7 @@
   programs.rclone.remotes.pcloud = {
     config = {
       type = "pcloud";
-      hostname = "eapi.pcloud.com";
+      hostname = "api.pcloud.com";
     };
     secrets.token = config.age.secrets.pcloud_token.path;
     mounts."" = {
