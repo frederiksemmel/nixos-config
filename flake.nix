@@ -95,19 +95,21 @@
             # shpool 0.11.0 wedges a session for good when a heartbeat ack is late,
             # e.g. after the ssh link stalls; fixed in 0.11.3 (shell-pool/shpool@6d33e8c5).
             # Drop once nixpkgs ships it (NixOS/nixpkgs#552795).
-            shpool = prev.shpool.overrideAttrs (finalAttrs: old: {
-              version = "0.11.5";
-              src = final.fetchFromGitHub {
-                owner = "shell-pool";
-                repo = "shpool";
-                rev = "v${finalAttrs.version}";
-                hash = "sha256-AfuAGYgeGdbCTj0RA52xkxQ8ycrSXOnRJqRVTy85Buc=";
-              };
-              cargoDeps = final.rustPlatform.fetchCargoVendor {
-                inherit (finalAttrs) pname version src;
-                hash = "sha256-K27VE9IBvldouiYr0RjUn2aqkVJjPF/FipBNsG5Nba8=";
-              };
-            });
+            shpool = prev.shpool.overrideAttrs (
+              finalAttrs: old: {
+                version = "0.11.5";
+                src = final.fetchFromGitHub {
+                  owner = "shell-pool";
+                  repo = "shpool";
+                  rev = "v${finalAttrs.version}";
+                  hash = "sha256-AfuAGYgeGdbCTj0RA52xkxQ8ycrSXOnRJqRVTy85Buc=";
+                };
+                cargoDeps = final.rustPlatform.fetchCargoVendor {
+                  inherit (finalAttrs) pname version src;
+                  hash = "sha256-K27VE9IBvldouiYr0RjUn2aqkVJjPF/FipBNsG5Nba8=";
+                };
+              }
+            );
             # The tuxedo-drivers Makefile pastes $(MAKEFLAGS) into a shell command, so
             # the kernel's `cmd_sign=…kmodigest$(space)$@` flag reaches bash as `$$(space)`
             # and the build dies with a syntax error. A plain $(MAKE) still hands the
