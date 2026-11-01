@@ -613,10 +613,23 @@ let
       profile="output:$1-stereo+input:analog-stereo"
       sink="alsa_output.${cfg.hdmiAudio.device}.hdmi-stereo"
 
-      card_id=$(pw-dump | jq -r --arg n "$card" \
-        'first(.[] | select(.info.props."device.name" == $n) | .id)')
-      profile_index=$(pw-dump "$card_id" | jq -r --arg p "$profile" \
-        'first(.[0].info.params.EnumProfile[] | select(.name == $p) | .index)')
+      # At login kanshi runs this before wireplumber has published the card.
+      ids=""
+      for _ in $(seq 40); do
+        ids=$(pw-dump | jq -r --arg n "$card" --arg p "$profile" '
+          first(.[] | select(.info.props."device.name" == $n) as $d
+            | $d.info.params.EnumProfile[]? | select(.name == $p)
+            | "\($d.id) \(.index)") // empty')
+        if [ -n "$ids" ]; then
+          break
+        fi
+        sleep 0.25
+      done
+      if [ -z "$ids" ]; then
+        echo "audio-output: $card has no profile $profile" >&2
+        exit 1
+      fi
+      read -r card_id profile_index <<<"$ids"
       wpctl set-profile "$card_id" "$profile_index"
 
       if [ "$1" != hdmi ]; then
