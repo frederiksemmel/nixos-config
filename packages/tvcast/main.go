@@ -1,9 +1,12 @@
-// tvcast casts a local file to a DLNA renderer through go2tv's library, and
+// tvcast casts local files to a DLNA renderer through go2tv's library, and
 // takes playback commands over a unix socket while the cast runs.
 //
 //	tvcast list                                      renderers as "URL<TAB>name"
 //	tvcast play -t URL [-s SUBS] [-start SECS] FILE  cast until the TV stops
+//	tvcast load FILE                                 switch the running cast to FILE
 //	tvcast toggle | seek SECS|+SECS|-SECS | position | stop
+//
+// Commands for a running cast exit with status 3 when no cast is running.
 package main
 
 import (
@@ -28,9 +31,11 @@ import (
 	"go2tv.app/go2tv/v2/utils"
 )
 
+var errNoCast = errors.New("no cast running")
+
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: tvcast list | play | toggle | seek | position | stop")
+		fmt.Fprintln(os.Stderr, "usage: tvcast list | play | load | toggle | seek | position | stop")
 		os.Exit(2)
 	}
 	var err error
@@ -40,10 +45,13 @@ func main() {
 	case "play":
 		err = play(os.Args[2:])
 	default:
-		err = control(strings.Join(os.Args[1:], " "))
+		err = control(os.Args[1:])
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "tvcast:", err)
+		if errors.Is(err, errNoCast) {
+			os.Exit(3)
+		}
 		os.Exit(1)
 	}
 }
@@ -74,10 +82,14 @@ func list() error {
 	return nil
 }
 
-// cast is the httphandlers.Screen of a running cast; Fini fires when the TV
-// reports that playback stopped.
+// cast is a running cast to one renderer. mu serialises everything that
+// talks to the TV, since load swaps tv and srv. As the httphandlers.Screen,
+// its Fini fires when the TV reports that playback stopped.
 type cast struct {
+	target  string
+	mu      sync.Mutex
 	tv      *soapcalls.TVPayload
+	srv     *httphandlers.HTTPserver
 	stopped chan struct{}
 	once    sync.Once
 }
@@ -85,6 +97,44 @@ type cast struct {
 func (c *cast) EmitMsg(string)      {}
 func (c *cast) SetMediaType(string) {}
 func (c *cast) Fini()               { c.once.Do(func() { close(c.stopped) }) }
+
+// load serves media and starts it on the TV, ending whatever played before.
+func (c *cast) load(media, subs string) error {
+	mtype, err := utils.GetMimeDetailsFromPath(media)
+	if err != nil {
+		return err
+	}
+	if c.tv != nil {
+		_ = c.tv.SendtoTV("Stop")
+		c.srv.StopServer()
+	}
+
+	tv, err := soapcalls.NewTVPayload(&soapcalls.Options{
+		DMR:   c.target,
+		Media: media,
+		Subs:  subs,
+		Mtype: mtype,
+		Seek:  true,
+	})
+	if err != nil {
+		return err
+	}
+	if subs == "" {
+		tv.SubtitlesURL = ""
+	}
+	srv := httphandlers.NewServer(tv.ListenAddress())
+	started := make(chan error, 1)
+	go srv.StartServer(started, media, subs, tv, c)
+	if err := <-started; err != nil {
+		return err
+	}
+	if err := tv.SendtoTV("Play1"); err != nil {
+		srv.StopServer()
+		return err
+	}
+	c.tv, c.srv = tv, srv
+	return nil
+}
 
 func (c *cast) position() (int, error) {
 	info, err := c.tv.GetPositionInfo()
@@ -112,10 +162,6 @@ func play(args []string) error {
 	if err != nil {
 		return err
 	}
-	mtype, err := utils.GetMimeDetailsFromPath(media)
-	if err != nil {
-		return err
-	}
 	if *subs != "" {
 		if *subs, err = filepath.Abs(*subs); err != nil {
 			return err
@@ -128,32 +174,11 @@ func play(args []string) error {
 	}
 	defer ln.Close()
 
-	tv, err := soapcalls.NewTVPayload(&soapcalls.Options{
-		DMR:   *target,
-		Media: media,
-		Subs:  *subs,
-		Mtype: mtype,
-		Seek:  true,
-	})
-	if err != nil {
+	c := &cast{target: *target, stopped: make(chan struct{})}
+	if err := c.load(media, *subs); err != nil {
 		return err
 	}
-	if *subs == "" {
-		tv.SubtitlesURL = ""
-	}
-
-	c := &cast{tv: tv, stopped: make(chan struct{})}
-	srv := httphandlers.NewServer(tv.ListenAddress())
-	started := make(chan error, 1)
-	go srv.StartServer(started, media, *subs, tv, c)
-	if err := <-started; err != nil {
-		return err
-	}
-	defer srv.StopServer()
-
-	if err := tv.SendtoTV("Play1"); err != nil {
-		return err
-	}
+	defer func() { c.srv.StopServer() }()
 	go serve(ln, c)
 
 	sig, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -164,7 +189,9 @@ func play(args []string) error {
 	select {
 	case <-c.stopped:
 	case <-sig.Done():
-		_ = tv.SendtoTV("Stop")
+		c.mu.Lock()
+		_ = c.tv.SendtoTV("Stop")
+		c.mu.Unlock()
 	}
 	return nil
 }
@@ -190,7 +217,10 @@ func seekOnceStarted(c *cast, secs int) {
 			return
 		case <-time.After(500 * time.Millisecond):
 		}
-		if c.seek(secs) == nil {
+		c.mu.Lock()
+		err := c.seek(secs)
+		c.mu.Unlock()
+		if err == nil {
 			return
 		}
 	}
@@ -208,24 +238,29 @@ func serve(ln net.Listener, c *cast) {
 			if err != nil {
 				return
 			}
-			cmd := strings.Fields(line)
-			reply, err := handle(c, cmd)
+			name, arg, _ := strings.Cut(strings.TrimSuffix(line, "\n"), " ")
+			c.mu.Lock()
+			reply, err := handle(c, name, arg)
+			c.mu.Unlock()
 			if err != nil {
 				reply = "error: " + err.Error()
 			}
 			fmt.Fprintln(conn, reply)
-			if len(cmd) > 0 && cmd[0] == "stop" {
+			if name == "stop" {
 				c.Fini()
 			}
 		}()
 	}
 }
 
-func handle(c *cast, cmd []string) (string, error) {
-	if len(cmd) == 0 {
-		return "", errors.New("empty command")
-	}
-	switch cmd[0] {
+func handle(c *cast, name, arg string) (string, error) {
+	switch name {
+	case "load":
+		if err := c.load(arg, ""); err != nil {
+			c.Fini()
+			return "", err
+		}
+		return "loaded", nil
 	case "toggle":
 		info, err := c.tv.GetTransportInfo()
 		if err != nil {
@@ -236,14 +271,11 @@ func handle(c *cast, cmd []string) (string, error) {
 		}
 		return "paused", c.tv.SendtoTV("Pause")
 	case "seek":
-		if len(cmd) != 2 {
+		secs, err := strconv.Atoi(arg)
+		if err != nil {
 			return "", errors.New("usage: seek SECS|+SECS|-SECS")
 		}
-		secs, err := strconv.Atoi(cmd[1])
-		if err != nil {
-			return "", err
-		}
-		if strings.ContainsAny(cmd[1][:1], "+-") {
+		if strings.HasPrefix(arg, "+") || strings.HasPrefix(arg, "-") {
 			pos, err := c.position()
 			if err != nil {
 				return "", err
@@ -258,16 +290,26 @@ func handle(c *cast, cmd []string) (string, error) {
 	case "stop":
 		return "stopped", c.tv.SendtoTV("Stop")
 	}
-	return "", fmt.Errorf("unknown command %q", cmd[0])
+	return "", fmt.Errorf("unknown command %q", name)
 }
 
-func control(cmd string) error {
+func control(args []string) error {
+	if args[0] == "load" {
+		if len(args) != 2 {
+			return errors.New("usage: tvcast load FILE")
+		}
+		abs, err := filepath.Abs(args[1])
+		if err != nil {
+			return err
+		}
+		args[1] = abs
+	}
 	conn, err := net.Dial("unix", socketPath())
 	if err != nil {
-		return errors.New("no cast running")
+		return errNoCast
 	}
 	defer conn.Close()
-	if _, err := fmt.Fprintln(conn, cmd); err != nil {
+	if _, err := fmt.Fprintln(conn, strings.Join(args, " ")); err != nil {
 		return err
 	}
 	reply, err := bufio.NewReader(conn).ReadString('\n')
