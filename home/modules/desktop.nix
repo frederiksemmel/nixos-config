@@ -618,14 +618,29 @@ let
         if [ "$rc" -ne 3 ]; then
           exit 0
         fi
-        notify-send -a tvcast -t 3000 "Looking for TVs…"
-        tvs=$(tvcast list)
-        if [ -z "$tvs" ]; then
-          notify-send -a tvcast "No TVs found"
+        tvs=$(tvcast known)
+        i=""
+        if [ -n "$tvs" ]; then
+          i=$({
+            cut -f2 <<<"$tvs"
+            echo "Search for TVs…"
+          } | fuzzel --dmenu --index --prompt "Cast to: ") || exit 0
+        fi
+        if [ -z "$i" ] || [ "$i" -ge "$(wc -l <<<"$tvs")" ]; then
+          notify-send -a tvcast -t 3000 "Looking for TVs…"
+          tvs=$(tvcast list)
+          if [ -z "$tvs" ]; then
+            notify-send -a tvcast "No TVs found"
+            exit 0
+          fi
+          i=$(cut -f2 <<<"$tvs" | fuzzel --dmenu --index --prompt "Cast to: ") || exit 0
+        fi
+        url=$(sed -n "$((i + 1))p" <<<"$tvs" | cut -f1)
+        notify-send -a tvcast -t 3000 "Connecting to the TV…"
+        if ! url=$(tvcast wake "$url" 2>&1); then
+          notify-send -a tvcast "Cast failed" "$url"
           exit 0
         fi
-        i=$(cut -f2 <<<"$tvs" | fuzzel --dmenu --index --prompt "Cast to: ") || exit 0
-        url=$(sed -n "$((i + 1))p" <<<"$tvs" | cut -f1)
         if ! out=$(tvcast play -t "$url" -- "$file" 2>&1); then
           notify-send -a tvcast "Cast failed" "$out"
         fi
@@ -647,6 +662,33 @@ let
         fi
         ;;
       esac
+    '';
+  };
+  # `tv-remote playpause` pauses or resumes the TV, `tv-remote volume +N|-N`
+  # changes its volume, `tv-remote KEY` presses a Samsung remote key on it.
+  tvRemote = pkgs.writeShellApplication {
+    name = "tv-remote";
+    runtimeInputs = [
+      tvcast
+      pkgs.libnotify
+    ];
+    text = ''
+      if [ "$1" = playpause ]; then
+        if out=$(tvcast playpause 2>&1); then
+          notify-send -a tvcast -t 2000 "TV $out"
+        else
+          notify-send -a tvcast "TV play/pause failed" "$out"
+        fi
+      elif [ "$1" = volume ]; then
+        if out=$(tvcast volume "$2" 2>&1); then
+          notify-send -a tvcast -t 2000 -h string:x-canonical-private-synchronous:tv-volume \
+            -h "int:value:$out" "TV volume $out"
+        else
+          notify-send -a tvcast "TV volume failed" "$out"
+        fi
+      elif ! out=$(tvcast key "$1" 2>&1); then
+        notify-send -a tvcast "TV remote failed" "$out"
+      fi
     '';
   };
   # Route audio over HDMI (`audio-output hdmi`) when the tv kanshi profile is
@@ -907,6 +949,33 @@ in
         "n":
           desc: Toggle Night Light
           cmd: ${lib.getExe wlsunsetToggle}
+        "v":
+          desc: TV
+          submenu:
+            "p":
+              desc: Play / Pause
+              cmd: ${lib.getExe tvRemote} playpause
+              keep_open: true
+            "k":
+              desc: Volume Up 7
+              cmd: ${lib.getExe tvRemote} volume +7
+              keep_open: true
+            "j":
+              desc: Volume Down 7
+              cmd: ${lib.getExe tvRemote} volume -7
+              keep_open: true
+            "K":
+              desc: Volume Up 2
+              cmd: ${lib.getExe tvRemote} volume +2
+              keep_open: true
+            "J":
+              desc: Volume Down 2
+              cmd: ${lib.getExe tvRemote} volume -2
+              keep_open: true
+            "m":
+              desc: Mute
+              cmd: ${lib.getExe tvRemote} KEY_MUTE
+              keep_open: true
         "t":
           desc: Toggle USB-C Internet Sharing
           cmd: ${lib.getExe usbcShareToggle}

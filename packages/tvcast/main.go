@@ -2,9 +2,20 @@
 // takes playback commands over a unix socket while the cast runs.
 //
 //	tvcast list                                      renderers as "URL<TAB>name"
+//	tvcast known                                     TVs list found before, likewise
+//	tvcast wake URL                                  turn a known TV on, print its URL
 //	tvcast play -t URL [-s SUBS] [-start SECS] FILE  cast until the TV stops
 //	tvcast load FILE                                 switch the running cast to FILE
 //	tvcast toggle | seek SECS|+SECS|-SECS | position | stop
+//	tvcast playpause                                 pause or resume the TV
+//	tvcast key KEY                                   press KEY on the TV's remote
+//	tvcast volume N|+N|-N                            set the TV's volume, print it
+//
+// wake returns once the TV answers, at the URL it now has, which differs
+// from the given one when the TV got another address. playpause toggles the
+// running cast, or else presses pause or play on the remote of the most
+// recently found TV, whatever it plays. key presses a Samsung remote key such
+// as KEY_MUTE on that TV, and volume sets that TV's volume.
 //
 // play prints the TV's last known position in seconds when the cast ends.
 // stop returns once the cast has ended. Commands for a running cast exit with
@@ -41,13 +52,25 @@ var (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: tvcast list | play | load | toggle | seek | position | stop")
+		fmt.Fprintln(os.Stderr, "usage: tvcast list | play | load | toggle | seek | position | stop | playpause")
 		os.Exit(2)
 	}
 	var err error
 	switch os.Args[1] {
 	case "list":
 		err = list()
+	case "known":
+		for _, k := range loadKnown() {
+			fmt.Printf("%s\t%s\n", k.url, k.name)
+		}
+	case "wake":
+		err = wakeUp(os.Args[2:])
+	case "playpause":
+		err = playpause()
+	case "key":
+		err = key(os.Args[2:])
+	case "volume":
+		err = volume(os.Args[2:])
 	case "play":
 		err = play(os.Args[2:])
 	default:
@@ -71,20 +94,90 @@ func socketPath() string {
 }
 
 func list() error {
-	devices.StartDiscovery(context.Background())
-	time.Sleep(3 * time.Second)
-	found, err := devices.LoadAllDevices()
-	if errors.Is(err, devices.ErrNoDeviceAvailable) {
-		return nil
-	}
+	found, err := discover()
 	if err != nil {
 		return err
 	}
+	var seen []knownTV
 	for _, d := range found {
-		if d.Type == devices.DeviceTypeDLNA && !d.IsAudioOnly {
-			fmt.Printf("%s\t%s\n", d.Addr, d.Name)
+		fmt.Printf("%s\t%s\n", d.Addr, d.Name)
+		k := knownTV{url: d.Addr, name: d.Name}
+		if k.mac = macOf(k.host()); k.mac != "" {
+			seen = append(seen, k)
 		}
 	}
+	return remember(seen)
+}
+
+func discover() ([]devices.Device, error) {
+	found, err := devices.LoadSSDPservices(2)
+	if errors.Is(err, devices.ErrNoDeviceAvailable) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var video []devices.Device
+	for _, d := range found {
+		if !d.IsAudioOnly {
+			video = append(video, d)
+		}
+	}
+	return video, nil
+}
+
+func playpause() error {
+	err := control([]string{"toggle"})
+	if !errors.Is(err, errNoCast) {
+		return err
+	}
+	state, err := remoteToggle()
+	if err != nil {
+		return err
+	}
+	fmt.Println(state)
+	return nil
+}
+
+func key(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: tvcast key KEY")
+	}
+	host, err := lastHost()
+	if err != nil {
+		return err
+	}
+	return samsungKey(host, args[0])
+}
+
+func volume(args []string) error {
+	if len(args) != 1 {
+		return errors.New("usage: tvcast volume N|+N|-N")
+	}
+	n, err := strconv.Atoi(args[0])
+	if err != nil {
+		return errors.New("usage: tvcast volume N|+N|-N")
+	}
+	known := loadKnown()
+	if len(known) == 0 {
+		return errors.New("no TV known yet; cast to it once first")
+	}
+	tv, err := soapcalls.NewTVPayload(&soapcalls.Options{DMR: known[0].url})
+	if err != nil {
+		return err
+	}
+	if strings.HasPrefix(args[0], "+") || strings.HasPrefix(args[0], "-") {
+		v, err := tv.GetVolumeSoapCall()
+		if err != nil {
+			return err
+		}
+		n += v
+	}
+	n = min(max(n, 0), 100)
+	if err := tv.SetVolumeSoapCall(strconv.Itoa(n)); err != nil {
+		return err
+	}
+	fmt.Println(n)
 	return nil
 }
 
