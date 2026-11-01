@@ -2,7 +2,10 @@ module tvcast
 
 go 1.26.10
 
-require go2tv.app/go2tv/v2 v2.7.1-0.20261010174114-36dc47ccb208
+require (
+	go2tv.app/go2tv/v2 v2.7.1-0.20261010174114-36dc47ccb208
+	golang.org/x/net v0.60.0
+)
 
 require (
 	github.com/alexballas/go-ssdp v0.0.4-0.20260524181453-a1b7428979ab // indirect
@@ -16,7 +19,6 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/saintfish/chardet v0.0.0-20230101081208-5e3ef4b5456d // indirect
 	golang.org/x/image v0.46.0 // indirect
-	golang.org/x/net v0.60.0 // indirect
 	golang.org/x/sys v0.48.0 // indirect
 	golang.org/x/text v0.42.0 // indirect
 )

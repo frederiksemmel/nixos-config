@@ -13,11 +13,12 @@ buildGoModule {
       ./go.mod
       ./go.sum
       ./main.go
+      ./tv.go
       ./tvcast.lua
     ];
   };
 
-  vendorHash = "sha256-RMrHffd4BxALos8BWy4aF1PAbdoFUSgc6ogD9hVfwHw=";
+  vendorHash = "sha256-KjSKsMrOYUFpFPk0p+FHcA4HeUGIKDab1gmsu1hyLcY=";
 
   env.CGO_ENABLED = 0;
 

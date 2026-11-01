@@ -1,8 +1,9 @@
--- `C` casts the current file to a DLNA TV picked from a menu. While casting,
--- the TV plays whatever file mpv has loaded, mpv stays paused and its
--- playback keys drive the TV, and when the TV finishes a file mpv moves on
--- to the next one in the playlist. When the cast ends, mpv is left at the
--- TV's position. `C` again ends the cast.
+-- `C` casts the current file to a DLNA TV picked from the TVs found before,
+-- turning it on if it is off, or from a search for TVs. While casting, the TV
+-- plays whatever file mpv has loaded, mpv stays paused and its playback keys
+-- drive the TV, and when the TV finishes a file mpv moves on to the next one
+-- in the playlist. When the cast ends, mpv is left at the TV's position. `C`
+-- again ends the cast.
 
 local input = require("mp.input")
 
@@ -109,6 +110,61 @@ local function start()
     end)
 end
 
+local function parse(out)
+    local tvs = {}
+    for url, name in trim(out):gmatch("([^\t\n]+)\t([^\n]+)") do
+        table.insert(tvs, { url = url, name = name })
+    end
+    return tvs
+end
+
+-- Turns the picked TV on if it is off and casts to it once it answers.
+local function connect(pick)
+    mp.osd_message("Connecting to " .. pick.name .. "…", 60)
+    tvcast_run({ "wake", pick.url }, function(r)
+        if r.status ~= 0 then
+            return mp.osd_message("Cast failed: " .. trim(r.stderr), 5)
+        end
+        tv = { url = trim(r.stdout), name = pick.name }
+        start()
+    end)
+end
+
+local search
+
+local function choose(tvs, with_search)
+    local names = {}
+    for _, t in ipairs(tvs) do
+        table.insert(names, t.name)
+    end
+    if with_search then
+        table.insert(names, "Search for TVs…")
+    end
+    input.select({
+        prompt = "Cast to:",
+        items = names,
+        submit = function(i)
+            if tvs[i] then
+                connect(tvs[i])
+            else
+                search()
+            end
+        end,
+    })
+end
+
+search = function()
+    mp.osd_message("Looking for TVs…", 10)
+    tvcast_run({ "list" }, function(r)
+        local tvs = parse(r.stdout)
+        if #tvs == 0 then
+            return mp.osd_message(r.status == 0 and "No TVs found" or "TV search failed: " .. trim(r.stderr), 5)
+        end
+        mp.osd_message("")
+        choose(tvs, false)
+    end)
+end
+
 local function cast()
     if tv then
         tv = nil
@@ -120,26 +176,11 @@ local function cast()
         return mp.osd_message("Only local files can be cast")
     end
 
-    mp.osd_message("Looking for TVs…", 5)
-    tvcast_run({ "list" }, function(r)
-        local tvs, names = {}, {}
-        for url, name in trim(r.stdout):gmatch("([^\t\n]+)\t([^\n]+)") do
-            table.insert(tvs, { url = url, name = name })
-            table.insert(names, name)
-        end
-        if #tvs == 0 then
-            return mp.osd_message(r.status == 0 and "No TVs found" or "TV search failed: " .. trim(r.stderr), 5)
-        end
-        mp.osd_message("")
-        input.select({
-            prompt = "Cast to:",
-            items = names,
-            submit = function(i)
-                tv = tvs[i]
-                start()
-            end,
-        })
-    end)
+    local known = parse(tvcast_run({ "known" }).stdout)
+    if #known == 0 then
+        return search()
+    end
+    choose(known, true)
 end
 
 mp.add_key_binding("C", "cast", cast)
