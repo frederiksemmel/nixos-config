@@ -1,6 +1,8 @@
 {
   flake,
   config,
+  lib,
+  pkgs,
   ...
 }:
 {
@@ -70,4 +72,13 @@
       };
     };
   };
+
+  systemd.user.services."rclone-mount:@pcloud" =
+    lib.mkIf config.programs.rclone.remotes.pcloud.mounts."".enable
+      {
+        Service.ExecStartPre = lib.mkForce [
+          "-/run/wrappers/bin/fusermount3 -uz ${config.home.homeDirectory}/pcloud"
+          "${lib.getExe' pkgs.coreutils "mkdir"} -p ${config.home.homeDirectory}/pcloud"
+        ];
+      };
 }
