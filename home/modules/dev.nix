@@ -773,6 +773,22 @@ in
         package = llm-agents.claude-code;
         enableMcpIntegration = true;
 
+        # Global ~/.claude/CLAUDE.md: loaded by every Claude Code session, in every project.
+        context = ''
+          # About my machine
+
+          - My shell is **nushell**. Any command you give me to copy-paste and run
+            myself must be valid nushell, not bash/zsh: `(cmd)` instead of `$(cmd)`,
+            `$env.VAR = "x"` or `with-env` instead of `export VAR=x`, `;` instead of `&&`,
+            `o+e>|` to pipe stderr too, `^cmd` to force an external. Prefer one paste-able
+            block over several steps. This does not change your own Bash tool, which runs bash.
+          - The OS is NixOS. System and home config live in ~/repos/nixos-config
+            (flake with home-manager). Change system settings there instead of
+            installing or configuring things imperatively. I apply changes with `nh os switch`.
+          - I can't approve `sudo` through you: when something needs root, give me the
+            command to run myself.
+        '';
+
         # NOTE: setting `settings` makes ~/.claude/settings.json a read-only
         # store symlink, so everything that used to live there is declared here.
         # The CLI can no longer write it: `/config`, `/model` and `/plugin` only
