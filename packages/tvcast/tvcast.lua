@@ -1,11 +1,15 @@
 -- `C` casts the current file to a DLNA TV picked from a menu. While casting,
--- mpv stays paused and its playback keys drive the TV; `C` again ends the
--- cast and leaves mpv at the TV's position.
+-- the TV plays whatever file mpv has loaded, mpv stays paused and its
+-- playback keys drive the TV, and when the TV finishes a file mpv moves on
+-- to the next one in the playlist. When the cast ends, mpv is left at the
+-- TV's position. `C` again ends the cast.
 
 local input = require("mp.input")
 
 local tvcast = "@tvcast@"
-local casting = false
+-- The TV being cast to, and an id that tells the current cast's exit apart
+-- from that of one it replaced.
+local tv, session = nil, 0
 
 local remote = {
     SPACE = { "toggle" },
@@ -56,7 +60,33 @@ local function set_remote(enabled)
     end
 end
 
-local function start(tv)
+local function has_next()
+    return mp.get_property_number("playlist-pos", 0) + 1 < mp.get_property_number("playlist-count", 0)
+end
+
+local function ended(id, r)
+    if id ~= session then
+        return
+    end
+    local pos = tonumber(trim(r.stdout))
+    local finished = pos and pos >= mp.get_property_number("duration", math.huge) - 5
+    if tv and finished and has_next() then
+        return mp.command("playlist-next")
+    end
+    tv = nil
+    set_remote(false)
+    if pos then
+        mp.commandv("seek", pos, "absolute")
+    end
+    if r.status == 0 then
+        mp.osd_message("Cast ended")
+    else
+        mp.osd_message("Cast failed: " .. trim(r.stderr), 5)
+    end
+end
+
+-- Casts the current file to tv, replacing any cast already running.
+local function start()
     local args = { "play", "-t", tv.url, "-start", tostring(math.floor(mp.get_property_number("time-pos", 0))) }
     local sub = mp.get_property_native("current-tracks/sub")
     local subfile = sub and sub.external and sub["external-filename"]
@@ -68,32 +98,22 @@ local function start(tv)
     table.insert(args, "--")
     table.insert(args, mp.get_property("path"))
 
+    tvcast_run({ "stop" })
+    session = session + 1
+    local id = session
     mp.set_property_bool("pause", true)
-    casting = true
     set_remote(true)
     mp.osd_message("Casting to " .. tv.name)
     tvcast_run(args, function(r)
-        casting = false
-        set_remote(false)
-        if r.status == 0 then
-            mp.osd_message("Cast ended")
-        else
-            mp.osd_message("Cast failed: " .. trim(r.stderr), 5)
-        end
+        ended(id, r)
     end)
 end
 
-local function stop()
-    local pos = tonumber(trim(tvcast_run({ "position" }).stdout))
-    tvcast_run({ "stop" })
-    if pos then
-        mp.commandv("seek", pos, "absolute")
-    end
-end
-
 local function cast()
-    if casting then
-        return stop()
+    if tv then
+        tv = nil
+        tvcast_run({ "stop" })
+        return
     end
     local path = mp.get_property("path")
     if not path or path:match("^%a[%w+.-]*://") then
@@ -115,7 +135,8 @@ local function cast()
             prompt = "Cast to:",
             items = names,
             submit = function(i)
-                start(tvs[i])
+                tv = tvs[i]
+                start()
             end,
         })
     end)
@@ -123,8 +144,13 @@ end
 
 mp.add_key_binding("C", "cast", cast)
 
-mp.register_event("shutdown", function()
-    if casting then
-        tvcast_run({ "stop" })
+mp.register_event("file-loaded", function()
+    if tv then
+        start()
     end
+end)
+
+mp.register_event("shutdown", function()
+    tv = nil
+    tvcast_run({ "stop" })
 end)
