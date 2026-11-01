@@ -6,7 +6,9 @@
 //	tvcast load FILE                                 switch the running cast to FILE
 //	tvcast toggle | seek SECS|+SECS|-SECS | position | stop
 //
-// Commands for a running cast exit with status 3 when no cast is running.
+// play prints the TV's last known position in seconds when the cast ends.
+// stop returns once the cast has ended. Commands for a running cast exit with
+// status 3 when no cast is running.
 package main
 
 import (
@@ -15,6 +17,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
@@ -31,7 +34,10 @@ import (
 	"go2tv.app/go2tv/v2/utils"
 )
 
-var errNoCast = errors.New("no cast running")
+var (
+	errNoCast  = errors.New("no cast running")
+	errStopped = errors.New("the cast stopped")
+)
 
 func main() {
 	if len(os.Args) < 2 {
@@ -90,6 +96,7 @@ type cast struct {
 	mu      sync.Mutex
 	tv      *soapcalls.TVPayload
 	srv     *httphandlers.HTTPserver
+	last    int // last position the TV reported, -1 before the first
 	stopped chan struct{}
 	once    sync.Once
 }
@@ -132,7 +139,7 @@ func (c *cast) load(media, subs string) error {
 		srv.StopServer()
 		return err
 	}
-	c.tv, c.srv = tv, srv
+	c.tv, c.srv, c.last = tv, srv, -1
 	return nil
 }
 
@@ -141,11 +148,28 @@ func (c *cast) position() (int, error) {
 	if err != nil {
 		return 0, err
 	}
-	return utils.ClockTimeToSeconds(info[1])
+	pos, err := utils.ClockTimeToSeconds(info[1])
+	if err == nil {
+		c.last = pos
+	}
+	return pos, err
 }
 
+// seek retries while the renderer refuses with UPnP error 701, which it does
+// until playback has started and while a previous seek is still settling.
 func (c *cast) seek(secs int) error {
-	return c.tv.SeekSoapCall(utils.SecondsToClockTime(secs))
+	for range 50 {
+		err := c.tv.SeekSoapCall(utils.SecondsToClockTime(secs))
+		if err == nil || !strings.Contains(err.Error(), "<errorCode>701</errorCode>") {
+			return err
+		}
+		select {
+		case <-c.stopped:
+			return errStopped
+		case <-time.After(200 * time.Millisecond):
+		}
+	}
+	return errors.New("the TV kept refusing to seek")
 }
 
 func play(args []string) error {
@@ -180,18 +204,41 @@ func play(args []string) error {
 	}
 	defer func() { c.srv.StopServer() }()
 	go serve(ln, c)
+	go func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if *start > 0 {
+			_ = c.seek(*start)
+		}
+	}()
+	go func() {
+		for {
+			select {
+			case <-c.stopped:
+				return
+			case <-time.After(time.Second):
+			}
+			c.mu.Lock()
+			_, _ = c.position()
+			c.mu.Unlock()
+		}
+	}()
 
 	sig, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
-	if *start > 0 {
-		go seekOnceStarted(c, *start)
-	}
 	select {
 	case <-c.stopped:
 	case <-sig.Done():
 		c.mu.Lock()
 		_ = c.tv.SendtoTV("Stop")
 		c.mu.Unlock()
+		c.Fini()
+	}
+
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.last >= 0 {
+		fmt.Println(c.last)
 	}
 	return nil
 }
@@ -208,24 +255,6 @@ func listen() (net.Listener, error) {
 	return net.Listen("unix", sock)
 }
 
-// seekOnceStarted retries the start seek, since renderers reject seeks until
-// playback is underway.
-func seekOnceStarted(c *cast, secs int) {
-	for range 20 {
-		select {
-		case <-c.stopped:
-			return
-		case <-time.After(500 * time.Millisecond):
-		}
-		c.mu.Lock()
-		err := c.seek(secs)
-		c.mu.Unlock()
-		if err == nil {
-			return
-		}
-	}
-}
-
 func serve(ln net.Listener, c *cast) {
 	for {
 		conn, err := ln.Accept()
@@ -233,9 +262,9 @@ func serve(ln net.Listener, c *cast) {
 			return
 		}
 		go func() {
-			defer conn.Close()
 			line, err := bufio.NewReader(conn).ReadString('\n')
 			if err != nil {
+				conn.Close()
 				return
 			}
 			name, arg, _ := strings.Cut(strings.TrimSuffix(line, "\n"), " ")
@@ -247,8 +276,12 @@ func serve(ln net.Listener, c *cast) {
 			}
 			fmt.Fprintln(conn, reply)
 			if name == "stop" {
+				// The connection closes when this process exits, after the
+				// socket is gone, which is what `tvcast stop` waits for.
 				c.Fini()
+				return
 			}
+			conn.Close()
 		}()
 	}
 }
@@ -288,6 +321,7 @@ func handle(c *cast, name, arg string) (string, error) {
 		pos, err := c.position()
 		return strconv.Itoa(pos), err
 	case "stop":
+		_, _ = c.position()
 		return "stopped", c.tv.SendtoTV("Stop")
 	}
 	return "", fmt.Errorf("unknown command %q", name)
@@ -312,10 +346,12 @@ func control(args []string) error {
 	if _, err := fmt.Fprintln(conn, strings.Join(args, " ")); err != nil {
 		return err
 	}
-	reply, err := bufio.NewReader(conn).ReadString('\n')
+	r := bufio.NewReader(conn)
+	reply, err := r.ReadString('\n')
 	if err != nil {
 		return err
 	}
+	_, _ = io.Copy(io.Discard, r)
 	reply = strings.TrimSpace(reply)
 	if msg, ok := strings.CutPrefix(reply, "error: "); ok {
 		return errors.New(msg)
