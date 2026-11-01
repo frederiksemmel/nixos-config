@@ -318,6 +318,17 @@ in
     extraCommands = ''
       iptables -A nixos-fw -p tcp --source 169.254.0.0/16 --dport 1024:65535 -j nixos-fw-accept
       iptables -A nixos-fw -p udp --source 169.254.0.0/16 --dport 1024:65535 -j nixos-fw-accept
+      # SSDP replies come unicast from a random port, which conntrack cannot tie
+      # to the multicast search, so accept them on ports that just searched.
+      ${pkgs.ipset}/bin/ipset -exist create ssdp-search hash:ip,port timeout 10
+      iptables -D OUTPUT -p udp -d 239.255.255.250 --dport 1900 -j SET --add-set ssdp-search src,src --exist 2>/dev/null || true
+      iptables -A OUTPUT -p udp -d 239.255.255.250 --dport 1900 -j SET --add-set ssdp-search src,src --exist
+      iptables -A nixos-fw -p udp -m set --match-set ssdp-search dst,dst -j nixos-fw-accept
+      # DLNA casting: the TV fetching media and posting playback events
+      iptables -A nixos-fw -p tcp --source 10.0.0.0/8,172.16.0.0/12,192.168.0.0/16 --dport 3500:3509 -j nixos-fw-accept
+    '';
+    extraStopCommands = ''
+      iptables -D OUTPUT -p udp -d 239.255.255.250 --dport 1900 -j SET --add-set ssdp-search src,src --exist 2>/dev/null || true
     '';
   };
 

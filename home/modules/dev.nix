@@ -194,6 +194,9 @@ in
       command = lib.getExe pkgs.rerun;
       args = [ "viewer-mcp" ];
     };
+    mcp-servers.settings.servers.mcp-beam.command = lib.getExe (
+      pkgs.callPackage ../../packages/mcp-beam.nix { }
+    );
     # Figma's hosted MCP; run `/mcp` once per machine to do the OAuth dance.
     mcp-servers.settings.servers.figma.url = "https://mcp.figma.com/mcp";
     # Linear's hosted MCP; same `/mcp` OAuth dance as Figma.
