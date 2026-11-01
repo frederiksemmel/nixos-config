@@ -233,8 +233,16 @@ in
       DNS = "9.9.9.9 1.1.1.1";
     };
   };
+  # Wired uplinks only. This laptop has no built-in Ethernet, so a wired link is a USB
+  # adapter or dock (enp*u*, or enx<MAC> / enp<bus>s<slot> for some docks) or
+  # Thunderbolt networking (thunderbolt*). An allowlist, because Type=ether alone also
+  # matches virtual links: networkd then ran DHCP on Docker's veths, pulled them off
+  # the docker0 bridge (published container ports stopped answering) and on vboxnet0.
   systemd.network.networks."10-usb-lan" = {
-    matchConfig.Type = "ether";
+    matchConfig = {
+      Type = "ether";
+      Name = "enp* enx* eth* thunderbolt*";
+    };
     networkConfig = {
       DHCP = "yes";
       LinkLocalAddressing = "yes";
@@ -582,6 +590,10 @@ in
   # In /etc/nixos/configuration.nix
   virtualisation.docker = {
     enable = true;
+    # Published ports (`-p 8080:80`) bind to localhost unless a host IP is given. Docker's
+    # own NAT rules bypass the NixOS firewall, so the default 0.0.0.0 exposed e.g. a local
+    # Supabase (DB password "postgres", Studio without login) to every network joined.
+    daemon.settings.ip = "127.0.0.1";
   };
 
   virtualisation.virtualbox.host.enable = true;
