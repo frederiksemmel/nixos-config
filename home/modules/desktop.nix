@@ -597,6 +597,7 @@ let
     };
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
+  tvcast = pkgs.callPackage ../../packages/tvcast { };
   # Route audio over HDMI (`audio-output hdmi`) when the tv kanshi profile is
   # applied, and over the built-in speakers (`audio-output analog`) for every
   # other profile. Wireplumber restores the last chosen card profile, so it
@@ -693,6 +694,7 @@ in
     '';
 
     home.packages = with pkgs; [
+      tvcast
       (lib.hiPrio handlr-xdg-open)
       wallpaperNext
       ironbar
@@ -1892,7 +1894,10 @@ in
         save-position-on-quit = true;
         write-filename-in-watch-later-config = true;
       };
-      scripts = [ pkgs.mpvScripts.memo ];
+      scripts = [
+        pkgs.mpvScripts.memo
+        tvcast
+      ];
       bindings = {
         # increase subtitle font size
         "ALT+k" = "add sub-scale +0.1";
