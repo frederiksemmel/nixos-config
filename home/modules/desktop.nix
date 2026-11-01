@@ -598,6 +598,57 @@ let
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
   tvcast = pkgs.callPackage ../../packages/tvcast { };
+  # `tvcast-imv cast FILE` stops a running cast, or casts FILE to a TV picked
+  # in fuzzel; `tvcast-imv follow FILE` switches a running cast to FILE.
+  tvcastImv = pkgs.writeShellApplication {
+    name = "tvcast-imv";
+    runtimeInputs = [
+      tvcast
+      pkgs.fuzzel
+      pkgs.libnotify
+    ];
+    text = ''
+      mode=$1 file=$2
+      want=''${XDG_RUNTIME_DIR:-/tmp}/tvcast-imv.want
+
+      case $mode in
+      cast)
+        rc=0
+        tvcast stop >/dev/null 2>&1 || rc=$?
+        if [ "$rc" -ne 3 ]; then
+          exit 0
+        fi
+        notify-send -a tvcast -t 3000 "Looking for TVs…"
+        tvs=$(tvcast list)
+        if [ -z "$tvs" ]; then
+          notify-send -a tvcast "No TVs found"
+          exit 0
+        fi
+        i=$(cut -f2 <<<"$tvs" | fuzzel --dmenu --index --prompt "Cast to: ") || exit 0
+        url=$(sed -n "$((i + 1))p" <<<"$tvs" | cut -f1)
+        if ! out=$(tvcast play -t "$url" -- "$file" 2>&1); then
+          notify-send -a tvcast "Cast failed" "$out"
+        fi
+        ;;
+      follow)
+        # Only the last of several quick image changes reaches the TV.
+        if [ ! -f "$file" ]; then
+          exit 0
+        fi
+        echo "$file" >"$want"
+        sleep 0.3
+        if [ "$(cat "$want")" != "$file" ]; then
+          exit 0
+        fi
+        rc=0
+        out=$(tvcast load "$file" 2>&1) || rc=$?
+        if [ "$rc" -ne 0 ] && [ "$rc" -ne 3 ]; then
+          notify-send -a tvcast "Cast failed" "$out"
+        fi
+        ;;
+      esac
+    '';
+  };
   # Route audio over HDMI (`audio-output hdmi`) when the tv kanshi profile is
   # applied, and over the built-in speakers (`audio-output analog`) for every
   # other profile. Wireplumber restores the last chosen card profile, so it
@@ -1875,6 +1926,21 @@ in
           overlay = "1";
           overlay_font = "Monospace:10";
         };
+        # imv runs exec through system(), so the casts run in the background.
+        binds =
+          let
+            follow = cmd: "${cmd}; exec ${lib.getExe tvcastImv} follow \"$imv_current_file\" &";
+          in
+          {
+            "<Shift+C>" = "exec ${lib.getExe tvcastImv} cast \"$imv_current_file\" &";
+            "<Left>" = follow "prev";
+            "<bracketleft>" = follow "prev";
+            "<Right>" = follow "next";
+            "<bracketright>" = follow "next";
+            gg = follow "goto 1";
+            "<Shift+G>" = follow "goto -1";
+            x = follow "close";
+          };
       };
     };
 
