@@ -11,12 +11,12 @@
 //	tvcast key KEY                                   press KEY on the TV's remote
 //	tvcast volume N|+N|-N                            set the TV's volume, print it
 //
-// wake returns once the TV answers and, when it had to be turned on, has had
-// a few seconds to settle, at the URL it now has, which differs
-// from the given one when the TV got another address. playpause toggles the
-// running cast, or else presses pause or play on the remote of the most
-// recently found TV, whatever it plays. key presses a Samsung remote key such
-// as KEY_MUTE on that TV, and volume sets that TV's volume.
+// wake returns once the TV takes playback commands, at the URL it now has,
+// which differs from the given one when the TV got another address.
+// playpause toggles the running cast, or else presses pause or play on the
+// remote of the most recently found TV, whatever it plays. key presses a
+// Samsung remote key such as KEY_MUTE on that TV, and volume sets that TV's
+// volume.
 //
 // play prints the TV's last known position in seconds when the cast ends.
 // stop returns once the cast has ended. Commands for a running cast exit with
@@ -233,8 +233,45 @@ func (c *cast) load(media, subs string) error {
 		srv.StopServer()
 		return err
 	}
+	for range 3 {
+		if !failedToStart(tv) {
+			break
+		}
+		if err := tv.SetAVTransportURI(); err != nil {
+			srv.StopServer()
+			return err
+		}
+		if err := tv.PlayPauseStopSoapCall("Play"); err != nil {
+			srv.StopServer()
+			return err
+		}
+	}
 	c.tv, c.srv, c.last = tv, srv, -1
 	return nil
+}
+
+// failedToStart watches the TV for up to 10 s after a play command, and
+// reports whether it gave up on the media instead of playing it: an error
+// status, or a stop after it began loading.
+func failedToStart(tv *soapcalls.TVPayload) bool {
+	loading := false
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
+		info, err := tv.GetTransportInfo()
+		if err == nil {
+			switch state := info[0]; {
+			case state == "PLAYING" || state == "PAUSED_PLAYBACK":
+				return false
+			case info[1] == "ERROR_OCCURRED":
+				return true
+			case state == "TRANSITIONING":
+				loading = true
+			case loading && (state == "STOPPED" || state == "NO_MEDIA_PRESENT"):
+				return true
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	return false
 }
 
 func (c *cast) position() (int, error) {

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"go2tv.app/go2tv/v2/soapcalls"
 	"golang.org/x/net/websocket"
 )
 
@@ -135,19 +136,28 @@ func wakeUp(args []string) error {
 	}
 
 	client := &http.Client{Timeout: time.Second}
+	// A TV that is booting serves its description before its player takes
+	// commands, so it answers once AVTransport reports a state.
 	answers := func() bool {
 		resp, err := client.Get(tv.url)
 		if err != nil {
 			return false
 		}
 		resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
+		if resp.StatusCode != http.StatusOK {
+			return false
+		}
+		p, err := soapcalls.NewTVPayload(&soapcalls.Options{DMR: tv.url})
+		if err != nil {
+			return false
+		}
+		info, err := p.GetTransportInfo()
+		return err == nil && info[0] != ""
 	}
 
 	start := time.Now()
 	for time.Since(start) < time.Minute {
 		if answers() {
-			settle(start)
 			fmt.Println(tv.url)
 			return nil
 		}
@@ -172,21 +182,11 @@ func wakeUp(args []string) error {
 				if err := remember([]knownTV{{k.url, k.name, tv.mac}}); err != nil {
 					return err
 				}
-				settle(start)
-				fmt.Println(k.url)
-				return nil
+				tv.url = k.url
 			}
 		}
 	}
 	return fmt.Errorf("%s did not turn on", tv.name)
-}
-
-// settle gives a TV that wake turned on time to bring up its network
-// before it is asked to fetch media. A TV that answered at once was on.
-func settle(start time.Time) {
-	if time.Since(start) > 2*time.Second {
-		time.Sleep(8 * time.Second)
-	}
 }
 
 // samsungKey presses key on the remote of the Samsung TV at host. The first
