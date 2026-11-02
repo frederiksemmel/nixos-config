@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"go2tv.app/go2tv/v2/soapcalls"
 	"golang.org/x/net/websocket"
 )
 
@@ -136,23 +135,13 @@ func wakeUp(args []string) error {
 	}
 
 	client := &http.Client{Timeout: time.Second}
-	// A TV that is booting serves its description before its player takes
-	// commands, so it answers once AVTransport reports a state.
 	answers := func() bool {
 		resp, err := client.Get(tv.url)
 		if err != nil {
 			return false
 		}
 		resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			return false
-		}
-		p, err := soapcalls.NewTVPayload(&soapcalls.Options{DMR: tv.url})
-		if err != nil {
-			return false
-		}
-		info, err := p.GetTransportInfo()
-		return err == nil && info[0] != ""
+		return resp.StatusCode == http.StatusOK
 	}
 
 	start := time.Now()
@@ -182,7 +171,8 @@ func wakeUp(args []string) error {
 				if err := remember([]knownTV{{k.url, k.name, tv.mac}}); err != nil {
 					return err
 				}
-				tv.url = k.url
+				fmt.Println(k.url)
+				return nil
 			}
 		}
 	}

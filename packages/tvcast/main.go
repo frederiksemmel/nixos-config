@@ -11,8 +11,8 @@
 //	tvcast key KEY                                   press KEY on the TV's remote
 //	tvcast volume N|+N|-N                            set the TV's volume, print it
 //
-// wake returns once the TV takes playback commands, at the URL it now has,
-// which differs from the given one when the TV got another address.
+// wake returns once the TV answers, at the URL it now has, which differs
+// from the given one when the TV got another address.
 // playpause toggles the running cast, or else presses pause or play on the
 // remote of the most recently found TV, whatever it plays. key presses a
 // Samsung remote key such as KEY_MUTE on that TV, and volume sets that TV's
@@ -191,13 +191,23 @@ type cast struct {
 	tv      *soapcalls.TVPayload
 	srv     *httphandlers.HTTPserver
 	last    int // last position the TV reported, -1 before the first
+	playing chan struct{}
 	stopped chan struct{}
 	once    sync.Once
 }
 
-func (c *cast) EmitMsg(string)      {}
 func (c *cast) SetMediaType(string) {}
-func (c *cast) Fini()               { c.once.Do(func() { close(c.stopped) }) }
+
+func (c *cast) EmitMsg(msg string) {
+	if msg == "Playing" {
+		select {
+		case c.playing <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (c *cast) Fini() { c.once.Do(func() { close(c.stopped) }) }
 
 // load serves media and starts it on the TV, ending whatever played before.
 func (c *cast) load(media, subs string) error {
@@ -229,49 +239,34 @@ func (c *cast) load(media, subs string) error {
 	if err := <-started; err != nil {
 		return err
 	}
+	select {
+	case <-c.playing:
+	default:
+	}
 	if err := tv.SendtoTV("Play1"); err != nil {
 		srv.StopServer()
 		return err
 	}
+	// A TV that has just booted can fail to fetch the media without saying
+	// so; it gets the media again when it has not started playing.
 	for range 3 {
-		if !failedToStart(tv) {
-			break
+		select {
+		case <-c.playing:
+		case <-time.After(6 * time.Second):
+			if err := tv.SetAVTransportURI(); err != nil {
+				srv.StopServer()
+				return err
+			}
+			if err := tv.PlayPauseStopSoapCall("Play"); err != nil {
+				srv.StopServer()
+				return err
+			}
+			continue
 		}
-		if err := tv.SetAVTransportURI(); err != nil {
-			srv.StopServer()
-			return err
-		}
-		if err := tv.PlayPauseStopSoapCall("Play"); err != nil {
-			srv.StopServer()
-			return err
-		}
+		break
 	}
 	c.tv, c.srv, c.last = tv, srv, -1
 	return nil
-}
-
-// failedToStart watches the TV for up to 10 s after a play command, and
-// reports whether it gave up on the media instead of playing it: an error
-// status, or a stop after it began loading.
-func failedToStart(tv *soapcalls.TVPayload) bool {
-	loading := false
-	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); {
-		info, err := tv.GetTransportInfo()
-		if err == nil {
-			switch state := info[0]; {
-			case state == "PLAYING" || state == "PAUSED_PLAYBACK":
-				return false
-			case info[1] == "ERROR_OCCURRED":
-				return true
-			case state == "TRANSITIONING":
-				loading = true
-			case loading && (state == "STOPPED" || state == "NO_MEDIA_PRESENT"):
-				return true
-			}
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return false
 }
 
 func (c *cast) position() (int, error) {
@@ -329,7 +324,7 @@ func play(args []string) error {
 	}
 	defer ln.Close()
 
-	c := &cast{target: *target, stopped: make(chan struct{})}
+	c := &cast{target: *target, playing: make(chan struct{}, 1), stopped: make(chan struct{})}
 	if err := c.load(media, *subs); err != nil {
 		return err
 	}
