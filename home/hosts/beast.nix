@@ -85,6 +85,14 @@ let
     };
     Install.WantedBy = [ "default.target" ];
   };
+
+  # Runs the server inside devenv shell, so every session it spawns starts in
+  # the repo with the devenv environment already loaded.
+  devenvRemoteControl =
+    repo:
+    lib.recursiveUpdate (remoteControl repo) {
+      Service.ExecStart = "${lib.getExe pkgs.devenv} shell --no-tui -- ${lib.getExe config.programs.claude-code.finalPackage} remote-control --remote-control-session-name-prefix ${repo} --spawn=same-dir --no-create-session-in-dir";
+    };
 in
 {
   programs.nushell.extraEnv = ''
@@ -158,10 +166,15 @@ in
     Install.WantedBy = [ "default.target" ];
   };
 
-  # Remote Control servers, so sessions can be spawned from the app, each in its
-  # own worktree. They run beside the blackjackeye spare above.
+  # Remote Control servers, so sessions can be spawned from the app. The
+  # nixos-config and blackjackeye ones give each session its own worktree and run
+  # beside the blackjackeye spare above; the devenv ones spawn in the repo itself.
   systemd.user.services.claude-remote-control-nixos-config = remoteControl "nixos-config";
   systemd.user.services.claude-remote-control-blackjackeye = remoteControl "blackjackeye";
+  systemd.user.services.claude-remote-control-spades-website = devenvRemoteControl "spades-website";
+  systemd.user.services.claude-remote-control-adminwebsite = devenvRemoteControl "adminwebsite";
+  systemd.user.services.claude-remote-control-holomorphic-visualizer = devenvRemoteControl "holomorphic-visualizer";
+  systemd.user.services.claude-remote-control-steimannli = devenvRemoteControl "steimannli";
 
   # Server-spawned sessions don't start inside devenv shell, so their worktree's
   # devenv environment is snapshotted once; Claude sources CLAUDE_ENV_FILE before
