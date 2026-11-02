@@ -8,12 +8,15 @@ call EnterWorktree before the first edit.
 
 Landing a change, without waiting to be asked:
 
-1. Validate it with one `nh os build .` from the worktree at the end of the task.
-2. Commit on the worktree branch.
-3. `git push origin HEAD:main`. If main moved, `git fetch` and
+1. Commit on the worktree branch.
+2. `git push origin HEAD:main`. If main moved, `git fetch` and
    `git rebase origin/main` first, then push again.
-4. Tell the user it is on origin/main. Worktree sessions cannot touch the main
-   checkout, and `nh os switch` builds from there, so the user runs
-   `git pull --ff-only` in it before switching.
+3. ExitWorktree with `keep` (git in the main checkout is blocked while inside a
+   worktree), then `git pull --ff-only` in the main checkout.
+4. Run one `nh os build .` in the main checkout: `nh os switch` builds from
+   there, so that is the build the user needs. If it fails, fix forward in a new
+   worktree.
+5. Remove the worktree with `git worktree remove` and delete its branch, then
+   tell the user it is pulled and built, ready for `nh os switch`.
 
 No PRs or long-lived branches: this is a single-author config with no review step.
