@@ -12,10 +12,11 @@
 //	tvcast volume N|+N|-N                            set the TV's volume, print it
 //
 // wake returns once the TV answers, at the URL it now has, which differs
-// from the given one when the TV got another address. playpause toggles the
-// running cast, or else presses pause or play on the remote of the most
-// recently found TV, whatever it plays. key presses a Samsung remote key such
-// as KEY_MUTE on that TV, and volume sets that TV's volume.
+// from the given one when the TV got another address.
+// playpause toggles the running cast, or else presses pause or play on the
+// remote of the most recently found TV, whatever it plays. key presses a
+// Samsung remote key such as KEY_MUTE on that TV, and volume sets that TV's
+// volume.
 //
 // play prints the TV's last known position in seconds when the cast ends.
 // stop returns once the cast has ended. Commands for a running cast exit with
@@ -190,13 +191,23 @@ type cast struct {
 	tv      *soapcalls.TVPayload
 	srv     *httphandlers.HTTPserver
 	last    int // last position the TV reported, -1 before the first
+	playing chan struct{}
 	stopped chan struct{}
 	once    sync.Once
 }
 
-func (c *cast) EmitMsg(string)      {}
 func (c *cast) SetMediaType(string) {}
-func (c *cast) Fini()               { c.once.Do(func() { close(c.stopped) }) }
+
+func (c *cast) EmitMsg(msg string) {
+	if msg == "Playing" {
+		select {
+		case c.playing <- struct{}{}:
+		default:
+		}
+	}
+}
+
+func (c *cast) Fini() { c.once.Do(func() { close(c.stopped) }) }
 
 // load serves media and starts it on the TV, ending whatever played before.
 func (c *cast) load(media, subs string) error {
@@ -228,9 +239,31 @@ func (c *cast) load(media, subs string) error {
 	if err := <-started; err != nil {
 		return err
 	}
+	select {
+	case <-c.playing:
+	default:
+	}
 	if err := tv.SendtoTV("Play1"); err != nil {
 		srv.StopServer()
 		return err
+	}
+	// A TV that has just booted can fail to fetch the media without saying
+	// so; it gets the media again when it has not started playing.
+	for range 3 {
+		select {
+		case <-c.playing:
+		case <-time.After(6 * time.Second):
+			if err := tv.SetAVTransportURI(); err != nil {
+				srv.StopServer()
+				return err
+			}
+			if err := tv.PlayPauseStopSoapCall("Play"); err != nil {
+				srv.StopServer()
+				return err
+			}
+			continue
+		}
+		break
 	}
 	c.tv, c.srv, c.last = tv, srv, -1
 	return nil
@@ -291,7 +324,7 @@ func play(args []string) error {
 	}
 	defer ln.Close()
 
-	c := &cast{target: *target, stopped: make(chan struct{})}
+	c := &cast{target: *target, playing: make(chan struct{}, 1), stopped: make(chan struct{})}
 	if err := c.load(media, *subs); err != nil {
 		return err
 	}
