@@ -10,6 +10,15 @@ let
   inherit (pkgs.stdenv.hostPlatform) system;
   llm-agents = flake.inputs.llm-agents.packages.${system};
 
+  claudeCode = pkgs.symlinkJoin {
+    inherit (llm-agents.claude-code) pname version meta;
+    paths = [ llm-agents.claude-code ];
+    nativeBuildInputs = [ pkgs.makeWrapper ];
+    postBuild = ''
+      wrapProgram $out/bin/claude --suffix PATH : ${lib.makeBinPath [ pkgs.python3 ]}
+    '';
+  };
+
   hostLabels = lib.mapAttrs (host: icon: "${icon} ${host}") {
     fstux = "💻";
     beast = "🐉";
@@ -770,7 +779,7 @@ in
 
       claude-code = {
         enable = true;
-        package = llm-agents.claude-code;
+        package = claudeCode;
         enableMcpIntegration = true;
 
         # Global ~/.claude/CLAUDE.md: loaded by every Claude Code session, in every project.
