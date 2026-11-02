@@ -913,6 +913,9 @@ in
         "l":
           desc: Linear
           cmd: chromium --app=https://linear.app
+        "e":
+          desc: Zero Mail
+          cmd: chromium --app=https://0.email/mail/inbox
         "r":
           desc: Rerun
           cmd: rerun
@@ -968,6 +971,20 @@ in
         categories = [
           "Development"
           "Office"
+        ];
+      };
+      zero-mail = {
+        name = "Zero";
+        genericName = "Email Client";
+        exec = "chromium --app=https://0.email/mail/inbox";
+        terminal = false;
+        icon = pkgs.fetchurl {
+          url = "https://0.email/icons-pwa/icon-512.png";
+          hash = "sha256-eUBoNowNqWkJGxABC8wlUfy0BjD6I1+29Mv46tQhywk=";
+        };
+        categories = [
+          "Network"
+          "Email"
         ];
       };
     };
@@ -1723,6 +1740,7 @@ in
         {
           matches = [
             { "app-id" = "^chrome-linear\\.app__"; }
+            { "app-id" = "^chrome-0\\.email__"; }
             { "app-id" = "^dev\\.zed\\.Zed$"; }
           ];
           "default-column-width".proportion = 1.0;
@@ -1732,6 +1750,67 @@ in
         #   "open-floating" = true;
         # }
       ];
+    };
+
+    # niri appends a disconnected output's workspaces below the remaining
+    # output's; this moves them to the top, since the laptop sits below the
+    # external display.
+    systemd.user.services.niri-orphans-on-top = {
+      Unit = {
+        Description = "Move a disconnected output's niri workspaces to the top";
+        PartOf = [ "graphical-session.target" ];
+        After = [ "graphical-session.target" ];
+      };
+      Service = {
+        ExecStart = lib.getExe (
+          pkgs.writers.writePython3Bin "niri-orphans-on-top" { } ''
+            import json
+            import os
+            import socket
+
+
+            def connect():
+                s = socket.socket(socket.AF_UNIX)
+                s.connect(os.environ["NIRI_SOCKET"])
+                return s
+
+
+            def move_to_index(ws_id, index):
+                with connect() as s:
+                    ref = {"Id": ws_id}
+                    a = {"MoveWorkspaceToIndex": {"index": index, "reference": ref}}
+                    s.sendall((json.dumps({"Action": a}) + "\n").encode())
+                    s.makefile().readline()
+
+
+            events = connect()
+            events.sendall(b'"EventStream"\n')
+            stream = events.makefile()
+            stream.readline()
+            last_output = {}
+            for line in stream:
+                changed = json.loads(line).get("WorkspacesChanged")
+                if changed is None:
+                    continue
+                workspaces = changed["workspaces"]
+                present = {w["output"] for w in workspaces}
+                orphans = sorted(
+                    (
+                        w
+                        for w in workspaces
+                        if last_output.get(w["id"]) not in (None, w["output"])
+                        and last_output[w["id"]] not in present
+                    ),
+                    key=lambda w: w["idx"],
+                )
+                for i, w in enumerate(orphans, start=1):
+                    move_to_index(w["id"], i)
+                last_output = {w["id"]: w["output"] for w in workspaces}
+          ''
+        );
+        Restart = "on-failure";
+      };
+      Install.WantedBy = [ "graphical-session.target" ];
     };
 
     systemd.user.services.ironbar = {
