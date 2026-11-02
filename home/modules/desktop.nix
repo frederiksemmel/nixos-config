@@ -690,6 +690,7 @@ in
       evince
       # papers issues with saving and icons
       signal-desktop
+      mailspring
       sqlitebrowser
       inlyne
 
@@ -914,8 +915,8 @@ in
           desc: Linear
           cmd: chromium --app=https://linear.app
         "e":
-          desc: Zero Mail
-          cmd: chromium --app=https://0.email/mail/inbox
+          desc: Mailspring
+          cmd: mailspring
         "r":
           desc: Rerun
           cmd: rerun
@@ -971,20 +972,6 @@ in
         categories = [
           "Development"
           "Office"
-        ];
-      };
-      zero-mail = {
-        name = "Zero";
-        genericName = "Email Client";
-        exec = "chromium --app=https://0.email/mail/inbox";
-        terminal = false;
-        icon = pkgs.fetchurl {
-          url = "https://0.email/icons-pwa/icon-512.png";
-          hash = "sha256-eUBoNowNqWkJGxABC8wlUfy0BjD6I1+29Mv46tQhywk=";
-        };
-        categories = [
-          "Network"
-          "Email"
         ];
       };
     };
@@ -1740,7 +1727,6 @@ in
         {
           matches = [
             { "app-id" = "^chrome-linear\\.app__"; }
-            { "app-id" = "^chrome-0\\.email__"; }
             { "app-id" = "^dev\\.zed\\.Zed$"; }
           ];
           "default-column-width".proportion = 1.0;
