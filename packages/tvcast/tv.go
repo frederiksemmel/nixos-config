@@ -147,6 +147,7 @@ func wakeUp(args []string) error {
 	start := time.Now()
 	for time.Since(start) < time.Minute {
 		if answers() {
+			settle(start)
 			fmt.Println(tv.url)
 			return nil
 		}
@@ -171,12 +172,21 @@ func wakeUp(args []string) error {
 				if err := remember([]knownTV{{k.url, k.name, tv.mac}}); err != nil {
 					return err
 				}
+				settle(start)
 				fmt.Println(k.url)
 				return nil
 			}
 		}
 	}
 	return fmt.Errorf("%s did not turn on", tv.name)
+}
+
+// settle gives a TV that wake turned on time to bring up its network
+// before it is asked to fetch media. A TV that answered at once was on.
+func settle(start time.Time) {
+	if time.Since(start) > 2*time.Second {
+		time.Sleep(8 * time.Second)
+	}
 }
 
 // samsungKey presses key on the remote of the Samsung TV at host. The first

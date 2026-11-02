@@ -11,7 +11,8 @@
 //	tvcast key KEY                                   press KEY on the TV's remote
 //	tvcast volume N|+N|-N                            set the TV's volume, print it
 //
-// wake returns once the TV answers, at the URL it now has, which differs
+// wake returns once the TV answers and, when it had to be turned on, has had
+// a few seconds to settle, at the URL it now has, which differs
 // from the given one when the TV got another address. playpause toggles the
 // running cast, or else presses pause or play on the remote of the most
 // recently found TV, whatever it plays. key presses a Samsung remote key such

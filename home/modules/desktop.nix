@@ -298,6 +298,7 @@ let
     name = "bar-claude";
     runtimeInputs = [
       pkgs.claudebar
+      pkgs.ironbar
       pkgs.jq
     ];
     text = ''
@@ -309,12 +310,9 @@ let
       ]}
       out=$(claudebar --format 'Claudio {session_pct}% · {session_reset}' \
         --color-low "$green" --color-mid "$yellow" --color-high "$orange" --color-critical "$red")
-      if [ "''${1:-}" = tooltip ]; then
-        # ironbar sets tooltips as plain text, not pango markup.
-        jq -r '.tooltip | gsub("<[^>]*>"; "") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&amp;"; "&")' <<<"$out"
-      else
-        jq -r .text <<<"$out"
-      fi
+      # ironbar sets tooltips as plain text, not pango markup.
+      ironbar var set claude_tooltip "$(jq -r '.tooltip | gsub("<[^>]*>"; "") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&amp;"; "&")' <<<"$out")" >/dev/null || true
+      jq -r .text <<<"$out"
     '';
   };
   ironbarCss = p: ''
@@ -1865,7 +1863,7 @@ in
             class = "cell";
             cmd = lib.getExe barClaude;
             interval = 300000;
-            tooltip = "{{300000:${lib.getExe barClaude} tooltip}}";
+            tooltip = "#claude_tooltip";
             on_click_left = "xdg-open https://claude.ai/settings/usage";
           }
           {
