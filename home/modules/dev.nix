@@ -16,10 +16,29 @@ let
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
       wrapProgram $out/bin/claude --suffix PATH : ${
-        lib.makeBinPath [
-          pkgs.python3
-          pkgs.file
-        ]
+        lib.makeBinPath (
+          with pkgs;
+          [
+            coreutils
+            curl
+            diffutils
+            fd
+            file
+            findutils
+            gawk
+            gh
+            git
+            gnugrep
+            gnused
+            gnutar
+            gzip
+            jq
+            perl
+            python3
+            ripgrep
+            unzip
+          ]
+        )
       }
     '';
   };
