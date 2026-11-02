@@ -15,7 +15,12 @@ let
     paths = [ llm-agents.claude-code ];
     nativeBuildInputs = [ pkgs.makeWrapper ];
     postBuild = ''
-      wrapProgram $out/bin/claude --suffix PATH : ${lib.makeBinPath [ pkgs.python3 ]}
+      wrapProgram $out/bin/claude --suffix PATH : ${
+        lib.makeBinPath [
+          pkgs.python3
+          pkgs.file
+        ]
+      }
     '';
   };
 
