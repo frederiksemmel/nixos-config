@@ -544,6 +544,7 @@ in
   programs.fuse.enable = true;
 
   services.usbmuxd.enable = true;
+  services.logind.settings.Login.HandlePowerKey = "ignore";
 
   zramSwap = {
     enable = true;

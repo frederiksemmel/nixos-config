@@ -1441,6 +1441,7 @@ in
       };
       ### Inputs
       input.focus-follows-mouse.enable = true;
+      input.power-key-handling.enable = false;
       input.touchpad = {
         accel-profile = "adaptive";
         accel-speed = 0.3;
@@ -1542,6 +1543,7 @@ in
           "${mod}+D".action = spawn "vicinae" "toggle";
           "${mod}+Shift+D".action = spawn "fuzzel";
           "${mod}+P".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-power.yaml";
+          "XF86PowerOff".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-power.yaml";
           "${mod}+O".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-opener.yaml";
 
           # Volume controls
