@@ -565,17 +565,6 @@ in
   systemd.slices."-".sliceConfig.ManagedOOMSwap = "kill";
 
   services.automatic-timezoned.enable = true;
-  services.tzupdate.enable = true;
-  # A switch restarts iwd, so tzupdate can start while wifi is still down.
-  systemd.services.tzupdate = {
-    serviceConfig = {
-      Type = lib.mkForce "exec";
-      Restart = "on-failure";
-      RestartSec = "30s";
-    };
-    startLimitIntervalSec = 300;
-    startLimitBurst = 5;
-  };
 
   environment.systemPackages =
     with pkgs;
