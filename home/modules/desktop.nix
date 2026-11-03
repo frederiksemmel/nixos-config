@@ -1731,6 +1731,17 @@ in
           ];
           "default-column-width".proportion = 1.0;
         }
+        {
+          matches = [
+            {
+              "app-id" = "^Mailspring$";
+              "at-startup" = true;
+            }
+          ];
+          "open-focused" = false;
+          opacity = 0.0;
+          "focus-ring".enable = false;
+        }
         # {
         #   matches = [ { "title" = "centerpiece"; } ];
         #   "open-floating" = true;
