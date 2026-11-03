@@ -32,10 +32,11 @@ let
 
     ~/.local/state/disk-cleanup/ carries what earlier runs did:
     - log.md: one line per deletion (date, path, size, owner, why it was safe to
-      delete). Read it first; append to it for everything you delete.
+      delete). Read it first; append to it for everything you delete. Lines after
+      the last "reported in <issue>" line are not on Linear yet.
     - pending.md: exists while a question on Linear waits for an answer. It holds
       the issue identifier, the date it was asked and the numbered candidates. If it
-      exists, handle it first (see Asking on Linear).
+      exists, handle it first (see Reporting on Linear).
 
     ## Where the space goes
 
@@ -82,23 +83,30 @@ let
     secrets or configuration, or anything outside /home/frederik and /srv/sv. Never
     use sudo, and don't stop processes or services.
 
-    ## Asking on Linear
+    ## Reporting on Linear
 
     You reach Linear through its MCP tools, with frederik's API key, so whatever you
     write appears as frederik's. Start every comment you write with "beast disk
     cleanup:"; a comment without that prefix comes from a person.
 
-    Every run that is still above 60% after the deletions above puts the candidates
-    that need an answer on Linear, biggest first, enough to reach 60% with some
-    margin. Without a pending issue, create one in the Company team (CO), assigned
-    to Frederik Semmel, titled "beast disk: may I delete these?", with:
-    - the usage now, and what you already deleted in this run with sizes,
-    - numbered candidates: path, size, owner, last change, what it is, why you are
-      unsure,
-    - the request to answer in a comment with the numbers to delete; anything not
-      named stays.
-    With a pending issue, add new candidates as a comment there, numbering on.
-    Write pending.md (issue identifier, date, the candidates), then end the session.
+    Every cleanup run reports on Linear, also when it deleted nothing and has
+    nothing to ask. Only a run that checks a pending question and finds no answer
+    stays silent. Without a pending issue, create one in the Company team (CO),
+    assigned to Frederik Semmel, titled "beast disk cleanup: <before>% to <after>%".
+    With a pending issue, put the report in a comment there instead. The report has:
+    - the fill before and after (disk-fill),
+    - what was deleted: every log.md line not reported yet, also from earlier runs
+      that couldn't reach Linear, with sizes and why each was safe,
+    - numbered candidates that need an answer, biggest first, enough to reach 60%
+      with some margin, numbering on from earlier questions in the issue: path,
+      Exclusive size, owner, last change, what it is, what the docs say about it,
+      why you are unsure,
+    - with candidates, the request to answer in a comment with the numbers to
+      delete; anything not named stays.
+    Then append "reported in <issue identifier>" to log.md, and with candidates write
+    pending.md (issue identifier, date, the candidates). Leave the issue open for
+    frederik to review, and end the session. If Linear can't be reached, say so in
+    the summary and leave log.md unreported, so the next run reports it.
 
     When pending.md exists:
     - Read the issue and its comments. A comment from a person answers your question
@@ -109,8 +117,8 @@ let
       pending.md. Then end the session without looking further.
     - An answer, or the issue was closed by a person: check again that nothing uses
       the approved candidates, delete them, log them, comment with what you deleted
-      and the usage after, move the issue to Done, and remove pending.md. If usage
-      is still above 60%, carry on.
+      and the fill after, append "reported in <issue identifier>" to log.md, move the
+      issue to Done, and remove pending.md. If the fill is still above 60%, carry on.
 
     End with a short summary (it lands in the journal): usage before and after, what
     you deleted, and whether a question is pending.
