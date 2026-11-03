@@ -63,6 +63,7 @@ in
     agenix.nixosModules.default
     disko.nixosModules.disko
     ./disko-btrfs.nix
+    ./wifi-timezone
     nixos-hardware.nixosModules.tuxedo-infinitybook-pro14-gen7
     determinate.nixosModules.default
     # tuxedo-nixos.nixosModules.default
@@ -570,8 +571,6 @@ in
     settings.OOM.DefaultMemoryPressureDurationSec = "20s";
   };
   systemd.slices."-".sliceConfig.ManagedOOMSwap = "kill";
-
-  services.automatic-timezoned.enable = true;
 
   environment.systemPackages =
     with pkgs;
