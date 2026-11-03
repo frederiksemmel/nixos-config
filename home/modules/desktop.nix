@@ -709,7 +709,7 @@ in
     ];
 
     # One look for both file-picker code paths: xdg-desktop-portal-gtk and apps
-    # that call gtk_file_chooser_dialog_new themselves (onlyoffice). Leaving
+    # that call gtk_file_chooser_dialog_new themselves. Leaving
     # gtk3.bookmarks unset keeps ~/.config/gtk-3.0/bookmarks writable and shared.
     gtk = {
       enable = true;
@@ -1286,10 +1286,6 @@ in
       extraConfig = ''
         set selection-clipboard clipboard
       '';
-    };
-
-    programs.onlyoffice = {
-      enable = true;
     };
 
     programs.fuzzel = {

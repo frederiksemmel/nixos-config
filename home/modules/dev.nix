@@ -265,6 +265,7 @@ in
 
       nushell = {
         enable = true;
+        loadSessionVariables = false;
         environmentVariables = config.home.sessionVariables // {
           ENV_CONVERSIONS.PATH = {
             from_string = lib.hm.nushell.mkNushellInline "{|s| $s | split row (char esep) }";
