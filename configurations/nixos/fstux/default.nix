@@ -131,7 +131,7 @@ in
       PubkeyAcceptedKeyTypes ssh-ed25519
       ServerAliveInterval 60
       IPQoS throughput
-      IdentityFile /home/frederik/.ssh/my-nixbuild-key
+      IdentityFile /home/frederik/.ssh/sv-nixbuild-key
       Port 2223
   '';
 

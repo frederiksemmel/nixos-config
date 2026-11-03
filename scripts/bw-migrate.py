@@ -46,6 +46,7 @@ PERSONAL_SSH = [
     ".ssh/id_sourcehut",
     ".ssh/google_compute_engine",
     ".ssh/my-nixbuild-key",
+    ".ssh/sv-nixbuild-key",
 ]
 ORG_SSH = [
     ".ssh/id_spadesvision_lambda",
@@ -56,7 +57,7 @@ ORG_SSH = [
         if p.suffix != ".pub"
     ),
 ]
-KEEP_ON_DISK = {".ssh/my-nixbuild-key", ".ssh/id_github", ".ssh/google_compute_engine"}
+KEEP_ON_DISK = {".ssh/my-nixbuild-key", ".ssh/sv-nixbuild-key", ".ssh/id_github", ".ssh/google_compute_engine"}
 
 USER_KEYS = {"login", "user", "username", "user name", "email", "e-mail", "mail", "benutzer", "benutzername"}
 URL_KEYS = {"url", "uri", "website", "site", "link", "web"}
