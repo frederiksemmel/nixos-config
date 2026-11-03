@@ -123,6 +123,11 @@ in
   };
   xdg.configFile."nix/nix.conf".force = true;
 
+  programs.nh.clean = {
+    enable = lib.mkForce true;
+    extraArgs = lib.mkForce "--keep 5";
+  };
+
   services.pueue.enable = true;
 
   services.shpool = {
