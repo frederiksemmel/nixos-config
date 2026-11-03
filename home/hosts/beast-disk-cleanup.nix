@@ -55,7 +55,8 @@ let
     Nothing may be in use: no Claude session (pid and cwd in
     ~/.claude/sessions/*.json), no process with its cwd or a path in its arguments
     there (/proc/*/cwd, `ps -eo pid,user,args`), no shpool session in it, no GPU job
-    reading it (nvidia-smi). Then these go without asking:
+    reading it (nvidia-smi). Be sparing: only what clearly fits one of these goes
+    without asking; when in doubt, it is a question.
     - A worktree of frederik's whose branch is merged: its commits are in the
       default branch on origin (`git cherry`, `git branch -r --contains`), or its
       GitHub PR is merged (`gh pr view <branch> --json state`). It must have no
@@ -70,13 +71,12 @@ let
       --delete-older-than 14d`). Keep the newest root of every aarch64 NixOS system
       (a store path whose `system` file says aarch64-linux, one per host name):
       those take hours to rebuild. Older aarch64 systems may go.
-    - Data under /srv/sv that the repo docs or the data itself mark as intermediate
-      or regenerable (renders, crops, caches, exports), unused for 14 days.
 
-    Everything else needs an answer on Linear first, in particular: anything owned by
-    another user, uncommitted work or commits that exist nowhere else, training runs,
-    models and checkpoints, recorded real data, testcases, labels, anything that
-    can't be regenerated, and anything you are unsure about.
+    Everything else needs an answer on Linear first, in particular: all data under
+    /srv/sv, anything owned by another user, unmerged worktrees, uncommitted work or
+    commits that exist nowhere else, training runs, models and checkpoints, and
+    anything you are unsure about. Say in the question what the repo docs tell you
+    about it, e.g. that a render is regenerable.
 
     Never delete the repos' main checkouts (~/repos/<repo> itself), ~/.claude, ~/.ssh,
     secrets or configuration, or anything outside /home/frederik and /srv/sv. Never
@@ -88,13 +88,16 @@ let
     write appears as frederik's. Start every comment you write with "beast disk
     cleanup:"; a comment without that prefix comes from a person.
 
-    When safe deletions can't reach 60%, create one issue in the Company team (CO),
-    assigned to Frederik Semmel, titled "beast disk: may I delete these?", with:
+    Every run that is still above 60% after the deletions above puts the candidates
+    that need an answer on Linear, biggest first, enough to reach 60% with some
+    margin. Without a pending issue, create one in the Company team (CO), assigned
+    to Frederik Semmel, titled "beast disk: may I delete these?", with:
     - the usage now, and what you already deleted in this run with sizes,
     - numbered candidates: path, size, owner, last change, what it is, why you are
       unsure,
     - the request to answer in a comment with the numbers to delete; anything not
       named stays.
+    With a pending issue, add new candidates as a comment there, numbering on.
     Write pending.md (issue identifier, date, the candidates), then end the session.
 
     When pending.md exists:
