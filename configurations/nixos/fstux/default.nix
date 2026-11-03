@@ -111,6 +111,10 @@ in
   };
 
   age.secrets.nixci_netrc.file = ../../../secrets/nixci_netrc.age;
+  age.secrets.spadesvision_nixbuild_ssh_key = {
+    file = ../../../secrets/spadesvision_nixbuild_ssh_key.age;
+    owner = "frederik";
+  };
   age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
   environment.etc."determinate/config.json".text = builtins.toJSON {
@@ -131,7 +135,7 @@ in
       PubkeyAcceptedKeyTypes ssh-ed25519
       ServerAliveInterval 60
       IPQoS throughput
-      IdentityFile /home/frederik/.ssh/sv-nixbuild-key
+      IdentityFile ${config.age.secrets.spadesvision_nixbuild_ssh_key.path}
       Port 2223
   '';
 
