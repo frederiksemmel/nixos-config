@@ -19,6 +19,7 @@ from pathlib import Path
 HOME = Path.home()
 STATE = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "disk-cleanup"
 PENDING = STATE / "pending.json"
+ISSUE_FILE = STATE / "issue"
 PREFIX = "beast disk cleanup:"
 START_AT = 90
 REMIND_AFTER = datetime.timedelta(days=2)
@@ -339,6 +340,25 @@ def claude(section):
     )
 
 
+def comment(identifier, body):
+    issue = linear(ISSUE, id=identifier)["issue"]
+    linear(COMMENT, issue=issue["id"], body=f"{PREFIX} {body}")
+
+
+def collect_garbage():
+    """Run the Nix GC after the session and report it on the run's issue."""
+    if not ISSUE_FILE.exists():
+        return
+    before = fill()
+    out = run("nix-collect-garbage", "--delete-older-than", "14d", timeout=3600, check=False)
+    summary = (out or "no output").splitlines()[-1]
+    comment(
+        ISSUE_FILE.read_text().strip(),
+        f"Nix garbage collection done: {summary}. / went from {before}% to {fill()}% full.",
+    )
+    ISSUE_FILE.unlink()
+
+
 def answer(pending, used):
     issue = linear(ISSUE, id=pending["issue"])["issue"]
     seen = pending["seen"]
@@ -352,6 +372,11 @@ def answer(pending, used):
         pending["seen"] = max([seen] + [c["createdAt"] for c in issue["comments"]["nodes"]])
         PENDING.write_text(json.dumps(pending, indent=2))
         replies = "\n\n".join(f"{c['user']['name']} at {c['createdAt']}:\n{c['body']}" for c in new)
+        linear(
+            COMMENT,
+            issue=issue["id"],
+            body=f"{PREFIX} got the answer, working on it now. / is {used}% full.",
+        )
         claude(
             f"Mode: answer. Issue {issue['identifier']} ({issue['url']})"
             f"{' was closed by a person' if closed else ''}.\n\n"
@@ -382,8 +407,10 @@ def main():
         print(facts(used))
     elif PENDING.exists():
         answer(json.loads(PENDING.read_text()), used)
+        collect_garbage()
     elif used >= START_AT or "--force" in sys.argv:
         claude(f"Mode: cleanup.\n\n{facts(used)}")
+        collect_garbage()
 
 
 if __name__ == "__main__":
