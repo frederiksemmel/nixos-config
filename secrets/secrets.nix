@@ -8,6 +8,7 @@ in
   "pcloud_token.age".publicKeys = [ frederik ];
   "spadesvision_ssh_config.age".publicKeys = [ frederik ];
   "spadesvision_ssh_config_agent.age".publicKeys = [ frederik ];
+  "beast_linear_api_key.age".publicKeys = [ frederik ];
   "nixci_netrc.age".publicKeys = [
     frederik
     fstux
