@@ -13,6 +13,14 @@ in
     frederik
     fstux
   ];
+  "frederik_password_hash.age".publicKeys = [
+    frederik
+    fstux
+  ];
+  "root_password_hash.age".publicKeys = [
+    frederik
+    fstux
+  ];
   "nixci_netrc.age".publicKeys = [
     frederik
     fstux

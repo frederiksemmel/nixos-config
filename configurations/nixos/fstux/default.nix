@@ -115,6 +115,8 @@ in
     file = ../../../secrets/spadesvision_nixbuild_ssh_key.age;
     owner = "frederik";
   };
+  age.secrets.frederik_password_hash.file = ../../../secrets/frederik_password_hash.age;
+  age.secrets.root_password_hash.file = ../../../secrets/root_password_hash.age;
   age.identityPaths = [ "/etc/ssh/ssh_host_ed25519_key" ];
 
   environment.etc."determinate/config.json".text = builtins.toJSON {
@@ -136,6 +138,7 @@ in
       ServerAliveInterval 60
       IPQoS throughput
       IdentityFile ${config.age.secrets.spadesvision_nixbuild_ssh_key.path}
+      IdentitiesOnly yes
       Port 2223
   '';
 
@@ -353,14 +356,14 @@ in
       "docker"
       "seat"
     ];
-    hashedPassword = "REDACTED_PASSWORD_HASH";
+    hashedPasswordFile = config.age.secrets.frederik_password_hash.path;
     shell = pkgs.nushell;
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIErLh2FCUO2ngFF79rahr6tWw12PkDxE6NRs8aJTT9y6 frederik@beast-to-fstux"
     ];
   };
 
-  users.users.root.hashedPassword = "REDACTED_PASSWORD_HASH";
+  users.users.root.hashedPasswordFile = config.age.secrets.root_password_hash.path;
 
   programs.sniffnet.enable = true;
   programs.gnupg.agent = {
