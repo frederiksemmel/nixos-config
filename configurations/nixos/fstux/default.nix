@@ -63,7 +63,6 @@ in
     agenix.nixosModules.default
     disko.nixosModules.disko
     ./disko-btrfs.nix
-    ./wifi-timezone
     nixos-hardware.nixosModules.tuxedo-infinitybook-pro14-gen7
     determinate.nixosModules.default
     # tuxedo-nixos.nixosModules.default
@@ -571,6 +570,36 @@ in
     settings.OOM.DefaultMemoryPressureDurationSec = "20s";
   };
   systemd.slices."-".sliceConfig.ManagedOOMSwap = "kill";
+
+  services.tzupdate.enable = true;
+  # A switch restarts iwd, so tzupdate can start while wifi is still down.
+  systemd.services.tzupdate = {
+    path = [ config.services.mullvad-vpn.package ];
+    script = lib.mkForce ''
+      if ! mullvad status | grep -q '^Disconnected'; then
+        echo "Mullvad is connected, keeping the timezone"
+        exit 0
+      fi
+      first="$(${lib.getExe config.services.tzupdate.package} --print-only)"
+      second="$(${lib.getExe config.services.tzupdate.package} --print-only)"
+      if [[ "$first" != "$second" ]]; then
+        echo "Lookups disagree ($first, $second), keeping the timezone"
+        exit 0
+      fi
+      current="$(timedatectl show --property=Timezone --value)"
+      if [[ "$first" != "$current" ]]; then
+        echo "Setting timezone $current -> $first"
+        timedatectl set-timezone "$first"
+      fi
+    '';
+    serviceConfig = {
+      Type = lib.mkForce "exec";
+      Restart = "on-failure";
+      RestartSec = "30s";
+    };
+    startLimitIntervalSec = 300;
+    startLimitBurst = 5;
+  };
 
   environment.systemPackages =
     with pkgs;
