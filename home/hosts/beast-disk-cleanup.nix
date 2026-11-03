@@ -165,13 +165,11 @@ let
 
       export PATH="/run/wrappers/bin:$HOME/.nix-profile/bin:/run/current-system/sw/bin:$PATH"
       cd "$HOME"
-      flock -n -E 0 "$state/lock" \
-        ${lib.getExe config.programs.claude-code.finalPackage} -p \
-        --permission-mode auto \
-        --strict-mcp-config --mcp-config "$mcp" \
-        "$(< ${prompt})
-
-      disk-fill says / is $used full now."
+      printf '%s\n\ndisk-fill says / is %s full now.\n' "$(< ${prompt})" "$used" |
+        flock -n -E 0 "$state/lock" \
+          ${lib.getExe config.programs.claude-code.finalPackage} -p \
+          --permission-mode auto \
+          --strict-mcp-config --mcp-config "$mcp"
     '';
   };
 in
