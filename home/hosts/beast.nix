@@ -95,7 +95,7 @@ let
     };
 in
 {
-  imports = [ ./beast-disk-cleanup.nix ];
+  imports = [ ./beast-disk-cleanup ];
 
   programs.nushell.extraEnv = ''
     $env.SSH_AUTH_SOCK = $env.SSH_AUTH_SOCK? | default $"($env.XDG_RUNTIME_DIR)/gcr/ssh"
