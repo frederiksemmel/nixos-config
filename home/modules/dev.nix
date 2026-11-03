@@ -807,6 +807,23 @@ in
         package = claudeCode;
         enableMcpIntegration = true;
 
+        # Mailspring's built-in MCP server (Preferences → MCP), up while Mailspring runs.
+        # Its bearer token is read from Mailspring's own config on every connect.
+        mcpServers.mailspring = {
+          type = "http";
+          url = "http://127.0.0.1:2587/mcp";
+          headersHelper = lib.getExe (
+            pkgs.writeShellApplication {
+              name = "mailspring-mcp-headers";
+              runtimeInputs = [ pkgs.jq ];
+              text = ''
+                jq '{Authorization: "Bearer \(.["*"].core.mcp.token)"}' \
+                  "${config.xdg.configHome}/Mailspring/config.json"
+              '';
+            }
+          );
+        };
+
         # Global ~/.claude/CLAUDE.md: loaded by every Claude Code session, in every project.
         context = ''
           # About my machine
