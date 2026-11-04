@@ -670,6 +670,7 @@ in
       # nautilus (systemPackages in fstux) is the one GUI file manager: it owns
       # org.freedesktop.FileManager1, which chromium's "show in files" calls.
       handlr-regex
+      seahorse
 
       # Audio & Video
       # pavucontrol
