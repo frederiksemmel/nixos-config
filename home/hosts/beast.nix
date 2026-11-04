@@ -97,6 +97,8 @@ in
 {
   imports = [ ./beast-disk-cleanup ];
 
+  profiles.bitwarden.headlessSshKeys.enable = true;
+
   programs.nushell.extraEnv = ''
     $env.SSH_AUTH_SOCK = $env.SSH_AUTH_SOCK? | default $"($env.XDG_RUNTIME_DIR)/gcr/ssh"
   '';

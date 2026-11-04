@@ -111,6 +111,67 @@ let
   # was last filled.
   sshApprovals = "$XDG_RUNTIME_DIR/ssh-agent-approvals";
 
+  # Headless hosts keep the agent they already run and load the vault's SSH
+  # keys into it with no confirm prompt and no lifetime, so background jobs can
+  # use them. The agent's fingerprints after a load are listed here until reboot.
+  sshLoaded = "$XDG_RUNTIME_DIR/rbw-ssh-loaded";
+
+  rbwSshLoad = pkgs.writeShellApplication {
+    name = "rbw-ssh-load";
+    runtimeInputs = [
+      pkgs.rbw
+      pkgs.openssh
+      pkgs.gawk
+    ];
+    text = ''
+      rbw list --fields id,type | awk -F '\t' '$2 == "SSH Key" { print $1 }' \
+        | while read -r id; do
+          rbw get --field private_key "$id" | ssh-add -q - || true
+        done
+      ssh-add -l | awk '{ print $2 }' >"${sshLoaded}"
+    '';
+  };
+
+  # Run by ssh's `Match exec` and at shell start; never matches. Reloads the
+  # keys when the agent lost some while the vault is unlocked, else asks for
+  # ssh-unlock.
+  rbwSshCheck = pkgs.writeShellApplication {
+    name = "rbw-ssh-check";
+    runtimeInputs = [
+      pkgs.rbw
+      pkgs.openssh
+      pkgs.gawk
+      pkgs.gnugrep
+      rbwSshLoad
+    ];
+    text = ''
+      agent=$(ssh-add -l 2>/dev/null | awk '{ print $2 }' || true)
+      if [ -s "${sshLoaded}" ] && ! grep -vqxF -f <(printf '%s\n' "$agent") "${sshLoaded}"; then
+        exit 1
+      fi
+      if rbw unlocked 2>/dev/null; then
+        rbw-ssh-load
+      else
+        echo "Bitwarden SSH keys not loaded: run ssh-unlock" >&2
+      fi
+      exit 1
+    '';
+  };
+
+  sshUnlock = pkgs.writeShellApplication {
+    name = "ssh-unlock";
+    runtimeInputs = [
+      pkgs.rbw
+      pkgs.coreutils
+      rbwSshLoad
+    ];
+    text = ''
+      RBW_TTY=$(tty) rbw unlock
+      rbw-ssh-load
+      echo "$(wc -l <"${sshLoaded}") keys in the agent"
+    '';
+  };
+
   # ssh-agent runs this before each use of a key added with `ssh-add -c` and
   # passes "Allow use of key <comment>?\nKey fingerprint <fp>."; exit 0
   # allows. Like Bitwarden's "remember until vault is locked", an Allow holds
@@ -236,6 +297,7 @@ in
   options.profiles.bitwarden = {
     enable = lib.mkEnableOption "Bitwarden desktop and CLI";
     sshAgent.enable = lib.mkEnableOption "ssh-agent loaded with the vault's SSH keys through rbw";
+    headlessSshKeys.enable = lib.mkEnableOption "the vault's SSH keys in the running agent, unlocked once per boot with ssh-unlock";
   };
 
   config = lib.mkIf cfg.enable (
@@ -299,6 +361,20 @@ in
           Install.WantedBy = [ "graphical-session.target" ];
         };
         programs.ssh.settings.rbw-ssh-add.header = "Match exec \"${lib.getExe rbwSshAdd}\"";
+      })
+      (lib.mkIf cfg.headlessSshKeys.enable {
+        assertions = [
+          {
+            assertion = !cfg.sshAgent.enable;
+            message = "profiles.bitwarden: enable sshAgent or headlessSshKeys, not both";
+          }
+        ];
+        home.packages = [ sshUnlock ];
+        programs.rbw.settings.pinentry = lib.mkForce pkgs.pinentry-tty;
+        programs.ssh.settings.rbw-ssh-check.header = "Match exec \"${lib.getExe rbwSshCheck}\"";
+        programs.nushell.extraConfig = ''
+          do -i { ^${lib.getExe rbwSshCheck} }
+        '';
       })
     ]
   );
