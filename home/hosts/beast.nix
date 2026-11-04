@@ -155,6 +155,8 @@ in
     };
   };
   systemd.user.services.shpool.Unit.X-SwitchMethod = "keep-old";
+  # The default (stop) SIGKILLs every session when the kernel OOM-kills one process in them.
+  systemd.user.services.shpool.Service.OOMPolicy = "continue";
 
   systemd.user.services.claude-rc-spare = {
     Unit = {
