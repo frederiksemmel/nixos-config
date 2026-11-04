@@ -766,7 +766,7 @@ in
           "application/vnd.openxmlformats-officedocument.wordprocessingml.document" = document;
           "application/vnd.oasis.opendocument.text" = document;
           "application/rtf" = document;
-          "image/*" = "imv.desktop";
+          "image/*" = "imv-dir.desktop";
           "video/*" = "mpv.desktop";
           "audio/*" = "mpv.desktop";
         };
