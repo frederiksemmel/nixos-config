@@ -23,11 +23,15 @@ def shpool-sessions [] {
         | where {|l| not ($l starts-with "<" or $l starts-with "Another Claude session sent a message") }
         | first
       } catch { null }
+      let message = try {
+        ^grep -F '"origin":{"kind":"human"}' $transcript | lines | last | from json | get timestamp
+        | into datetime | into int | $in // 1_000_000
+      } catch { null }
       let title = $titles | where type == "custom-title" | get -o customTitle | last
         | default ($titles | where type == "ai-title" | get -o aiTitle | last)
         | default $prompt
         | default "spare"
-      { name: (shpool-session-name $s.pid), cname: ($s.name? | default ""), title: $title, status: $s.status, cwd: $s.cwd }
+      { name: (shpool-session-name $s.pid), cname: ($s.name? | default ""), title: $title, status: $s.status, cwd: $s.cwd, message: $message }
     }
   } | compact
   $sessions | each {|s|
@@ -50,6 +54,19 @@ def shpool-sessions [] {
       dir: ($cwd | default "")
       title: $title
       ids: $ids
+      repo: ($cwd | default "" | str replace --regex '/\.claude/worktrees/.*$' "" | path basename)
+      claude: $claude.status?
+      message: $claude.message?
+      started: $s.started_at_unix_ms
+      detached: $s.last_disconnected_at_unix_ms?
+      spare: ($claude != null and $claude.title == "spare" and ($s.name | str starts-with "rc-"))
     }
   } | sort-by last --reverse
+}
+
+def shpool-repos [] {
+  glob $"($env.HOME)/repos/*/.git" | each {|git|
+    let path = $git | path dirname
+    { name: ($path | path basename), path: $path, devenv: ($path | path join devenv.nix | path exists) }
+  } | sort-by name
 }

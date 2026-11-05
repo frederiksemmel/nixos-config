@@ -9,7 +9,7 @@ let
 
   # Attaches a shpool session on beast and reattaches it after ssh itself fails
   # (exit 255), as long as beast still lists the session; any other exit ends
-  # it. With --new, the first attach creates the session.
+  # it. With --new, the first attach creates the session, in --dir running --cmd.
   beastAttach = pkgs.writeShellApplication {
     name = "beast-attach";
     runtimeInputs = with pkgs; [
@@ -18,11 +18,18 @@ let
       coreutils
     ];
     text = ''
+      quote() { jq -rn --arg s "$1" '$s | @json'; }
+
       fresh=0
       title=""
+      create=()
       while (($#)); do
         case "$1" in
           --new) fresh=1 ;;
+          --dir | --cmd)
+            create+=("$1" "$(quote "$2")")
+            shift
+            ;;
           --title)
             title=$2
             shift
@@ -32,12 +39,12 @@ let
         shift
       done
       if (($# != 1)) || [[ $1 == -* ]]; then
-        echo "usage: beast-attach [--new] [--title TITLE] SESSION" >&2
+        echo "usage: beast-attach [--new [--dir DIR] [--cmd CMD]] [--title TITLE] SESSION" >&2
         exit 2
       fi
       session=$1
       title=''${title:-$session}
-      remote=$(jq -rn --arg s "$session" '$s | @json')
+      remote=$(quote "$session")
       opts=(-o ConnectTimeout=5 -o BatchMode=yes)
       err=$(mktemp)
       trap 'rm -f "$err"' EXIT
@@ -71,13 +78,13 @@ let
           echo "beast-attach: no session $session on beast" >&2
           exit 1
         fi
-        force=(-f)
+        mode=(-f)
         if ((fresh)); then
-          force=()
+          mode=("''${create[@]}")
         fi
         started=$SECONDS
         rc=0
-        ssh -t "''${opts[@]}" beast shpool attach "''${force[@]}" "$remote" || rc=$?
+        ssh -t "''${opts[@]}" beast shpool attach "''${mode[@]}" "$remote" || rc=$?
         if ((rc != 255)); then
           exit "$rc"
         fi
@@ -94,7 +101,7 @@ let
   attach = lib.getExe beastAttach;
 in
 {
-  options.profiles.beastSessions.enable = lib.mkEnableOption "beast, beast-attach and beast-restore: beast's shpool sessions in foot windows that reattach after the connection drops";
+  options.profiles.beastSessions.enable = lib.mkEnableOption "beast, beast-attach, beast-new, beast-spare, beast-clean and beast-restore: beast's shpool sessions in foot windows that reattach after the connection drops";
 
   config = lib.mkIf cfg.enable {
     home.packages = [ beastAttach ];
@@ -105,8 +112,12 @@ in
     };
 
     programs.nushell.extraConfig = ''
+      def beast-remote [command] {
+        ^ssh -o ConnectTimeout=5 beast $"(open --raw ${../hosts/beast-shpool-sessions.nu} | decode utf-8)\n($command) | to json" | from json
+      }
+
       def beast-sessions [] {
-        ^ssh -o ConnectTimeout=5 beast $"(open --raw ${../hosts/beast-shpool-sessions.nu} | decode utf-8)\nshpool-sessions | to json" | from json
+        beast-remote shpool-sessions
       }
 
       def beast-window-title [session] {
@@ -148,17 +159,106 @@ in
           if ($names | is-not-empty) { ^ssh beast shpool kill ...$names }
           beast
         } else {
-          let taken = $sessions.name
-          let default = 1..(($taken | length) + 1) | each {|i| $"s($i)" } | where {|n| $n not-in $taken } | first
-          let name = input $"session name \(enter for ($default)\): " | str trim | str replace --all --regex '\s+' '-'
-          exec ${attach} --new (if ($name | is-empty) { $default } else { $name })
+          beast-new
+        }
+      }
+
+      # New shpool session on beast: Claude with Remote Control in a repo, inside
+      # devenv when the repo has one. Without a repo, asks for one or a plain shell.
+      def beast-new [
+        repo?: string       # repo under ~/repos on beast, or a unique part of its name
+        --name (-n): string # session name, default <repo>-<number>
+      ] {
+        let repos = beast-remote shpool-repos
+        let target = if $repo == null {
+          let i = ["plain shell" ...$repos.name] | input list --fuzzy --index "new session in (esc cancels)"
+          if $i == null { return }
+          if $i == 0 { null } else { $repos | get ($i - 1) }
+        } else {
+          let exact = $repos | where name == $repo
+          let found = if ($exact | is-empty) { $repos | where name =~ $repo } else { $exact }
+          if ($found | length) != 1 {
+            error make --unspanned { msg: $"($repo) matches ($found | length) of: ($repos.name | str join ' ')" }
+          }
+          $found | first
+        }
+        let taken = beast-sessions | get name
+        let prefix = if $target == null { "s" } else { $"($target.name)-" }
+        let default = 1..(($taken | length) + 1) | each {|i| $"($prefix)($i)" } | where {|n| $n not-in $taken } | first
+        let chosen = if $name != null {
+          $name
+        } else if $repo != null {
+          ""
+        } else {
+          input $"session name \(enter for ($default)\): " | str trim | str replace --all --regex '\s+' '-'
+        }
+        let session = if ($chosen | is-empty) { $default } else { $chosen }
+        if $target == null {
+          exec ${attach} --new $session
+        }
+        let claude = $"claude --remote-control --remote-control-session-name-prefix ($target.name)"
+        let cmd = if $target.devenv { $"devenv shell --no-tui -- ($claude)" } else { $claude }
+        exec ${attach} --new --dir $target.path --cmd $cmd $session
+      }
+
+      # Attaches the newest detached Remote Control spare from claude-rc-spare.
+      def beast-spare [] {
+        let spares = beast-sessions | where {|s| $s.spare and $s.status == "disconnected" }
+        if ($spares | is-empty) {
+          error make --unspanned { msg: "no detached spare on beast yet, claude-rc-spare starts one within a few seconds" }
+        }
+        exec ${attach} ($spares | first | get name)
+      }
+
+      # Kills the sessions matching every given filter, after confirming. Attached
+      # sessions, busy Claude sessions and unused spares are kept unless included.
+      def beast-clean [
+        --no-message-for: duration # no message from you for this long (shells: not attached or detached for this long)
+        --detached-for: duration   # detached for this long
+        --older-than: duration     # started this long ago
+        --repo: string             # in the repo with this exact name
+        --match: string            # name or title matches this regex
+        --include-attached         # also consider attached sessions
+        --include-busy             # also consider Claude sessions that are working
+        --dry-run (-n)             # list matches without killing
+        --yes (-y)                 # kill without asking
+      ] {
+        if ([$no_message_for $detached_for $older_than $repo $match] | compact | is-empty) {
+          error make --unspanned { msg: "give at least one filter, see beast-clean --help" }
+        }
+        let since = {|ms| (date now) - ($ms * 1_000_000 | into datetime) }
+        let matches = beast-sessions
+        | where {|s| not $s.spare }
+        | where {|s| $include_attached or $s.status != "attached" }
+        | where {|s| $include_busy or $s.claude != "busy" }
+        | where {|s| $no_message_for == null or (do $since ($s.message | default $s.last)) >= $no_message_for }
+        | where {|s| $detached_for == null or ($s.status != "attached" and $s.detached != null and (do $since $s.detached) >= $detached_for) }
+        | where {|s| $older_than == null or (do $since $s.started) >= $older_than }
+        | where {|s| $repo == null or $s.repo == $repo }
+        | where {|s| $match == null or $s.name =~ $match or $s.title =~ $match }
+        if ($matches | is-empty) {
+          print "no sessions match"
+          return
+        }
+        print ($matches | each {|s|
+          {
+            name: $s.name
+            title: ($s.title | str substring ..<50)
+            repo: $s.repo
+            status: $s.status
+            "last message": (if $s.message == null { "" } else { $s.message * 1_000_000 | into datetime | date humanize })
+          }
+        })
+        if $dry_run { return }
+        if $yes or ((input $"kill these ($matches | length) sessions? [y/N] ") in ["y" "Y"]) {
+          ^ssh beast shpool kill ...($matches | each { $in.name | to json })
         }
       }
 
       def beast-restore [--dry-run (-n)] {
         let windows = beast-sessions
         | where status == "disconnected"
-        | where {|s| not (($s.name | str starts-with "rc-") and ($s.title | str starts-with "spare (")) }
+        | where {|s| not $s.spare }
         | each {|s|
           let title = beast-window-title $s
           [${lib.getExe config.programs.foot.package} --title $title ${attach} --title $title $s.name]
