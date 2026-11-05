@@ -462,6 +462,18 @@ let
       };
     };
   };
+  # Picks an emoji in fuzzel, types it into the focused window and copies it.
+  emojiPicker = pkgs.writeShellApplication {
+    name = "emoji-picker";
+    runtimeInputs = [
+      pkgs.fuzzel
+      pkgs.rofimoji
+    ];
+    text = ''
+      exec rofimoji --selector fuzzel --typer wtype --clipboarder wl-copy \
+        --skin-tone neutral --action type copy
+    '';
+  };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
   tvcast = pkgs.callPackage ../../packages/tvcast { };
   # `tvcast-imv cast FILE` stops a running cast, or casts FILE to a TV picked
@@ -859,6 +871,9 @@ in
         "p":
           desc: Next Wallpaper
           cmd: systemctl --user start wallpaper-next.service
+        "m":
+          desc: Emoji Picker
+          cmd: ${lib.getExe emojiPicker}
         "g":
           desc: Sync Spadesvision Drive
           cmd: ${lib.getExe config.profiles.cloud.syncNow.spadesvision}
