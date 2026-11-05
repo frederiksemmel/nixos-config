@@ -371,6 +371,9 @@ in
           scrollback = {
             lines = 100000;
           };
+          bell = {
+            urgent = "yes";
+          };
           # fyi rather than notify-send: it prints the XDG activation token
           # mako hands out on click, which foot needs to focus the window.
           desktop-notifications = {
@@ -979,15 +982,14 @@ in
             in
             {
               # Fires when a session wants something from you: a permission
-              # dialog, a 60s-idle prompt, an MCP form, or a waiting subagent.
+              # dialog, an MCP form, or a waiting subagent.
               Notification = [
                 {
-                  matcher = "permission_prompt|idle_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input";
+                  matcher = "permission_prompt|elicitation_dialog|elicitation_url_dialog|agent_needs_input";
                   hooks = [ notify ];
                 }
               ];
-              # Turn complete, i.e. the prompt is yours again. Drop this entry to
-              # only get notified once the prompt has actually sat idle for 60s.
+              # Turn complete, i.e. the prompt is yours again.
               Stop = [ { hooks = [ notify ]; } ];
               # The turn died on an API error: rate limit, overload, auth.
               StopFailure = [ { hooks = [ notify ]; } ];

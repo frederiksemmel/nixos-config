@@ -14,6 +14,10 @@
 # focuses the right window when it is clicked. Because the escape travels down
 # the pty, this works the same over SSH and inside shpool.
 #
+# A BEL follows the notification. foot's `bell.urgent` turns it into an XDG
+# activation urgency request while the window is unfocused, so niri marks the
+# window and its workspace until the window gets focus.
+#
 # Registered for `Notification`, `Stop`, `StopFailure` and `UserPromptSubmit`
 # in `programs.claude-code.settings.hooks`. Urgency encodes what Claudio wants
 # (mako colours the border by it), and the project and session topic are
@@ -105,11 +109,6 @@ writeShellApplication {
             summary="A Claudio subagent needs you"
             urgency=1
             ;;
-          idle_prompt)
-            summary="Claudio is waiting for you"
-            urgency=1
-            detail=
-            ;;
           *)
             summary="Claudio wants your attention"
             urgency=1
@@ -161,7 +160,7 @@ writeShellApplication {
 
     # Closing first matters when the window is focused: foot then suppresses
     # the new notification, and the stale one must not linger.
-    emit "$close$title$text"
+    emit "$close$title$text"$'\a'
   '';
 
   meta = {
