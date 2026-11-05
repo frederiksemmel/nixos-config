@@ -1192,6 +1192,10 @@ in
         "wordcraft"
       ];
     };
+    mcp-servers.settings.servers.figcraft = {
+      command = lib.getExe' config.programs.artcraft.packages.figcraft "figcraft-cli";
+      args = [ "mcp" ];
+    };
 
     # Lock screen. NOTE: PAM cannot be set up from home-manager, so
     # `security.pam.services.veila` lives in the host config.

@@ -932,6 +932,8 @@ in
               "Bash(ssh:*)"
               # Google Drive through the claude.ai connector.
               "mcp__claude_ai_Google_Drive"
+              # FigCraft's MCP server.
+              "mcp__plugin_hm_figcraft"
             ];
 
             ask = [
