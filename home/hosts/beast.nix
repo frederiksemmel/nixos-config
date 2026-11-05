@@ -202,7 +202,7 @@ in
     }
   ];
 
-  programs.nushell.extraConfig = builtins.readFile ./beast-shpool-sessions.nu + ''
+  programs.nushell.extraConfig = builtins.readFile ../modules/beast/shpool-sessions.nu + ''
 
     def shpool-pick [] {
       let sessions = shpool-sessions
