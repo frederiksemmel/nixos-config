@@ -77,6 +77,7 @@ in
     imports = [ flake.self.homeModules.frederik ];
     home.stateVersion = "25.05";
     profiles.bitwarden.sshAgent.enable = true;
+    profiles.beastSessions.enable = true;
   };
   home-manager.backupFileExtension = "backup";
   home-manager.useGlobalPkgs = true;

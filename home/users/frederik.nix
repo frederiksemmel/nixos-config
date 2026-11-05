@@ -12,6 +12,7 @@
     ../modules/cloud.nix
     ../modules/ssh.nix
     ../modules/bitwarden.nix
+    ../modules/beast-sessions.nix
   ];
 
   # Building the option docs leaks nixpkgs' store path into options.json without
