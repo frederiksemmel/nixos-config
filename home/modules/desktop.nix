@@ -684,8 +684,6 @@ in
       zotero
       xournalpp
       # libreoffice
-      flake.inputs.sonora.packages.${pkgs.stdenv.hostPlatform.system}.default
-      wtype
       # ungoogled-chromium
       evince
       # papers issues with saving and icons
