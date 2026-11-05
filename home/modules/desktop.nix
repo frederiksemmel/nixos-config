@@ -1196,6 +1196,25 @@ in
       command = lib.getExe' config.programs.artcraft.packages.figcraft "figcraft-cli";
       args = [ "mcp" ];
     };
+    xdg.configFile."mcp/figcraft-live.json".source =
+      (pkgs.formats.json { }).generate "figcraft-live-mcp.json"
+        {
+          mcpServers.figcraft-live = {
+            command = lib.getExe' config.programs.artcraft.packages.figcraft "figcraft-cli";
+            args = [
+              "mcp"
+              "--attach"
+              "7979"
+            ];
+          };
+        };
+    programs.nushell.shellAliases.claude-figcraft = "claude --mcp-config ${config.xdg.configHome}/mcp/figcraft-live.json";
+    xdg.dataFile."applications/ai.storyteller.figcraft.desktop".source =
+      pkgs.runCommand "ai.storyteller.figcraft.desktop" { }
+        ''
+          sed 's/^Exec=figcraft/Exec=figcraft --control 7979/' \
+            ${config.programs.artcraft.packages.figcraft}/share/applications/ai.storyteller.figcraft.desktop > $out
+        '';
 
     # Lock screen. NOTE: PAM cannot be set up from home-manager, so
     # `security.pam.services.veila` lives in the host config.
