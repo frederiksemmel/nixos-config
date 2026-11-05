@@ -21,6 +21,10 @@
     agenix.inputs.nixpkgs.follows = "nixpkgs";
     veila.url = "github:naurissteins/Veila";
     veila.inputs.nixpkgs.follows = "nixpkgs";
+    artcraft.url = "github:devitek/artcraft-nixos";
+    artcraft.inputs.nixpkgs.follows = "nixpkgs";
+    sonora.url = "github:Devitek/sonora";
+    sonora.inputs.nixpkgs.follows = "nixpkgs";
     # tuxedo-nixos.url = "github:sund3RRR/tuxedo-nixos";
     determinate.url = "https://flakehub.com/f/DeterminateSystems/determinate/*";
 

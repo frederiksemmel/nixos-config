@@ -613,6 +613,7 @@ in
 {
   imports = with flake.inputs; [
     veila.homeModules.default
+    artcraft.homeManagerModules.default
     # centerpiece.hmModules."x86_64-linux".default
   ];
 
@@ -683,8 +684,8 @@ in
       zotero
       xournalpp
       # libreoffice
-      gridcraft
-      wordcraft
+      flake.inputs.sonora.packages.${pkgs.stdenv.hostPlatform.system}.default
+      wtype
       # ungoogled-chromium
       evince
       # papers issues with saving and icons
@@ -1182,6 +1183,15 @@ in
     };
 
     programs.zed-editor.enable = true;
+
+    programs.artcraft = {
+      enable = true;
+      apps = [
+        "figcraft"
+        "gridcraft"
+        "wordcraft"
+      ];
+    };
 
     # Lock screen. NOTE: PAM cannot be set up from home-manager, so
     # `security.pam.services.veila` lives in the host config.
