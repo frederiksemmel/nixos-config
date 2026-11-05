@@ -6,6 +6,8 @@
   bashNonInteractive,
   coreutils,
   curl,
+  gawk,
+  gnugrep,
   gnused,
   jq,
   libnotify,
@@ -14,13 +16,13 @@
 
 stdenvNoCC.mkDerivation (finalAttrs: {
   pname = "claudebar";
-  version = "0.8.1";
+  version = "0.10.6";
 
   src = fetchFromGitHub {
     owner = "mryll";
     repo = "claudebar";
     tag = "v${finalAttrs.version}";
-    hash = "sha256-te/ktnawRkHbUlENTmy/FS6eLCWXVzzr3od/2v9S7ow=";
+    hash = "sha256-K9072poFrxod6vVXjEoG+420cvD+6IzkWeRiqS1qw+c=";
   };
 
   nativeBuildInputs = [ makeWrapper ];
@@ -43,6 +45,8 @@ stdenvNoCC.mkDerivation (finalAttrs: {
       lib.makeBinPath [
         coreutils # GNU date, cut, mktemp, timeout
         curl
+        gawk
+        gnugrep
         gnused
         jq
         libnotify # notify-send, for rate-limit warnings
