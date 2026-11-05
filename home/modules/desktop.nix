@@ -530,8 +530,9 @@ let
       esac
     '';
   };
-  # `tv-remote playpause` pauses or resumes the TV, `tv-remote volume +N|-N`
-  # changes its volume, `tv-remote KEY` presses a Samsung remote key on it.
+  # `tv-remote on` turns the TV on, `tv-remote playpause` pauses or resumes it,
+  # `tv-remote volume +N|-N` changes its volume, `tv-remote KEY` presses a
+  # Samsung remote key on it.
   tvRemote = pkgs.writeShellApplication {
     name = "tv-remote";
     runtimeInputs = [
@@ -539,7 +540,14 @@ let
       pkgs.libnotify
     ];
     text = ''
-      if [ "$1" = playpause ]; then
+      if [ "$1" = on ]; then
+        notify-send -a tvcast -t 3000 "Turning the TV on…"
+        if out=$(tvcast wake 2>&1); then
+          notify-send -a tvcast -t 2000 "TV on"
+        else
+          notify-send -a tvcast "TV failed to turn on" "$out"
+        fi
+      elif [ "$1" = playpause ]; then
         if out=$(tvcast playpause 2>&1); then
           notify-send -a tvcast -t 2000 "TV $out"
         else
@@ -815,6 +823,9 @@ in
         "v":
           desc: TV
           submenu:
+            "o":
+              desc: Turn On
+              cmd: ${lib.getExe tvRemote} on
             "p":
               desc: Play / Pause
               cmd: ${lib.getExe tvRemote} playpause

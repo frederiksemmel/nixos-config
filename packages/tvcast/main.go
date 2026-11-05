@@ -3,7 +3,7 @@
 //
 //	tvcast list                                      renderers as "URL<TAB>name"
 //	tvcast known                                     TVs list found before, likewise
-//	tvcast wake URL                                  turn a known TV on, print its URL
+//	tvcast wake [URL]                                turn a known TV on, print its URL
 //	tvcast play -t URL [-s SUBS] [-start SECS] FILE  cast until the TV stops
 //	tvcast load FILE                                 switch the running cast to FILE
 //	tvcast toggle | seek SECS|+SECS|-SECS | position | stop
@@ -12,7 +12,8 @@
 //	tvcast volume N|+N|-N                            set the TV's volume, print it
 //
 // wake returns once the TV answers, at the URL it now has, which differs
-// from the given one when the TV got another address.
+// from the given one when the TV got another address. Without a URL it wakes
+// the most recently found TV.
 // playpause toggles the running cast, or else presses pause or play on the
 // remote of the most recently found TV, whatever it plays. key presses a
 // Samsung remote key such as KEY_MUTE on that TV, and volume sets that TV's

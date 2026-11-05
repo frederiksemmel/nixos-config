@@ -124,11 +124,18 @@ func wake(mac string) error {
 }
 
 func wakeUp(args []string) error {
-	if len(args) != 1 {
-		return errors.New("usage: tvcast wake URL")
+	if len(args) > 1 {
+		return errors.New("usage: tvcast wake [URL]")
+	}
+	known := loadKnown()
+	if len(args) == 0 {
+		if len(known) == 0 {
+			return errors.New("no TV known yet; cast to it once first")
+		}
+		args = []string{known[0].url}
 	}
 	tv := knownTV{url: args[0], name: args[0]}
-	for _, k := range loadKnown() {
+	for _, k := range known {
 		if k.url == tv.url {
 			tv = k
 		}
