@@ -94,7 +94,11 @@ Singleton {
             auth.rejected();
         }
 
+        // Quickshell cancels the session after a failed login, and greetd's worker
+        // has exited by then, so that reply is an error nobody is waiting on.
         function onError(error) {
+            if (!auth.busy)
+                return;
             auth.pending = null;
             auth.prompt = "";
             auth.busy = false;
