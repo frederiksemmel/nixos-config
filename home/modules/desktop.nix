@@ -315,6 +315,41 @@ let
       jq -r .text <<<"$out"
     '';
   };
+  # Bar cell for mako's parked mode: a count of the hidden notifications,
+  # updated by mako's PropertiesChanged signals. The notif_parked ironvar shows
+  # the cell only while parked.
+  barNotif = pkgs.writeShellApplication {
+    name = "bar-notif";
+    runtimeInputs = [
+      config.services.mako.package
+      pkgs.dbus
+      pkgs.gnugrep
+      pkgs.ironbar
+      pkgs.jq
+    ];
+    text = ''
+      update() {
+        modes=$(makoctl mode || true)
+        if ! grep -qx parked <<<"$modes"; then
+          ironbar var set notif_parked false >/dev/null || true
+          return
+        fi
+        ${shellPalette [
+          "muted"
+          "yellow"
+        ]}
+        echo "<span color='$muted'>NOTIF</span> <span color='$yellow'>$(makoctl list -j | jq length)</span>"
+        ironbar var set notif_parked true >/dev/null || true
+      }
+
+      update
+      dbus-monitor --session "type='signal',path='/fr/emersion/Mako'" | while read -r line; do
+        if [[ $line == signal* ]]; then
+          update
+        fi
+      done
+    '';
+  };
   ironbarCss = p: ''
     * {
       font-family: "${p.font}", monospace;
@@ -1131,7 +1166,35 @@ in
 
         [app-name=Claudio urgency=critical]
         border-color=${p.orange}
+
+        [mode=parked expiring=0]
+        invisible=1
+
+        [mode=parked urgency=critical]
+        invisible=1
       '';
+    # Three fingers, since browsers take a two-finger pinch for zoom.
+    xdg.configFile."libinput-gestures.conf".text =
+      let
+        makoctl = "${config.services.mako.package}/bin/makoctl";
+      in
+      ''
+        gesture pinch in 3 ${makoctl} mode -a parked
+        gesture pinch out 3 ${makoctl} mode -r parked
+      '';
+    systemd.user.services.libinput-gestures = {
+      Unit = {
+        Description = "Touchpad gestures niri does not handle";
+        PartOf = [ "graphical-session.target" ];
+        After = [ "graphical-session.target" ];
+        X-Restart-Triggers = [ config.xdg.configFile."libinput-gestures.conf".source ];
+      };
+      Service = {
+        ExecStart = "${pkgs.libinput-gestures}/bin/libinput-gestures";
+        Restart = "on-failure";
+      };
+      Install.WantedBy = [ "graphical-session.target" ];
+    };
     services.awww.enable = true;
 
     # Repoints the link when it is missing or targets a wallpaper set from an
@@ -1711,6 +1774,17 @@ in
           "${mod}+C".action = center-column;
           "${mod}+B".action = spawn "ironbar" "bar" "main" "toggle-visible";
 
+          # Park notifications: hidden, but kept alive until brought back.
+          "${mod}+N".action = spawn "makoctl" "mode" "-t" "parked";
+          "${mod}+TouchpadScrollLeft" = {
+            cooldown-ms = 400;
+            action = spawn "makoctl" "mode" "-a" "parked";
+          };
+          "${mod}+TouchpadScrollRight" = {
+            cooldown-ms = 400;
+            action = spawn "makoctl" "mode" "-r" "parked";
+          };
+
           # Adjust dimensions
           "${mod}+Minus".action = set-column-width "-10%";
           "${mod}+Equal".action = set-column-width "+10%";
@@ -1908,6 +1982,14 @@ in
           }
         ];
         end = [
+          {
+            type = "script";
+            class = "cell";
+            mode = "watch";
+            cmd = lib.getExe barNotif;
+            show_if = "#notif_parked";
+            on_click_left = "${config.services.mako.package}/bin/makoctl mode -r parked";
+          }
           # Claudio plan usage. The usage endpoint is rate limited, so five
           # minutes is the lowest sane interval.
           {
