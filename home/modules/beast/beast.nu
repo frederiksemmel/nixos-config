@@ -86,6 +86,14 @@ def connect [session: string, title: string, --create: list<string>] {
 # Picks a session on beast and attaches this window to it.
 #
 # Esc opens a plain shell on beast instead.
+#
+# Subcommands:
+#   list     Lists the sessions on beast, newest activity first.
+#   attach   Attaches this window to a session and keeps it attached across dropped connections.
+#   new      Starts a session: Claude with Remote Control in a repo, inside devenv when the repo has one.
+#   spare    Attaches this window to the newest detached Remote Control spare.
+#   clean    Kills the sessions matching every given filter, after listing them and asking.
+#   restore  Opens every detached session fullscreen on its own workspace, skipping unused spares.
 export def main [] {
   let sessions = list
   let new_entry = "new session"
@@ -245,7 +253,26 @@ export def clean [
   }
 }
 
-# Opens a foot window for every detached session, skipping unused spares.
+def niri-window-ids [] {
+  ^niri msg --json windows | from json | get id
+}
+
+# Index of the last empty workspace on the focused output; niri always keeps one.
+def empty-workspace [] {
+  let workspaces = ^niri msg --json workspaces | from json
+  let output = $workspaces | where is_focused | first | get output
+  $workspaces | where output == $output and active_window_id == null | get idx | math max
+}
+
+def wait-for-new-window [known: list<int>] {
+  for _ in 1..100 {
+    if (niri-window-ids | any {|id| $id not-in $known }) { return }
+    sleep 50ms
+  }
+  error make --unspanned { msg: "no foot window appeared within 5 seconds" }
+}
+
+# Opens every detached session fullscreen on its own workspace, skipping unused spares.
 export def restore [
   --dry-run (-n) # list the windows without opening them
 ] {
@@ -255,6 +282,11 @@ export def restore [
   if $dry_run { return $windows }
   for window in $windows {
     let command = $"use ($self); beast attach ($window.session | to json) --title ($window.title | to json)"
-    ^setsid -f foot --title $window.title nu --no-config-file --commands $command o+e> /dev/null
+    let known = niri-window-ids
+    # A window lands on the workspace focused when it appears, so each one has
+    # to appear before the next workspace gets focus.
+    ^niri msg action focus-workspace (empty-workspace)
+    ^setsid -f foot --fullscreen --title $window.title nu --no-config-file --commands $command o+e> /dev/null
+    wait-for-new-window $known
   }
 }
