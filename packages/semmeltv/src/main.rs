@@ -8,6 +8,7 @@ mod loader;
 mod nav;
 mod player;
 mod progress;
+mod segments;
 mod tmdb;
 
 use artwork::Cache;

@@ -23,6 +23,20 @@ playback. During a video the arrows seek, and Stop quits.
 Stopping a video saves its position and playing it again resumes there. The last
 episode started per show is kept in `progress.json` in the cache.
 
+## Skipping intros and recaps
+
+During an episode's recap or intro a Skip button shows in mpv, and OK presses it.
+Otherwise OK pauses, as Play and Pause always do. Skipping is never automatic,
+because the times do not fit every release: a file with a recap the database's
+release lacks lands partway through the titles.
+
+Times come from [TheIntroDB](https://theintrodb.org) when an episode starts, and
+are not stored. An episode needs a TMDB id, from `semmeltv artwork` or `tmdb` in
+`meta.toml`, and without one or without a network it plays with no button. When
+several ranges exist the earliest counts, since later ones have been wrong. Their
+terms allow personal, non-commercial use and forbid passing the data on, so
+timings must not be exported or committed.
+
 ## Voice commands
 
 `semmeltv understand TEXT` shows what a spoken sentence would do, in English,

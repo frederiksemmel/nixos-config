@@ -6,6 +6,7 @@ use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav};
 use crate::player::{Finish, Player};
 use crate::progress::{Position, Progress};
+use crate::segments::Title;
 use crate::{AppWindow, CardData, ShelfData};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -189,13 +190,23 @@ impl App {
                 ui.invoke_playback_finished(finish != Finish::Failed, finish == Finish::Ended)
             });
         };
-        match Player::start(path, finished) {
+        match Player::start(path, self.title(path), finished) {
             Ok(player) => {
                 self.player = Some(player);
                 self.record_start(path);
             }
             Err(error) => self.show_message(format!("mpv did not start: {error}")),
         }
+    }
+
+    fn title(&self, path: &Path) -> Option<Title> {
+        let (show, episode) = self.nav.library().find_episode(path)?;
+        let matched = self.names.titles.get(&show.key).map(|matched| matched.id);
+        Some(Title {
+            tmdb: show.tmdb.or(matched)?,
+            season: episode.season,
+            episode: episode.number,
+        })
     }
 
     fn record_start(&mut self, path: &Path) {
