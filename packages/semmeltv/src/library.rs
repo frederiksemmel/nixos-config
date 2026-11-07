@@ -1,9 +1,11 @@
 use regex::Regex;
 use serde::Deserialize;
+use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
+use std::time::UNIX_EPOCH;
 
 const SERIES_DIR: &str = "Series";
 const MOVIES_DIR: &str = "Movies";
@@ -44,6 +46,7 @@ static RELEASE_TAG: LazyLock<Regex> = LazyLock::new(|| {
 pub struct FileEntry {
     pub path: PathBuf,
     pub size: u64,
+    pub modified: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -76,6 +79,7 @@ pub struct Episode {
     pub title: Option<String>,
     pub path: PathBuf,
     size: u64,
+    modified: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -89,11 +93,21 @@ pub struct Movie {
     pub dir: Option<PathBuf>,
     pub path: PathBuf,
     size: u64,
+    modified: u64,
 }
 
 impl Show {
     pub fn episode_count(&self) -> usize {
         self.seasons.iter().map(|season| season.episodes.len()).sum()
+    }
+
+    fn latest_addition(&self) -> u64 {
+        self.seasons
+            .iter()
+            .flat_map(|season| &season.episodes)
+            .map(|episode| episode.modified)
+            .max()
+            .unwrap_or(0)
     }
 
     pub fn only_episode(&self) -> Option<&Episode> {
@@ -182,9 +196,14 @@ fn walk(root: &Path, relative: &Path, entries: &mut Vec<FileEntry>) {
         if metadata.is_dir() {
             walk(root, &path, entries);
         } else if is_video(&path) {
+            let modified = metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(UNIX_EPOCH).ok());
             entries.push(FileEntry {
                 path,
                 size: metadata.len(),
+                modified: modified.map_or(0, |elapsed| elapsed.as_secs()),
             });
         }
     }
@@ -344,6 +363,7 @@ fn add_episode(show: &mut Show, root: &Path, entry: &FileEntry, marker: Option<M
         title,
         path: root.join(&entry.path),
         size: entry.size,
+        modified: entry.modified,
     };
     let season = match show.seasons.iter_mut().find(|season| season.number == season_number) {
         Some(season) => season,
@@ -437,6 +457,7 @@ fn movie_from_file(root: &Path, file: &FileEntry, dir: Option<PathBuf>) -> Movie
         dir,
         path: root.join(&file.path),
         size: file.size,
+        modified: file.modified,
         ..Movie::default()
     }
 }
@@ -556,10 +577,12 @@ fn sort_title(title: &str) -> String {
 }
 
 fn sort(library: &mut Library) {
-    library.shows.sort_by_key(|show| sort_title(&show.title));
+    library
+        .shows
+        .sort_by_key(|show| (Reverse(show.latest_addition()), sort_title(&show.title)));
     library
         .movies
-        .sort_by_key(|movie| (sort_title(&movie.title), movie.year));
+        .sort_by_key(|movie| (Reverse(movie.modified), sort_title(&movie.title), movie.year));
     for show in &mut library.shows {
         show.key = slug(&show.title);
     }
@@ -581,6 +604,7 @@ mod tests {
             .map(|(path, size)| FileEntry {
                 path: path.into(),
                 size: *size,
+                modified: 0,
             })
             .collect();
         build("/lib".as_ref(), entries)
@@ -850,8 +874,57 @@ mod tests {
         assert!(show.only_episode().is_some());
     }
 
+    fn dated(paths: &[(&str, u64)]) -> Library {
+        let entries = paths
+            .iter()
+            .map(|(path, modified)| FileEntry {
+                path: path.into(),
+                size: 1,
+                modified: *modified,
+            })
+            .collect();
+        build("/lib".as_ref(), entries)
+    }
+
     #[test]
-    fn sorting_ignores_a_leading_the() {
+    fn newest_films_come_first() {
+        let library = dated(&[
+            ("Movies/Apple (2001)/Apple.2001.mkv", 100),
+            ("Movies/Zebra (1960)/Zebra.1960.mkv", 300),
+            ("Movies/Mango (2020)/Mango.2020.mkv", 200),
+        ]);
+        let order: Vec<_> = library.movies.iter().map(|movie| movie.title.as_str()).collect();
+        assert_eq!(order, ["Zebra", "Mango", "Apple"]);
+    }
+
+    #[test]
+    fn a_new_episode_brings_its_show_forward_but_episodes_stay_in_order() {
+        let library = dated(&[
+            ("Series/Old Show/Old.Show.S01E01.mkv", 100),
+            ("Series/Old Show/Old.Show.S01E02.mkv", 900),
+            ("Series/Old Show/Old.Show.S02E01.mkv", 110),
+            ("Series/New Show/New.Show.S01E01.mkv", 500),
+        ]);
+        let order: Vec<_> = library.shows.iter().map(|show| show.title.as_str()).collect();
+        assert_eq!(order, ["Old Show", "New Show"]);
+        let show = &library.shows[0];
+        let seasons: Vec<_> = show.seasons.iter().map(|season| season.number).collect();
+        let episodes: Vec<_> = show.seasons[0].episodes.iter().map(|episode| episode.number).collect();
+        assert_eq!((seasons, episodes), (vec![1, 2], vec![1, 2]));
+    }
+
+    #[test]
+    fn episodes_filed_under_movies_count_towards_their_show() {
+        let library = dated(&[
+            ("Series/Alpha/Alpha.S01E01.mkv", 100),
+            ("Series/Beta/Beta.S01E01.mkv", 200),
+            ("Movies/Alpha.S01E02.1080p.mkv", 300),
+        ]);
+        assert_eq!(library.shows[0].title, "Alpha");
+    }
+
+    #[test]
+    fn titles_added_together_fall_back_to_the_alphabet_ignoring_the() {
         let library = library(&[
             ("Movies/The Zebra/The.Zebra.2001.mp4", 1),
             ("Movies/The Apple/The.Apple.2001.mp4", 1),

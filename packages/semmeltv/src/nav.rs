@@ -186,6 +186,7 @@ mod tests {
             .map(|p| FileEntry {
                 path: p.into(),
                 size: 1,
+                modified: 0,
             })
             .collect();
         Nav::new(library::build("/lib".as_ref(), entries))
