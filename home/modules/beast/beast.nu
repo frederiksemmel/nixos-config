@@ -5,6 +5,9 @@ use session-picker.nu *
 const self = path self
 const shpool_defs = path self shpool-sessions.nu
 const connect_options = [-o ConnectTimeout=5 -o BatchMode=yes]
+# A shpool session reaches the agent through the attaching client's SSH_AUTH_SOCK,
+# and `ssh beast <command>` runs without nushell's env file, which sets it.
+const agent_env = '$env.SSH_AUTH_SOCK = $"($env.XDG_RUNTIME_DIR)/gcr/ssh";'
 const reset_terminal = "\e[?25h\e[?1000;1002;1003;1006;2004l\e[<99u"
 
 # Evaluates a nushell expression on beast, with shpool-sessions.nu loaded.
@@ -88,7 +91,7 @@ def connect [session: string, title: string, --create: list<string>] {
     let mode = if $exists { [-f] } else { $create }
     let started = date now
     let code = try {
-      ^ssh -t ...$connect_options beast shpool attach ...$mode $name
+      ^ssh -t ...$connect_options beast $agent_env shpool attach ...$mode $name
       0
     } catch {|failure|
       $failure.exit_code? | default 1
