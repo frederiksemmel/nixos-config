@@ -20,8 +20,10 @@ playback device named SemmelTV. Machines without CEC simply skip this.
 Arrows move, OK selects, Back or Exit goes back, and Play and Pause toggle
 playback. During a video the arrows seek, and Stop quits.
 
-Stopping a video saves its position and playing it again resumes there. The last
-episode started per show is kept in `progress.json` in the cache.
+Stopping a video saves its position and playing it again resumes there. So does
+a restart, and a crash or power cut loses at most the last 30 seconds. A video
+that played to its end starts over. The last episode started per show is kept in
+`progress.json` in the cache.
 
 ## Skipping intros and recaps
 

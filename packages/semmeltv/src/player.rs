@@ -13,10 +13,14 @@ use std::time::Duration;
 const POLL: Duration = Duration::from_millis(50);
 const STOP: &str = "quit-watch-later 10";
 const STOPPED_EXIT_CODE: i32 = 10;
+const ENDED_EXIT_CODE: i32 = 11;
+const SIGNALLED_EXIT_CODE: i32 = 4;
+const SAVE_EVERY: f64 = 30.0;
 const SELECT_MESSAGE: &str = "semmeltv-select";
 const SELECT: &str = "script-message semmeltv-select";
 const POSITION_ID: u64 = 1;
 const DURATION_ID: u64 = 2;
+const ENDED_ID: u64 = 3;
 const PROMPT_ID: u64 = 1;
 const PROMPT_WIDTH: u32 = 1920;
 const PROMPT_HEIGHT: u32 = 1080;
@@ -44,8 +48,8 @@ pub enum Finish {
 impl Finish {
     fn from_exit_code(code: Option<i32>) -> Self {
         match code {
-            Some(0) => Self::Ended,
-            Some(STOPPED_EXIT_CODE) => Self::Stopped,
+            Some(ENDED_EXIT_CODE) => Self::Ended,
+            Some(0 | SIGNALLED_EXIT_CODE | STOPPED_EXIT_CODE) => Self::Stopped,
             _ => Self::Failed,
         }
     }
@@ -55,6 +59,7 @@ impl Finish {
 enum Event {
     Position(f64),
     Duration(f64),
+    Ended,
     Select,
 }
 
@@ -62,14 +67,12 @@ impl Event {
     fn parse(line: &str) -> Option<Self> {
         let message: Value = serde_json::from_str(line).ok()?;
         match message["event"].as_str()? {
-            "property-change" => {
-                let value = message["data"].as_f64()?;
-                match message["id"].as_u64()? {
-                    POSITION_ID => Some(Self::Position(value)),
-                    DURATION_ID => Some(Self::Duration(value)),
-                    _ => None,
-                }
-            }
+            "property-change" => match message["id"].as_u64()? {
+                POSITION_ID => Some(Self::Position(message["data"].as_f64()?)),
+                DURATION_ID => Some(Self::Duration(message["data"].as_f64()?)),
+                ENDED_ID => message["data"].as_bool()?.then_some(Self::Ended),
+                _ => None,
+            },
             "client-message" => (message["args"][0].as_str()? == SELECT_MESSAGE).then_some(Self::Select),
             _ => None,
         }
@@ -80,6 +83,8 @@ impl Event {
 struct Playback {
     stream: Option<UnixStream>,
     position: f64,
+    saved: f64,
+    ended: bool,
     segments: Vec<Segment>,
     prompt: Option<Kind>,
 }
@@ -105,6 +110,24 @@ impl Playback {
             self.send(prompt_command(prompt));
         }
     }
+
+    fn save_position(&mut self) {
+        if !self.ended && save_due(self.saved, self.position) {
+            self.saved = self.position;
+            self.send(json!(["write-watch-later-config"]));
+        }
+    }
+
+    fn end(&mut self) {
+        self.ended = true;
+        self.send(json!(["set_property", "save-position-on-quit", false]));
+        self.send(json!(["delete-watch-later-config"]));
+        self.send(json!(["quit", ENDED_EXIT_CODE]));
+    }
+}
+
+fn save_due(saved: f64, position: f64) -> bool {
+    (position - saved).abs() >= SAVE_EVERY
 }
 
 fn prompt_command(prompt: Option<Kind>) -> Value {
@@ -139,7 +162,9 @@ impl Player {
         let mut child = Process::new("mpv")
             .arg("--fs")
             .arg("--force-window=immediate")
-            .arg("--no-terminal")
+            .arg("--really-quiet")
+            .arg("--save-position-on-quit")
+            .arg("--keep-open")
             .arg(format!("--input-ipc-server={}", socket_path.display()))
             .arg("--")
             .arg(path)
@@ -183,15 +208,17 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             for (key, action) in KEYBINDS {
                 let _ = send(&mut stream, json!(["keybind", key, action]));
             }
+            let _ = send(&mut stream, json!(["observe_property", POSITION_ID, "time-pos"]));
+            let _ = send(&mut stream, json!(["observe_property", ENDED_ID, "eof-reached"]));
             if title.is_some() {
-                let _ = send(&mut stream, json!(["observe_property", POSITION_ID, "time-pos"]));
                 let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
             }
-            if let Ok(events) = stream.try_clone() {
+            let events = stream.try_clone();
+            shared.lock().unwrap().stream = Some(stream);
+            if let Ok(events) = events {
                 let shared = shared.clone();
                 thread::spawn(move || listen(events, &shared, title));
             }
-            shared.lock().unwrap().stream = Some(stream);
             return;
         }
         thread::sleep(POLL);
@@ -205,6 +232,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 let mut playback = shared.lock().unwrap();
                 playback.position = position;
                 playback.update_prompt();
+                playback.save_position();
             }
             Some(Event::Duration(duration)) => {
                 if let Some(title) = title.take() {
@@ -212,6 +240,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                     thread::spawn(move || find_segments(title, duration, &shared));
                 }
             }
+            Some(Event::Ended) => shared.lock().unwrap().end(),
             Some(Event::Select) => {
                 let mut playback = shared.lock().unwrap();
                 let message = playback.select();
@@ -240,22 +269,27 @@ fn send(stream: &mut UnixStream, command: Value) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
 
     #[test]
     fn the_exit_code_tells_an_ended_video_from_a_stopped_or_broken_one() {
-        assert_eq!(Finish::from_exit_code(Some(0)), Finish::Ended);
+        assert_eq!(Finish::from_exit_code(Some(ENDED_EXIT_CODE)), Finish::Ended);
         assert_eq!(Finish::from_exit_code(Some(STOPPED_EXIT_CODE)), Finish::Stopped);
+        assert_eq!(Finish::from_exit_code(Some(0)), Finish::Stopped);
+        assert_eq!(Finish::from_exit_code(Some(SIGNALLED_EXIT_CODE)), Finish::Stopped);
         assert_eq!(Finish::from_exit_code(Some(2)), Finish::Failed);
         assert_eq!(Finish::from_exit_code(None), Finish::Failed);
     }
 
     #[test]
-    fn mpv_reports_the_position_the_duration_and_a_pressed_key() {
+    fn mpv_reports_the_position_the_duration_the_end_and_a_pressed_key() {
         let position = r#"{"event":"property-change","id":1,"name":"time-pos","data":12.5}"#;
         let duration = r#"{"event":"property-change","id":2,"name":"duration","data":2730.0}"#;
+        let end = r#"{"event":"property-change","id":3,"name":"eof-reached","data":true}"#;
         let key = r#"{"event":"client-message","args":["semmeltv-select"]}"#;
         assert_eq!(Event::parse(position), Some(Event::Position(12.5)));
         assert_eq!(Event::parse(duration), Some(Event::Duration(2730.0)));
+        assert_eq!(Event::parse(end), Some(Event::Ended));
         assert_eq!(Event::parse(key), Some(Event::Select));
     }
 
@@ -264,12 +298,65 @@ mod tests {
         for line in [
             r#"{"request_id":0,"error":"success"}"#,
             r#"{"event":"property-change","id":1,"name":"time-pos"}"#,
+            r#"{"event":"property-change","id":3,"name":"eof-reached","data":false}"#,
             r#"{"event":"client-message","args":["something-else"]}"#,
             r#"{"event":"playback-restart"}"#,
             "not json",
         ] {
             assert_eq!(Event::parse(line), None, "{line}");
         }
+    }
+
+    #[test]
+    fn the_position_is_saved_once_it_moved_thirty_seconds_either_way() {
+        assert!(!save_due(0.0, 29.9));
+        assert!(save_due(0.0, 30.0));
+        assert!(save_due(100.0, 60.0));
+        assert!(!save_due(100.0, 80.0));
+    }
+
+    #[test]
+    fn a_resumed_video_saves_its_position_at_once() {
+        assert!(save_due(Playback::default().saved, 1200.0));
+    }
+
+    #[test]
+    fn nothing_is_saved_after_the_end() {
+        let mut playback = Playback {
+            position: 100.0,
+            ended: true,
+            ..Playback::default()
+        };
+        playback.save_position();
+        assert_eq!(playback.saved, 0.0);
+        playback.ended = false;
+        playback.save_position();
+        assert_eq!(playback.saved, 100.0);
+    }
+
+    #[test]
+    fn the_end_forgets_the_position_before_quitting() {
+        let (stream, mut mpv) = UnixStream::pair().unwrap();
+        let mut playback = Playback {
+            stream: Some(stream),
+            ..Playback::default()
+        };
+        playback.end();
+        drop(playback);
+        let mut sent = String::new();
+        mpv.read_to_string(&mut sent).unwrap();
+        let commands: Vec<Value> = sent
+            .lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()["command"].clone())
+            .collect();
+        assert_eq!(
+            commands,
+            [
+                json!(["set_property", "save-position-on-quit", false]),
+                json!(["delete-watch-later-config"]),
+                json!(["quit", ENDED_EXIT_CODE]),
+            ]
+        );
     }
 
     fn during_the_intro() -> Playback {
