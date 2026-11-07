@@ -37,6 +37,7 @@
     mcp-servers-nix.inputs.nixpkgs.follows = "nixpkgs";
 
     flake-parts.url = "github:hercules-ci/flake-parts";
+    crane.url = "github:ipetkov/crane";
   };
 
   nixConfig = {
@@ -119,7 +120,7 @@
             claude-notify = final.callPackage ./packages/claude-notify.nix { };
             nordwand-mono = final.callPackage ./packages/nordwand-mono.nix { };
             plymouth-spades-vision = final.callPackage ./packages/plymouth-spades-vision { };
-            semmeltv = final.callPackage ./packages/semmeltv { };
+            semmeltv = final.callPackage ./packages/semmeltv { inherit (inputs) crane; };
             # The viewer makes every recording streamed in from an SDK the active one,
             # so it keeps jumping while several recordings stream in at once. The patch
             # adds a "Switch to newly streamed recordings" setting; with it off, such a
@@ -218,6 +219,7 @@
               "gst-hailo-${name}" = hailo.gst-hailo;
               "pyhailort-${name}" = hailo.pyhailort;
             }) pkgs.hailo;
+            devShells.semmeltv = pkgs.semmeltv.devShell;
             treefmt = {
               projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
               programs = {

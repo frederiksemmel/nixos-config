@@ -1,4 +1,5 @@
 {
+  flake,
   lib,
   nixos-raspberrypi,
   pkgs,
@@ -11,7 +12,10 @@ let
   mpv = pkgs.mpv.override {
     mpv-unwrapped = pkgs.mpv-unwrapped.override { inherit ffmpeg; };
   };
-  semmeltv = pkgs.callPackage ../../../packages/semmeltv { inherit mpv; };
+  semmeltv = pkgs.callPackage ../../../packages/semmeltv {
+    inherit mpv;
+    inherit (flake.inputs) crane;
+  };
   blankCursor = pkgs.callPackage ../../../packages/semmeltv/blank-cursor.nix { };
   stateDir = "/var/lib/semmeltv";
 in

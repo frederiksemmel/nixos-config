@@ -6,7 +6,7 @@
   ...
 }:
 let
-  semmeltv = pkgs.callPackage ../../../packages/semmeltv { };
+  semmeltv = pkgs.callPackage ../../../packages/semmeltv { inherit (flake.inputs) crane; };
   stateDir = "/var/lib/semmeltv";
 in
 {

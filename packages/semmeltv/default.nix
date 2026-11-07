@@ -1,6 +1,7 @@
 {
   lib,
-  rustPlatform,
+  pkgs,
+  crane,
   makeBinaryWrapper,
   pkg-config,
   inter,
@@ -12,56 +13,73 @@
   wlr-randr,
 }:
 
-rustPlatform.buildRustPackage {
-  pname = "semmeltv";
-  version = "0.1.0";
+let
+  craneLib = crane.mkLib pkgs;
 
-  src = lib.fileset.toSource {
-    root = ./.;
-    fileset = lib.fileset.unions [
-      ./Cargo.lock
-      ./Cargo.toml
-      ./build.rs
-      ./src
-      ./ui
+  commonArgs = {
+    pname = "semmeltv";
+    version = "0.1.0";
+
+    src = lib.fileset.toSource {
+      root = ./.;
+      fileset = lib.fileset.unions [
+        ./Cargo.lock
+        ./Cargo.toml
+        ./build.rs
+        ./src
+        ./ui
+      ];
+    };
+
+    strictDeps = true;
+
+    nativeBuildInputs = [
+      makeBinaryWrapper
+      pkg-config
     ];
+    buildInputs = [ fontconfig ];
+
+    env = {
+      SEMMELTV_FONT_DIR = "${inter}/share/fonts/truetype";
+      RUSTFLAGS = "-C link-arg=-Wl,-rpath,${
+        lib.makeLibraryPath [
+          fontconfig
+          libGL
+          libxkbcommon
+          wayland
+        ]
+      }";
+    };
   };
 
-  cargoLock.lockFile = ./Cargo.lock;
+  cargoArtifacts = craneLib.buildDepsOnly (commonArgs // { cargoCheckCommand = "true"; });
+in
+craneLib.buildPackage (
+  commonArgs
+  // {
+    inherit cargoArtifacts;
 
-  nativeBuildInputs = [
-    makeBinaryWrapper
-    pkg-config
-  ];
-  buildInputs = [ fontconfig ];
+    dontPatchELF = true;
 
-  env = {
-    SEMMELTV_FONT_DIR = "${inter}/share/fonts/truetype";
-    RUSTFLAGS = "-C link-arg=-Wl,-rpath,${
-      lib.makeLibraryPath [
-        fontconfig
-        libGL
-        libxkbcommon
-        wayland
-      ]
-    }";
-  };
+    postInstall = ''
+      wrapProgram $out/bin/semmeltv --suffix PATH : ${
+        lib.makeBinPath [
+          mpv
+          wlr-randr
+        ]
+      }
+    '';
 
-  dontPatchELF = true;
+    passthru.devShell = craneLib.devShell {
+      inherit (commonArgs) buildInputs env;
+      packages = [ pkg-config ];
+    };
 
-  postInstall = ''
-    wrapProgram $out/bin/semmeltv --suffix PATH : ${
-      lib.makeBinPath [
-        mpv
-        wlr-randr
-      ]
-    }
-  '';
-
-  meta = {
-    description = "Apple TV style interface for a personal video library";
-    license = lib.licenses.gpl3Only;
-    mainProgram = "semmeltv";
-    platforms = lib.platforms.linux;
-  };
-}
+    meta = {
+      description = "Apple TV style interface for a personal video library";
+      license = lib.licenses.gpl3Only;
+      mainProgram = "semmeltv";
+      platforms = lib.platforms.linux;
+    };
+  }
+)
