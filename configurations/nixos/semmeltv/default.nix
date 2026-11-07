@@ -1,22 +1,15 @@
 {
-  flake,
   lib,
+  nixos-raspberrypi,
   pkgs,
   ...
 }:
 let
-  inherit (flake.inputs) nixos-raspberrypi;
   semmeltv = pkgs.callPackage ../../../packages/semmeltv { };
   stateDir = "/var/lib/semmeltv";
 in
 {
-  imports = with nixos-raspberrypi.nixosModules; [
-    raspberry-pi-5.base
-    raspberry-pi-5.display-vc4
-    sd-image
-  ];
-
-  networking.hostName = "semmeltv";
+  imports = [ nixos-raspberrypi.nixosModules.sd-image ];
 
   boot.supportedFilesystems.zfs = lib.mkForce false;
 

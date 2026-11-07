@@ -7,6 +7,8 @@
     nixos-hardware.url = "github:NixOS/nixos-hardware";
     nixos-hardware.inputs.nixpkgs.follows = "nixpkgs";
     nixos-raspberrypi.url = "github:nvmd/nixos-raspberrypi/main";
+    deploy-rs.url = "github:serokell/deploy-rs";
+    deploy-rs.inputs.nixpkgs.follows = "nixpkgs";
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
     treefmt-nix.url = "github:numtide/treefmt-nix";
@@ -78,11 +80,33 @@
             ];
           };
 
-          nixosConfigurations."semmeltv" = inputs.nixos-raspberrypi.lib.nixosSystem {
+          nixosConfigurations."semmeltv3" = inputs.nixos-raspberrypi.lib.nixosSystem {
             specialArgs = specialArgs // {
               inherit (inputs) nixos-raspberrypi;
             };
-            modules = [ ./configurations/nixos/semmeltv ];
+            modules = [ ./configurations/nixos/semmeltv3 ];
+          };
+
+          nixosConfigurations."semmeltv5" = inputs.nixos-raspberrypi.lib.nixosSystem {
+            specialArgs = specialArgs // {
+              inherit (inputs) nixos-raspberrypi;
+            };
+            modules = [ ./configurations/nixos/semmeltv5 ];
+          };
+
+          deploy = {
+            sshUser = "frederik";
+            user = "root";
+            nodes = {
+              semmeltv3 = {
+                hostname = "semmeltv3";
+                profiles.system.path = inputs.deploy-rs.lib.aarch64-linux.activate.nixos self.nixosConfigurations.semmeltv3;
+              };
+              semmeltv5 = {
+                hostname = "semmeltv5";
+                profiles.system.path = inputs.deploy-rs.lib.aarch64-linux.activate.nixos self.nixosConfigurations.semmeltv5;
+              };
+            };
           };
 
           homeModules.frederik = ./home/users/frederik.nix;
@@ -186,6 +210,7 @@
             };
             packages = {
               inherit (pkgs) claudebar claude-notify semmeltv;
+              deploy-rs = inputs.deploy-rs.packages.${system}.default;
             }
             // lib.concatMapAttrs (name: hailo: {
               "hailort-${name}" = hailo.hailort;
