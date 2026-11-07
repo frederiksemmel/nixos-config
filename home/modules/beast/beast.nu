@@ -224,15 +224,36 @@ export def spare [] {
   attach ($spares | first | get name)
 }
 
+def pick-phone-session [] {
+  let sessions = on-beast phone-sessions
+  if ($sessions | is-empty) {
+    error make --unspanned { msg: "no phone sessions on beast" }
+  }
+  let columns = (term size).columns - 4
+  let choice = $sessions
+  | each {|s|
+    [
+      ($s.title | str substring ..<60 | fill -w 60)
+      ($s.claude | fill -w 4)
+      ($s.ago | str replace " ago" "" | fill -w 14)
+      ($s.dir | path basename)
+    ] | str join "  " | str substring ..<$columns
+  }
+  | input list --fuzzy --index "take which session (type to filter, esc cancels)"
+  if $choice != null { $sessions | get $choice | get session }
+}
+
 # Moves a session started in the app into shpool and attaches this window to it.
 #
-# Stops the session's process and resumes the conversation in the same directory
+# Without a session it asks for one. Stops the session's process and resumes the conversation in the same directory
 # with Remote Control on. The app gets a new conversation for it and the old one
 # stops updating. A session that is working is refused until it is idle.
 export def take [
-  session: string@complete-phone-sessions # session id, tab completes with titles
-  --name (-n): string                     # session name, default <repo>-<number>
+  session?: string@complete-phone-sessions # session id, default asks for one
+  --name (-n): string                      # session name, default <repo>-<number>
 ] {
+  let session = if $session == null { pick-phone-session } else { $session }
+  if $session == null { return }
   let taken = list | get name
   if $name in $taken {
     error make --unspanned { msg: $"($name) already exists, use beast attach" }
