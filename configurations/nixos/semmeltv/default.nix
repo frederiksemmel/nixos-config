@@ -68,6 +68,7 @@ in
 
   systemd.services.cage-tty1 = {
     after = [ "systemd-tmpfiles-setup.service" ];
+    restartIfChanged = lib.mkForce true;
     serviceConfig = {
       Restart = "always";
       RestartSec = 2;
