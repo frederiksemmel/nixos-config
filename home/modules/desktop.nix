@@ -2111,6 +2111,9 @@ in
       mutableSettings = true;
       settings = {
         tray.enabled = false;
+        providers.files.preferences.excludedIndexingPaths = [
+          config.programs.rclone.remotes.pcloud.mounts."".mountPoint
+        ];
         theme.dark.name = "terminal";
         theme.light.name = "terminal-light";
         imports = [ "${config.theme.dir}/current/vicinae.json" ];
