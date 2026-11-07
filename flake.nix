@@ -87,8 +87,11 @@
 
           homeModules.frederik = ./home/users/frederik.nix;
 
+          nixosModules.hailo = ./packages/hailo/module.nix;
+
           overlays.default = final: prev: {
             claudebar = final.callPackage ./packages/claudebar.nix { };
+            hailo = final.callPackage ./packages/hailo { };
             claude-notify = final.callPackage ./packages/claude-notify.nix { };
             nordwand-mono = final.callPackage ./packages/nordwand-mono.nix { };
             plymouth-spades-vision = final.callPackage ./packages/plymouth-spades-vision { };
@@ -165,7 +168,12 @@
         };
 
         perSystem =
-          { pkgs, system, ... }:
+          {
+            lib,
+            pkgs,
+            system,
+            ...
+          }:
           {
             _module.args.pkgs = import inputs.nixpkgs {
               inherit system;
@@ -177,7 +185,13 @@
             };
             packages = {
               inherit (pkgs) claudebar claude-notify;
-            };
+            }
+            // lib.concatMapAttrs (name: hailo: {
+              "hailort-${name}" = hailo.hailort;
+              "hailo-firmware-${name}" = hailo.firmware;
+              "gst-hailo-${name}" = hailo.gst-hailo;
+              "pyhailort-${name}" = hailo.pyhailort;
+            }) pkgs.hailo;
             treefmt = {
               projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
               programs = {
