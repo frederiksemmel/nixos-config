@@ -82,6 +82,12 @@ in
     environment = {
       SEMMELTV_LIBRARY = "${stateDir}/library";
       SEMMELTV_CACHE = "${stateDir}/cache";
+      FONTCONFIG_FILE = "${pkgs.makeFontsConf {
+        fontDirectories = [
+          pkgs.dejavu_fonts
+          pkgs.inter
+        ];
+      }}";
       XCURSOR_THEME = "blank";
       XCURSOR_PATH = "${blankCursor}/share/icons";
     };
