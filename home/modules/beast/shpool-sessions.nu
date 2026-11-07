@@ -6,6 +6,10 @@ def repo-name [cwd: string] {
   $cwd | str replace --regex '/\.claude/worktrees/.*$' "" | path basename
 }
 
+def group-of [session: string] {
+  try { open --raw $"($env.HOME)/.local/state/beast-session-groups/($session)" | str trim } catch { null }
+}
+
 def claude-sessions [] {
   glob $"($env.HOME)/.claude/sessions/*.json" | each {|f|
     try {
@@ -36,6 +40,8 @@ def claude-sessions [] {
         message: $message
         pid: $s.pid
         session: $s.sessionId
+        group: (group-of $s.sessionId)
+        transcript: $transcript
         bridge: $s.bridgeSessionId?
         entrypoint: ($s.entrypoint? | default "")
         updated: $s.updatedAt?
@@ -75,6 +81,7 @@ def shpool-sessions [] {
       title: $title
       ids: $ids
       repo: (repo-name ($cwd | default ""))
+      group: $claude.group?
       claude: $claude.status?
       message: $claude.message?
       started: $s.started_at_unix_ms
@@ -113,11 +120,13 @@ def phone-sessions [] {
       pid: $c.pid
       status: "phone"
       claude: $c.status
+      last: $c.updated
       ago: ($c.updated * 1_000_000 | into datetime | date humanize)
       dir: $c.cwd
       title: ($name | default $c.title)
       ids: ""
       repo: (repo-name $c.cwd)
+      group: $c.group
     }
   }
 }
@@ -137,6 +146,28 @@ def stop-phone-session [session: string] {
     sleep 50ms
   }
   error make --unspanned { msg: $"($claude.title) did not stop within 5 seconds" }
+}
+
+def session-groups [] {
+  claude-sessions | get group | compact | uniq | sort
+}
+
+# Puts a session in a group, replacing the one it was given.
+def set-session-group [session: string, group: string] {
+  let claude = claude-sessions | where {|c| $session in [$c.name $c.session] } | get -o 0
+  if $claude == null {
+    error make --unspanned { msg: $"no Claude session ($session) on beast" }
+  }
+  ^session-group $group $claude.session
+  { title: $claude.title, group: $group }
+}
+
+# Asks for a group for every Claude session that has none.
+def label-sessions [] {
+  claude-sessions | where group == null | each {|c|
+    { session_id: $c.session, cwd: $c.cwd, transcript_path: $c.transcript } | to json | ^session-group-hook
+    { title: $c.title, group: (group-of $c.session) }
+  } | where group != null
 }
 
 def shpool-repos [] {

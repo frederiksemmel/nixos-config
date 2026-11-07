@@ -95,7 +95,10 @@ let
     };
 in
 {
-  imports = [ ./beast-disk-cleanup ];
+  imports = [
+    ./beast-disk-cleanup
+    ./beast-session-groups.nix
+  ];
 
   profiles.bitwarden.headlessSshKeys.enable = true;
 
@@ -204,35 +207,23 @@ in
 
   programs.nushell.extraConfig = builtins.readFile ../modules/beast/shpool-sessions.nu + ''
 
+    use ${../modules/beast/session-picker.nu} *
+
     def shpool-pick [] {
-      let sessions = shpool-sessions
+      let sessions = shpool-sessions | by-group
       let new = "new session"
       let kill = "kill sessions…"
-      let lines = if ($sessions | is-empty) { [] } else {
-        let title_w = [($sessions.title | str length | math max) 40] | math min
-        let ids_w = $sessions.ids | str length | math max
-        let cols = (term size).columns - 4
-        $sessions | each {|s|
-          [
-            ($s.title | str substring ..<$title_w | fill -w $title_w)
-            ($s.ids | fill -w $ids_w)
-            ($s.ago | str replace " ago" "" | fill -w 14)
-            ($s.status | str replace "disconnected" "detached" | fill -w 8)
-            ($s.dir | path basename)
-          ] | str join "  " | str substring ..<$cols
-        }
-      }
       let n = $sessions | length
-      let choice = if ($lines | is-empty) { $n } else {
-        $lines | append [$new $kill] | input list --fuzzy --index "shpool session (type to filter, esc for a plain shell)"
+      let lines = session-rows $sessions
+      let choice = if $n == 0 { $n } else {
+        $lines | append [$new $kill] | fzf-pick "type to filter, esc for a plain shell" | get -o 0
       }
       if $choice == null {
       } else if $choice < $n {
         exec shpool attach --force ($sessions | get $choice | get name)
       } else if $choice > $n {
         $lines
-        | input list --fuzzy --multi --index "kill which sessions (tab marks, enter kills, esc cancels)"
-        | default []
+        | fzf-pick --multi "tab marks, enter kills, esc cancels"
         | each {|i| shpool kill ($sessions | get $i | get name) }
         | ignore
         shpool-pick
