@@ -24,6 +24,7 @@ in
     "nix-command"
     "flakes"
   ];
+  nix.settings.trusted-users = [ "@wheel" ];
 
   users.users.frederik = {
     isNormalUser = true;
