@@ -6,6 +6,7 @@
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
     nixos-hardware.url = "github:NixOS/nixos-hardware";
     nixos-hardware.inputs.nixpkgs.follows = "nixpkgs";
+    nixos-raspberrypi.url = "github:nvmd/nixos-raspberrypi/main";
     disko.url = "github:nix-community/disko";
     disko.inputs.nixpkgs.follows = "nixpkgs";
     treefmt-nix.url = "github:numtide/treefmt-nix";
@@ -37,9 +38,13 @@
   };
 
   nixConfig = {
-    extra-substituters = [ "https://cache.numtide.com" ];
+    extra-substituters = [
+      "https://cache.numtide.com"
+      "https://nixos-raspberrypi.cachix.org"
+    ];
     extra-trusted-public-keys = [
       "niks3.numtide.com-1:DTx8wZduET09hRmMtKdQDxNNthLQETkc/yaX7M4qK0g="
+      "nixos-raspberrypi.cachix.org-1:4iMO9LXa8BqhU+Rpg6LQKiGa2lsNh/j2oiYLNOQ5sPI="
     ];
   };
 
@@ -71,6 +76,13 @@
               inputs.home-manager.nixosModules.home-manager
               { home-manager.extraSpecialArgs = specialArgs; }
             ];
+          };
+
+          nixosConfigurations."semmeltv" = inputs.nixos-raspberrypi.lib.nixosSystem {
+            specialArgs = specialArgs // {
+              inherit (inputs) nixos-raspberrypi;
+            };
+            modules = [ ./configurations/nixos/semmeltv ];
           };
 
           homeModules.frederik = ./home/users/frederik.nix;
