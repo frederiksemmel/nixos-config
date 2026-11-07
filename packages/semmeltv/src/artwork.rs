@@ -152,14 +152,15 @@ impl Generator<'_> {
         }
         match lookup(client) {
             Ok(Lookup::Match(found)) => {
-                let matched = Matched {
-                    id: found.id,
-                    name: found.name.clone(),
-                    date: found.date.clone(),
-                    checked: now(),
-                };
-                self.matches.titles.insert(key.to_string(), matched);
-                println!("{label}: TMDB {} {} ({})", found.id, found.name, found.date);
+                self.remember(key, &found, label);
+                Some(found)
+            }
+            Ok(Lookup::Likely(found)) => {
+                self.report.push(format!(
+                    "{label}: chose the best known match, {} {} ({})",
+                    found.id, found.name, found.date
+                ));
+                self.remember(key, &found, label);
                 Some(found)
             }
             Ok(Lookup::Unsure(candidates)) => {
@@ -179,6 +180,17 @@ impl Generator<'_> {
                 None
             }
         }
+    }
+
+    fn remember(&mut self, key: &str, found: &Found, label: &str) {
+        let matched = Matched {
+            id: found.id,
+            name: found.name.clone(),
+            date: found.date.clone(),
+            checked: now(),
+        };
+        self.matches.titles.insert(key.to_string(), matched);
+        println!("{label}: TMDB {} {} ({})", found.id, found.name, found.date);
     }
 
     fn fetch(&mut self, key: &str, url_path: Option<&str>, size: &str, label: &str) -> bool {
@@ -281,7 +293,9 @@ impl Generator<'_> {
             movie.tmdb,
             |client| {
                 let by_title = client.search_movie(&movie.title, movie.year)?;
-                if normalize(&movie.title) == normalize(&movie.file_title) || matches!(by_title, Lookup::Match(_)) {
+                if normalize(&movie.title) == normalize(&movie.file_title)
+                    || matches!(by_title, Lookup::Match(_) | Lookup::Likely(_))
+                {
                     Ok(by_title)
                 } else {
                     client.search_movie(&movie.file_title, movie.year)

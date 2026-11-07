@@ -10,6 +10,8 @@ const THROTTLE_RETRIES: usize = 3;
 const THROTTLE_WAIT: Duration = Duration::from_secs(2);
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 const CANDIDATES: usize = 4;
+const CLEAR_WINNER_MIN_VOTES: f64 = 500.0;
+const CLEAR_WINNER_RATIO: f64 = 20.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Kind {
@@ -28,6 +30,7 @@ pub struct Found {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Lookup {
     Match(Found),
+    Likely(Found),
     Unsure(Vec<Found>),
     Nothing,
 }
@@ -42,6 +45,8 @@ struct Record {
     #[serde(default, alias = "first_air_date")]
     release_date: Option<String>,
     backdrop_path: Option<String>,
+    #[serde(default)]
+    vote_count: f64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -82,6 +87,16 @@ fn record_year(record: &Record) -> Option<u16> {
     record.release_date.as_deref()?.get(..4)?.parse().ok()
 }
 
+fn clear_winner<'a>(records: &[&'a Record]) -> Option<&'a Record> {
+    let mut by_votes = records.to_vec();
+    by_votes.sort_by(|a, b| b.vote_count.total_cmp(&a.vote_count));
+    let [first, second, ..] = by_votes.as_slice() else {
+        return None;
+    };
+    (first.vote_count >= CLEAR_WINNER_MIN_VOTES && first.vote_count >= CLEAR_WINNER_RATIO * second.vote_count)
+        .then_some(*first)
+}
+
 fn classify(wanted: &str, year: Option<u16>, records: &[Record]) -> Lookup {
     if records.is_empty() {
         return Lookup::Nothing;
@@ -106,7 +121,10 @@ fn classify(wanted: &str, year: Option<u16>, records: &[Record]) -> Lookup {
     match chosen.as_slice() {
         [only] => Lookup::Match(Found::from(*only)),
         [first, ..] if year.is_some() => Lookup::Match(Found::from(*first)),
-        _ => {
+        many => {
+            if let Some(winner) = clear_winner(many) {
+                return Lookup::Likely(Found::from(winner));
+            }
             let pool: Vec<&Record> = if chosen.is_empty() {
                 records.iter().collect()
             } else {
@@ -224,6 +242,14 @@ mod tests {
             original_title: Some(title.to_string()),
             release_date: Some(date.to_string()),
             backdrop_path: None,
+            vote_count: 0.0,
+        }
+    }
+
+    fn voted(id: u64, title: &str, date: &str, vote_count: f64) -> Record {
+        Record {
+            vote_count,
+            ..record(id, title, date)
         }
     }
 
@@ -251,6 +277,29 @@ mod tests {
     fn several_same_titles_without_a_year_are_unsure() {
         let records = [record(1, "Dark", "2017-12-01"), record(2, "Dark", "2005-01-01")];
         assert!(matches!(classify("Dark", None, &records), Lookup::Unsure(found) if found.len() == 2));
+    }
+
+    #[test]
+    fn a_far_better_known_title_wins_without_a_year() {
+        let records = [
+            voted(196108, "Chernobyl", "2022-03-30", 6.0),
+            voted(87108, "Chernobyl", "2019-05-06", 8510.0),
+        ];
+        assert!(matches!(classify("Chernobyl", None, &records), Lookup::Likely(found) if found.id == 87108));
+    }
+
+    #[test]
+    fn close_or_little_known_titles_stay_unsure() {
+        let close = [
+            voted(1082195, "The Order", "2024-12-05", 988.0),
+            voted(9616, "The Order", "2003-09-05", 393.0),
+        ];
+        let obscure = [
+            voted(1, "Wind", "1998-09-18", 100.0),
+            voted(2, "Wind", "2003-01-01", 1.0),
+        ];
+        assert!(matches!(classify("The Order", None, &close), Lookup::Unsure(_)));
+        assert!(matches!(classify("Wind", None, &obscure), Lookup::Unsure(_)));
     }
 
     #[test]
