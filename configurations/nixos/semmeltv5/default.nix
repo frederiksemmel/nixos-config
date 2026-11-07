@@ -18,4 +18,8 @@
     generation = "hailo8";
   };
   nixpkgs.config.allowUnfreePackages = [ "hailo8-firmware" ];
+  hardware.raspberry-pi.config.all.base-dt-params.pciex1_gen = {
+    enable = true;
+    value = "3";
+  };
 }
