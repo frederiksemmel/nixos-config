@@ -111,6 +111,20 @@ seconds. Restarting the app never wakes it, and neither does a shorter hot-plug
 pulse. Once the TV sends Standby, plugging in leaves it off until the TV shows it
 is on again. A cold boot wakes it regardless.
 
+## Playing a video
+
+The remote and the keyboard do the same thing in mpv. Left and Right skip 10
+seconds, and repeating or holding them speeds up: 10, 10, 20, 30, 60, then 120
+seconds a press. Changing direction or leaving them alone for 1.2 seconds starts
+over. Up and Down skip a minute. Seeks stop at the start and 5 seconds before the
+end, so a long fast-forward does not end the episode.
+
+Starting, seeking, pausing and resuming show the title, a progress bar, and the
+elapsed and remaining time at the bottom of the screen, for 4 seconds or for as
+long as the video is paused. A seek also shows where it lands and the size of the
+last jump. It is drawn with mpv's `osd-overlay` because mpv shows nothing of its
+own for commands sent over its IPC socket, which is how the remote reaches it.
+
 Stopping a video saves its position and playing it again resumes there. So does
 a restart, and a crash or power cut loses at most the last 30 seconds. A video
 that played to its end starts over. The last episode started per show is kept in

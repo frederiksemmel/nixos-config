@@ -1,5 +1,7 @@
 use crate::command::Command;
 use crate::display::{self, Mode};
+use crate::overlay::{self, View};
+use crate::seek::{Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
 use serde_json::{Value, json};
 use std::env;
@@ -9,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const POLL: Duration = Duration::from_millis(50);
 const STOP: &str = "quit-watch-later 10";
@@ -17,29 +19,30 @@ const STOPPED_EXIT_CODE: i32 = 10;
 const ENDED_EXIT_CODE: i32 = 11;
 const SIGNALLED_EXIT_CODE: i32 = 4;
 const SAVE_EVERY: f64 = 30.0;
-const SELECT_MESSAGE: &str = "semmeltv-select";
-const SELECT: &str = "script-message semmeltv-select";
+const SHOWN_FOR: Duration = Duration::from_secs(4);
+const TICK: Duration = Duration::from_millis(100);
+const LONG_JUMP: i32 = 60;
+const OSD_FONT: &str = "Inter";
+const OSD_FONTS: &str = env!("SEMMELTV_FONT_DIR");
 const POSITION_ID: u64 = 1;
 const DURATION_ID: u64 = 2;
 const ENDED_ID: u64 = 3;
 const FRAME_RATE_ID: u64 = 4;
+const PAUSE_ID: u64 = 5;
 const PROMPT_ID: u64 = 1;
 const LOADING_ID: u64 = 2;
-const PROMPT_WIDTH: u32 = 1920;
-const PROMPT_HEIGHT: u32 = 1080;
-const PROMPT_PILL: &str =
-    "m 42 0 l 258 0 b 281 0 300 19 300 42 b 300 65 281 84 258 84 l 42 84 b 19 84 0 65 0 42 b 0 19 19 0 42 0";
+const OVERLAY_ID: u64 = 3;
 const LOADING_TEXT: &str = r"{\an5\pos(960,540)\bord0\shad0\b1\fs64\1c&HFFFFFF&}Loading…";
 const KEYBINDS: [(&str, &str); 9] = [
     ("ESC", STOP),
     ("BS", STOP),
-    ("ENTER", SELECT),
-    ("KP_ENTER", SELECT),
-    ("SPACE", "cycle pause"),
-    ("LEFT", "seek -10"),
-    ("RIGHT", "seek 10"),
-    ("UP", "seek 60"),
-    ("DOWN", "seek -60"),
+    ("ENTER", "script-message semmeltv-select"),
+    ("KP_ENTER", "script-message semmeltv-select"),
+    ("SPACE", "script-message semmeltv-play-pause"),
+    ("LEFT", "repeatable script-message semmeltv-left"),
+    ("RIGHT", "repeatable script-message semmeltv-right"),
+    ("UP", "repeatable script-message semmeltv-up"),
+    ("DOWN", "repeatable script-message semmeltv-down"),
 ];
 
 type Shared = Arc<Mutex<Playback>>;
@@ -67,7 +70,8 @@ enum Event {
     Duration(f64),
     Ended,
     FrameRate(f64),
-    Select,
+    Paused(bool),
+    Key(Command),
     Started,
 }
 
@@ -80,25 +84,45 @@ impl Event {
                 DURATION_ID => Some(Self::Duration(message["data"].as_f64()?)),
                 FRAME_RATE_ID => Some(Self::FrameRate(message["data"].as_f64()?)),
                 ENDED_ID => message["data"].as_bool()?.then_some(Self::Ended),
+                PAUSE_ID => Some(Self::Paused(message["data"].as_bool()?)),
                 _ => None,
             },
-            "client-message" => (message["args"][0].as_str()? == SELECT_MESSAGE).then_some(Self::Select),
+            "client-message" => key_command(message["args"][0].as_str()?).map(Self::Key),
             "playback-restart" => Some(Self::Started),
             _ => None,
         }
     }
 }
 
+fn key_command(message: &str) -> Option<Command> {
+    match message {
+        "semmeltv-select" => Some(Command::Select),
+        "semmeltv-play-pause" => Some(Command::PlayPause),
+        "semmeltv-left" => Some(Command::Left),
+        "semmeltv-right" => Some(Command::Right),
+        "semmeltv-up" => Some(Command::Up),
+        "semmeltv-down" => Some(Command::Down),
+        _ => None,
+    }
+}
+
 #[derive(Default)]
 struct Playback {
     stream: Option<UnixStream>,
+    name: String,
     position: f64,
+    duration: f64,
     saved: f64,
+    started: bool,
+    paused: bool,
     ended: bool,
+    closed: bool,
     segments: Vec<Segment>,
     prompt: Option<Kind>,
-    started: bool,
     display_mode: Option<Mode>,
+    scrub: Scrub,
+    shown_until: Option<Instant>,
+    drawn: String,
 }
 
 impl Playback {
@@ -108,10 +132,51 @@ impl Playback {
         }
     }
 
+    fn command(&mut self, command: Command, now: Instant) {
+        match command {
+            Command::Back => self.send(json!(["quit-watch-later", STOPPED_EXIT_CODE])),
+            Command::Select => {
+                self.scrub.cancel();
+                let message = self.select();
+                self.send(message);
+            }
+            Command::PlayPause => self.send(json!(["cycle", "pause"])),
+            Command::Left => self.step(Direction::Back, now),
+            Command::Right => self.step(Direction::Forward, now),
+            Command::Up => self.jump(LONG_JUMP, now),
+            Command::Down => self.jump(-LONG_JUMP, now),
+        }
+        self.wake(now);
+        self.present(now);
+    }
+
+    fn step(&mut self, direction: Direction, now: Instant) {
+        if self.started {
+            let order = self.scrub.step(direction, self.position, self.duration, now);
+            self.seek(order);
+        }
+    }
+
+    fn jump(&mut self, seconds: i32, now: Instant) {
+        if self.started {
+            let order = self.scrub.jump(seconds, self.position, self.duration, now);
+            self.seek(order);
+        }
+    }
+
+    fn seek(&mut self, order: Option<Order>) {
+        if let Some(order) = order {
+            self.send(seek_command(order));
+            if order.exact {
+                self.position = order.to;
+            }
+        }
+    }
+
     fn select(&self) -> Value {
         match segments::at(&self.segments, self.position) {
             Some(segment) => json!(["seek", segment.end, "absolute"]),
-            None => json!(["keypress", "SPACE"]),
+            None => json!(["cycle", "pause"]),
         }
     }
 
@@ -120,6 +185,52 @@ impl Playback {
         if prompt != self.prompt {
             self.prompt = prompt;
             self.send(prompt_command(prompt));
+        }
+    }
+
+    fn begin(&mut self, now: Instant) {
+        if !self.started {
+            self.started = true;
+            self.paused = false;
+            self.wake(now);
+        }
+    }
+
+    fn wake(&mut self, now: Instant) {
+        self.shown_until = Some(now + SHOWN_FOR);
+    }
+
+    fn tick(&mut self, now: Instant) {
+        if !self.ended {
+            let order = self.scrub.poll(now);
+            self.seek(order);
+            self.present(now);
+        }
+    }
+
+    fn shown(&self, now: Instant) -> bool {
+        self.started && (self.paused || self.shown_until.is_some_and(|until| now < until))
+    }
+
+    fn view(&self, now: Instant) -> View<'_> {
+        View {
+            title: &self.name,
+            position: self.scrub.target().unwrap_or(self.position),
+            duration: self.duration,
+            paused: self.paused,
+            jump: self.scrub.jump_shown(now),
+        }
+    }
+
+    fn present(&mut self, now: Instant) {
+        let drawn = if self.shown(now) {
+            self.view(now).render()
+        } else {
+            String::new()
+        };
+        if drawn != self.drawn {
+            self.send(overlay_command(&drawn));
+            self.drawn = drawn;
         }
     }
 
@@ -142,12 +253,38 @@ fn save_due(saved: f64, position: f64) -> bool {
     (position - saved).abs() >= SAVE_EVERY
 }
 
+fn seek_command(order: Order) -> Value {
+    let mode = if order.exact {
+        "absolute+exact"
+    } else {
+        "absolute+keyframes"
+    };
+    json!(["seek", order.to, mode])
+}
+
+fn overlay_command(data: &str) -> Value {
+    if data.is_empty() {
+        return json!({ "name": "osd-overlay", "id": OVERLAY_ID, "format": "none", "data": "" });
+    }
+    json!({
+        "name": "osd-overlay",
+        "id": OVERLAY_ID,
+        "format": "ass-events",
+        "data": data,
+        "res_x": overlay::WIDTH,
+        "res_y": overlay::HEIGHT,
+    })
+}
+
 fn prompt_command(prompt: Option<Kind>) -> Value {
     match prompt {
         Some(kind) => {
-            let pill = format!(r"{{\an7\pos(1560,930)\bord0\shad0\1c&HFFFFFF&\p1}}{PROMPT_PILL}{{\p0}}");
+            let pill = format!(
+                r"{{\an7\pos(1524,792)\bord0\shad0\1c&HFFFFFF&\p1}}{}{{\p0}}",
+                overlay::pill(300.0, 84.0)
+            );
             let label = format!(
-                r"{{\an5\pos(1710,972)\bord0\shad0\b1\fs44\1c&H120D0B&}}{}",
+                r"{{\an5\pos(1674,834)\bord0\shad0\b1\fs44\1c&H120D0B&}}{}",
                 kind.label()
             );
             json!({
@@ -155,8 +292,9 @@ fn prompt_command(prompt: Option<Kind>) -> Value {
                 "id": PROMPT_ID,
                 "format": "ass-events",
                 "data": format!("{pill}\n{label}"),
-                "res_x": PROMPT_WIDTH,
-                "res_y": PROMPT_HEIGHT,
+                "res_x": overlay::WIDTH,
+                "res_y": overlay::HEIGHT,
+                "z": 1,
             })
         }
         None => json!({ "name": "osd-overlay", "id": PROMPT_ID, "format": "none", "data": "" }),
@@ -174,8 +312,8 @@ fn loading_command(shown: bool) -> Value {
         "id": LOADING_ID,
         "format": format,
         "data": data,
-        "res_x": PROMPT_WIDTH,
-        "res_y": PROMPT_HEIGHT,
+        "res_x": overlay::WIDTH,
+        "res_y": overlay::HEIGHT,
     })
 }
 
@@ -184,7 +322,12 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn start(path: &Path, title: Option<Title>, on_exit: impl FnOnce(Finish) + Send + 'static) -> io::Result<Self> {
+    pub fn start(
+        path: &Path,
+        name: String,
+        title: Option<Title>,
+        on_exit: impl FnOnce(Finish) + Send + 'static,
+    ) -> io::Result<Self> {
         let socket_path = socket_path();
         let _ = std::fs::remove_file(&socket_path);
         let mut child = Process::new("mpv")
@@ -197,12 +340,18 @@ impl Player {
             .arg("--hwdec=drm")
             .arg("--gpu-context=wayland")
             .arg("--profile=fast")
+            .arg("--no-osc")
+            .arg(format!("--osd-font={OSD_FONT}"))
+            .arg(format!("--osd-fonts-dir={OSD_FONTS}"))
             .arg(format!("--input-ipc-server={}", socket_path.display()))
             .arg("--")
             .arg(path)
             .stdin(Stdio::null())
             .spawn()?;
-        let playback = Shared::default();
+        let playback = Shared::new(Mutex::new(Playback {
+            name,
+            ..Playback::default()
+        }));
         let shared = playback.clone();
         thread::spawn(move || {
             connect(&mut child, &socket_path, &shared, title);
@@ -217,17 +366,7 @@ impl Player {
     }
 
     pub fn command(&self, command: Command) {
-        let mut playback = self.playback.lock().unwrap();
-        let message = match command {
-            Command::Back => json!(["quit-watch-later", STOPPED_EXIT_CODE]),
-            Command::Select => playback.select(),
-            Command::PlayPause => json!(["keypress", "SPACE"]),
-            Command::Left => json!(["keypress", "LEFT"]),
-            Command::Right => json!(["keypress", "RIGHT"]),
-            Command::Up => json!(["keypress", "UP"]),
-            Command::Down => json!(["keypress", "DOWN"]),
-        };
-        playback.send(message);
+        self.playback.lock().unwrap().command(command, Instant::now());
     }
 }
 
@@ -247,12 +386,13 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             let _ = send(&mut stream, json!(["observe_property", ENDED_ID, "eof-reached"]));
             let _ = send(&mut stream, loading_command(true));
             let _ = send(&mut stream, json!(["observe_property", FRAME_RATE_ID, "container-fps"]));
-            if title.is_some() {
-                let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
-            }
+            let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
+            let _ = send(&mut stream, json!(["observe_property", PAUSE_ID, "pause"]));
             let events = stream.try_clone();
             shared.lock().unwrap().stream = Some(stream);
             if let Ok(events) = events {
+                let ticking = shared.clone();
+                thread::spawn(move || tick(&ticking));
                 let shared = shared.clone();
                 thread::spawn(move || listen(events, &shared, title));
             }
@@ -272,16 +412,19 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 playback.save_position();
             }
             Some(Event::Duration(duration)) => {
+                shared.lock().unwrap().duration = duration;
                 if let Some(title) = title.take() {
                     let shared = shared.clone();
                     thread::spawn(move || find_segments(title, duration, &shared));
                 }
             }
             Some(Event::Ended) => shared.lock().unwrap().end(),
-            Some(Event::Select) => {
+            Some(Event::Paused(paused)) => {
+                let now = Instant::now();
                 let mut playback = shared.lock().unwrap();
-                let message = playback.select();
-                playback.send(message);
+                playback.paused = paused;
+                playback.wake(now);
+                playback.present(now);
             }
             Some(Event::FrameRate(fps)) => {
                 let matched = {
@@ -297,12 +440,27 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 let mut playback = shared.lock().unwrap();
                 playback.send(loading_command(false));
                 if !playback.started {
-                    playback.started = true;
                     playback.send(json!(["set_property", "pause", false]));
+                    playback.begin(Instant::now());
                 }
             }
+            Some(Event::Key(command)) => shared.lock().unwrap().command(command, Instant::now()),
             None => {}
         }
+    }
+    shared.lock().unwrap().closed = true;
+}
+
+fn tick(shared: &Shared) {
+    loop {
+        {
+            let mut playback = shared.lock().unwrap();
+            if playback.closed {
+                return;
+            }
+            playback.tick(Instant::now());
+        }
+        thread::sleep(TICK);
     }
 }
 
@@ -318,7 +476,8 @@ fn find_segments(title: Title, duration: f64, shared: &Shared) {
 }
 
 fn send(stream: &mut UnixStream, command: Value) -> io::Result<()> {
-    writeln!(stream, "{}", json!({ "command": command }))
+    let line = format!("{}\n", json!({ "command": command }));
+    stream.write_all(line.as_bytes())
 }
 
 #[cfg(test)]
@@ -341,13 +500,15 @@ mod tests {
         let position = r#"{"event":"property-change","id":1,"name":"time-pos","data":12.5}"#;
         let duration = r#"{"event":"property-change","id":2,"name":"duration","data":2730.0}"#;
         let end = r#"{"event":"property-change","id":3,"name":"eof-reached","data":true}"#;
+        let pause = r#"{"event":"property-change","id":5,"name":"pause","data":true}"#;
         let key = r#"{"event":"client-message","args":["semmeltv-select"]}"#;
         assert_eq!(Event::parse(position), Some(Event::Position(12.5)));
         assert_eq!(Event::parse(duration), Some(Event::Duration(2730.0)));
         assert_eq!(Event::parse(end), Some(Event::Ended));
         let frame_rate = r#"{"event":"property-change","id":4,"name":"container-fps","data":23.976}"#;
         assert_eq!(Event::parse(frame_rate), Some(Event::FrameRate(23.976)));
-        assert_eq!(Event::parse(key), Some(Event::Select));
+        assert_eq!(Event::parse(pause), Some(Event::Paused(true)));
+        assert_eq!(Event::parse(key), Some(Event::Key(Command::Select)));
     }
 
     #[test]
@@ -362,6 +523,7 @@ mod tests {
             r#"{"event":"property-change","id":1,"name":"time-pos"}"#,
             r#"{"event":"property-change","id":3,"name":"eof-reached","data":false}"#,
             r#"{"event":"client-message","args":["something-else"]}"#,
+            r#"{"event":"property-change","id":5,"name":"pause"}"#,
             "not json",
         ] {
             assert_eq!(Event::parse(line), None, "{line}");
@@ -420,6 +582,158 @@ mod tests {
         );
     }
 
+    #[test]
+    fn every_key_binding_message_reaches_a_command() {
+        for (_, action) in KEYBINDS {
+            if let Some((_, message)) = action.split_once("script-message ") {
+                assert!(key_command(message).is_some(), "{message}");
+            }
+        }
+    }
+
+    fn sent_by(act: impl FnOnce(&mut Playback), mut playback: Playback) -> Vec<Value> {
+        let (stream, mut mpv) = UnixStream::pair().unwrap();
+        playback.stream = Some(stream);
+        act(&mut playback);
+        drop(playback);
+        let mut sent = String::new();
+        mpv.read_to_string(&mut sent).unwrap();
+        sent.lines()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap()["command"].clone())
+            .collect()
+    }
+
+    fn playing() -> Playback {
+        Playback {
+            name: "Sintel".to_string(),
+            position: 100.0,
+            duration: 5400.0,
+            started: true,
+            ..Playback::default()
+        }
+    }
+
+    fn is_overlay(command: &Value) -> bool {
+        command["name"] == "osd-overlay" && command["id"] == OVERLAY_ID
+    }
+
+    #[test]
+    fn an_arrow_seeks_and_draws_the_target_and_the_jump() {
+        let now = Instant::now();
+        let sent = sent_by(|playback| playback.command(Command::Right, now), playing());
+        assert_eq!(sent[0], json!(["seek", 110.0, "absolute+exact"]));
+        assert!(is_overlay(&sent[1]));
+        assert!(sent[1]["data"].as_str().unwrap().contains("+10s"));
+    }
+
+    #[test]
+    fn up_and_down_jump_a_minute() {
+        let now = Instant::now();
+        let up = sent_by(|playback| playback.command(Command::Up, now), playing());
+        assert_eq!(up[0], json!(["seek", 160.0, "absolute+exact"]));
+        let down = sent_by(|playback| playback.command(Command::Down, now), playing());
+        assert_eq!(down[0], json!(["seek", 40.0, "absolute+exact"]));
+    }
+
+    #[test]
+    fn arrows_do_nothing_before_the_first_frame() {
+        let now = Instant::now();
+        let sent = sent_by(|playback| playback.command(Command::Right, now), Playback::default());
+        assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn the_overlay_hides_after_four_seconds_without_input() {
+        let now = Instant::now();
+        let sent = sent_by(
+            |playback| {
+                playback.command(Command::PlayPause, now);
+                playback.tick(now + Duration::from_millis(3900));
+                playback.tick(now + SHOWN_FOR);
+            },
+            playing(),
+        );
+        let overlays: Vec<_> = sent.iter().filter(|command| is_overlay(command)).collect();
+        assert_eq!(overlays.len(), 2);
+        assert_eq!(overlays[0]["format"], "ass-events");
+        assert_eq!(overlays[1]["format"], "none");
+    }
+
+    #[test]
+    fn the_overlay_stays_while_paused() {
+        let now = Instant::now();
+        let mut playback = playing();
+        playback.paused = true;
+        playback.wake(now);
+        assert!(playback.shown(now + Duration::from_secs(600)));
+        playback.paused = false;
+        assert!(!playback.shown(now + Duration::from_secs(600)));
+    }
+
+    #[test]
+    fn nothing_is_drawn_before_playback_starts() {
+        let now = Instant::now();
+        let mut playback = Playback::default();
+        playback.wake(now);
+        assert!(!playback.shown(now));
+        playback.begin(now);
+        assert!(playback.shown(now));
+    }
+
+    #[test]
+    fn a_seek_settles_on_its_exact_target_from_the_tick() {
+        let now = Instant::now();
+        let sent = sent_by(
+            |playback| {
+                playback.command(Command::Right, now);
+                playback.command(Command::Right, now + Duration::from_millis(200));
+                playback.tick(now + Duration::from_millis(300));
+                playback.tick(now + Duration::from_millis(900));
+                assert_eq!(playback.position, 120.0);
+            },
+            playing(),
+        );
+        let seeks: Vec<_> = sent.iter().filter(|command| command[0] == "seek").collect();
+        assert_eq!(
+            seeks,
+            [
+                &json!(["seek", 110.0, "absolute+exact"]),
+                &json!(["seek", 120.0, "absolute+keyframes"]),
+                &json!(["seek", 120.0, "absolute+exact"]),
+            ]
+        );
+    }
+
+    #[test]
+    fn the_tick_sends_nothing_after_the_end() {
+        let now = Instant::now();
+        let mut ended = playing();
+        ended.ended = true;
+        ended.wake(now);
+        assert!(sent_by(|playback| playback.tick(now), ended).is_empty());
+    }
+
+    #[test]
+    fn ok_skips_a_section_even_right_after_an_arrow() {
+        let now = Instant::now();
+        let during = Playback {
+            started: true,
+            duration: 2700.0,
+            ..during_the_intro()
+        };
+        let sent = sent_by(
+            |playback| {
+                playback.command(Command::Right, now);
+                playback.position = 15.0;
+                playback.command(Command::Select, now + Duration::from_millis(100));
+                playback.tick(now + Duration::from_secs(2));
+            },
+            during,
+        );
+        let seeks: Vec<_> = sent.iter().filter(|command| command[0] == "seek").collect();
+        assert_eq!(seeks.last(), Some(&&json!(["seek", 20.0, "absolute"])));
+    }
+
     fn during_the_intro() -> Playback {
         Playback {
             position: 15.0,
@@ -437,7 +751,7 @@ mod tests {
         let mut playback = during_the_intro();
         assert_eq!(playback.select(), json!(["seek", 20.0, "absolute"]));
         playback.position = 20.0;
-        assert_eq!(playback.select(), json!(["keypress", "SPACE"]));
+        assert_eq!(playback.select(), json!(["cycle", "pause"]));
     }
 
     #[test]

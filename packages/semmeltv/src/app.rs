@@ -397,7 +397,7 @@ impl App {
                 ui.invoke_playback_finished(finish != Finish::Failed, finish == Finish::Ended)
             });
         };
-        match Player::start(&source, self.title(path), finished) {
+        match Player::start(&source, self.caption(path), self.title(path), finished) {
             Ok(player) => {
                 self.player = Some(player);
                 self.record_start(path);
@@ -417,6 +417,14 @@ impl App {
         });
         let paths = std::iter::once(path.to_path_buf()).chain(next).collect();
         let _ = self.fetcher.send(paths);
+    }
+
+    fn caption(&self, path: &Path) -> String {
+        if let Some((show, episode)) = self.nav.library().find_episode(path) {
+            return format!("{} · {}", show.title, self.episode_label(show, episode));
+        }
+        let movie = self.nav.library().movies.iter().find(|movie| movie.path == path);
+        movie.map_or_else(|| path.display().to_string(), |movie| movie.title.clone())
     }
 
     fn title(&self, path: &Path) -> Option<Title> {
