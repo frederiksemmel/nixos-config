@@ -20,6 +20,12 @@ playback device named SemmelTV. Machines without CEC simply skip this.
 Arrows move, OK selects, Back or Exit goes back, and Play and Pause toggle
 playback. During a video the arrows seek, and Stop quits.
 
+The app wakes the TV and switches it to its input when the machine cold boots
+with HDMI connected, or when HDMI is plugged in after being out for at least 10
+seconds. Restarting the app never wakes it, and neither does a shorter hot-plug
+pulse. Once the TV sends Standby, plugging in leaves it off until the TV shows it
+is on again. A cold boot wakes it regardless.
+
 Stopping a video saves its position and playing it again resumes there. So does
 a restart, and a crash or power cut loses at most the last 30 seconds. A video
 that played to its end starts over. The last episode started per show is kept in

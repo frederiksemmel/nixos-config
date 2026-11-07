@@ -6,6 +6,7 @@ use cec_linux::{
 };
 use std::fs;
 use std::io;
+use std::mem;
 use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -14,6 +15,8 @@ const DEVICE_NAME: &str = "SemmelTV";
 const MENU_ACTIVATED: u8 = 0;
 const POWER_ON: u8 = 0;
 const REPEAT_WINDOW: Duration = Duration::from_millis(600);
+const MIN_UNPLUGGED: Duration = Duration::from_secs(10);
+const COLD_BOOT_UPTIME: Duration = Duration::from_secs(180);
 
 pub fn spawn(remote: Remote) {
     for path in adapters(Path::new("/dev")) {
@@ -46,13 +49,23 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
     let device = CecDevice::open(path)?;
     device.set_mode(CecModeInitiator::Send, CecModeFollower::All)?;
     claim_address(&device)?;
+    let plugged = device.get_phys()? != CecPhysicalAddress::INVALID;
+    let mut wake = TvWake::start(plugged, uptime(), Instant::now());
     let mut keys = KeyFilter::default();
     loop {
         let ready = device.poll(PollFlags::POLLIN | PollFlags::POLLPRI, PollTimeout::NONE)?;
         if ready.contains(PollFlags::POLLPRI) {
             if let CecEvent::StateChange(state) = device.get_event()? {
-                if state.phys_addr != CecPhysicalAddress::INVALID {
-                    announce(&device)?;
+                let plugged = state.phys_addr != CecPhysicalAddress::INVALID;
+                match wake.link_changed(plugged, !state.log_addr_mask.is_empty(), Instant::now()) {
+                    Greeting::Silent => {}
+                    Greeting::Announce => announce(&device)?,
+                    Greeting::Wake => {
+                        if let Err(error) = turn_on_tv(&device) {
+                            eprintln!("{}: Image View On failed: {error}", path.display());
+                        }
+                        announce(&device)?;
+                    }
                 }
             }
         }
@@ -64,6 +77,7 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
             if !message.is_ok() {
                 continue;
             }
+            wake.heard(message.initiator(), opcode);
             let own_address = device.get_phys()?;
             match react(opcode, message.parameters(), own_address) {
                 Reaction::Ignore => {}
@@ -107,6 +121,10 @@ fn own_logical_address(device: &CecDevice) -> io::Result<CecLogicalAddress> {
         .first()
         .copied()
         .ok_or_else(|| io::Error::other("no logical address claimed"))
+}
+
+fn turn_on_tv(device: &CecDevice) -> io::Result<()> {
+    device.turn_on(own_logical_address(device)?, CecLogicalAddress::Tv)
 }
 
 fn announce(device: &CecDevice) -> io::Result<()> {
@@ -177,6 +195,70 @@ impl KeyFilter {
     fn release(&mut self) {
         self.held = None;
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum Greeting {
+    Silent,
+    Announce,
+    Wake,
+}
+
+struct TvWake {
+    unplugged_since: Option<Instant>,
+    wake_owed: bool,
+    tv_off: bool,
+}
+
+impl TvWake {
+    fn start(plugged: bool, uptime: Duration, now: Instant) -> Self {
+        Self {
+            unplugged_since: (!plugged).then_some(now),
+            wake_owed: plugged && uptime < COLD_BOOT_UPTIME,
+            tv_off: false,
+        }
+    }
+
+    fn link_changed(&mut self, plugged: bool, claimed: bool, now: Instant) -> Greeting {
+        if !plugged {
+            self.unplugged_since.get_or_insert(now);
+            self.wake_owed = false;
+            return Greeting::Silent;
+        }
+        if let Some(since) = self.unplugged_since.take() {
+            self.wake_owed = now - since >= MIN_UNPLUGGED && !self.tv_off;
+        }
+        if !claimed {
+            return Greeting::Silent;
+        }
+        if mem::take(&mut self.wake_owed) {
+            Greeting::Wake
+        } else {
+            Greeting::Announce
+        }
+    }
+
+    fn heard(&mut self, initiator: CecLogicalAddress, opcode: CecOpcode) {
+        match opcode {
+            CecOpcode::Standby => self.tv_off = true,
+            CecOpcode::RequestActiveSource | CecOpcode::SetStreamPath if initiator == CecLogicalAddress::Tv => {
+                self.tv_off = false;
+            }
+            _ => {}
+        }
+    }
+}
+
+fn uptime() -> Duration {
+    fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|contents| parse_uptime(&contents))
+        .unwrap_or(Duration::MAX)
+}
+
+fn parse_uptime(contents: &str) -> Option<Duration> {
+    let seconds = contents.split_whitespace().next()?.parse().ok()?;
+    Duration::try_from_secs_f64(seconds).ok()
 }
 
 #[cfg(test)]
@@ -265,6 +347,169 @@ mod tests {
         let start = Instant::now();
         keys.press(Command::Right, start);
         assert!(keys.press(Command::Right, start + Duration::from_millis(200)).is_some());
+    }
+
+    const COLD: Duration = Duration::from_secs(45);
+    const WARM: Duration = Duration::from_secs(3600);
+
+    fn secs(seconds: f64) -> Duration {
+        Duration::from_secs_f64(seconds)
+    }
+
+    fn running(start: Instant) -> TvWake {
+        let mut wake = TvWake::start(true, WARM, start);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
+        wake
+    }
+
+    fn replug(wake: &mut TvWake, at: Instant, absent: Duration) -> Greeting {
+        assert_eq!(wake.link_changed(false, false, at), Greeting::Silent);
+        wake.link_changed(true, true, at + absent)
+    }
+
+    #[test]
+    fn plugging_in_after_ten_seconds_wakes_the_tv_once() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        assert_eq!(replug(&mut wake, start, secs(10.0)), Greeting::Wake);
+        assert_eq!(wake.link_changed(true, true, start + secs(11.0)), Greeting::Announce);
+    }
+
+    #[test]
+    fn a_short_hot_plug_pulse_only_announces() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        assert_eq!(replug(&mut wake, start, secs(0.5)), Greeting::Announce);
+        assert_eq!(replug(&mut wake, start + secs(1.0), secs(9.9)), Greeting::Announce);
+    }
+
+    #[test]
+    fn repeated_unplug_events_keep_the_first_timestamp() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        wake.link_changed(false, false, start);
+        wake.link_changed(false, false, start + secs(9.0));
+        assert_eq!(wake.link_changed(true, true, start + secs(10.0)), Greeting::Wake);
+    }
+
+    #[test]
+    fn a_change_of_valid_address_never_wakes() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        assert_eq!(wake.link_changed(true, true, start + secs(60.0)), Greeting::Announce);
+    }
+
+    #[test]
+    fn the_wake_waits_for_a_logical_address() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        wake.link_changed(false, false, start);
+        assert_eq!(wake.link_changed(true, false, start + secs(20.0)), Greeting::Silent);
+        assert_eq!(wake.link_changed(true, true, start + secs(20.1)), Greeting::Wake);
+    }
+
+    #[test]
+    fn nothing_is_sent_without_a_logical_address() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        assert_eq!(wake.link_changed(true, false, start + secs(1.0)), Greeting::Silent);
+    }
+
+    #[test]
+    fn unplugging_before_the_claim_cancels_the_wake() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        wake.link_changed(false, false, start);
+        wake.link_changed(true, false, start + secs(20.0));
+        wake.link_changed(false, false, start + secs(20.1));
+        assert_eq!(wake.link_changed(true, true, start + secs(20.2)), Greeting::Announce);
+    }
+
+    #[test]
+    fn a_cold_boot_wakes_the_tv_once() {
+        let start = Instant::now();
+        let mut wake = TvWake::start(true, COLD, start);
+        assert_eq!(wake.link_changed(true, false, start), Greeting::Silent);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Wake);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
+    }
+
+    #[test]
+    fn a_cold_boot_ends_at_three_minutes() {
+        let start = Instant::now();
+        let mut wake = TvWake::start(true, secs(179.9), start);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Wake);
+        let mut wake = TvWake::start(true, secs(180.0), start);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
+    }
+
+    #[test]
+    fn a_restart_announces_without_waking() {
+        let start = Instant::now();
+        let mut wake = TvWake::start(true, WARM, start);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
+    }
+
+    #[test]
+    fn an_unknown_uptime_counts_as_a_restart() {
+        let start = Instant::now();
+        let mut wake = TvWake::start(true, Duration::MAX, start);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
+    }
+
+    #[test]
+    fn starting_unplugged_counts_as_absent_from_the_start() {
+        let start = Instant::now();
+        let mut soon = TvWake::start(false, COLD, start);
+        assert_eq!(soon.link_changed(true, true, start + secs(5.0)), Greeting::Announce);
+        let mut later = TvWake::start(false, WARM, start);
+        assert_eq!(later.link_changed(true, true, start + secs(10.0)), Greeting::Wake);
+    }
+
+    #[test]
+    fn standby_suppresses_hot_plug_wakes() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        wake.heard(CecLogicalAddress::Tv, CecOpcode::Standby);
+        assert_eq!(replug(&mut wake, start, secs(60.0)), Greeting::Announce);
+        assert_eq!(replug(&mut wake, start + secs(70.0), secs(60.0)), Greeting::Announce);
+    }
+
+    #[test]
+    fn a_tv_that_is_on_again_can_be_woken_again() {
+        for opcode in [CecOpcode::RequestActiveSource, CecOpcode::SetStreamPath] {
+            let start = Instant::now();
+            let mut wake = running(start);
+            wake.heard(CecLogicalAddress::Tv, CecOpcode::Standby);
+            wake.heard(CecLogicalAddress::Tv, opcode);
+            assert_eq!(replug(&mut wake, start, secs(60.0)), Greeting::Wake, "{opcode:?}");
+        }
+    }
+
+    #[test]
+    fn only_the_tv_can_lift_the_suppression() {
+        let start = Instant::now();
+        let mut wake = running(start);
+        wake.heard(CecLogicalAddress::Tv, CecOpcode::Standby);
+        wake.heard(CecLogicalAddress::Playback1, CecOpcode::RequestActiveSource);
+        wake.heard(CecLogicalAddress::Tv, CecOpcode::GiveDevicePowerStatus);
+        assert_eq!(replug(&mut wake, start, secs(60.0)), Greeting::Announce);
+    }
+
+    #[test]
+    fn a_cold_boot_wakes_even_after_standby() {
+        let start = Instant::now();
+        let mut wake = TvWake::start(true, COLD, start);
+        wake.heard(CecLogicalAddress::Tv, CecOpcode::Standby);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Wake);
+    }
+
+    #[test]
+    fn uptime_is_the_first_field_of_proc_uptime() {
+        assert_eq!(parse_uptime("123.50 4567.89\n"), Some(secs(123.5)));
+        assert_eq!(parse_uptime(""), None);
+        assert_eq!(parse_uptime("nonsense 1.0"), None);
+        assert_eq!(parse_uptime("-1.0 1.0"), None);
     }
 
     #[test]
