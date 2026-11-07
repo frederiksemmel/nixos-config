@@ -46,9 +46,6 @@ in
       [
         stateDir
         "${stateDir}/cache"
-        "${stateDir}/library"
-        "${stateDir}/library/Movies"
-        "${stateDir}/library/Series"
       ]
       (_: {
         d = {

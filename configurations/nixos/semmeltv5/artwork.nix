@@ -19,7 +19,10 @@ in
 
   systemd.services.semmeltv-artwork = {
     description = "Download SemmelTV artwork from TMDB";
-    after = [ "network-online.target" ];
+    after = [
+      "network-online.target"
+      "semmeltv-mount.service"
+    ];
     wants = [ "network-online.target" ];
     environment = {
       SEMMELTV_LIBRARY = "${stateDir}/library";
@@ -36,7 +39,8 @@ in
   systemd.timers.semmeltv-artwork = {
     wantedBy = [ "timers.target" ];
     timerConfig = {
-      OnCalendar = "daily";
+      OnCalendar = "hourly";
+      OnBootSec = "5min";
       Persistent = true;
     };
   };

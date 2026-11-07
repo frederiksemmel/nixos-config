@@ -6,7 +6,10 @@ in
 {
   "spadesvision_gdrive_token.age".publicKeys = [ frederik ];
   "spadesvision_gdrive_client_secret.age".publicKeys = [ frederik ];
-  "pcloud_token.age".publicKeys = [ frederik ];
+  "pcloud_token.age".publicKeys = [
+    frederik
+    semmeltv5
+  ];
   "spadesvision_ssh_config.age".publicKeys = [ frederik ];
   "spadesvision_ssh_config_agent.age".publicKeys = [ frederik ];
   "beast_linear_api_key.age".publicKeys = [ frederik ];
