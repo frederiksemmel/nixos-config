@@ -2,6 +2,7 @@ use crate::artwork::Matches;
 use crate::library::{self, normalize, sort_title};
 use crate::manifest::{Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
 use crate::parse::{self, FileEntry, Parsed, ParsedEpisode, ParsedMovie, ParsedShow};
+use crate::tags;
 use crate::tmdb::{Client, Found, Kind, Lookup};
 use std::collections::{BTreeSet, HashSet};
 use std::fs;
@@ -199,6 +200,7 @@ pub fn merge(
         mut report,
         ..
     } = merger;
+    fill_tags(&mut manifest);
     sort(&mut manifest);
     let on_disk: BTreeSet<&str> = files.iter().filter_map(|file| file.path.to_str()).collect();
     let listed: BTreeSet<&str> = manifest_paths(&manifest).collect();
@@ -218,6 +220,27 @@ fn manifest_paths(manifest: &Manifest) -> impl Iterator<Item = &str> {
     episodes
         .map(|episode| episode.path.as_str())
         .chain(manifest.movie.iter().map(|movie| movie.path.as_str()))
+}
+
+fn fill_tags(manifest: &mut Manifest) {
+    for episode in manifest.show.iter_mut().flat_map(|show| &mut show.episodes) {
+        fill(
+            &episode.path,
+            &mut episode.video,
+            &mut episode.resolution,
+            &mut episode.audio,
+        );
+    }
+    for movie in &mut manifest.movie {
+        fill(&movie.path, &mut movie.video, &mut movie.resolution, &mut movie.audio);
+    }
+}
+
+fn fill(path: &str, video: &mut Option<String>, resolution: &mut Option<String>, audio: &mut Option<String>) {
+    let tags = tags::from_path(path);
+    *video = video.take().or(tags.video);
+    *resolution = resolution.take().or(tags.resolution);
+    *audio = audio.take().or(tags.audio);
 }
 
 fn sort(manifest: &mut Manifest) {
@@ -347,6 +370,9 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             title: parsed.title.clone(),
             path,
             added,
+            video: None,
+            resolution: None,
+            audio: None,
             review,
         });
     }
@@ -388,6 +414,9 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             tmdb: identity.as_ref().map(|identity| identity.id),
             path,
             added: self.added_date(parsed.modified),
+            video: None,
+            resolution: None,
+            audio: None,
             review: unsure || duplicate,
         });
     }
@@ -557,6 +586,55 @@ mod tests {
         let (again, report) = import(Some(manifest), &tree);
         assert_eq!(again.render(), edited.render());
         assert!(report.added.is_empty() && report.review.is_empty());
+    }
+
+    #[test]
+    fn a_new_import_reads_the_tags_from_the_names() {
+        let (manifest, _) = import(
+            None,
+            &files(&[
+                ("Movies/Up (2009)/Up.2009.1080p.BluRay.x265.AAC5.1.mkv", "2021-03-04"),
+                (
+                    "Series/Dark/Dark.S01E01.720p.WEBRip.10bit.DDP5.1.Atmos.x265.mkv",
+                    "2021-03-04",
+                ),
+            ]),
+        );
+        let movie = manifest.movie[0].tags();
+        assert_eq!(movie.video.as_deref(), Some("HEVC"));
+        assert_eq!(movie.resolution.as_deref(), Some("1080p"));
+        assert_eq!(movie.audio.as_deref(), Some("5.1"));
+        let episode = manifest.show[0].episodes[0].tags();
+        assert_eq!(episode.video.as_deref(), Some("HEVC 10-bit"));
+        assert_eq!(episode.resolution.as_deref(), Some("720p"));
+        assert_eq!(episode.audio.as_deref(), Some("5.1 Atmos"));
+    }
+
+    #[test]
+    fn importing_again_fills_missing_tags_and_keeps_hand_edits() {
+        let text = r#"[[show]]
+title = "Dark"
+episodes = [
+  { season = 1, episode = 1, path = "Series/Dark/Dark.S01E01.1080p.x265.DD5.1.mkv", added = 2021-03-04, video = "AV1" },
+]
+
+[[movie]]
+title = "Gone"
+path = "Movies/Gone/Gone.720p.x264.mkv"
+added = 2021-03-04
+review = true
+"#;
+        let tree = files(&[("Series/Dark/Dark.S01E01.1080p.x265.DD5.1.mkv", "2021-03-04")]);
+        let (first, _) = import(Some(Manifest::parse(text).unwrap()), &tree);
+        let episode = first.show[0].episodes[0].tags();
+        assert_eq!(episode.video.as_deref(), Some("AV1"));
+        assert_eq!(episode.resolution.as_deref(), Some("1080p"));
+        assert_eq!(episode.audio.as_deref(), Some("5.1"));
+        assert_eq!(first.movie[0].resolution.as_deref(), Some("720p"));
+        assert!(first.movie[0].review);
+        let (second, report) = import(Some(first.clone()), &tree);
+        assert_eq!(second.render(), first.render());
+        assert!(report.added.is_empty());
     }
 
     #[test]

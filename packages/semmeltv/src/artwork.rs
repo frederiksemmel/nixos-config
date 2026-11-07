@@ -20,6 +20,8 @@ const JPEG_QUALITY: u8 = 85;
 pub struct Matches {
     pub titles: BTreeMap<String, Matched>,
     pub episode_names: BTreeMap<String, String>,
+    #[serde(default)]
+    pub runtimes: BTreeMap<String, u32>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -50,12 +52,19 @@ impl Cache {
         self.art_dir().join(format!("{key}.jpg"))
     }
 
-    fn matches_path(&self) -> PathBuf {
+    pub fn matches_path(&self) -> PathBuf {
         self.root.join("tmdb.json")
     }
 
     fn progress_path(&self) -> PathBuf {
         self.root.join("progress.json")
+    }
+
+    pub fn watch_later_dir(&self, file: &Path) -> PathBuf {
+        let parts = file
+            .components()
+            .filter(|part| matches!(part, path::Component::Normal(_)));
+        self.root.join("watch-later").join(parts.collect::<PathBuf>())
     }
 
     pub fn load_matches(&self) -> Matches {
@@ -182,7 +191,13 @@ impl Generator<'_> {
             .flat_map(|season| &season.episodes)
             .all(|episode| self.is_current(&show.episode_key(episode)));
         let card_current = show.poster.is_some() || self.is_current(&show.key);
-        let found = if card_current && episodes_current {
+        let runtimes_known = show
+            .seasons
+            .iter()
+            .filter(|season| season.number > 0)
+            .flat_map(|season| &season.episodes)
+            .all(|episode| self.matches.runtimes.contains_key(&show.episode_key(episode)));
+        let found = if card_current && episodes_current && runtimes_known {
             None
         } else {
             self.details(tmdb::Kind::Tv, show.tmdb, &label)
@@ -215,6 +230,9 @@ impl Generator<'_> {
                 if let Some(name) = still.and_then(|still| still.name.clone()) {
                     self.matches.episode_names.insert(key.clone(), name);
                 }
+                if let Some(runtime) = still.and_then(|still| still.runtime).filter(|minutes| *minutes > 0) {
+                    self.matches.runtimes.insert(key.clone(), runtime);
+                }
                 self.fetch(
                     &key,
                     still.and_then(|still| still.still_path.as_deref()),
@@ -232,16 +250,22 @@ impl Generator<'_> {
             None => movie.title.clone(),
         };
         println!("{label}");
-        if movie.poster.is_some() || self.is_current(&movie.key) {
+        let art_current = movie.poster.is_some() || self.is_current(&movie.key);
+        if art_current && self.matches.runtimes.contains_key(&movie.key) {
             return Ok(());
         }
         let found = self.details(tmdb::Kind::Movie, movie.tmdb, &label);
-        self.fetch(
-            &movie.key,
-            found.as_ref().and_then(|f| f.backdrop.as_deref()),
-            "w780",
-            &label,
-        );
+        if let Some(runtime) = found.as_ref().and_then(|f| f.runtime) {
+            self.matches.runtimes.insert(movie.key.clone(), runtime);
+        }
+        if !art_current {
+            self.fetch(
+                &movie.key,
+                found.as_ref().and_then(|f| f.backdrop.as_deref()),
+                "w780",
+                &label,
+            );
+        }
         self.cache.save_matches(&self.matches)
     }
 }
@@ -279,6 +303,21 @@ mod tests {
         let client = Client::new(String::new());
         assert!(generate(&Library::default(), &root.join("library"), &cache, client).is_err());
         assert!(!root.exists());
+    }
+
+    #[test]
+    fn files_with_the_same_name_keep_their_saved_positions_apart() {
+        let cache = Cache::new("/cache".into());
+        let one = cache.watch_later_dir(Path::new("/lib/Series/One/S01/E01.mkv"));
+        let two = cache.watch_later_dir(Path::new("/lib/Series/Two/S01/E01.mkv"));
+        assert_eq!(one, Path::new("/cache/watch-later/lib/Series/One/S01/E01.mkv"));
+        assert_ne!(one, two);
+    }
+
+    #[test]
+    fn a_tmdb_cache_without_runtimes_still_loads() {
+        let matches: Matches = serde_json::from_str(r#"{"titles":{},"episode_names":{}}"#).unwrap();
+        assert!(matches.runtimes.is_empty());
     }
 
     #[test]

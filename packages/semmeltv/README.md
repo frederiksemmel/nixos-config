@@ -25,7 +25,7 @@ date.
     year = 2017
     tmdb = 70523
     episodes = [
-      { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.mkv", added = 2024-05-01 },
+      { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.1080p.x265.DD5.1.mkv", added = 2024-05-01, video = "HEVC", resolution = "1080p", audio = "5.1" },
     ]
 
     [[movie]]
@@ -34,10 +34,12 @@ date.
     added = 2024-05-01
     review = true
 
-`year`, `tmdb` and an episode's `title` are optional. `review = true`, on a show,
-an episode or a film, marks something a person should check; it changes nothing
-in the app. Unknown keys are an error, so typos surface. Import rewrites the file
-sorted by title, which drops comments.
+`year`, `tmdb` and an episode's `title` are optional. So are `video`, `resolution`
+and `audio`, which import reads from the release tags in the file name, then from
+the folders above it. `review = true`, on a show, an episode or a film, marks
+something a person should check; it changes nothing in the app. Unknown keys are
+an error, so typos surface. Import rewrites the file sorted by title, which drops
+comments.
 
 Home and the rows sort by `added`, shows by their newest episode. Newly Added is
 the 12 newest titles.
@@ -47,8 +49,9 @@ the 12 newest titles.
     semmeltv import --manifest library.toml [--library DIR | --listing FILE]
 
 Compares the videos under `Series/` and `Movies/` with the manifest, parsing file
-names as it goes, and adds what is new. Existing entries stay exactly as they are.
-With no manifest yet it is a first import: `added` is each file's date. Later,
+names as it goes, and adds what is new. Existing entries stay as they are, except
+that a missing `video`, `resolution` or `audio` is filled from the path; a value
+already there is never replaced. With no manifest yet it is a first import: `added` is each file's date. Later,
 `added` is today, because a film sorted today may have an old file date.
 
 `--listing` reads `rclone lsf -R --files-only --format tsp` output instead of the
@@ -61,11 +64,24 @@ New videos reach the library through `pcloud:Incoming`: a person starts a Claude
 session on beast and runs the `/semmeltv-incoming` skill, which sorts them into
 place, runs the import against a local copy, and uploads the result.
 
+## Title details
+
+A quiet line at the bottom of Home and of a show describes the focused card:
+
+    HEVC 10-bit · 1080p · 5.1 · 2h 11m · Stopped at 1h 04m · Downloaded
+
+Encoding and audio come from `library.toml`. The duration is the one mpv reported
+once a file has played, and until then the TMDB runtime in `tmdb.json`. The stopping
+point comes from `progress.json`, and a finished title has none, nor does one left
+in its first minute. A show on Home describes its resume episode, named first, as
+in `S2 E3`. Anything unknown is left out. No video file is read for any of this.
+
 ## Refreshing
 
 The app checks `library.toml` every 30 seconds and reloads it when it changed.
 Focus stays on the same title and an open show stays open. During playback the
-reload waits until the video ends. New art appears the same way.
+reload waits until the video ends. New art and new `tmdb.json` data appear the
+same way.
 
 ## Streaming and offline
 
@@ -127,8 +143,12 @@ own for commands sent over its IPC socket, which is how the remote reaches it.
 
 Stopping a video saves its position and playing it again resumes there. So does
 a restart, and a crash or power cut loses at most the last 30 seconds. A video
-that played to its end starts over. The last episode started per show is kept in
-`progress.json` in the cache.
+that played to its end starts over. `progress.json` in the cache keeps the last
+episode started per show under `shows`, and each file's stopping point and real
+duration under `files`. mpv's own saved positions live in `watch-later/` in the
+cache, one folder per library file, so a position saved while streaming also
+applies to the same file played from the rclone cache, and two files with the
+same name stay apart.
 
 ## Skipping intros and recaps
 
@@ -166,7 +186,7 @@ the first of:
 2. a TMDB image: a backdrop for shows and films, a still for episodes
 3. a gradient with the title
 
-The step needs a TMDB API Read Access Token, from `TMDB_TOKEN_FILE`,
+It also stores episode names and runtimes in `tmdb.json`. The step needs a TMDB API Read Access Token, from `TMDB_TOKEN_FILE`,
 `--tmdb-token-file` or `TMDB_TOKEN`. Images older than six months are refreshed,
 or deleted if that fails, as TMDB's terms require. Titles with no `tmdb` in
 `library.toml` keep the gradient, and are printed and saved to `tmdb-report.txt`

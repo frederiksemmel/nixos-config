@@ -78,7 +78,11 @@ fn choose(outputs: &Value, fps: f64) -> Option<(Mode, Mode)> {
 }
 
 pub fn match_frame_rate(fps: f64) -> Option<Mode> {
-    let output = Command::new("wlr-randr").arg("--json").stdin(Stdio::null()).output().ok()?;
+    let output = Command::new("wlr-randr")
+        .arg("--json")
+        .stdin(Stdio::null())
+        .output()
+        .ok()?;
     let outputs = serde_json::from_slice(&output.stdout).ok()?;
     let (matching, previous) = choose(&outputs, fps)?;
     matching.apply();

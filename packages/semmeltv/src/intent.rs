@@ -408,17 +408,11 @@ fn play(episode: &Episode) -> Action {
 }
 
 fn resume(show: &Show, progress: &Progress) -> Action {
-    let Some(position) = progress.get(&show.key) else {
-        return show.first_episode().map_or_else(|| nothing_in(show), play);
-    };
-    if !position.finished {
-        return show
-            .episode(position.season, position.episode)
-            .or_else(|| show.first_episode())
-            .map_or_else(|| nothing_in(show), play);
+    match progress.resume_episode(show) {
+        Some(episode) => play(episode),
+        None if show.episode_count() > 0 => Action::Refuse(format!("You have finished {}", show.title)),
+        None => nothing_in(show),
     }
-    show.episode_after(position.season, position.episode)
-        .map_or_else(|| Action::Refuse(format!("You have finished {}", show.title)), play)
 }
 
 fn nothing_in(show: &Show) -> Action {
@@ -428,7 +422,7 @@ fn nothing_in(show: &Show) -> Action {
 fn play_show(show: &Show, season: SeasonChoice, episode: Option<u32>, progress: &Progress) -> Action {
     match (season, episode) {
         (SeasonChoice::Next, _) => {
-            let current = progress.get(&show.key).map_or(0, |position| position.season);
+            let current = progress.shows.get(&show.key).map_or(0, |position| position.season);
             play_show(show, SeasonChoice::Number(current + 1), episode, progress)
         }
         (SeasonChoice::Unspecified, None) => resume(show, progress),
@@ -519,7 +513,10 @@ mod tests {
             episode,
             finished,
         };
-        Progress::from([("outlander".to_string(), position)])
+        Progress {
+            shows: [("outlander".to_string(), position)].into(),
+            ..Progress::default()
+        }
     }
 
     fn request(verb: Verb, season: SeasonChoice, episode: Option<u32>) -> Option<Request> {
@@ -609,7 +606,7 @@ mod tests {
             "Gracias por ver el video",
         ] {
             assert!(
-                matches!(understand(text, &library(), &Progress::new()), Action::Refuse(_)),
+                matches!(understand(text, &library(), &Progress::default()), Action::Refuse(_)),
                 "{text}"
             );
         }
@@ -644,13 +641,13 @@ mod tests {
 
     #[test]
     fn a_specific_episode_plays_that_file() {
-        let action = understand("spiele Outlander Staffel 2 Folge 3", &library(), &Progress::new());
+        let action = understand("spiele Outlander Staffel 2 Folge 3", &library(), &Progress::default());
         assert_eq!(action, episode_path(2, 3));
     }
 
     #[test]
     fn a_season_alone_starts_at_its_first_episode() {
-        let action = understand("play season 2 of Outlander", &library(), &Progress::new());
+        let action = understand("play season 2 of Outlander", &library(), &Progress::default());
         assert_eq!(action, episode_path(2, 1));
     }
 
@@ -665,14 +662,14 @@ mod tests {
             ),
         ] {
             let expected = Action::Refuse(message.to_string());
-            assert_eq!(understand(text, &library, &Progress::new()), expected, "{text}");
+            assert_eq!(understand(text, &library, &Progress::default()), expected, "{text}");
         }
     }
 
     #[test]
     fn continue_starts_at_the_beginning_of_an_unwatched_show() {
         assert_eq!(
-            understand("continue Outlander", &library(), &Progress::new()),
+            understand("continue Outlander", &library(), &Progress::default()),
             episode_path(1, 1)
         );
     }
@@ -722,7 +719,7 @@ mod tests {
     fn transcription_slips_still_find_the_title() {
         for text in ["play Out Lander", "play outlanders", "play Outlender", "play Autlander"] {
             assert_eq!(
-                understand(text, &library(), &Progress::new()),
+                understand(text, &library(), &Progress::default()),
                 episode_path(1, 1),
                 "{text}"
             );
@@ -731,14 +728,14 @@ mod tests {
 
     #[test]
     fn part_of_a_title_finds_it() {
-        let action = understand("play Andor", &library(), &Progress::new());
+        let action = understand("play Andor", &library(), &Progress::default());
         let path = "/lib/Series/Star Wars Andor/Star.Wars.Andor.S01E01.mkv";
         assert_eq!(action, Action::Play(path.into()));
     }
 
     #[test]
     fn an_ambiguous_title_asks_instead_of_guessing() {
-        let Action::Refuse(message) = understand("play Star Wars", &library(), &Progress::new()) else {
+        let Action::Refuse(message) = understand("play Star Wars", &library(), &Progress::default()) else {
             panic!("expected a question");
         };
         assert!(message.starts_with("Did you mean"), "{message}");
@@ -747,7 +744,7 @@ mod tests {
 
     #[test]
     fn movies_play_directly() {
-        let action = understand("spiele Dune", &library(), &Progress::new());
+        let action = understand("spiele Dune", &library(), &Progress::default());
         assert_eq!(
             action,
             Action::Play("/lib/Movies/Dune (2021)/Dune.2021.1080p.mkv".into())
@@ -756,7 +753,7 @@ mod tests {
 
     #[test]
     fn an_unknown_title_is_refused_for_playing() {
-        let action = understand("play Severance", &library(), &Progress::new());
+        let action = understand("play Severance", &library(), &Progress::default());
         assert_eq!(
             action,
             Action::Refuse("\"severance\" is not in the library".to_string())
@@ -765,7 +762,11 @@ mod tests {
 
     #[test]
     fn downloading_the_next_season_counts_from_the_library() {
-        let action = understand("download the next season of Outlander", &library(), &Progress::new());
+        let action = understand(
+            "download the next season of Outlander",
+            &library(),
+            &Progress::default(),
+        );
         let expected = Action::Download {
             title: "Outlander".to_string(),
             season: Some(3),
@@ -775,7 +776,7 @@ mod tests {
 
     #[test]
     fn a_show_outside_the_library_can_still_be_requested() {
-        let action = understand("download Severance season 2", &library(), &Progress::new());
+        let action = understand("download Severance season 2", &library(), &Progress::default());
         let expected = Action::Download {
             title: "severance".to_string(),
             season: Some(2),

@@ -234,11 +234,13 @@ export component AppWindow inherits Window {
     in property <string> message;
     in property <string> empty-note;
     in property <bool> tmdb-notice;
+    in property <string> details;
 
     callback key(string) -> bool;
     callback remote-input();
     callback changed();
     callback playback-finished(bool, bool);
+    callback position-saved();
 
     property <length> u: self.height / 1080;
 
@@ -259,7 +261,7 @@ export component AppWindow inherits Window {
             x: 96 * root.u;
             y: 96 * root.u;
             width: parent.width - 192 * root.u;
-            height: parent.height - 96 * root.u;
+            height: parent.height - 152 * root.u;
             u: root.u;
             shelves: root.home-shelves;
             focus-row: root.home-row;
@@ -300,7 +302,7 @@ export component AppWindow inherits Window {
                 x: 96 * root.u;
                 y: 236 * root.u;
                 width: parent.width - 192 * root.u;
-                height: parent.height - 236 * root.u;
+                height: parent.height - 292 * root.u;
                 u: root.u;
                 shelves: root.show-shelves;
                 focus-row: root.show-row;
@@ -332,14 +334,30 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.tmdb-notice && !root.show-open: Rectangle {
-            y: parent.height - 52 * root.u;
-            height: 52 * root.u;
+        Rectangle {
+            y: parent.height - 120 * root.u;
+            height: 24 * root.u;
+            background: @linear-gradient(0deg, #0b0d12 0%, #0b0d1200 100%);
+        }
+
+        Rectangle {
+            y: parent.height - 96 * root.u;
+            height: 96 * root.u;
             background: #0b0d12;
 
             Text {
                 x: 96 * root.u;
-                y: 8 * root.u;
+                y: 12 * root.u;
+                width: parent.width - 192 * root.u;
+                text: root.details;
+                color: #8f95a3;
+                font-size: 24 * root.u;
+                overflow: elide;
+            }
+
+            if root.tmdb-notice && !root.show-open: Text {
+                x: 96 * root.u;
+                y: 52 * root.u;
                 text: "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.";
                 color: #6c7280;
                 font-size: 18 * root.u;
@@ -348,7 +366,7 @@ export component AppWindow inherits Window {
 
         if root.message != "": Rectangle {
             x: (parent.width - self.width) / 2;
-            y: parent.height - 150 * root.u;
+            y: parent.height - 196 * root.u;
             width: label.preferred-width + 80 * root.u;
             height: 84 * root.u;
             border-radius: 42 * root.u;

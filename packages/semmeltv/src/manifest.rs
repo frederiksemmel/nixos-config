@@ -1,3 +1,4 @@
+use crate::tags::Tags;
 use serde::Deserialize;
 use serde::de::{self, Deserializer};
 use std::fmt::{self, Display, Formatter, Write as _};
@@ -98,6 +99,9 @@ pub struct EpisodeEntry {
     pub title: Option<String>,
     pub path: String,
     pub added: Date,
+    pub video: Option<String>,
+    pub resolution: Option<String>,
+    pub audio: Option<String>,
     #[serde(default)]
     pub review: bool,
 }
@@ -110,8 +114,31 @@ pub struct MovieEntry {
     pub tmdb: Option<u64>,
     pub path: String,
     pub added: Date,
+    pub video: Option<String>,
+    pub resolution: Option<String>,
+    pub audio: Option<String>,
     #[serde(default)]
     pub review: bool,
+}
+
+impl EpisodeEntry {
+    pub fn tags(&self) -> Tags {
+        Tags {
+            video: self.video.clone(),
+            resolution: self.resolution.clone(),
+            audio: self.audio.clone(),
+        }
+    }
+}
+
+impl MovieEntry {
+    pub fn tags(&self) -> Tags {
+        Tags {
+            video: self.video.clone(),
+            resolution: self.resolution.clone(),
+            audio: self.audio.clone(),
+        }
+    }
 }
 
 impl Manifest {
@@ -140,10 +167,13 @@ impl Manifest {
                     .title
                     .as_ref()
                     .map_or(String::new(), |title| format!("title = {}, ", quoted(title)));
+                let tags: String = tag_lines(&episode.tags())
+                    .map(|(key, value)| format!(", {key} = {}", quoted(value)))
+                    .collect();
                 let review = if episode.review { ", review = true" } else { "" };
                 let _ = writeln!(
                     text,
-                    "  {{ season = {}, episode = {}, {title}path = {}, added = {}{review} }},",
+                    "  {{ season = {}, episode = {}, {title}path = {}, added = {}{tags}{review} }},",
                     episode.season,
                     episode.episode,
                     quoted(&episode.path),
@@ -157,6 +187,9 @@ impl Manifest {
             render_title(&mut text, &movie.title, movie.year, movie.tmdb);
             let _ = writeln!(text, "path = {}", quoted(&movie.path));
             let _ = writeln!(text, "added = {}", movie.added);
+            for (key, value) in tag_lines(&movie.tags()) {
+                let _ = writeln!(text, "{key} = {}", quoted(value));
+            }
             render_review(&mut text, movie.review);
             let _ = writeln!(text);
         }
@@ -200,6 +233,16 @@ fn quoted(text: &str) -> String {
     quoted
 }
 
+fn tag_lines(tags: &Tags) -> impl Iterator<Item = (&'static str, &String)> {
+    [
+        ("video", &tags.video),
+        ("resolution", &tags.resolution),
+        ("audio", &tags.audio),
+    ]
+    .into_iter()
+    .filter_map(|(key, value)| Some((key, value.as_ref()?)))
+}
+
 fn render_title(text: &mut String, title: &str, year: Option<u16>, tmdb: Option<u64>) {
     let _ = writeln!(text, "title = {}", quoted(title));
     if let Some(year) = year {
@@ -226,7 +269,7 @@ year = 2017
 tmdb = 70523
 review = true
 episodes = [
-  { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.mkv", added = 2024-05-01 },
+  { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.mkv", added = 2024-05-01, video = "HEVC 10-bit", resolution = "1080p", audio = "5.1" },
   { season = 1, episode = 2, path = "Series/Dark/S01/Dark.S01E02.mkv", added = 2024-05-02, review = true },
 ]
 
@@ -236,6 +279,9 @@ year = 1980
 tmdb = 813
 path = "Movies/Airplane 1980/Airplane.1980.mkv"
 added = 2023-01-09
+video = "H.264"
+resolution = "720p"
+audio = "AAC"
 
 [[movie]]
 title = "Wind"

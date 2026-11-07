@@ -25,6 +25,7 @@ pub struct Found {
     pub name: String,
     pub date: String,
     pub backdrop: Option<String>,
+    pub runtime: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -45,6 +46,7 @@ struct Record {
     #[serde(default, alias = "first_air_date")]
     release_date: Option<String>,
     backdrop_path: Option<String>,
+    runtime: Option<u32>,
     #[serde(default)]
     vote_count: f64,
 }
@@ -64,6 +66,7 @@ pub struct SeasonEpisode {
     pub episode_number: u32,
     pub name: Option<String>,
     pub still_path: Option<String>,
+    pub runtime: Option<u32>,
 }
 
 impl Season {
@@ -79,6 +82,7 @@ impl From<&Record> for Found {
             name: record.title.clone().unwrap_or_default(),
             date: record.release_date.clone().unwrap_or_default(),
             backdrop: record.backdrop_path.clone(),
+            runtime: record.runtime.filter(|minutes| *minutes > 0),
         }
     }
 }
@@ -242,6 +246,7 @@ mod tests {
             original_title: Some(title.to_string()),
             release_date: Some(date.to_string()),
             backdrop_path: None,
+            runtime: None,
             vote_count: 0.0,
         }
     }
@@ -337,6 +342,32 @@ mod tests {
         assert_eq!(season.episode(1).unwrap().still_path.as_deref(), Some("/a.jpg"));
         assert!(season.episode(2).unwrap().name.is_none());
         assert!(season.episode(3).is_none());
+    }
+
+    #[test]
+    fn details_and_seasons_carry_their_runtimes() {
+        let found = |json| Found::from(&serde_json::from_str::<Record>(json).unwrap()).runtime;
+        assert_eq!(
+            found(r#"{"id":1,"title":"Up","backdrop_path":null,"runtime":96}"#),
+            Some(96)
+        );
+        assert_eq!(
+            found(r#"{"id":1,"title":"Soon","backdrop_path":null,"runtime":0}"#),
+            None
+        );
+        assert_eq!(
+            found(r#"{"id":1,"title":"Soon","backdrop_path":null,"runtime":null}"#),
+            None
+        );
+        assert_eq!(
+            found(r#"{"id":2,"name":"Dark","backdrop_path":null,"episode_run_time":[60]}"#),
+            None
+        );
+        let json = r#"{"episodes":[{"episode_number":1,"name":null,"still_path":null,"runtime":52},
+            {"episode_number":2,"name":null,"still_path":null,"runtime":null}]}"#;
+        let season: Season = serde_json::from_str(json).unwrap();
+        assert_eq!(season.episode(1).unwrap().runtime, Some(52));
+        assert_eq!(season.episode(2).unwrap().runtime, None);
     }
 
     #[test]

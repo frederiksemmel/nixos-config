@@ -1,6 +1,7 @@
 use crate::command::Command;
 use crate::display::{self, Mode};
 use crate::overlay::{self, View};
+use crate::progress::Place;
 use crate::seek::{Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
 use serde_json::{Value, json};
@@ -123,6 +124,7 @@ struct Playback {
     scrub: Scrub,
     shown_until: Option<Instant>,
     drawn: String,
+    on_save: Option<Box<dyn Fn() + Send>>,
 }
 
 impl Playback {
@@ -238,6 +240,9 @@ impl Playback {
         if !self.ended && save_due(self.saved, self.position) {
             self.saved = self.position;
             self.send(json!(["write-watch-later-config"]));
+            if let Some(on_save) = &self.on_save {
+                on_save();
+            }
         }
     }
 
@@ -324,8 +329,10 @@ pub struct Player {
 impl Player {
     pub fn start(
         path: &Path,
+        watch_later_dir: &Path,
         name: String,
         title: Option<Title>,
+        on_save: impl Fn() + Send + 'static,
         on_exit: impl FnOnce(Finish) + Send + 'static,
     ) -> io::Result<Self> {
         let socket_path = socket_path();
@@ -336,6 +343,8 @@ impl Player {
             .arg("--force-window=immediate")
             .arg("--really-quiet")
             .arg("--save-position-on-quit")
+            .arg("--ignore-path-in-watch-later-config")
+            .arg(format!("--watch-later-dir={}", watch_later_dir.display()))
             .arg("--keep-open")
             .arg("--hwdec=drm")
             .arg("--gpu-context=wayland")
@@ -350,6 +359,7 @@ impl Player {
             .spawn()?;
         let playback = Shared::new(Mutex::new(Playback {
             name,
+            on_save: Some(Box::new(on_save)),
             ..Playback::default()
         }));
         let shared = playback.clone();
@@ -363,6 +373,14 @@ impl Player {
             on_exit(finish);
         });
         Ok(Self { playback })
+    }
+
+    pub fn place(&self) -> Place {
+        let playback = self.playback.lock().unwrap();
+        Place {
+            position: playback.position,
+            duration: playback.duration,
+        }
     }
 
     pub fn command(&self, command: Command) {
@@ -541,6 +559,20 @@ mod tests {
     #[test]
     fn a_resumed_video_saves_its_position_at_once() {
         assert!(save_due(Playback::default().saved, 1200.0));
+    }
+
+    #[test]
+    fn a_save_is_announced_once() {
+        let saves = Arc::new(Mutex::new(0));
+        let counter = saves.clone();
+        let mut playback = Playback {
+            position: 100.0,
+            on_save: Some(Box::new(move || *counter.lock().unwrap() += 1)),
+            ..Playback::default()
+        };
+        playback.save_position();
+        playback.save_position();
+        assert_eq!(*saves.lock().unwrap(), 1);
     }
 
     #[test]

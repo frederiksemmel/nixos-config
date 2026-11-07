@@ -20,6 +20,7 @@ pub struct Paths {
     pub root: PathBuf,
     pub saved: PathBuf,
     pub art: PathBuf,
+    pub matches: PathBuf,
     pub remote: Option<String>,
 }
 
@@ -50,7 +51,7 @@ pub fn spawn(paths: Paths, deliver: impl Fn(Change) + Send + 'static) {
     thread::spawn(move || {
         let manifest_file = paths.root.join(manifest::FILE_NAME);
         let mut manifest_seen = None;
-        let mut art_seen = stamp(&paths.art);
+        let mut art_seen = (stamp(&paths.art), stamp(&paths.matches));
         loop {
             let online = paths.remote.as_deref().is_none_or(reachable);
             deliver(Change::Poll { online });
@@ -63,7 +64,7 @@ pub fn spawn(paths: Paths, deliver: impl Fn(Change) + Send + 'static) {
             } else {
                 manifest_seen = None;
             }
-            let art = stamp(&paths.art);
+            let art = (stamp(&paths.art), stamp(&paths.matches));
             if art != art_seen {
                 art_seen = art;
                 deliver(Change::Art);

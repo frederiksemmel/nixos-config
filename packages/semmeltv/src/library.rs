@@ -1,4 +1,5 @@
 use crate::manifest::{self, Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
+use crate::tags::Tags;
 use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
@@ -42,6 +43,7 @@ pub struct Episode {
     pub title: Option<String>,
     pub path: PathBuf,
     pub added: Date,
+    pub tags: Tags,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -53,6 +55,7 @@ pub struct Movie {
     pub poster: Option<PathBuf>,
     pub path: PathBuf,
     pub added: Date,
+    pub tags: Tags,
 }
 
 impl Library {
@@ -216,6 +219,13 @@ impl Episode {
             None => format!("Episode {}", self.number),
         }
     }
+
+    pub fn short_label(&self) -> String {
+        match self.season {
+            0 => format!("Special {}", self.number),
+            season => format!("S{season} E{}", self.number),
+        }
+    }
 }
 
 fn plural(count: usize, noun: &str) -> String {
@@ -265,6 +275,7 @@ fn build_episode(root: &Path, entry: &EpisodeEntry) -> Episode {
         title: entry.title.clone(),
         path: root.join(&entry.path),
         added: entry.added,
+        tags: entry.tags(),
     }
 }
 
@@ -283,6 +294,7 @@ fn build_movie(
         poster: own_dir.and_then(|dir| find_poster(&root.join(dir), poster)),
         path: root.join(&entry.path),
         added: entry.added,
+        tags: entry.tags(),
     }
 }
 
@@ -482,6 +494,8 @@ episodes = [
         assert_eq!(show.seasons[1].label(), "Specials");
         let labels: Vec<_> = show.episodes().map(Episode::label).collect();
         assert_eq!(labels, ["2. Lies", "Episode 3", "The Making Of"]);
+        let short: Vec<_> = show.episodes().map(Episode::short_label).collect();
+        assert_eq!(short, ["S1 E2", "S1 E3", "Special 1"]);
     }
 
     #[test]

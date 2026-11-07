@@ -2,6 +2,7 @@ mod app;
 mod artwork;
 mod cec;
 mod command;
+mod details;
 mod display;
 mod fetch;
 mod import;
@@ -17,6 +18,7 @@ mod player;
 mod progress;
 mod seek;
 mod segments;
+mod tags;
 mod tmdb;
 mod watch;
 

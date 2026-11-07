@@ -1,6 +1,7 @@
 use crate::artwork::{Cache, Matches};
 use crate::cec;
 use crate::command::Command;
+use crate::details::Details;
 use crate::fetch;
 use crate::library::{self, Episode, Item, Library, Show};
 use crate::loader::{self, Job, Pixels};
@@ -9,6 +10,7 @@ use crate::offline::{self, Presence, Source, Store};
 use crate::player::{Finish, Player};
 use crate::progress::{Position, Progress};
 use crate::segments::Title;
+use crate::tags::Tags;
 use crate::watch::{self, Change};
 use crate::{AppWindow, CardData, OfflineState, ShelfData};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -59,6 +61,11 @@ pub struct Setup {
     pub cache: Cache,
 }
 
+struct Playing {
+    file: PathBuf,
+    show: Option<String>,
+}
+
 #[derive(Default)]
 struct Deferred {
     library: Option<Result<Library, String>>,
@@ -73,7 +80,7 @@ struct App {
     images: Sender<Job<Target>>,
     player: Option<Player>,
     progress: Progress,
-    playing: Option<String>,
+    playing: Option<Playing>,
     message_timer: Timer,
     store: Store,
     fetcher: Sender<Vec<PathBuf>>,
@@ -120,6 +127,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let names = cache.load_matches();
     let progress = cache.load_progress();
     let art = cache.art_dir();
+    let matches = cache.matches_path();
     let app = Rc::new(RefCell::new(App {
         ui: ui.clone_strong(),
         downloaded: store.downloaded(library.paths()),
@@ -171,6 +179,13 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         }
     });
 
+    let saved_position = Rc::downgrade(&app);
+    ui.on_position_saved(move || {
+        if let Some(app) = saved_position.upgrade() {
+            app.borrow_mut().record_place();
+        }
+    });
+
     let changed = Rc::downgrade(&app);
     ui.on_changed(move || {
         if let Some(app) = changed.upgrade() {
@@ -184,6 +199,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
             root,
             saved,
             art,
+            matches,
             remote,
         },
         notify_watch,
@@ -354,6 +370,7 @@ impl App {
                 }
             }
         }
+        self.present_details();
     }
 
     fn file_status(&self, path: &Path) -> (Presence, String) {
@@ -392,12 +409,24 @@ impl App {
             }
         };
         let handle = self.ui.as_weak();
+        let saved = move || {
+            let _ = handle.upgrade_in_event_loop(|ui| ui.invoke_position_saved());
+        };
+        let handle = self.ui.as_weak();
         let finished = move |finish: Finish| {
             let _ = handle.upgrade_in_event_loop(move |ui| {
                 ui.invoke_playback_finished(finish != Finish::Failed, finish == Finish::Ended)
             });
         };
-        match Player::start(&source, self.caption(path), self.title(path), finished) {
+        let watch_later_dir = self.cache.watch_later_dir(path);
+        match Player::start(
+            &source,
+            &watch_later_dir,
+            self.caption(path),
+            self.title(path),
+            saved,
+            finished,
+        ) {
             Ok(player) => {
                 self.player = Some(player);
                 self.record_start(path);
@@ -437,25 +466,40 @@ impl App {
     }
 
     fn record_start(&mut self, path: &Path) {
-        let Some((show, episode)) = self.nav.library().find_episode(path) else {
-            return;
-        };
-        let key = show.key.clone();
-        let position = Position {
-            season: episode.season,
-            episode: episode.number,
-            finished: false,
-        };
-        self.progress.insert(key.clone(), position);
-        self.playing = Some(key);
-        self.save_progress();
+        let found = self.nav.library().find_episode(path);
+        let show = found.map(|(show, episode)| {
+            let position = Position {
+                season: episode.season,
+                episode: episode.number,
+                finished: false,
+            };
+            (show.key.clone(), position)
+        });
+        self.playing = Some(Playing {
+            file: path.to_path_buf(),
+            show: show.as_ref().map(|(key, _)| key.clone()),
+        });
+        if let Some((key, position)) = show {
+            self.progress.shows.insert(key, position);
+            self.save_progress();
+        }
+    }
+
+    fn record_place(&mut self) {
+        if let (Some(player), Some(playing)) = (&self.player, &self.playing) {
+            self.progress.record(&playing.file, player.place());
+            self.save_progress();
+        }
     }
 
     fn finish_playback(&mut self, success: bool, ended: bool) {
+        self.record_place();
         self.player = None;
-        let show = self.playing.take();
-        if ended && let Some(position) = show.and_then(|key| self.progress.get_mut(&key)) {
-            position.finished = true;
+        if let Some(playing) = self.playing.take().filter(|_| ended) {
+            self.progress.finish(&playing.file);
+            if let Some(position) = playing.show.and_then(|key| self.progress.shows.get_mut(&key)) {
+                position.finished = true;
+            }
             self.save_progress();
         }
         if !success {
@@ -495,6 +539,53 @@ impl App {
             self.ui.set_show_row(cursor.row as i32);
             self.ui.set_show_cols(cols_model(cursor));
         }
+        self.present_details();
+    }
+
+    fn present_details(&self) {
+        let line = match self.nav.open_show() {
+            Some((show, cursor)) => show
+                .seasons
+                .get(cursor.row)
+                .and_then(|season| season.episodes.get(cursor.col()))
+                .map(|episode| {
+                    let status = self.file_status(&episode.path).1;
+                    self.file_details(None, &episode.tags, &show.episode_key(episode), &episode.path, &status)
+                }),
+            None => self.nav.focused_item().map(|item| self.item_details(item)),
+        };
+        self.ui.set_details(line.unwrap_or_default().into());
+    }
+
+    fn item_details(&self, item: Item) -> String {
+        let status = self.item_status(item).1;
+        match item {
+            Item::Movie(index) => {
+                let movie = self.nav.movie(index);
+                self.file_details(None, &movie.tags, &movie.key, &movie.path, &status)
+            }
+            Item::Show(index) => {
+                let show = self.nav.show(index);
+                let next = self.progress.resume_episode(show).or_else(|| show.first_episode());
+                next.map_or(status.clone(), |episode| {
+                    let label = show.only_episode().is_none().then(|| episode.short_label());
+                    self.file_details(label, &episode.tags, &show.episode_key(episode), &episode.path, &status)
+                })
+            }
+        }
+    }
+
+    fn file_details(&self, episode: Option<String>, tags: &Tags, key: &str, file: &Path, download: &str) -> String {
+        let watched = self.progress.files.get(file).copied().unwrap_or_default();
+        let runtime = self.names.runtimes.get(key).map(|minutes| f64::from(*minutes) * 60.0);
+        Details {
+            episode,
+            tags: Some(tags),
+            duration: watched.duration.or(runtime),
+            stopped_at: watched.stopped_at,
+            download,
+        }
+        .line()
     }
 
     fn request(&self, screen: Screen, shelf: usize, card: usize, key: SharedString, art: Option<PathBuf>) {
@@ -597,6 +688,7 @@ impl App {
         self.ui.set_show_row(cursor.row as i32);
         self.ui.set_show_cols(cols_model(cursor));
         self.ui.set_show_open(true);
+        self.present_details();
     }
 
     fn episode_label(&self, show: &Show, episode: &Episode) -> String {
