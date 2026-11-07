@@ -1,6 +1,6 @@
-use crate::library::{Library, Movie, Show, normalize};
+use crate::library::{Library, Movie, Show};
 use crate::progress::Progress;
-use crate::tmdb::{self, Client, Found, Lookup, Season};
+use crate::tmdb::{self, Client, Found, Season};
 use image::ImageReader;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
@@ -9,7 +9,7 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, BufWriter, Cursor};
 use std::path::{self, Path, PathBuf};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 pub const CARD_WIDTH: u32 = 640;
 pub const CARD_HEIGHT: u32 = 360;
@@ -27,7 +27,6 @@ pub struct Matched {
     pub id: u64,
     pub name: String,
     pub date: String,
-    pub checked: u64,
 }
 
 pub struct Cache {
@@ -39,8 +38,16 @@ impl Cache {
         Self { root }
     }
 
+    pub fn art_dir(&self) -> PathBuf {
+        self.root.join("art")
+    }
+
+    pub fn saved_manifest(&self) -> PathBuf {
+        self.root.join("library.last-good.toml")
+    }
+
     fn art(&self, key: &str) -> PathBuf {
-        self.root.join("art").join(format!("{key}.jpg"))
+        self.art_dir().join(format!("{key}.jpg"))
     }
 
     fn matches_path(&self) -> PathBuf {
@@ -87,7 +94,7 @@ impl Cache {
     }
 
     pub fn has_tmdb_art(&self) -> bool {
-        fs::read_dir(self.root.join("art")).is_ok_and(|mut entries| entries.next().is_some())
+        fs::read_dir(self.art_dir()).is_ok_and(|mut entries| entries.next().is_some())
     }
 }
 
@@ -102,7 +109,7 @@ pub fn generate(library: &Library, library_root: &Path, cache: &Cache, client: C
     if path::absolute(&cache.root)?.starts_with(path::absolute(library_root)?) {
         return Err(io::Error::other("the cache must stay outside the library"));
     }
-    fs::create_dir_all(cache.root.join("art"))?;
+    fs::create_dir_all(cache.art_dir())?;
     let matches = cache.load_matches();
     let mut generator = Generator {
         cache,
@@ -120,77 +127,24 @@ pub fn generate(library: &Library, library_root: &Path, cache: &Cache, client: C
     let report = generator.report.join("\n");
     fs::write(cache.root.join("tmdb-report.txt"), &report)?;
     if !report.is_empty() {
-        println!("\nNeeds attention (pin with tmdb = <id> in meta.toml):\n{report}");
+        println!("\nNeeds attention (set tmdb = <id> in library.toml):\n{report}");
     }
     Ok(())
 }
 
 impl Generator<'_> {
-    fn matched(
-        &mut self,
-        key: &str,
-        kind: tmdb::Kind,
-        pinned: Option<u64>,
-        lookup: impl FnOnce(&Client) -> Result<Lookup, ureq::Error>,
-        label: &str,
-    ) -> Option<Found> {
-        let client = &self.client;
-        let known = self
-            .matches
-            .titles
-            .get(key)
-            .filter(|m| age_of(m.checked) < TMDB_MAX_AGE)
-            .map(|m| m.id);
-        if let Some(id) = pinned.or(known) {
-            return match client.details(kind, id) {
-                Ok(found) => Some(found),
-                Err(error) => {
-                    self.report.push(format!("{label}: TMDB {id} failed: {error}"));
-                    None
-                }
-            };
-        }
-        match lookup(client) {
-            Ok(Lookup::Match(found)) => {
-                self.remember(key, &found, label);
-                Some(found)
-            }
-            Ok(Lookup::Likely(found)) => {
-                self.report.push(format!(
-                    "{label}: chose the best known match, {} {} ({})",
-                    found.id, found.name, found.date
-                ));
-                self.remember(key, &found, label);
-                Some(found)
-            }
-            Ok(Lookup::Unsure(candidates)) => {
-                let list: Vec<_> = candidates
-                    .iter()
-                    .map(|c| format!("{} {} ({})", c.id, c.name, c.date))
-                    .collect();
-                self.report.push(format!("{label}: unsure: {}", list.join("; ")));
-                None
-            }
-            Ok(Lookup::Nothing) => {
-                self.report.push(format!("{label}: nothing found"));
-                None
-            }
-            Err(error) => {
-                self.report.push(format!("{label}: lookup failed: {error}"));
-                None
-            }
-        }
-    }
-
-    fn remember(&mut self, key: &str, found: &Found, label: &str) {
-        let matched = Matched {
-            id: found.id,
-            name: found.name.clone(),
-            date: found.date.clone(),
-            checked: now(),
+    fn details(&mut self, kind: tmdb::Kind, id: Option<u64>, label: &str) -> Option<Found> {
+        let Some(id) = id else {
+            self.report.push(format!("{label}: no TMDB id"));
+            return None;
         };
-        self.matches.titles.insert(key.to_string(), matched);
-        println!("{label}: TMDB {} {} ({})", found.id, found.name, found.date);
+        match self.client.details(kind, id) {
+            Ok(found) => Some(found),
+            Err(error) => {
+                self.report.push(format!("{label}: TMDB {id} failed: {error}"));
+                None
+            }
+        }
     }
 
     fn fetch(&mut self, key: &str, url_path: Option<&str>, size: &str, label: &str) -> bool {
@@ -231,13 +185,7 @@ impl Generator<'_> {
         let found = if card_current && episodes_current {
             None
         } else {
-            self.matched(
-                &show.key,
-                tmdb::Kind::Tv,
-                show.tmdb,
-                |client| client.search_tv(&show.title, show.year),
-                &label,
-            )
+            self.details(tmdb::Kind::Tv, show.tmdb, &label)
         };
 
         if show.poster.is_none() {
@@ -287,22 +235,7 @@ impl Generator<'_> {
         if movie.poster.is_some() || self.is_current(&movie.key) {
             return Ok(());
         }
-        let found = self.matched(
-            &movie.key,
-            tmdb::Kind::Movie,
-            movie.tmdb,
-            |client| {
-                let by_title = client.search_movie(&movie.title, movie.year)?;
-                if normalize(&movie.title) == normalize(&movie.file_title)
-                    || matches!(by_title, Lookup::Match(_) | Lookup::Likely(_))
-                {
-                    Ok(by_title)
-                } else {
-                    client.search_movie(&movie.file_title, movie.year)
-                }
-            },
-            &label,
-        );
+        let found = self.details(tmdb::Kind::Movie, movie.tmdb, &label);
         self.fetch(
             &movie.key,
             found.as_ref().and_then(|f| f.backdrop.as_deref()),
@@ -311,16 +244,6 @@ impl Generator<'_> {
         );
         self.cache.save_matches(&self.matches)
     }
-}
-
-fn now() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |elapsed| elapsed.as_secs())
-}
-
-fn age_of(checked: u64) -> Duration {
-    Duration::from_secs(now().saturating_sub(checked))
 }
 
 fn is_fresh(path: &Path) -> bool {

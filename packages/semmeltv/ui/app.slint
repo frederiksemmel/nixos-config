@@ -1,17 +1,70 @@
 import "@fonts/InterVariable.ttf";
 
+export enum OfflineState {
+    unknown,
+    remote,
+    downloading,
+    partial,
+    downloaded,
+}
+
 export struct CardData {
+    key: string,
     title: string,
     detail: string,
     art: image,
     has-art: bool,
     tint-a: color,
     tint-b: color,
+    offline: OfflineState,
+    offline-text: string,
 }
 
 export struct ShelfData {
     title: string,
     cards: [CardData],
+}
+
+component OfflineBadge {
+    in property <length> u;
+    in property <OfflineState> state;
+    in property <string> text;
+
+    property <color> dot: self.state == OfflineState.downloaded ? #58d68d
+        : self.state == OfflineState.partial ? #58d68d
+        : self.state == OfflineState.downloading ? #f5c04e
+        : #8a909c;
+    property <bool> hollow: self.state == OfflineState.remote;
+
+    visible: self.state != OfflineState.unknown;
+    width: label.preferred-width + 54 * self.u;
+    height: 40 * self.u;
+
+    Rectangle {
+        border-radius: 20 * root.u;
+        background: #000000a8;
+    }
+
+    Rectangle {
+        x: 16 * root.u;
+        y: 12 * root.u;
+        width: 16 * root.u;
+        height: 16 * root.u;
+        border-radius: 8 * root.u;
+        background: root.hollow ? transparent : root.dot;
+        border-width: root.hollow ? 2 * root.u : 0;
+        border-color: root.dot;
+    }
+
+    label := Text {
+        x: 42 * root.u;
+        height: 100%;
+        text: root.text;
+        color: root.hollow ? #c9cdd6 : white;
+        font-size: 22 * root.u;
+        font-weight: 500;
+        vertical-alignment: center;
+    }
 }
 
 component CardView {
@@ -63,6 +116,14 @@ component CardView {
             border-color: white;
             opacity: root.focused ? 1 : 0;
             animate opacity { duration: 120ms; }
+        }
+
+        OfflineBadge {
+            x: 12 * root.u;
+            y: parent.height - self.height - 12 * root.u;
+            u: root.u;
+            state: root.card.offline;
+            text: root.card.offline-text;
         }
     }
 
@@ -135,7 +196,7 @@ component ShelfStack {
     in property <bool> active;
 
     property <length> step: 444 * u;
-    property <length> content-height: self.shelves.length * self.step - 60 * u;
+    property <length> content-height: self.shelves.length * self.step + 16 * u;
     property <length> max-offset: max(0px, self.content-height - self.height);
 
     Rectangle {
@@ -171,10 +232,12 @@ export component AppWindow inherits Window {
     in property <[int]> show-cols;
 
     in property <string> message;
+    in property <string> empty-note;
     in property <bool> tmdb-notice;
 
     callback key(string) -> bool;
     callback remote-input();
+    callback changed();
     callback playback-finished(bool, bool);
 
     property <length> u: self.height / 1080;
@@ -204,6 +267,29 @@ export component AppWindow inherits Window {
             active: !root.show-open;
             opacity: root.show-open ? 0 : 1;
             animate opacity { duration: 200ms; }
+        }
+
+        if root.empty-note != "" && !root.show-open: VerticalLayout {
+            alignment: center;
+            spacing: 24 * root.u;
+            padding-left: 200 * root.u;
+            padding-right: 200 * root.u;
+
+            Text {
+                text: "Nothing to watch yet";
+                color: white;
+                font-size: 56 * root.u;
+                font-weight: 700;
+                horizontal-alignment: center;
+            }
+
+            Text {
+                text: root.empty-note;
+                color: #a8adb8;
+                font-size: 32 * root.u;
+                horizontal-alignment: center;
+                wrap: word-wrap;
+            }
         }
 
         Rectangle {
@@ -246,12 +332,18 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.tmdb-notice && !root.show-open: Text {
-            x: 96 * root.u;
-            y: parent.height - 44 * root.u;
-            text: "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.";
-            color: #6c7280;
-            font-size: 18 * root.u;
+        if root.tmdb-notice && !root.show-open: Rectangle {
+            y: parent.height - 52 * root.u;
+            height: 52 * root.u;
+            background: #0b0d12;
+
+            Text {
+                x: 96 * root.u;
+                y: 8 * root.u;
+                text: "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.";
+                color: #6c7280;
+                font-size: 18 * root.u;
+            }
         }
 
         if root.message != "": Rectangle {

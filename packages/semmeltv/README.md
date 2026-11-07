@@ -1,15 +1,100 @@
 # SemmelTV
 
-Apple TV style interface for a personal video library. It reads `Series/` and
-`Movies/` under a library folder, draws menus with Slint, and plays video in a
+Apple TV style interface for a personal video library. It reads `library.toml`
+at the root of a library folder, draws menus with Slint, and plays video in a
 separate mpv window.
 
-    semmeltv [ui|list|artwork|understand TEXT] [--library DIR] [--cache DIR]
-                                               [--tmdb-token-file FILE]
+    semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--cache DIR]
+             [--vfs-cache DIR] [--tmdb-token-file FILE]
+             [--manifest FILE] [--listing FILE]
 
 `--library` defaults to `$SEMMELTV_LIBRARY`, then `~/pcloud`. `--cache` defaults
-to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`. The cache must be outside
-the library, and nothing ever writes to the library.
+to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`. `--vfs-cache` defaults to
+`$SEMMELTV_VFS_CACHE`. The cache must be outside the library, and the app and the
+artwork step never write to the library.
+
+## library.toml
+
+The only source of truth, written by `semmeltv import` and fine to edit by hand.
+The app reads nothing else: no file names, no folders. An entry whose file is
+missing is skipped. Paths are relative to the library root, and `added` is a
+date.
+
+    [[show]]
+    title = "Dark"
+    year = 2017
+    tmdb = 70523
+    episodes = [
+      { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.mkv", added = 2024-05-01 },
+    ]
+
+    [[movie]]
+    title = "Wind"
+    path = "Movies/Wind/WIND.avi"
+    added = 2024-05-01
+    review = true
+
+`year`, `tmdb` and an episode's `title` are optional. `review = true`, on a show,
+an episode or a film, marks something a person should check; it changes nothing
+in the app. Unknown keys are an error, so typos surface. Import rewrites the file
+sorted by title, which drops comments.
+
+Home and the rows sort by `added`, shows by their newest episode. Newly Added is
+the 12 newest titles.
+
+## Importing
+
+    semmeltv import --manifest library.toml [--library DIR | --listing FILE]
+
+Compares the videos under `Series/` and `Movies/` with the manifest, parsing file
+names as it goes, and adds what is new. Existing entries stay exactly as they are.
+With no manifest yet it is a first import: `added` is each file's date. Later,
+`added` is today, because a film sorted today may have an old file date.
+
+`--listing` reads `rclone lsf -R --files-only --format tsp` output instead of the
+tree. A new title takes its TMDB id from `tmdb.json` in the cache when known, and
+otherwise from a search if a token is set. A title with no id, a file with no
+episode marker, or a second copy of a title is marked for review. The report also
+names entries whose file is missing and videos that were left out.
+
+New videos reach the library through `pcloud:Incoming`: a person starts a Claude
+session on beast and runs the `/semmeltv-incoming` skill, which sorts them into
+place, runs the import against a local copy, and uploads the result.
+
+## Refreshing
+
+The app checks `library.toml` every 30 seconds and reloads it when it changed.
+Focus stays on the same title and an open show stays open. During playback the
+reload waits until the video ends. New art appears the same way.
+
+## Streaming and offline
+
+On semmeltv5, `/var/lib/semmeltv/library` is a read-only rclone mount of pCloud
+with a full VFS cache on local disk. The cache size is
+`semmeltv.offlineCacheGiB` in `configurations/nixos/semmeltv5/default.nix`, and
+the least recently watched titles are evicted first.
+
+rclone only keeps what was read, so when a title starts the app reads the rest of
+the file through the mount in the background, slowly, followed by the next
+episode of a show. A file larger than the cache is skipped. `SEMMELTV_VFS_CACHE`
+is the cache's file tree (`.../vfs/pcloud`), `SEMMELTV_VFS_CACHE_BYTES` its size,
+and `SEMMELTV_REMOTE` a `host:port` probed every poll to tell whether pCloud can
+be reached. Without `SEMMELTV_VFS_CACHE` everything counts as streaming and cards
+show no state.
+
+Cards show what is on the device: Downloaded, Downloading or Not downloaded, and
+for a show a count such as 3 of 10 downloaded. A file counts as downloaded when
+its allocated blocks in the cache cover its size, since cache files are sparse.
+Newly added titles are not downloaded until watched.
+
+Offline, the app uses the last good copy of the manifest,
+`library.last-good.toml` in the cache, and plays downloaded files straight from
+the rclone cache, which also works when the mount is down or was started without
+a network. Selecting anything else says it can't be reached. rclone's own view of
+a cached file only survives offline until `--dir-cache-time` (1h) runs out, which
+is why the app does not depend on it. Files played straight from the cache do not
+refresh their place in the eviction order, and titles in a mount that never came
+up have no `poster.jpg`.
 
 ## Remote
 
@@ -39,8 +124,8 @@ because the times do not fit every release: a file with a recap the database's
 release lacks lands partway through the titles.
 
 Times come from [TheIntroDB](https://theintrodb.org) when an episode starts, and
-are not stored. An episode needs a TMDB id, from `semmeltv artwork` or `tmdb` in
-`meta.toml`, and without one or without a network it plays with no button. When
+are not stored. An episode needs its show's `tmdb` in `library.toml`, and without
+one or without a network it plays with no button. When
 several ranges exist the earliest counts, since later ones have been wrong. Their
 terms allow personal, non-commercial use and forbid passing the data on, so
 timings must not be exported or committed.
@@ -69,17 +154,9 @@ the first of:
 
 The step needs a TMDB API Read Access Token, from `TMDB_TOKEN_FILE`,
 `--tmdb-token-file` or `TMDB_TOKEN`. Images older than six months are refreshed,
-or deleted if that fails, as TMDB's terms require. Titles it could not match
-safely keep the gradient, and are printed and saved to `tmdb-report.txt` in the
-cache.
-
-## meta.toml
-
-Optional, in a title's folder, all fields optional:
-
-    title = "Star Wars: Maul – Shadow Lord"
-    year = 2026
-    tmdb = 12345
+or deleted if that fails, as TMDB's terms require. Titles with no `tmdb` in
+`library.toml` keep the gradient, and are printed and saved to `tmdb-report.txt`
+in the cache.
 
 ## Development
 

@@ -492,7 +492,7 @@ fn download(request: &Request, found: &Found) -> Action {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::FileEntry;
+    use crate::import::library_from_paths;
     use crate::progress::Position;
 
     fn library() -> Library {
@@ -510,15 +510,7 @@ mod tests {
             "Series/Star Wars Ahsoka/Star.Wars.Ahsoka.S01E02.mkv",
             "Movies/Dune (2021)/Dune.2021.1080p.mkv",
         ];
-        let entries = paths
-            .iter()
-            .map(|path| FileEntry {
-                path: path.into(),
-                size: 1,
-                modified: 0,
-            })
-            .collect();
-        library::build("/lib".as_ref(), entries)
+        library_from_paths(&paths)
     }
 
     fn progress(season: u32, episode: u32, finished: bool) -> Progress {
