@@ -2,6 +2,7 @@ mod app;
 mod artwork;
 mod cec;
 mod command;
+mod display;
 mod fetch;
 mod import;
 mod intent;

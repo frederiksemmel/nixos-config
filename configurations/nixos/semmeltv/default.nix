@@ -5,7 +5,13 @@
   ...
 }:
 let
-  semmeltv = pkgs.callPackage ../../../packages/semmeltv { };
+  ffmpeg = pkgs.callPackage "${nixos-raspberrypi}/pkgs/ffmpeg_8-rpi.nix" {
+    ffmpeg = pkgs.ffmpeg_8;
+  };
+  mpv = pkgs.mpv.override {
+    mpv-unwrapped = pkgs.mpv-unwrapped.override { inherit ffmpeg; };
+  };
+  semmeltv = pkgs.callPackage ../../../packages/semmeltv { inherit mpv; };
   blankCursor = pkgs.callPackage ../../../packages/semmeltv/blank-cursor.nix { };
   stateDir = "/var/lib/semmeltv";
 in
@@ -51,9 +57,19 @@ in
         d = {
           user = "semmeltv";
           group = "users";
-          mode = "0755";
+          mode = "2775";
         };
       });
+
+  security.polkit.extraConfig = ''
+    polkit.addRule(function(action, subject) {
+      if (action.id == "org.freedesktop.systemd1.manage-units"
+          && action.lookup("unit") == "cage-tty1.service"
+          && subject.user == "frederik") {
+        return polkit.Result.YES;
+      }
+    });
+  '';
 
   services.cage = {
     enable = true;

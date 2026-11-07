@@ -9,6 +9,7 @@
   libxkbcommon,
   wayland,
   mpv,
+  wlr-randr,
 }:
 
 rustPlatform.buildRustPackage {
@@ -49,7 +50,12 @@ rustPlatform.buildRustPackage {
   dontPatchELF = true;
 
   postInstall = ''
-    wrapProgram $out/bin/semmeltv --suffix PATH : ${lib.makeBinPath [ mpv ]}
+    wrapProgram $out/bin/semmeltv --suffix PATH : ${
+      lib.makeBinPath [
+        mpv
+        wlr-randr
+      ]
+    }
   '';
 
   meta = {

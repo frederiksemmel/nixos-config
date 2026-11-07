@@ -1,4 +1,5 @@
 use crate::command::Command;
+use crate::display::{self, Mode};
 use crate::segments::{self, Kind, Segment, Title};
 use serde_json::{Value, json};
 use std::env;
@@ -21,12 +22,15 @@ const SELECT: &str = "script-message semmeltv-select";
 const POSITION_ID: u64 = 1;
 const DURATION_ID: u64 = 2;
 const ENDED_ID: u64 = 3;
+const FRAME_RATE_ID: u64 = 4;
 const PROMPT_ID: u64 = 1;
+const LOADING_ID: u64 = 2;
 const PROMPT_WIDTH: u32 = 1920;
 const PROMPT_HEIGHT: u32 = 1080;
 const PROMPT_PILL: &str =
     "m 42 0 l 258 0 b 281 0 300 19 300 42 b 300 65 281 84 258 84 l 42 84 b 19 84 0 65 0 42 b 0 19 19 0 42 0";
-const KEYBINDS: [(&str, &str); 7] = [
+const LOADING_TEXT: &str = r"{\an5\pos(960,540)\bord0\shad0\b1\fs64\1c&HFFFFFF&}Loading…";
+const KEYBINDS: [(&str, &str); 9] = [
     ("ESC", STOP),
     ("BS", STOP),
     ("ENTER", SELECT),
@@ -34,6 +38,8 @@ const KEYBINDS: [(&str, &str); 7] = [
     ("SPACE", "cycle pause"),
     ("LEFT", "seek -10"),
     ("RIGHT", "seek 10"),
+    ("UP", "seek 60"),
+    ("DOWN", "seek -60"),
 ];
 
 type Shared = Arc<Mutex<Playback>>;
@@ -60,7 +66,9 @@ enum Event {
     Position(f64),
     Duration(f64),
     Ended,
+    FrameRate(f64),
     Select,
+    Started,
 }
 
 impl Event {
@@ -70,10 +78,12 @@ impl Event {
             "property-change" => match message["id"].as_u64()? {
                 POSITION_ID => Some(Self::Position(message["data"].as_f64()?)),
                 DURATION_ID => Some(Self::Duration(message["data"].as_f64()?)),
+                FRAME_RATE_ID => Some(Self::FrameRate(message["data"].as_f64()?)),
                 ENDED_ID => message["data"].as_bool()?.then_some(Self::Ended),
                 _ => None,
             },
             "client-message" => (message["args"][0].as_str()? == SELECT_MESSAGE).then_some(Self::Select),
+            "playback-restart" => Some(Self::Started),
             _ => None,
         }
     }
@@ -87,6 +97,8 @@ struct Playback {
     ended: bool,
     segments: Vec<Segment>,
     prompt: Option<Kind>,
+    started: bool,
+    display_mode: Option<Mode>,
 }
 
 impl Playback {
@@ -99,7 +111,7 @@ impl Playback {
     fn select(&self) -> Value {
         match segments::at(&self.segments, self.position) {
             Some(segment) => json!(["seek", segment.end, "absolute"]),
-            None => json!(["cycle", "pause"]),
+            None => json!(["keypress", "SPACE"]),
         }
     }
 
@@ -151,6 +163,22 @@ fn prompt_command(prompt: Option<Kind>) -> Value {
     }
 }
 
+fn loading_command(shown: bool) -> Value {
+    let (format, data) = if shown {
+        ("ass-events", LOADING_TEXT)
+    } else {
+        ("none", "")
+    };
+    json!({
+        "name": "osd-overlay",
+        "id": LOADING_ID,
+        "format": format,
+        "data": data,
+        "res_x": PROMPT_WIDTH,
+        "res_y": PROMPT_HEIGHT,
+    })
+}
+
 pub struct Player {
     playback: Shared,
 }
@@ -161,10 +189,14 @@ impl Player {
         let _ = std::fs::remove_file(&socket_path);
         let mut child = Process::new("mpv")
             .arg("--fs")
+            .arg("--pause")
             .arg("--force-window=immediate")
             .arg("--really-quiet")
             .arg("--save-position-on-quit")
             .arg("--keep-open")
+            .arg("--hwdec=drm")
+            .arg("--gpu-context=wayland")
+            .arg("--profile=fast")
             .arg(format!("--input-ipc-server={}", socket_path.display()))
             .arg("--")
             .arg(path)
@@ -175,6 +207,9 @@ impl Player {
         thread::spawn(move || {
             connect(&mut child, &socket_path, &shared, title);
             let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
+            if let Some(mode) = shared.lock().unwrap().display_mode.take() {
+                mode.apply();
+            }
             let _ = std::fs::remove_file(&socket_path);
             on_exit(finish);
         });
@@ -186,11 +221,11 @@ impl Player {
         let message = match command {
             Command::Back => json!(["quit-watch-later", STOPPED_EXIT_CODE]),
             Command::Select => playback.select(),
-            Command::PlayPause => json!(["cycle", "pause"]),
-            Command::Left => json!(["seek", -10]),
-            Command::Right => json!(["seek", 10]),
-            Command::Up => json!(["seek", 60]),
-            Command::Down => json!(["seek", -60]),
+            Command::PlayPause => json!(["keypress", "SPACE"]),
+            Command::Left => json!(["keypress", "LEFT"]),
+            Command::Right => json!(["keypress", "RIGHT"]),
+            Command::Up => json!(["keypress", "UP"]),
+            Command::Down => json!(["keypress", "DOWN"]),
         };
         playback.send(message);
     }
@@ -210,6 +245,8 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             }
             let _ = send(&mut stream, json!(["observe_property", POSITION_ID, "time-pos"]));
             let _ = send(&mut stream, json!(["observe_property", ENDED_ID, "eof-reached"]));
+            let _ = send(&mut stream, loading_command(true));
+            let _ = send(&mut stream, json!(["observe_property", FRAME_RATE_ID, "container-fps"]));
             if title.is_some() {
                 let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
             }
@@ -245,6 +282,24 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 let mut playback = shared.lock().unwrap();
                 let message = playback.select();
                 playback.send(message);
+            }
+            Some(Event::FrameRate(fps)) => {
+                let matched = {
+                    let playback = shared.lock().unwrap();
+                    playback.started || playback.display_mode.is_some()
+                };
+                if !matched {
+                    let previous = display::match_frame_rate(fps);
+                    shared.lock().unwrap().display_mode = previous;
+                }
+            }
+            Some(Event::Started) => {
+                let mut playback = shared.lock().unwrap();
+                playback.send(loading_command(false));
+                if !playback.started {
+                    playback.started = true;
+                    playback.send(json!(["set_property", "pause", false]));
+                }
             }
             None => {}
         }
@@ -290,7 +345,14 @@ mod tests {
         assert_eq!(Event::parse(position), Some(Event::Position(12.5)));
         assert_eq!(Event::parse(duration), Some(Event::Duration(2730.0)));
         assert_eq!(Event::parse(end), Some(Event::Ended));
+        let frame_rate = r#"{"event":"property-change","id":4,"name":"container-fps","data":23.976}"#;
+        assert_eq!(Event::parse(frame_rate), Some(Event::FrameRate(23.976)));
         assert_eq!(Event::parse(key), Some(Event::Select));
+    }
+
+    #[test]
+    fn the_first_frame_clears_the_loading_screen() {
+        assert_eq!(Event::parse(r#"{"event":"playback-restart"}"#), Some(Event::Started));
     }
 
     #[test]
@@ -300,7 +362,6 @@ mod tests {
             r#"{"event":"property-change","id":1,"name":"time-pos"}"#,
             r#"{"event":"property-change","id":3,"name":"eof-reached","data":false}"#,
             r#"{"event":"client-message","args":["something-else"]}"#,
-            r#"{"event":"playback-restart"}"#,
             "not json",
         ] {
             assert_eq!(Event::parse(line), None, "{line}");
@@ -376,7 +437,7 @@ mod tests {
         let mut playback = during_the_intro();
         assert_eq!(playback.select(), json!(["seek", 20.0, "absolute"]));
         playback.position = 20.0;
-        assert_eq!(playback.select(), json!(["cycle", "pause"]));
+        assert_eq!(playback.select(), json!(["keypress", "SPACE"]));
     }
 
     #[test]
