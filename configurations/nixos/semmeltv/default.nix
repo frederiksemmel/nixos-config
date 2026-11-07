@@ -1,10 +1,18 @@
-{ flake, lib, ... }:
+{
+  flake,
+  lib,
+  pkgs,
+  ...
+}:
 let
   inherit (flake.inputs) nixos-raspberrypi;
+  semmeltv = pkgs.callPackage ../../../packages/semmeltv { };
+  stateDir = "/var/lib/semmeltv";
 in
 {
   imports = with nixos-raspberrypi.nixosModules; [
     raspberry-pi-5.base
+    raspberry-pi-5.display-vc4
     sd-image
   ];
 
@@ -25,6 +33,52 @@ in
     ];
   };
   security.sudo.wheelNeedsPassword = false;
+
+  users.users.semmeltv = {
+    isNormalUser = true;
+    home = stateDir;
+    createHome = false;
+    extraGroups = [
+      "video"
+      "render"
+      "input"
+    ];
+  };
+
+  systemd.tmpfiles.settings.semmeltv =
+    lib.genAttrs
+      [
+        stateDir
+        "${stateDir}/cache"
+        "${stateDir}/library"
+        "${stateDir}/library/Movies"
+        "${stateDir}/library/Series"
+      ]
+      (_: {
+        d = {
+          user = "semmeltv";
+          group = "users";
+          mode = "0755";
+        };
+      });
+
+  services.cage = {
+    enable = true;
+    user = "semmeltv";
+    program = lib.getExe semmeltv;
+    environment = {
+      SEMMELTV_LIBRARY = "${stateDir}/library";
+      SEMMELTV_CACHE = "${stateDir}/cache";
+    };
+  };
+
+  systemd.services.cage-tty1 = {
+    after = [ "systemd-tmpfiles-setup.service" ];
+    serviceConfig = {
+      Restart = "always";
+      RestartSec = 2;
+    };
+  };
 
   services.openssh = {
     enable = true;
