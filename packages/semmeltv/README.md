@@ -11,6 +11,15 @@ separate mpv window.
 to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`. The cache must be outside
 the library, and nothing ever writes to the library.
 
+## Remote
+
+The TV's own remote works over HDMI-CEC through the kernel's `/dev/cec*` devices,
+which needs membership of the `video` group. The app appears on the TV as a
+playback device named SemmelTV. Machines without CEC simply skip this.
+
+Arrows move, OK selects, Back or Exit goes back, and Play and Pause toggle
+playback. During a video the arrows seek, and Stop quits.
+
 ## Artwork
 
 `semmeltv artwork` runs apart from the UI, after a sync or on demand. A card uses

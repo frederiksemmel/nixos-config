@@ -1,5 +1,6 @@
 mod app;
 mod artwork;
+mod cec;
 mod command;
 mod library;
 mod loader;

@@ -6,6 +6,7 @@ license = "GPL-3.0-only"
 publish = false
 
 [dependencies]
+cec_linux = { version = "0.2", features = ["poll"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 regex = "1"
 serde = { version = "1", features = ["derive"] }

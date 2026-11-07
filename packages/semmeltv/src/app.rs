@@ -1,4 +1,5 @@
 use crate::artwork::{Cache, Matches};
+use crate::cec;
 use crate::command::Command;
 use crate::library::{Library, Show};
 use crate::loader::{self, Job, Pixels};
@@ -12,7 +13,7 @@ use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
@@ -23,6 +24,20 @@ static SHOW_GENERATION: AtomicU64 = AtomicU64::new(0);
 enum Screen {
     Home,
     Show(u64),
+}
+
+#[derive(Clone)]
+pub struct Remote {
+    commands: Sender<Command>,
+    ui: slint::Weak<AppWindow>,
+}
+
+impl Remote {
+    pub fn send(&self, command: Command) {
+        if self.commands.send(command).is_ok() {
+            let _ = self.ui.upgrade_in_event_loop(|ui| ui.invoke_remote_input());
+        }
+    }
 }
 
 struct Target {
@@ -75,6 +90,20 @@ pub fn run(library: Library, cache: Cache) -> Result<(), slint::PlatformError> {
         }
         true
     });
+    let (commands, received) = mpsc::channel();
+    let remote_input = Rc::downgrade(&app);
+    ui.on_remote_input(move || {
+        if let Some(app) = remote_input.upgrade() {
+            for command in received.try_iter() {
+                App::dispatch(&app, command);
+            }
+        }
+    });
+    cec::spawn(Remote {
+        commands,
+        ui: ui.as_weak(),
+    });
+
     let finished = Rc::downgrade(&app);
     ui.on_playback_finished(move |success| {
         if let Some(app) = finished.upgrade() {
