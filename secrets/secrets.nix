@@ -26,6 +26,7 @@ in
     frederik
     fstux
   ];
+  "semmeltv_ssh_key.age".publicKeys = [ frederik ];
   "tmdb_token.age".publicKeys = [
     frederik
     semmeltv5

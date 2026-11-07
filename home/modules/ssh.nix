@@ -26,6 +26,11 @@ in
       path = spadesvisionConfig;
     };
 
+    age.secrets.semmeltv_ssh_key = {
+      file = ../../secrets/semmeltv_ssh_key.age;
+      path = "${config.home.homeDirectory}/.ssh/id_semmeltv";
+    };
+
     programs.ssh = {
       enable = true;
       enableDefaultConfig = false;
@@ -53,6 +58,12 @@ in
           User = "frederik";
           IdentityFile = identity "~/.ssh/beast_login";
           IdentitiesOnly = true;
+        };
+        "semmeltv*" = {
+          User = "frederik";
+          IdentityFile = "~/.ssh/id_semmeltv";
+          IdentitiesOnly = true;
+          StrictHostKeyChecking = "accept-new";
         };
       };
     };

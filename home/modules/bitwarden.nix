@@ -360,7 +360,8 @@ in
           };
           Install.WantedBy = [ "graphical-session.target" ];
         };
-        programs.ssh.settings.rbw-ssh-add.header = "Match exec \"${lib.getExe rbwSshAdd}\"";
+        programs.ssh.settings.rbw-ssh-add.header =
+          "Match host \"*,!semmeltv*\" exec \"${lib.getExe rbwSshAdd}\"";
       })
       (lib.mkIf cfg.headlessSshKeys.enable {
         assertions = [
@@ -371,7 +372,8 @@ in
         ];
         home.packages = [ sshUnlock ];
         programs.rbw.settings.pinentry = lib.mkForce pkgs.pinentry-tty;
-        programs.ssh.settings.rbw-ssh-check.header = "Match exec \"${lib.getExe rbwSshCheck}\"";
+        programs.ssh.settings.rbw-ssh-check.header =
+          "Match host \"*,!semmeltv*\" exec \"${lib.getExe rbwSshCheck}\"";
         programs.nushell.extraConfig = ''
           do -i { ^${lib.getExe rbwSshCheck} }
         '';

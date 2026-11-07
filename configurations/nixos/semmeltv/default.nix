@@ -24,6 +24,7 @@ in
     extraGroups = [ "wheel" ];
     openssh.authorizedKeys.keys = [
       "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFYY+tQCwMzcg13wu+aJbcK0uA2EWS89akoAgxnW2yRL frederiksemmel@gmail.com"
+      "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOv3Vv3vTKjcqvmmsuTiYLA8pSb8WmaF6Ohn/LtgbOUw frederik@semmeltv"
     ];
   };
   security.sudo.wheelNeedsPassword = false;
