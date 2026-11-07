@@ -59,12 +59,10 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
                 let plugged = state.phys_addr != CecPhysicalAddress::INVALID;
                 match wake.link_changed(plugged, !state.log_addr_mask.is_empty(), Instant::now()) {
                     Greeting::Silent => {}
-                    Greeting::Announce => announce(&device)?,
+                    Greeting::Announce => log_failure(path, "Active Source", announce(&device)),
                     Greeting::Wake => {
-                        if let Err(error) = turn_on_tv(&device) {
-                            eprintln!("{}: Image View On failed: {error}", path.display());
-                        }
-                        announce(&device)?;
+                        log_failure(path, "Image View On", turn_on_tv(&device));
+                        log_failure(path, "Active Source", announce(&device));
                     }
                 }
             }
@@ -87,13 +85,20 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
                     }
                 }
                 Reaction::Release => keys.release(),
-                Reaction::Announce => announce(&device)?,
+                Reaction::Announce => log_failure(path, "Active Source", announce(&device)),
                 Reaction::Reply(reply, status) => {
-                    let from = own_logical_address(&device)?;
-                    device.transmit_data(from, message.initiator(), reply, &[status])?;
+                    let sent = own_logical_address(&device)
+                        .and_then(|from| device.transmit_data(from, message.initiator(), reply, &[status]));
+                    log_failure(path, "reply", sent);
                 }
             }
         }
+    }
+}
+
+fn log_failure(path: &Path, action: &str, result: io::Result<()>) {
+    if let Err(error) = result {
+        eprintln!("{}: {action} failed: {error}", path.display());
     }
 }
 
