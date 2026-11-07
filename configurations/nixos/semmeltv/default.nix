@@ -6,6 +6,7 @@
 }:
 let
   semmeltv = pkgs.callPackage ../../../packages/semmeltv { };
+  blankCursor = pkgs.callPackage ../../../packages/semmeltv/blank-cursor.nix { };
   stateDir = "/var/lib/semmeltv";
 in
 {
@@ -64,6 +65,8 @@ in
     environment = {
       SEMMELTV_LIBRARY = "${stateDir}/library";
       SEMMELTV_CACHE = "${stateDir}/cache";
+      XCURSOR_THEME = "blank";
+      XCURSOR_PATH = "${blankCursor}/share/icons";
     };
   };
 
