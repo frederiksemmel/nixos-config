@@ -96,7 +96,50 @@ pub struct Movie {
     modified: u64,
 }
 
+impl Library {
+    pub fn find_episode(&self, path: &Path) -> Option<(&Show, &Episode)> {
+        self.shows.iter().find_map(|show| {
+            show.seasons
+                .iter()
+                .flat_map(|season| &season.episodes)
+                .find(|episode| episode.path == path)
+                .map(|episode| (show, episode))
+        })
+    }
+}
+
 impl Show {
+    pub fn episode(&self, season: u32, number: u32) -> Option<&Episode> {
+        self.seasons
+            .iter()
+            .find(|candidate| candidate.number == season)?
+            .episodes
+            .iter()
+            .find(|episode| episode.number == number)
+    }
+
+    fn regular_episodes(&self) -> impl Iterator<Item = &Episode> {
+        self.seasons
+            .iter()
+            .filter(|season| season.number > 0)
+            .flat_map(|season| &season.episodes)
+    }
+
+    pub fn first_episode(&self) -> Option<&Episode> {
+        self.regular_episodes()
+            .next()
+            .or_else(|| self.seasons.first()?.episodes.first())
+    }
+
+    pub fn episode_after(&self, season: u32, number: u32) -> Option<&Episode> {
+        self.regular_episodes()
+            .find(|episode| (episode.season, episode.number) > (season, number))
+    }
+
+    pub fn last_season(&self) -> u32 {
+        self.seasons.iter().map(|season| season.number).max().unwrap_or(0)
+    }
+
     pub fn episode_count(&self) -> usize {
         self.seasons.iter().map(|season| season.episodes.len()).sum()
     }

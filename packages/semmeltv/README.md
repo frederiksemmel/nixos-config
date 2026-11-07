@@ -4,8 +4,8 @@ Apple TV style interface for a personal video library. It reads `Series/` and
 `Movies/` under a library folder, draws menus with Slint, and plays video in a
 separate mpv window.
 
-    semmeltv [ui|list|artwork] [--library DIR] [--cache DIR]
-                               [--tmdb-token-file FILE]
+    semmeltv [ui|list|artwork|understand TEXT] [--library DIR] [--cache DIR]
+                                               [--tmdb-token-file FILE]
 
 `--library` defaults to `$SEMMELTV_LIBRARY`, then `~/pcloud`. `--cache` defaults
 to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`. The cache must be outside
@@ -19,6 +19,22 @@ playback device named SemmelTV. Machines without CEC simply skip this.
 
 Arrows move, OK selects, Back or Exit goes back, and Play and Pause toggle
 playback. During a video the arrows seek, and Stop quits.
+
+Stopping a video saves its position and playing it again resumes there. The last
+episode started per show is kept in `progress.json` in the cache.
+
+## Voice commands
+
+`semmeltv understand TEXT` shows what a spoken sentence would do, in English,
+German or Spanish:
+
+    continue playing Outlander
+    spiele Outlander Staffel 2 Folge 3
+    descarga la siguiente temporada de Outlander
+
+Continuing plays the next episode once the last one ended. Titles match the
+library loosely, so transcription slips are forgiven; translated titles are not
+known. Download requests are understood but not carried out yet.
 
 ## Artwork
 

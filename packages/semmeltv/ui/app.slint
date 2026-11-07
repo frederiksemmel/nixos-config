@@ -175,7 +175,7 @@ export component AppWindow inherits Window {
 
     callback key(string) -> bool;
     callback remote-input();
-    callback playback-finished(bool);
+    callback playback-finished(bool, bool);
 
     property <length> u: self.height / 1080;
 

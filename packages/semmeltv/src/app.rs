@@ -4,7 +4,8 @@ use crate::command::Command;
 use crate::library::{Library, Show};
 use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav};
-use crate::player::Player;
+use crate::player::{Finish, Player};
+use crate::progress::{Position, Progress};
 use crate::{AppWindow, CardData, ShelfData};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -53,6 +54,8 @@ struct App {
     names: Matches,
     images: Sender<Job<Target>>,
     player: Option<Player>,
+    progress: Progress,
+    playing: Option<String>,
     message_timer: Timer,
 }
 
@@ -69,6 +72,7 @@ pub fn run(library: Library, cache: Cache) -> Result<(), slint::PlatformError> {
         });
     });
     let names = cache.load_matches();
+    let progress = cache.load_progress();
     let app = Rc::new(RefCell::new(App {
         ui: ui.clone_strong(),
         nav: Nav::new(library),
@@ -76,6 +80,8 @@ pub fn run(library: Library, cache: Cache) -> Result<(), slint::PlatformError> {
         names,
         images,
         player: None,
+        progress,
+        playing: None,
         message_timer: Timer::default(),
     }));
     app.borrow_mut().present_home();
@@ -105,9 +111,9 @@ pub fn run(library: Library, cache: Cache) -> Result<(), slint::PlatformError> {
     });
 
     let finished = Rc::downgrade(&app);
-    ui.on_playback_finished(move |success| {
+    ui.on_playback_finished(move |success, ended| {
         if let Some(app) = finished.upgrade() {
-            app.borrow_mut().finish_playback(success);
+            app.borrow_mut().finish_playback(success, ended);
         }
     });
     ui.run()
@@ -178,19 +184,50 @@ impl App {
 
     fn play(&mut self, path: &Path) {
         let handle = self.ui.as_weak();
-        let finished = move |success| {
-            let _ = handle.upgrade_in_event_loop(move |ui| ui.invoke_playback_finished(success));
+        let finished = move |finish: Finish| {
+            let _ = handle.upgrade_in_event_loop(move |ui| {
+                ui.invoke_playback_finished(finish != Finish::Failed, finish == Finish::Ended)
+            });
         };
         match Player::start(path, finished) {
-            Ok(player) => self.player = Some(player),
+            Ok(player) => {
+                self.player = Some(player);
+                self.record_start(path);
+            }
             Err(error) => self.show_message(format!("mpv did not start: {error}")),
         }
     }
 
-    fn finish_playback(&mut self, success: bool) {
+    fn record_start(&mut self, path: &Path) {
+        let Some((show, episode)) = self.nav.library().find_episode(path) else {
+            return;
+        };
+        let key = show.key.clone();
+        let position = Position {
+            season: episode.season,
+            episode: episode.number,
+            finished: false,
+        };
+        self.progress.insert(key.clone(), position);
+        self.playing = Some(key);
+        self.save_progress();
+    }
+
+    fn finish_playback(&mut self, success: bool, ended: bool) {
         self.player = None;
+        let show = self.playing.take();
+        if ended && let Some(position) = show.and_then(|key| self.progress.get_mut(&key)) {
+            position.finished = true;
+            self.save_progress();
+        }
         if !success {
             self.show_message("This video could not be played".to_string());
+        }
+    }
+
+    fn save_progress(&self) {
+        if let Err(error) = self.cache.save_progress(&self.progress) {
+            eprintln!("progress: {error}");
         }
     }
 

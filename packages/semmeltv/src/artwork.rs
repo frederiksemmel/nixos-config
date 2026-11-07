@@ -1,4 +1,5 @@
 use crate::library::{Library, Movie, Show, normalize};
+use crate::progress::Progress;
 use crate::tmdb::{self, Client, Found, Lookup, Season};
 use image::ImageReader;
 use image::codecs::jpeg::JpegEncoder;
@@ -46,6 +47,10 @@ impl Cache {
         self.root.join("tmdb.json")
     }
 
+    fn progress_path(&self) -> PathBuf {
+        self.root.join("progress.json")
+    }
+
     pub fn load_matches(&self) -> Matches {
         fs::read(self.matches_path())
             .ok()
@@ -57,6 +62,21 @@ impl Cache {
         let path = self.matches_path();
         let temporary = path.with_extension("json.tmp");
         fs::write(&temporary, serde_json::to_vec_pretty(matches)?)?;
+        fs::rename(temporary, path)
+    }
+
+    pub fn load_progress(&self) -> Progress {
+        fs::read(self.progress_path())
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default()
+    }
+
+    pub fn save_progress(&self, progress: &Progress) -> io::Result<()> {
+        let path = self.progress_path();
+        let temporary = path.with_extension("json.tmp");
+        fs::create_dir_all(&self.root)?;
+        fs::write(&temporary, serde_json::to_vec_pretty(progress)?)?;
         fs::rename(temporary, path)
     }
 

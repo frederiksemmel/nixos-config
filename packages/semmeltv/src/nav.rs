@@ -84,6 +84,10 @@ impl Nav {
         &self.home
     }
 
+    pub fn library(&self) -> &Library {
+        &self.library
+    }
+
     pub fn shows(&self) -> &[Show] {
         &self.library.shows
     }
