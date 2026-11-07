@@ -3,15 +3,12 @@
   imports = with nixos-raspberrypi.nixosModules; [
     ../semmeltv
     ./artwork.nix
-    ./mount.nix
     flake.self.nixosModules.hailo
     raspberry-pi-5.base
     raspberry-pi-5.display-vc4
   ];
 
   networking.hostName = "semmeltv5";
-
-  semmeltv.offlineCacheGiB = 80;
 
   hardware.hailo = {
     enable = true;
