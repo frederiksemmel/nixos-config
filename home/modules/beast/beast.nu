@@ -247,10 +247,11 @@ def pick-phone-session [] {
 #
 # Without a session it asks for one. Stops the session's process and resumes the conversation in the same directory
 # with Remote Control on. The app gets a new conversation for it and the old one
-# stops updating. A session that is working is refused until it is idle.
+# stops updating. A session that is working is refused until it is idle. The
+# generated name becomes the shpool, Claude and Remote Control session name.
 export def take [
   session?: string@complete-phone-sessions # session id, default asks for one
-  --name (-n): string                      # session name, default <repo>-<number>
+  --name (-n): string                      # session name, default generated from its opening request
 ] {
   let session = if $session == null { pick-phone-session } else { $session }
   if $session == null { return }
@@ -259,9 +260,16 @@ export def take [
     error make --unspanned { msg: $"($name) already exists, use beast attach" }
   }
   let claude = on-beast $"stop-phone-session ($session | to json)"
-  let shpool_name = $name | default (free-name $"($claude.repo)-" $taken)
-  let command = $"claude --resume ($session) --remote-control --remote-control-session-name-prefix ($claude.repo)"
-  connect $shpool_name (window-title $claude) --create [--dir ($claude.dir | to json) --cmd ($command | to json)]
+  let wanted = $name | default $claude.name
+  let session_name = if $wanted == null {
+    free-name $"($claude.repo)-" $taken
+  } else if $wanted in $taken {
+    free-name $"($wanted)-" $taken
+  } else {
+    $wanted
+  }
+  let command = $"claude --resume ($session) --name ($session_name) --remote-control ($session_name)"
+  connect $session_name $session_name --create [--dir ($claude.dir | to json) --cmd ($command | to json)]
 }
 
 # Kills the sessions matching every given filter, after listing them and asking.

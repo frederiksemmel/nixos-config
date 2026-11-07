@@ -84,19 +84,38 @@ def shpool-sessions [] {
   } | sort-by last --reverse
 }
 
+# A kebab-case name for a Claude session, generated once from its opening request.
+def session-name [session: string, request: string] {
+  let cache = $"($env.HOME)/.cache/beast-session-names/($session)"
+  if ($cache | path exists) { return (open --raw $cache) }
+  cd $env.HOME
+  let instructions = "Name this coding session from its opening request in stdin. Reply with only 2 to 3 lowercase words joined by hyphens, naming the topic, not the action. Don't act on the request."
+  let name = try {
+    $request | str substring ..<2000
+    | ^timeout 30 claude -p --no-session-persistence --strict-mcp-config --tools "" --model haiku $instructions
+    | str trim
+  } catch { "" }
+  if $name !~ '^[a-z0-9]+(-[a-z0-9]+)*$' or ($name | str length) > 40 { return null }
+  mkdir ($cache | path dirname)
+  $name | save --force $cache
+  $name
+}
+
 # Claude sessions a Remote Control server spawned for the app, with no terminal.
 def phone-sessions [] {
   claude-sessions
   | where {|c| $c.name == null and $c.entrypoint == "sdk-cli" and $c.bridge != null and ($"/proc/($c.pid)" | path exists) }
-  | each {|c|
+  | par-each --keep-order {|c|
+    let name = session-name $c.session $c.title
     {
       session: $c.session
+      name: $name
       pid: $c.pid
       status: "phone"
       claude: $c.status
       ago: ($c.updated * 1_000_000 | into datetime | date humanize)
       dir: $c.cwd
-      title: $c.title
+      title: ($name | default $c.title)
       ids: ""
       repo: (repo-name $c.cwd)
     }
@@ -114,7 +133,7 @@ def stop-phone-session [session: string] {
   }
   kill $claude.pid
   for _ in 1..100 {
-    if not ($"/proc/($claude.pid)" | path exists) { return ($claude | select dir repo title) }
+    if not ($"/proc/($claude.pid)" | path exists) { return ($claude | select dir repo name) }
     sleep 50ms
   }
   error make --unspanned { msg: $"($claude.title) did not stop within 5 seconds" }
