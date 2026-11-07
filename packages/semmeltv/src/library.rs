@@ -103,10 +103,6 @@ impl Show {
         }
     }
 
-    pub fn first_episode(&self) -> Option<&Episode> {
-        self.seasons.iter().flat_map(|season| &season.episodes).next()
-    }
-
     pub fn episode_key(&self, episode: &Episode) -> String {
         format!("{}-s{:02}e{:02}", self.key, episode.season, episode.number)
     }
@@ -219,7 +215,7 @@ fn stem(path: &Path) -> String {
     path.file_stem().unwrap_or_default().to_string_lossy().into_owned()
 }
 
-fn apply_meta(dir: &Path) -> Meta {
+fn read_meta(dir: &Path) -> Meta {
     fs::read_to_string(dir.join("meta.toml"))
         .ok()
         .and_then(|text| match toml::from_str(&text) {
@@ -241,7 +237,7 @@ fn find_poster(dir: &Path) -> Option<PathBuf> {
 
 fn apply_show_files(show: &mut Show) {
     for dir in show.dirs.clone() {
-        let meta = apply_meta(&dir);
+        let meta = read_meta(&dir);
         show.title = meta.title.unwrap_or_else(|| show.title.clone());
         show.year = meta.year.or(show.year);
         show.tmdb = meta.tmdb.or(show.tmdb);
@@ -253,7 +249,7 @@ fn apply_movie_files(movie: &mut Movie) {
     let Some(dir) = movie.dir.clone() else {
         return;
     };
-    let meta = apply_meta(&dir);
+    let meta = read_meta(&dir);
     movie.title = meta.title.unwrap_or_else(|| movie.title.clone());
     movie.year = meta.year.or(movie.year);
     movie.tmdb = meta.tmdb;

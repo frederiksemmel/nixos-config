@@ -9,7 +9,6 @@
   libxkbcommon,
   wayland,
   mpv,
-  ffmpeg-headless,
 }:
 
 rustPlatform.buildRustPackage {
@@ -50,12 +49,7 @@ rustPlatform.buildRustPackage {
   dontPatchELF = true;
 
   postInstall = ''
-    wrapProgram $out/bin/semmeltv --suffix PATH : ${
-      lib.makeBinPath [
-        mpv
-        ffmpeg-headless
-      ]
-    }
+    wrapProgram $out/bin/semmeltv --suffix PATH : ${lib.makeBinPath [ mpv ]}
   '';
 
   meta = {

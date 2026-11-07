@@ -7,7 +7,7 @@ mod nav;
 mod player;
 mod tmdb;
 
-use artwork::{Cache, Options};
+use artwork::Cache;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -15,14 +15,12 @@ use std::process::ExitCode;
 
 slint::include_modules!();
 
-const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork] [--library DIR] [--cache DIR] [--no-frames] [--tmdb-token-file FILE]";
+const USAGE: &str = "usage: semmeltv [ui|list|artwork] [--library DIR] [--cache DIR] [--tmdb-token-file FILE]";
 
 struct Args {
     mode: String,
     library: PathBuf,
     cache: PathBuf,
-    frames: bool,
     token_file: Option<PathBuf>,
 }
 
@@ -38,7 +36,6 @@ fn parse_args() -> Result<Args, String> {
         cache: env_path("SEMMELTV_CACHE")
             .or_else(|| env_path("XDG_CACHE_HOME").map(|dir| dir.join("semmeltv")))
             .unwrap_or_else(|| home.join(".cache/semmeltv")),
-        frames: true,
         token_file: env_path("TMDB_TOKEN_FILE"),
     };
     let mut raw = env::args().skip(1);
@@ -49,7 +46,6 @@ fn parse_args() -> Result<Args, String> {
             "--library" => args.library = value("--library")?.into(),
             "--cache" => args.cache = value("--cache")?.into(),
             "--tmdb-token-file" => args.token_file = Some(value("--tmdb-token-file")?.into()),
-            "--no-frames" => args.frames = false,
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
     }
@@ -84,20 +80,8 @@ fn run() -> Result<(), String> {
     match args.mode.as_str() {
         "list" => list(&library),
         "artwork" => {
-            let tmdb = tmdb_client(&args)?;
-            if tmdb.is_none() {
-                println!("No TMDB token, using frames only");
-            }
-            artwork::generate(
-                &library,
-                &args.library,
-                &cache,
-                Options {
-                    frames: args.frames,
-                    tmdb,
-                },
-            )
-            .map_err(|error| error.to_string())?;
+            let client = tmdb_client(&args)?.ok_or("artwork needs a TMDB token: set TMDB_TOKEN_FILE")?;
+            artwork::generate(&library, &args.library, &cache, client).map_err(|error| error.to_string())?;
         }
         _ => app::run(library, cache).map_err(|error| error.to_string())?,
     }

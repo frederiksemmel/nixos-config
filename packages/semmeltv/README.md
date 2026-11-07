@@ -5,7 +5,7 @@ Apple TV style interface for a personal video library. It reads `Series/` and
 separate mpv window.
 
     semmeltv [ui|list|artwork] [--library DIR] [--cache DIR]
-                               [--no-frames] [--tmdb-token-file FILE]
+                               [--tmdb-token-file FILE]
 
 `--library` defaults to `$SEMMELTV_LIBRARY`, then `~/pcloud`. `--cache` defaults
 to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`. The cache must be outside
@@ -17,13 +17,14 @@ the library, and nothing ever writes to the library.
 the first of:
 
 1. `poster.jpg` or `poster.png` in the title's folder
-2. a TMDB image
-3. a frame extracted with ffmpeg
+2. a TMDB image: a backdrop for shows and films, a still for episodes
+3. a gradient with the title
 
-TMDB needs an API Read Access Token, from `TMDB_TOKEN_FILE`, `--tmdb-token-file`
-or `TMDB_TOKEN`. Images older than six months are refreshed, as TMDB's terms
-require. Titles it could not match safely are printed and saved to
-`tmdb-report.txt` in the cache.
+The step needs a TMDB API Read Access Token, from `TMDB_TOKEN_FILE`,
+`--tmdb-token-file` or `TMDB_TOKEN`. Images older than six months are refreshed,
+or deleted if that fails, as TMDB's terms require. Titles it could not match
+safely keep the gradient, and are printed and saved to `tmdb-report.txt` in the
+cache.
 
 ## meta.toml
 
