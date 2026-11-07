@@ -18,12 +18,27 @@ def complete-sessions [] {
   }
 }
 
+def complete-phone-sessions [] {
+  let sessions = try { on-beast phone-sessions } catch { [] }
+  {
+    options: { sort: false, completion_algorithm: fuzzy }
+    completions: ($sessions | each {|s| { value: $s.session, description: $s.title } })
+  }
+}
+
 def complete-repos [] {
   let repos = try { on-beast shpool-repos } catch { [] }
   {
     options: { completion_algorithm: fuzzy }
     completions: ($repos | each {|r| { value: $r.name, description: $r.path } })
   }
+}
+
+def free-name [prefix: string, taken: list<string>] {
+  1..(($taken | length) + 1)
+  | each {|n| $"($prefix)($n)" }
+  | where $it not-in $taken
+  | first
 }
 
 def window-title [session: record] {
@@ -92,17 +107,20 @@ def connect [session: string, title: string, --create: list<string>] {
 #   attach   Attaches this window to a session and keeps it attached across dropped connections.
 #   new      Starts a session: Claude with Remote Control in a repo, inside devenv when the repo has one.
 #   spare    Attaches this window to the newest detached Remote Control spare.
+#   take     Moves a session started in the app into shpool and attaches this window to it.
 #   clean    Kills the sessions matching every given filter, after listing them and asking.
 #   restore  Opens every detached session fullscreen on its own workspace, skipping unused spares.
 export def main [] {
-  let sessions = list
+  let found = on-beast "{ sessions: (shpool-sessions), phone: (phone-sessions) }"
+  let sessions = $found.sessions
+  let listed = $sessions | append $found.phone
   let new_entry = "new session"
   let kill_entry = "kill sessions…"
-  let rows = if ($sessions | is-empty) { [] } else {
-    let title_width = [($sessions.title | str length | math max) 40] | math min
-    let ids_width = $sessions.ids | str length | math max
+  let rows = if ($listed | is-empty) { [] } else {
+    let title_width = [($listed.title | str length | math max) 40] | math min
+    let ids_width = $listed.ids | str length | math max
     let columns = (term size).columns - 4
-    $sessions | each {|s|
+    $listed | each {|s|
       [
         ($s.title | str substring ..<$title_width | fill -w $title_width)
         ($s.ids | fill -w $ids_width)
@@ -112,7 +130,7 @@ export def main [] {
       ] | str join "  " | str substring ..<$columns
     }
   }
-  let count = $sessions | length
+  let count = $listed | length
   let choice = if ($rows | is-empty) { $count } else {
     $rows | append [$new_entry $kill_entry]
     | input list --fuzzy --index "beast session (type to filter, esc for a plain shell)"
@@ -121,12 +139,17 @@ export def main [] {
     do --ignore-errors { ^ssh -t beast "hide-env SSH_CONNECTION; exec nu --login" }
     exit
   } else if $choice < $count {
-    let session = $sessions | get $choice
-    connect $session.name (window-title $session)
+    let session = $listed | get $choice
+    if $session.status == "phone" {
+      take $session.session
+    } else {
+      connect $session.name (window-title $session)
+    }
   } else if $choice == $count {
     new
   } else {
     let names = $rows
+    | first ($sessions | length)
     | input list --fuzzy --multi --index "kill which sessions (tab marks, enter kills, esc cancels)"
     | default []
     | each {|i| $sessions | get $i | get name | to json }
@@ -170,10 +193,7 @@ export def new [
   }
   let taken = list | get name
   let prefix = if $target == null { "s" } else { $"($target.name)-" }
-  let default_name = 1..(($taken | length) + 1)
-  | each {|n| $"($prefix)($n)" }
-  | where $it not-in $taken
-  | first
+  let default_name = free-name $prefix $taken
   let session = if $name != null {
     $name
   } else if $repo != null {
@@ -202,6 +222,25 @@ export def spare [] {
     error make --unspanned { msg: "no detached spare on beast yet, claude-rc-spare starts one within a few seconds" }
   }
   attach ($spares | first | get name)
+}
+
+# Moves a session started in the app into shpool and attaches this window to it.
+#
+# Stops the session's process and resumes the conversation in the same directory
+# with Remote Control on. The app gets a new conversation for it and the old one
+# stops updating. A session that is working is refused until it is idle.
+export def take [
+  session: string@complete-phone-sessions # session id, tab completes with titles
+  --name (-n): string                     # session name, default <repo>-<number>
+] {
+  let taken = list | get name
+  if $name in $taken {
+    error make --unspanned { msg: $"($name) already exists, use beast attach" }
+  }
+  let claude = on-beast $"stop-phone-session ($session | to json)"
+  let shpool_name = $name | default (free-name $"($claude.repo)-" $taken)
+  let command = $"claude --resume ($session) --remote-control --remote-control-session-name-prefix ($claude.repo)"
+  connect $shpool_name (window-title $claude) --create [--dir ($claude.dir | to json) --cmd ($command | to json)]
 }
 
 # Kills the sessions matching every given filter, after listing them and asking.

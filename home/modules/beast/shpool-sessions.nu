@@ -2,16 +2,12 @@ def shpool-session-name [pid] {
   open --raw $"/proc/($pid)/environ" | split row (char nul) | where $it starts-with "SHPOOL_SESSION_NAME=" | first | str substring 20..
 }
 
-def shpool-sessions [] {
-  let sessions = shpool list --json | from json | get sessions
-  let daemon = ^pgrep -u $env.USER -x shpool | lines | first
-  let shells = ^pgrep -P $daemon | lines | each {|pid|
-    try {
-      let fg = open --raw $"/proc/($pid)/stat" | split row ") " | last | split row " " | get 5
-      { name: (shpool-session-name $pid), fg: $fg }
-    }
-  } | compact
-  let claudes = glob $"($env.HOME)/.claude/sessions/*.json" | each {|f|
+def repo-name [cwd: string] {
+  $cwd | str replace --regex '/\.claude/worktrees/.*$' "" | path basename
+}
+
+def claude-sessions [] {
+  glob $"($env.HOME)/.claude/sessions/*.json" | each {|f|
     try {
       let s = open $f
       let transcript = $"($env.HOME)/.claude/projects/($s.cwd | str replace --all --regex '[^A-Za-z0-9]' '-')/($s.sessionId).jsonl"
@@ -31,9 +27,33 @@ def shpool-sessions [] {
         | default ($titles | where type == "ai-title" | get -o aiTitle | last)
         | default $prompt
         | default "spare"
-      { name: (shpool-session-name $s.pid), cname: ($s.name? | default ""), title: $title, status: $s.status, cwd: $s.cwd, message: $message }
+      {
+        name: (try { shpool-session-name $s.pid } catch { null })
+        cname: ($s.name? | default "")
+        title: $title
+        status: $s.status
+        cwd: $s.cwd
+        message: $message
+        pid: $s.pid
+        session: $s.sessionId
+        bridge: $s.bridgeSessionId?
+        entrypoint: ($s.entrypoint? | default "")
+        updated: $s.updatedAt?
+      }
     }
   } | compact
+}
+
+def shpool-sessions [] {
+  let sessions = shpool list --json | from json | get sessions
+  let daemon = ^pgrep -u $env.USER -x shpool | lines | first
+  let shells = ^pgrep -P $daemon | lines | each {|pid|
+    try {
+      let fg = open --raw $"/proc/($pid)/stat" | split row ") " | last | split row " " | get 5
+      { name: (shpool-session-name $pid), fg: $fg }
+    }
+  } | compact
+  let claudes = claude-sessions
   $sessions | each {|s|
     let claude = $claudes | where name == $s.name | get -o 0
     let fg = $shells | where name == $s.name | get -o 0.fg
@@ -54,7 +74,7 @@ def shpool-sessions [] {
       dir: ($cwd | default "")
       title: $title
       ids: $ids
-      repo: ($cwd | default "" | str replace --regex '/\.claude/worktrees/.*$' "" | path basename)
+      repo: (repo-name ($cwd | default ""))
       claude: $claude.status?
       message: $claude.message?
       started: $s.started_at_unix_ms
@@ -62,6 +82,42 @@ def shpool-sessions [] {
       spare: ($claude != null and $claude.title == "spare" and ($s.name | str starts-with "rc-"))
     }
   } | sort-by last --reverse
+}
+
+# Claude sessions a Remote Control server spawned for the app, with no terminal.
+def phone-sessions [] {
+  claude-sessions
+  | where {|c| $c.name == null and $c.entrypoint == "sdk-cli" and $c.bridge != null and ($"/proc/($c.pid)" | path exists) }
+  | each {|c|
+    {
+      session: $c.session
+      pid: $c.pid
+      status: "phone"
+      claude: $c.status
+      ago: ($c.updated * 1_000_000 | into datetime | date humanize)
+      dir: $c.cwd
+      title: $c.title
+      ids: ""
+      repo: (repo-name $c.cwd)
+    }
+  }
+}
+
+# Stops an idle phone session's process, which leaves its worktree and transcript in place.
+def stop-phone-session [session: string] {
+  let claude = phone-sessions | where session == $session | get -o 0
+  if $claude == null {
+    error make --unspanned { msg: $"no phone session ($session) on beast" }
+  }
+  if $claude.claude != "idle" {
+    error make --unspanned { msg: $"($claude.title) is ($claude.claude), take it once it is idle" }
+  }
+  kill $claude.pid
+  for _ in 1..100 {
+    if not ($"/proc/($claude.pid)" | path exists) { return ($claude | select dir repo title) }
+    sleep 50ms
+  }
+  error make --unspanned { msg: $"($claude.title) did not stop within 5 seconds" }
 }
 
 def shpool-repos [] {
