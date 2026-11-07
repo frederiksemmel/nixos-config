@@ -1,9 +1,10 @@
-{ nixos-raspberrypi, ... }:
+{ flake, nixos-raspberrypi, ... }:
 {
   imports = with nixos-raspberrypi.nixosModules; [
     ../semmeltv
     ./artwork.nix
     ./mount.nix
+    flake.self.nixosModules.hailo
     raspberry-pi-5.base
     raspberry-pi-5.display-vc4
   ];
@@ -11,4 +12,10 @@
   networking.hostName = "semmeltv5";
 
   semmeltv.offlineCacheGiB = 32;
+
+  hardware.hailo = {
+    enable = true;
+    generation = "hailo8";
+  };
+  nixpkgs.config.allowUnfreePackages = [ "hailo8-firmware" ];
 }
