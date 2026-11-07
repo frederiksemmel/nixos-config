@@ -1,0 +1,272 @@
+import "@fonts/InterVariable.ttf";
+
+export struct CardData {
+    title: string,
+    detail: string,
+    art: image,
+    has-art: bool,
+    tint-a: color,
+    tint-b: color,
+}
+
+export struct ShelfData {
+    title: string,
+    cards: [CardData],
+}
+
+component CardView {
+    in property <length> u;
+    in property <CardData> card;
+    in property <bool> focused;
+
+    Rectangle {
+        y: 0;
+        width: 100%;
+        height: 225 * u;
+        transform-scale: root.focused ? 1.1 : 1;
+        animate transform-scale { duration: 180ms; easing: ease-out-quint; }
+
+        Rectangle {
+            border-radius: 14 * u;
+            clip: true;
+            background: @linear-gradient(135deg, root.card.tint-a 0%, root.card.tint-b 100%);
+
+            if !root.card.has-art: Text {
+                x: 28 * u;
+                width: parent.width - 56 * u;
+                text: root.card.title;
+                color: white;
+                font-size: 40 * u;
+                font-weight: 700;
+                wrap: word-wrap;
+                overflow: elide;
+                vertical-alignment: center;
+            }
+
+            if root.card.has-art: Image {
+                width: 100%;
+                height: 100%;
+                source: root.card.art;
+                image-fit: cover;
+            }
+
+            Rectangle {
+                background: black;
+                opacity: root.focused ? 0 : 0.3;
+                animate opacity { duration: 180ms; }
+            }
+        }
+
+        Rectangle {
+            border-radius: 14 * u;
+            border-width: 5 * u;
+            border-color: white;
+            opacity: root.focused ? 1 : 0;
+            animate opacity { duration: 120ms; }
+        }
+    }
+
+    Text {
+        x: 0;
+        y: 248 * u;
+        width: 100%;
+        text: root.card.has-art ? root.card.title : "";
+        color: root.focused ? white : #a8adb8;
+        font-size: 30 * u;
+        font-weight: root.focused ? 600 : 500;
+        overflow: elide;
+    }
+
+    Text {
+        x: 0;
+        y: root.card.has-art ? 290 * u : 248 * u;
+        width: 100%;
+        text: root.card.detail;
+        color: #7d8391;
+        font-size: 24 * u;
+        overflow: elide;
+    }
+}
+
+component ShelfRow {
+    in property <length> u;
+    in property <ShelfData> shelf;
+    in property <int> focus-col;
+    in property <bool> active;
+
+    property <length> step: 436 * u;
+    property <length> content-width: self.shelf.cards.length * self.step - 36 * u;
+    property <length> max-offset: max(0px, self.content-width - self.width);
+    property <length> offset: min(max(0, self.focus-col - 1) * self.step, self.max-offset);
+
+    Text {
+        x: 0;
+        y: 0;
+        text: root.shelf.title;
+        color: root.active ? white : #c9cdd6;
+        font-size: 42 * u;
+        font-weight: 700;
+    }
+
+    Rectangle {
+        x: -root.offset;
+        y: 84 * u;
+        width: root.content-width;
+        height: root.height - 84 * u;
+        animate x { duration: 240ms; easing: ease-out-quint; }
+
+        for card[index] in root.shelf.cards: CardView {
+            x: index * root.step;
+            y: 0;
+            width: 400 * root.u;
+            height: 330 * root.u;
+            u: root.u;
+            card: card;
+            focused: root.active && index == root.focus-col;
+        }
+    }
+}
+
+component ShelfStack {
+    in property <length> u;
+    in property <[ShelfData]> shelves;
+    in property <int> focus-row;
+    in property <[int]> focus-cols;
+    in property <bool> active;
+
+    property <length> step: 444 * u;
+    property <length> content-height: self.shelves.length * self.step;
+    property <length> max-offset: max(0px, self.content-height - self.height);
+
+    Rectangle {
+        x: 0;
+        y: -min(root.focus-row * root.step, root.max-offset);
+        width: 100%;
+        height: root.content-height;
+        animate y { duration: 280ms; easing: ease-out-quint; }
+
+        for shelf[index] in root.shelves: ShelfRow {
+            x: 0;
+            y: index * root.step;
+            width: parent.width;
+            height: 414 * root.u;
+            u: root.u;
+            shelf: shelf;
+            focus-col: root.focus-cols[index];
+            active: root.active && index == root.focus-row;
+        }
+    }
+}
+
+export component AppWindow inherits Window {
+    in property <[ShelfData]> home-shelves;
+    in property <int> home-row;
+    in property <[int]> home-cols;
+
+    in property <bool> show-open;
+    in property <string> show-title;
+    in property <string> show-subtitle;
+    in property <[ShelfData]> show-shelves;
+    in property <int> show-row;
+    in property <[int]> show-cols;
+
+    in property <string> message;
+    in property <bool> tmdb-notice;
+
+    callback key(string) -> bool;
+    callback playback-finished(bool);
+
+    property <length> u: self.height / 1080;
+
+    title: "SemmelTV";
+    no-frame: true;
+    preferred-width: 1920px;
+    preferred-height: 1080px;
+    background: #0b0d12;
+    default-font-family: "Inter Variable";
+    forward-focus: scope;
+
+    scope := FocusScope {
+        key-pressed(event) => {
+            root.key(event.text) ? accept : reject
+        }
+
+        home := ShelfStack {
+            x: 96 * root.u;
+            y: 96 * root.u;
+            width: parent.width - 192 * root.u;
+            height: parent.height - 96 * root.u;
+            u: root.u;
+            shelves: root.home-shelves;
+            focus-row: root.home-row;
+            focus-cols: root.home-cols;
+            active: !root.show-open;
+            opacity: root.show-open ? 0 : 1;
+            animate opacity { duration: 200ms; }
+        }
+
+        Rectangle {
+            opacity: root.show-open ? 1 : 0;
+            animate opacity { duration: 200ms; }
+
+            ShelfStack {
+                x: 96 * root.u;
+                y: 236 * root.u;
+                width: parent.width - 192 * root.u;
+                height: parent.height - 236 * root.u;
+                u: root.u;
+                shelves: root.show-shelves;
+                focus-row: root.show-row;
+                focus-cols: root.show-cols;
+                active: root.show-open;
+            }
+
+            Rectangle {
+                y: 0;
+                height: 214 * root.u;
+                background: #0b0d12;
+            }
+
+            Text {
+                x: 96 * root.u;
+                y: 60 * root.u;
+                text: root.show-title;
+                color: white;
+                font-size: 68 * root.u;
+                font-weight: 700;
+            }
+
+            Text {
+                x: 96 * root.u;
+                y: 144 * root.u;
+                text: root.show-subtitle;
+                color: #a8adb8;
+                font-size: 30 * root.u;
+            }
+        }
+
+        if root.tmdb-notice && !root.show-open: Text {
+            x: 96 * root.u;
+            y: parent.height - 44 * root.u;
+            text: "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.";
+            color: #6c7280;
+            font-size: 18 * root.u;
+        }
+
+        if root.message != "": Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: parent.height - 150 * root.u;
+            width: label.preferred-width + 80 * root.u;
+            height: 84 * root.u;
+            border-radius: 42 * root.u;
+            background: #232733;
+
+            label := Text {
+                text: root.message;
+                color: white;
+                font-size: 32 * root.u;
+                vertical-alignment: center;
+            }
+        }
+    }
+}

@@ -95,6 +95,7 @@
             claude-notify = final.callPackage ./packages/claude-notify.nix { };
             nordwand-mono = final.callPackage ./packages/nordwand-mono.nix { };
             plymouth-spades-vision = final.callPackage ./packages/plymouth-spades-vision { };
+            semmeltv = final.callPackage ./packages/semmeltv { };
             # The viewer makes every recording streamed in from an SDK the active one,
             # so it keeps jumping while several recordings stream in at once. The patch
             # adds a "Switch to newly streamed recordings" setting; with it off, such a
@@ -184,7 +185,7 @@
               overlays = [ self.overlays.default ];
             };
             packages = {
-              inherit (pkgs) claudebar claude-notify;
+              inherit (pkgs) claudebar claude-notify semmeltv;
             }
             // lib.concatMapAttrs (name: hailo: {
               "hailort-${name}" = hailo.hailort;
