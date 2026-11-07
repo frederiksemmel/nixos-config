@@ -11,7 +11,7 @@
 
   networking.hostName = "semmeltv5";
 
-  semmeltv.offlineCacheGiB = 32;
+  semmeltv.offlineCacheGiB = 80;
 
   hardware.hailo = {
     enable = true;
