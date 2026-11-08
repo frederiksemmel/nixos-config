@@ -31,6 +31,8 @@ use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
+const VOICE_RESULT_TIME: Duration = Duration::from_secs(6);
+const VOICE_WAITING_TIME: Duration = Duration::from_secs(20);
 const EMPTY_LIBRARY: &str = "The library is empty";
 const OUT_OF_REACH: &str = "Not downloaded, and pCloud can't be reached right now";
 const NOTHING_PLAYING: &str = "Nothing is playing";
@@ -89,6 +91,7 @@ struct App {
     progress: Progress,
     playing: Option<Playing>,
     message_timer: Timer,
+    voice_timer: Timer,
     store: Store,
     fetcher: Sender<Vec<PathBuf>>,
     downloaded: HashSet<PathBuf>,
@@ -162,6 +165,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         progress,
         playing: None,
         message_timer: Timer::default(),
+        voice_timer: Timer::default(),
         store,
         fetcher,
         downloading: None,
@@ -547,6 +551,7 @@ impl App {
         }
         if heard == Heard::Transcribing {
             self.report(json!({ "state": "transcribing" }));
+            self.show_voice("", "Working out what you said…", None);
             return;
         }
         if heard == Heard::Listening {
@@ -555,7 +560,7 @@ impl App {
                 player.set_muted(true);
                 self.unmute_after_listening = true;
             }
-            self.tell("Listening…");
+            self.show_voice("", "Listening…", None);
             return;
         }
         let action = match &heard {
@@ -576,20 +581,25 @@ impl App {
                 let understood = !matches!(action, Action::Refuse(_));
                 let outcome = self.describe(&action);
                 self.report(json!({ "state": "heard", "text": text, "action": outcome, "understood": understood }));
+                self.show_voice(&format!("“{text}”"), &outcome, Some(VOICE_RESULT_TIME));
                 self.act(action);
             }
             (Heard::NoMicrophone, _) => {
                 self.report(json!({ "state": "no-microphone" }));
-                self.tell("No microphone is connected");
+                self.show_voice("", "No microphone is connected", Some(VOICE_RESULT_TIME));
             }
             (Heard::Failed(error), _) => {
                 eprintln!("voice: {error}");
                 self.report(json!({ "state": "failed", "message": error }));
-                self.tell("Voice control failed");
+                self.show_voice("", "Voice control failed", Some(VOICE_RESULT_TIME));
+            }
+            (Heard::Transcript(_), None) => {
+                self.report(json!({ "state": "nothing" }));
+                self.show_voice("", "I didn't catch that", Some(VOICE_RESULT_TIME));
             }
             _ => {
                 self.report(json!({ "state": "nothing" }));
-                self.tell("I didn't catch that");
+                self.show_voice("", "I didn't hear anything", Some(VOICE_RESULT_TIME));
             }
         }
     }
@@ -648,8 +658,7 @@ impl App {
                 }
                 None => self.play(&path),
             },
-            Action::Download { title, .. } => self.tell(&format!("Downloading {title} by voice is not set up yet")),
-            Action::Refuse(reason) => self.tell(&reason),
+            Action::Download { .. } | Action::Refuse(_) => {}
             Action::Control(control) => self.control(control),
         }
     }
@@ -663,7 +672,7 @@ impl App {
                     self.tell("The TV did not answer");
                 }
             }
-            (_, None) => self.tell(NOTHING_PLAYING),
+            (_, None) => {}
             (Control::Pause, Some(player)) => player.set_paused(true),
             (Control::Resume, Some(player)) => player.set_paused(false),
             (Control::Stop, Some(player)) => player.command(Command::Back),
@@ -682,6 +691,31 @@ impl App {
     fn save_progress(&self) {
         if let Err(error) = self.cache.save_progress(&self.progress) {
             eprintln!("progress: {error}");
+        }
+    }
+
+    fn show_voice(&self, heard: &str, status: &str, hold: Option<Duration>) {
+        if let Some(player) = &self.player {
+            let text = if heard.is_empty() {
+                status.to_string()
+            } else {
+                format!("{heard}\n{status}")
+            };
+            player.say_for(&text, hold.unwrap_or(VOICE_WAITING_TIME));
+        }
+        self.ui.set_voice_transcript(heard.into());
+        self.ui.set_voice_status(status.into());
+        match hold {
+            Some(time) => {
+                let handle = self.ui.as_weak();
+                self.voice_timer.start(TimerMode::SingleShot, time, move || {
+                    if let Some(ui) = handle.upgrade() {
+                        ui.set_voice_transcript("".into());
+                        ui.set_voice_status("".into());
+                    }
+                });
+            }
+            None => self.voice_timer.stop(),
         }
     }
 

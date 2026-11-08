@@ -186,7 +186,16 @@ library loosely, so transcription slips are forgiven; translated titles are not
 known. Download requests are understood but not carried out yet.
 
 The wake word, any colour key on the remote, or V on a keyboard starts
-listening.
+listening. A panel at the top shows Listening… until you stop speaking, then
+Working out what you said…, then what it heard in quotes with what it does
+below, for 6 seconds. During a video the same lines show in mpv. Each attempt
+also prints a line such as
+
+    voice: 2.3 s recorded, speech from 0.3 s to 1.5 s, noise floor 180, recognised in 290 ms
+
+so a slow answer can be traced to the recording running on or to recognition.
+Recording ends after 0.8 seconds below three times the noise floor (at least
+400), gives up after 5 seconds without speech, and stops at 10.
 
 `SEMMELTV_LED` names a Linux LED, such as `/sys/class/leds/ACT`, that lights
 while the app listens and works out what was said. The app's user must be able

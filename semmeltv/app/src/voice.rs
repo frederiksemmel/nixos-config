@@ -126,13 +126,24 @@ fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard
         match progress {
             Progress::Listening => continue,
             Progress::Nothing => {
-                recording = None;
+                if let Some(recording) = recording.take() {
+                    eprintln!("voice: {}", recording.endpointer.summary());
+                }
                 heard(Heard::Nothing);
             }
             Progress::Ended => {
-                let samples = recording.take().map(|recording| recording.samples).unwrap_or_default();
+                let Some(Recording { endpointer, samples }) = recording.take() else {
+                    continue;
+                };
                 heard(Heard::Transcribing);
-                heard(match wyoming::transcribe(speech, &samples) {
+                let started = Instant::now();
+                let result = wyoming::transcribe(speech, &samples);
+                eprintln!(
+                    "voice: {}, recognised in {} ms",
+                    endpointer.summary(),
+                    started.elapsed().as_millis()
+                );
+                heard(match result {
                     Ok(text) => Heard::Transcript(text),
                     Err(error) => Heard::Failed(format!("Speech recognition: {error}")),
                 });
@@ -293,6 +304,8 @@ pub struct Endpointer {
     speech: usize,
     quiet: usize,
     floor: f32,
+    first_speech: Option<usize>,
+    last_speech: usize,
 }
 
 impl Default for Endpointer {
@@ -302,6 +315,8 @@ impl Default for Endpointer {
             speech: 0,
             quiet: 0,
             floor: INITIAL_FLOOR,
+            first_speech: None,
+            last_speech: 0,
         }
     }
 }
@@ -313,6 +328,8 @@ impl Endpointer {
         if level > (self.floor * SPEECH_OVER_FLOOR).max(MIN_SPEECH_LEVEL) {
             self.speech += 1;
             self.quiet = 0;
+            self.first_speech.get_or_insert(self.frames);
+            self.last_speech = self.frames;
         } else {
             self.quiet += 1;
         }
@@ -324,6 +341,22 @@ impl Endpointer {
             Progress::Nothing
         } else {
             Progress::Listening
+        }
+    }
+}
+
+impl Endpointer {
+    fn summary(&self) -> String {
+        let seconds = |frames: usize| frames as f64 * FRAME_TIME.as_secs_f64();
+        let recorded = seconds(self.frames);
+        match self.first_speech {
+            Some(first) => format!(
+                "{recorded:.1} s recorded, speech from {:.1} s to {:.1} s, noise floor {:.0}",
+                seconds(first - 1),
+                seconds(self.last_speech),
+                self.floor
+            ),
+            None => format!("{recorded:.1} s recorded, no speech, noise floor {:.0}", self.floor),
         }
     }
 }
@@ -392,6 +425,19 @@ mod tests {
         let after = feed(&mut endpointer, &tone(60.0), END_QUIET_FRAMES);
         assert_eq!(after.last(), Some(&Progress::Ended));
         assert!(after[..END_QUIET_FRAMES - 1].iter().all(|p| *p == Progress::Listening));
+    }
+
+    #[test]
+    fn the_summary_says_when_speech_started_and_stopped() {
+        let mut endpointer = Endpointer::default();
+        feed(&mut endpointer, &tone(60.0), 10);
+        feed(&mut endpointer, &tone(6000.0), 40);
+        feed(&mut endpointer, &tone(60.0), END_QUIET_FRAMES);
+        assert!(
+            endpointer
+                .summary()
+                .starts_with("2.3 s recorded, speech from 0.3 s to 1.5 s, noise floor")
+        );
     }
 
     #[test]

@@ -408,10 +408,14 @@ impl Player {
     }
 
     pub fn say(&self, text: &str) {
+        self.say_for(text, Duration::from_millis(SAY_FOR_MS));
+    }
+
+    pub fn say_for(&self, text: &str, time: Duration) {
         self.playback
             .lock()
             .unwrap()
-            .send(json!(["show-text", text, SAY_FOR_MS]));
+            .send(json!(["show-text", text, time.as_millis() as u64]));
     }
 }
 

@@ -238,6 +238,8 @@ export component AppWindow inherits Window {
     in property <[int]> show-cols;
 
     in property <string> message;
+    in property <string> voice-transcript;
+    in property <string> voice-status;
     in property <string> empty-note;
     in property <bool> tmdb-notice;
     in property <string> details;
@@ -474,6 +476,34 @@ export component AppWindow inherits Window {
                 color: white;
                 font-size: 32 * root.u;
                 vertical-alignment: center;
+            }
+        }
+
+        if root.voice-status != "": Rectangle {
+            x: (parent.width - self.width) / 2;
+            y: 96 * root.u;
+            width: voice.preferred-width + 96 * root.u;
+            height: voice.preferred-height + 48 * root.u;
+            border-radius: 42 * root.u;
+            background: #232733;
+
+            voice := VerticalLayout {
+                x: 48 * root.u;
+                y: 24 * root.u;
+                spacing: 8 * root.u;
+
+                if root.voice-transcript != "": Text {
+                    text: root.voice-transcript;
+                    color: #aab0c0;
+                    font-size: 28 * root.u;
+                    horizontal-alignment: center;
+                }
+                Text {
+                    text: root.voice-status;
+                    color: white;
+                    font-size: 32 * root.u;
+                    horizontal-alignment: center;
+                }
             }
         }
     }
