@@ -12,6 +12,16 @@ const TITLE_LENGTH: usize = 56;
 const CURVE: f64 = 0.45;
 const CLOCK_BOTTOM: f64 = 1016.0;
 const CLOCK_STYLE: &str = r"\fs38\1a&H10&";
+const TOAST_TOP: f64 = 72.0;
+const TOAST_PADDING_X: f64 = 48.0;
+const TOAST_PADDING_Y: f64 = 24.0;
+const TOAST_GAP: f64 = 6.0;
+const TOAST_RADIUS: f64 = 32.0;
+const TOAST_LENGTH: usize = 72;
+const TOAST_MIN_WIDTH: f64 = 320.0;
+const HEADING_SIZE: f64 = 34.0;
+const MESSAGE_SIZE: f64 = 42.0;
+const GLYPH_WIDTH: f64 = 0.41;
 
 const SCRIM: &str =
     r"{\an7\pos(0,0)\bord0\shad0\blur90\1c&H000000&\1a&H20&\p1}m -200 770 l 2120 770 l 2120 1300 l -200 1300{\p0}";
@@ -92,6 +102,35 @@ impl View<'_> {
     }
 }
 
+pub fn toast(heading: &str, message: &str) -> String {
+    let heading = shorten_to(heading, TOAST_LENGTH);
+    let message = shorten_to(message, TOAST_LENGTH);
+    let estimate = |line: &str, size: f64| line.chars().count() as f64 * size * GLYPH_WIDTH;
+    let width = (estimate(&heading, HEADING_SIZE).max(estimate(&message, MESSAGE_SIZE)) + 2.0 * TOAST_PADDING_X)
+        .clamp(TOAST_MIN_WIDTH, RIGHT - LEFT);
+    let heading_height = if heading.is_empty() {
+        0.0
+    } else {
+        HEADING_SIZE + TOAST_GAP
+    };
+    let height = 2.0 * TOAST_PADDING_Y + heading_height + MESSAGE_SIZE;
+    let centre = f64::from(WIDTH) / 2.0;
+    let top = TOAST_TOP + TOAST_PADDING_Y;
+    let mut events = vec![shape(
+        centre - width / 2.0,
+        TOAST_TOP,
+        &rounded(width, height, TOAST_RADIUS),
+        r"\1c&H332723&",
+    )];
+    if !heading.is_empty() {
+        let style = format!(r"\shad0\fs{HEADING_SIZE}\1c&HB8ADA8&");
+        events.push(text(r"\an8", centre, top, &style, &escape(&heading)));
+    }
+    let style = format!(r"\shad0\fs{MESSAGE_SIZE}");
+    events.push(text(r"\an8", centre, top + heading_height, &style, &escape(&message)));
+    events.join("\n")
+}
+
 fn clock(seconds: f64) -> String {
     let total = seconds.max(0.0) as u64;
     let (hours, minutes, seconds) = (total / 3600, total / 60 % 60, total % 60);
@@ -115,7 +154,10 @@ fn shape(x: f64, y: f64, path: &str, style: &str) -> String {
 }
 
 pub fn pill(width: f64, height: f64) -> String {
-    let radius = width.min(height) / 2.0;
+    rounded(width, height, width.min(height) / 2.0)
+}
+
+fn rounded(width: f64, height: f64, radius: f64) -> String {
     let (w, h, r, c) = (width, height, radius, radius * CURVE);
     let mut path = format!("m {r:.1} 0 l {:.1} 0 ", w - r);
     path += &format!("b {:.1} 0 {w:.1} {c:.1} {w:.1} {r:.1} l {w:.1} {:.1} ", w - c, h - r);
@@ -131,11 +173,15 @@ pub fn pill(width: f64, height: f64) -> String {
 }
 
 fn shorten(title: &str) -> String {
+    shorten_to(title, TITLE_LENGTH)
+}
+
+fn shorten_to(title: &str, length: usize) -> String {
     let title = title.replace(['\n', '\r'], " ");
-    if title.chars().count() <= TITLE_LENGTH {
+    if title.chars().count() <= length {
         return title;
     }
-    let cut: String = title.chars().take(TITLE_LENGTH - 1).collect();
+    let cut: String = title.chars().take(length - 1).collect();
     format!("{}…", cut.trim_end())
 }
 
@@ -240,5 +286,36 @@ mod tests {
     fn a_title_cannot_become_ass_markup() {
         assert_eq!(escape(r"{\b1}Pilot"), "\\{\\\u{2060}b1}Pilot");
         assert!(!shorten("one\ntwo").contains('\n'));
+    }
+
+    fn toast_box(rendered: &str) -> (f64, f64) {
+        let start = rendered.find(r"\pos(").unwrap() + 5;
+        let end = start + rendered[start..].find(',').unwrap();
+        let left: f64 = rendered[start..end].parse().unwrap();
+        let path_start = rendered.find(r"\p1}").unwrap() + 4;
+        let path_end = path_start + rendered[path_start..].find('{').unwrap();
+        let right = rendered[path_start..path_end]
+            .split(['m', 'l', 'b'])
+            .flat_map(|part| part.split_whitespace().step_by(2).map(|x| x.parse::<f64>().unwrap()))
+            .fold(0.0, f64::max);
+        (left, left + right)
+    }
+
+    #[test]
+    fn a_toast_is_centred_and_fits_its_text() {
+        let short = toast("", "Listening…");
+        let long = toast("“Play White Lotus”", "Playing The White Lotus · season 1, episode 1");
+        let (left, right) = toast_box(&long);
+        assert!((left + right - f64::from(WIDTH)).abs() < 0.2);
+        assert!(toast_box(&short).1 - toast_box(&short).0 < right - left);
+        assert!(long.contains(r"\an8\pos(960,"));
+    }
+
+    #[test]
+    fn a_long_transcript_is_shortened_to_one_line() {
+        let rendered = toast(&"word ".repeat(40), "Playing");
+        let (left, right) = toast_box(&rendered);
+        assert!(left >= LEFT && right <= RIGHT);
+        assert!(rendered.contains('…'));
     }
 }

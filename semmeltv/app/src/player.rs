@@ -23,7 +23,7 @@ const SAVE_EVERY: f64 = 30.0;
 const SHOWN_FOR: Duration = Duration::from_secs(4);
 const TICK: Duration = Duration::from_millis(100);
 const LONG_JUMP: i32 = 60;
-const SAY_FOR_MS: u64 = 3000;
+const SAY_FOR: Duration = Duration::from_secs(3);
 const OSD_FONT: &str = "Inter";
 const OSD_FONTS: &str = env!("SEMMELTV_FONT_DIR");
 const POSITION_ID: u64 = 1;
@@ -34,6 +34,7 @@ const PAUSE_ID: u64 = 5;
 const PROMPT_ID: u64 = 1;
 const LOADING_ID: u64 = 2;
 const OVERLAY_ID: u64 = 3;
+const TOAST_ID: u64 = 4;
 const LOADING_TEXT: &str = r"{\an5\pos(960,540)\bord0\shad0\b1\fs64\1c&HFFFFFF&}Loading…";
 const KEYBINDS: [(&str, &str); 9] = [
     ("ESC", STOP),
@@ -126,6 +127,7 @@ struct Playback {
     scrub: Scrub,
     shown_until: Option<Instant>,
     drawn: String,
+    toast_until: Option<Instant>,
     on_save: Option<Box<dyn Fn() + Send>>,
 }
 
@@ -205,7 +207,16 @@ impl Playback {
         self.shown_until = Some(now + SHOWN_FOR);
     }
 
+    fn toast(&mut self, heading: &str, message: &str, until: Instant) {
+        self.toast_until = Some(until);
+        self.send(toast_command(&overlay::toast(heading, message)));
+    }
+
     fn tick(&mut self, now: Instant) {
+        if self.toast_until.is_some_and(|until| now >= until) {
+            self.toast_until = None;
+            self.send(toast_command(""));
+        }
         if !self.ended {
             let order = self.scrub.poll(now);
             self.seek(order);
@@ -281,6 +292,19 @@ fn overlay_command(data: &str) -> Value {
         "data": data,
         "res_x": overlay::WIDTH,
         "res_y": overlay::HEIGHT,
+    })
+}
+
+fn toast_command(data: &str) -> Value {
+    let format = if data.is_empty() { "none" } else { "ass-events" };
+    json!({
+        "name": "osd-overlay",
+        "id": TOAST_ID,
+        "format": format,
+        "data": data,
+        "res_x": overlay::WIDTH,
+        "res_y": overlay::HEIGHT,
+        "z": 2,
     })
 }
 
@@ -408,14 +432,14 @@ impl Player {
     }
 
     pub fn say(&self, text: &str) {
-        self.say_for(text, Duration::from_millis(SAY_FOR_MS));
+        self.toast("", text, SAY_FOR);
     }
 
-    pub fn say_for(&self, text: &str, time: Duration) {
+    pub fn toast(&self, heading: &str, message: &str, time: Duration) {
         self.playback
             .lock()
             .unwrap()
-            .send(json!(["show-text", text, time.as_millis() as u64]));
+            .toast(heading, message, Instant::now() + time);
     }
 }
 

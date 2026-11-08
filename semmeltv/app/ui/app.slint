@@ -225,6 +225,63 @@ component ShelfStack {
     }
 }
 
+component Toast inherits Rectangle {
+    in property <length> u;
+    in property <string> heading;
+    in property <string> text;
+    in property <bool> voice;
+    in property <bool> busy;
+
+    border-radius: 32 * root.u;
+    background: #232733;
+    border-width: 1px;
+    border-color: #ffffff1a;
+    drop-shadow-blur: 32 * root.u;
+    drop-shadow-color: #00000099;
+
+    HorizontalLayout {
+        padding-left: (root.voice ? 36 : 44) * root.u;
+        padding-right: 44 * root.u;
+        padding-top: 24 * root.u;
+        padding-bottom: 26 * root.u;
+        spacing: 24 * root.u;
+
+        if root.voice: VerticalLayout {
+            alignment: center;
+
+            Rectangle {
+                width: 22 * root.u;
+                height: 22 * root.u;
+                border-radius: self.width / 2;
+                background: root.busy ? white : #8f95a3;
+                opacity: root.busy ? 0.55 + 0.45 * sin(animation-tick() / 1.2s * 360deg) : 1;
+            }
+        }
+
+        VerticalLayout {
+            alignment: center;
+            spacing: 6 * root.u;
+
+            if root.heading != "": Text {
+                text: root.heading;
+                color: #a8adb8;
+                font-size: 26 * root.u;
+                horizontal-alignment: root.voice ? left : center;
+                wrap: word-wrap;
+            }
+
+            Text {
+                text: root.text;
+                color: white;
+                font-size: 32 * root.u;
+                font-weight: 500;
+                horizontal-alignment: root.voice ? left : center;
+                wrap: word-wrap;
+            }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     in property <[ShelfData]> home-shelves;
     in property <int> home-row;
@@ -240,6 +297,7 @@ export component AppWindow inherits Window {
     in property <string> message;
     in property <string> voice-transcript;
     in property <string> voice-status;
+    in property <bool> voice-busy;
     in property <string> empty-note;
     in property <bool> tmdb-notice;
     in property <string> details;
@@ -256,8 +314,8 @@ export component AppWindow inherits Window {
 
     title: "SemmelTV";
     no-frame: true;
-    preferred-width: 1920px;
-    preferred-height: 1080px;
+    preferred-width: 1280px;
+    preferred-height: 720px;
     background: #0b0d12;
     default-font-family: "Inter Variable";
     forward-focus: scope;
@@ -463,48 +521,28 @@ export component AppWindow inherits Window {
             }
         }
 
-        if root.message != "": Rectangle {
+        voice-toast := Toast {
+            u: root.u;
+            visible: root.voice-status != "";
+            heading: root.voice-transcript;
+            text: root.voice-status;
+            voice: true;
+            busy: root.voice-busy;
+            width: min(self.preferred-width, parent.width - 384 * root.u, 1200 * root.u);
+            height: self.preferred-height;
             x: (parent.width - self.width) / 2;
-            y: parent.height - 196 * root.u;
-            width: label.preferred-width + 80 * root.u;
-            height: 84 * root.u;
-            border-radius: 42 * root.u;
-            background: #232733;
-
-            label := Text {
-                text: root.message;
-                color: white;
-                font-size: 32 * root.u;
-                vertical-alignment: center;
-            }
+            y: parent.height - 160 * root.u - self.height;
         }
 
-        if root.voice-status != "": Rectangle {
+        Toast {
+            u: root.u;
+            visible: root.message != "";
+            text: root.message;
+            width: min(self.preferred-width, parent.width - 384 * root.u, 1200 * root.u);
+            height: self.preferred-height;
             x: (parent.width - self.width) / 2;
-            y: 96 * root.u;
-            width: voice.preferred-width + 96 * root.u;
-            height: voice.preferred-height + 48 * root.u;
-            border-radius: 42 * root.u;
-            background: #232733;
-
-            voice := VerticalLayout {
-                x: 48 * root.u;
-                y: 24 * root.u;
-                spacing: 8 * root.u;
-
-                if root.voice-transcript != "": Text {
-                    text: root.voice-transcript;
-                    color: #aab0c0;
-                    font-size: 28 * root.u;
-                    horizontal-alignment: center;
-                }
-                Text {
-                    text: root.voice-status;
-                    color: white;
-                    font-size: 32 * root.u;
-                    horizontal-alignment: center;
-                }
-            }
+            y: parent.height - 160 * root.u - self.height
+                - (voice-toast.visible ? voice-toast.height + 24 * root.u : 0);
         }
     }
 }

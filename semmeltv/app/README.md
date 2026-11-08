@@ -186,10 +186,13 @@ library loosely, so transcription slips are forgiven; translated titles are not
 known. Download requests are understood but not carried out yet.
 
 The wake word, any colour key on the remote, or V on a keyboard starts
-listening. A panel at the top shows Listening… until you stop speaking, then
-Working out what you said…, then what it heard in quotes with what it does
-below, for 6 seconds. During a video the same lines show in mpv. Each attempt
-also prints a line such as
+listening. A panel above the details line shows Listening…, with a pulsing
+dot, until you stop speaking, then Working out what you said…, then what it
+heard in quotes with what it does below, for 6 seconds. Other messages use the
+same panel, without the dot. During a video the panel is drawn at the top
+instead, clear of the progress bar and the Skip button; mpv cannot measure text,
+so its width is estimated from the length and lines longer than 72 characters
+are cut short. Each attempt also prints a line such as
 
     voice: 2.3 s recorded, speech from 0.3 s to 1.5 s, noise floor 180, recognised in 290 ms
 

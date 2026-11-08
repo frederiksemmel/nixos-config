@@ -696,15 +696,11 @@ impl App {
 
     fn show_voice(&self, heard: &str, status: &str, hold: Option<Duration>) {
         if let Some(player) = &self.player {
-            let text = if heard.is_empty() {
-                status.to_string()
-            } else {
-                format!("{heard}\n{status}")
-            };
-            player.say_for(&text, hold.unwrap_or(VOICE_WAITING_TIME));
+            player.toast(heard, status, hold.unwrap_or(VOICE_WAITING_TIME));
         }
         self.ui.set_voice_transcript(heard.into());
         self.ui.set_voice_status(status.into());
+        self.ui.set_voice_busy(hold.is_none());
         match hold {
             Some(time) => {
                 let handle = self.ui.as_weak();
