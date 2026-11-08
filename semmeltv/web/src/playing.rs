@@ -137,7 +137,7 @@ async fn info(cx: &Cx) -> Result<impl View> {
                         let at = format!("{} / {}", clock(now.position), clock(now.duration));
                         match now.caption.as_str() {
                             "" => at,
-                            caption => format!("{caption} · {at}"),
+                            caption => format!("{at} · {caption}"),
                         }
                     };
                     emit! {
