@@ -5,7 +5,7 @@ at the root of a library folder, draws menus with Slint, and plays video in a
 separate mpv window.
 
     semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--cache DIR]
-             [--vfs-cache DIR] [--tmdb-token-file FILE] [--omdb-key-file FILE]
+             [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
              [--manifest FILE] [--listing FILE] [--refresh]
 
 The library is `pcloud:SemmelTV`: `library.toml`, `Movies/`, `Series/` and
@@ -27,7 +27,7 @@ date.
     year = 2017
     tmdb = 70523
     imdb = "tt5753856"
-    ratings = { imdb = 8.7, metacritic = 74 }
+    ratings = { imdb = 8.7, rt = 94, popcorn = 92, metacritic = 74 }
     rated = 2026-11-08
     episodes = [
       { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.1080p.x265.DD5.1.mkv", added = 2024-05-01, runtime = 51, video = "HEVC", resolution = "1080p", audio = "5.1" },
@@ -42,9 +42,9 @@ date.
 `year`, `tmdb` and an episode's `title` are optional. So are `video`, `resolution`
 and `audio`, which import reads from the release tags in the file name, then from
 the folders above it, and `runtime` in minutes, which the artwork step takes from
-TMDB along with a missing episode `title`. `imdb`, `ratings` (`imdb` out of 10,
-`rt` and `metacritic` out of 100) and `rated` come from the artwork step too; see
-Ratings. `review = true`, on a show, an episode or a film, marks
+TMDB along with a missing episode `title`. `imdb`, `ratings` (`imdb` out of 10;
+`rt`, `popcorn` and `metacritic` out of 100) and `rated` come from the artwork
+step too; see Ratings. `review = true`, on a show, an episode or a film, marks
 something a person should check; it changes nothing in the app. Unknown keys are
 an error, so typos surface. Import rewrites the file sorted by title, which drops
 comments.
@@ -241,18 +241,24 @@ step needs a TMDB API Read Access Token, from `TMDB_TOKEN_FILE`,
 
 ## Ratings
 
-The artwork step also stores IMDb, Rotten Tomatoes and Metacritic scores. It
-takes a title's IMDb id from TMDB's external ids, asks OMDb for the scores and
-writes `imdb`, `ratings` and `rated`, the day it asked, into the manifest. A
-title with a `rated` date is not asked again; one OMDb knows nothing about, or
-with no IMDb id on TMDB, gets a `rated` date and no `ratings`. Any score can be
-missing: shows rarely have Rotten Tomatoes or Metacritic.
+The artwork step also stores ratings from MDBList: IMDb, the Rotten Tomatoes
+Tomatometer (`rt`), the Rotten Tomatoes audience score (`popcorn`) and
+Metacritic. It looks each title up by its TMDB id
+(`https://api.mdblist.com/tmdb/{movie,show}/ID`) and writes `imdb`, `ratings`
+and `rated`, the day it asked, into the manifest. A title with a `rated` date is
+not asked again; one MDBList knows nothing about gets a `rated` date and no
+`ratings`. Any score can be missing, and a score of 0 counts as missing.
 
-`--refresh` asks again for ratings 30 days old or older. OMDb's free key allows
-1000 requests a day, so a run stops after 900 and on OMDb's "Request limit
-reached!", keeps what it has and leaves the rest for the next run. Ratings need
-an OMDb key from `OMDB_API_KEY_FILE`, `--omdb-key-file` or `OMDB_API_KEY`;
-without one the step skips them. The TVs never get the key.
+The details strip shows the Tomatometer (a tomato from 60%, a splat below), the
+audience score (a full popcorn bucket from 60%, a tipped-over one below) and
+IMDb, each only when present. Metacritic is stored but not shown.
+
+`--refresh` asks again for ratings 30 days old or older. MDBList's free key
+allows 1000 requests a day (and 1000 per 5 minutes), so a run stops after 900
+and on HTTP 401, 403 or 429, keeps what it has and leaves the rest for the next
+run. Ratings need an MDBList key from `MDBLIST_API_KEY_FILE`,
+`--mdblist-key-file` or `MDBLIST_API_KEY`; without one the step skips them. The
+TVs never get the key.
 
 ## Development
 

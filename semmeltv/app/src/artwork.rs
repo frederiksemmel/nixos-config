@@ -1,5 +1,5 @@
 use crate::manifest::{Date, Manifest, MovieEntry, ReadError, Scores, ShowEntry};
-use crate::omdb;
+use crate::mdblist;
 use crate::tmdb::{Client, Found, Kind, Season};
 use image::ImageReader;
 use image::codecs::jpeg::JpegEncoder;
@@ -15,7 +15,7 @@ pub const CARD_WIDTH: u32 = 640;
 pub const CARD_HEIGHT: u32 = 360;
 const REFRESH_AFTER: Duration = Duration::from_secs(150 * 24 * 60 * 60);
 const RATINGS_REFRESH_DAYS: i64 = 30;
-const OMDB_REQUESTS_PER_RUN: usize = 900;
+const REQUESTS_PER_RUN: usize = 900;
 const JPEG_QUALITY: u8 = 85;
 const BACKDROP_SIZE: &str = "w780";
 const STILL_SIZE: &str = "original";
@@ -38,24 +38,19 @@ pub trait Source {
     fn details(&self, kind: Kind, id: u64) -> Result<Found, String>;
     fn season(&self, id: u64, season: u32) -> Result<Season, String>;
     fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, String>;
-    fn imdb_id(&self, kind: Kind, id: u64) -> Result<Option<String>, String>;
 }
 
 pub trait Ratings {
-    fn ratings(&self, imdb: &str) -> Result<Option<Scores>, omdb::Error>;
+    fn ratings(&self, kind: Kind, tmdb: u64) -> Result<Option<mdblist::Found>, mdblist::Error>;
 }
 
-impl Ratings for omdb::Client {
-    fn ratings(&self, imdb: &str) -> Result<Option<Scores>, omdb::Error> {
-        omdb::Client::ratings(self, imdb)
+impl Ratings for mdblist::Client {
+    fn ratings(&self, kind: Kind, tmdb: u64) -> Result<Option<mdblist::Found>, mdblist::Error> {
+        mdblist::Client::ratings(self, kind, tmdb)
     }
 }
 
 impl Source for Client {
-    fn imdb_id(&self, kind: Kind, id: u64) -> Result<Option<String>, String> {
-        Client::imdb_id(self, kind, id).map_err(|error| error.to_string())
-    }
-
     fn details(&self, kind: Kind, id: u64) -> Result<Found, String> {
         Client::details(self, kind, id).map_err(|error| error.to_string())
     }
@@ -76,7 +71,7 @@ pub struct Summary {
     pub rated: usize,
     pub unrated: Vec<String>,
     pub ratings_waiting: usize,
-    pub omdb_requests: usize,
+    pub requests: usize,
     pub problems: Vec<String>,
 }
 
@@ -259,47 +254,40 @@ impl<S: Source> Run<'_, S> {
         if !due {
             return;
         }
-        if self.ratings_stopped || self.summary.omdb_requests >= OMDB_REQUESTS_PER_RUN {
+        if self.ratings_stopped || self.summary.requests >= REQUESTS_PER_RUN {
             self.summary.ratings_waiting += 1;
             return;
         }
-        if rating.imdb.is_none() {
-            match self.source.imdb_id(rating.kind, tmdb) {
-                Ok(found) => *rating.imdb = found,
-                Err(error) => {
-                    let problem = format!("{label}: TMDB {tmdb} external ids: {error}");
-                    self.summary.problems.push(problem);
-                    return;
+        self.summary.requests += 1;
+        match ratings.ratings(rating.kind, tmdb) {
+            Ok(Some(found)) => {
+                if found.imdb.is_some() {
+                    *rating.imdb = found.imdb;
+                }
+                *rating.scores = found.scores;
+                *rating.rated = Some(self.today);
+                if found.scores.is_empty() {
+                    self.summary.unrated.push(format!("{label}: MDBList has no ratings"));
+                } else {
+                    self.summary.rated += 1;
                 }
             }
-        }
-        let Some(imdb) = rating.imdb.as_deref() else {
-            *rating.scores = Scores::default();
-            *rating.rated = Some(self.today);
-            self.summary.unrated.push(format!("{label}: no IMDb id on TMDB"));
-            return;
-        };
-        self.summary.omdb_requests += 1;
-        match ratings.ratings(imdb) {
-            Ok(Some(scores)) if !scores.is_empty() => {
-                *rating.scores = scores;
-                *rating.rated = Some(self.today);
-                self.summary.rated += 1;
-            }
-            Ok(_) => {
+            Ok(None) => {
                 *rating.scores = Scores::default();
                 *rating.rated = Some(self.today);
                 self.summary
                     .unrated
-                    .push(format!("{label}: OMDb has no ratings for {imdb}"));
+                    .push(format!("{label}: MDBList does not know TMDB {tmdb}"));
             }
-            Err(omdb::Error::Stop(reason)) => {
+            Err(mdblist::Error::Stop(reason)) => {
                 self.ratings_stopped = true;
                 self.summary.ratings_waiting += 1;
-                self.summary.problems.push(format!("OMDb: {reason}"));
+                self.summary.problems.push(format!("MDBList: {reason}"));
             }
-            Err(omdb::Error::Failed(reason)) => {
-                self.summary.problems.push(format!("{label}: OMDb {imdb}: {reason}"));
+            Err(mdblist::Error::Failed(reason)) => {
+                self.summary
+                    .problems
+                    .push(format!("{label}: MDBList TMDB {tmdb}: {reason}"));
             }
         }
     }
@@ -443,19 +431,14 @@ added = 2024-05-01
                 Ok(self.png.clone())
             }
         }
-
-        fn imdb_id(&self, kind: Kind, id: u64) -> Result<Option<String>, String> {
-            self.calls.borrow_mut().push(format!("imdb {kind:?} {id}"));
-            Ok((kind == Kind::Movie).then(|| format!("tt{id}")))
-        }
     }
 
-    struct FakeOmdb {
+    struct FakeMdblist {
         asked: RefCell<Vec<String>>,
         limit: usize,
     }
 
-    impl FakeOmdb {
+    impl FakeMdblist {
         fn new(limit: usize) -> Self {
             Self {
                 asked: RefCell::new(Vec::new()),
@@ -464,17 +447,24 @@ added = 2024-05-01
         }
     }
 
-    impl Ratings for FakeOmdb {
-        fn ratings(&self, imdb: &str) -> Result<Option<Scores>, omdb::Error> {
+    impl Ratings for FakeMdblist {
+        fn ratings(&self, kind: Kind, tmdb: u64) -> Result<Option<mdblist::Found>, mdblist::Error> {
             let mut asked = self.asked.borrow_mut();
             if asked.len() >= self.limit {
-                return Err(omdb::Error::Stop("Request limit reached!".to_string()));
+                return Err(mdblist::Error::Stop("Daily API limit exceeded!".to_string()));
             }
-            asked.push(imdb.to_string());
-            Ok(Some(Scores {
-                imdb: Some(Tenths(83)),
-                rt: Some(98),
-                metacritic: None,
+            asked.push(format!("{kind:?} {tmdb}"));
+            if kind == Kind::Tv {
+                return Ok(None);
+            }
+            Ok(Some(mdblist::Found {
+                imdb: Some(format!("tt{tmdb}")),
+                scores: Scores {
+                    imdb: Some(Tenths(83)),
+                    rt: Some(98),
+                    popcorn: Some(90),
+                    metacritic: None,
+                },
             }))
         }
     }
@@ -501,29 +491,36 @@ added = 2024-05-01
     }
 
     #[test]
-    fn ratings_come_from_omdb_through_the_imdb_id_on_tmdb() {
+    fn ratings_come_from_mdblist_by_tmdb_id() {
         let dir = workdir("ratings");
         let manifest = dir.join("library.toml");
-        let omdb = FakeOmdb::new(10);
-        let summary = run(&manifest, &Fake::new(), Some(&omdb), false).unwrap();
+        let mdblist = FakeMdblist::new(10);
+        let fake = Fake::new();
+        let summary = run(&manifest, &fake, Some(&mdblist), false).unwrap();
         assert_eq!(summary.rated, 1);
-        assert_eq!(summary.omdb_requests, 1);
-        assert_eq!(summary.unrated, ["Dark: no IMDb id on TMDB"]);
+        assert_eq!(summary.requests, 2);
+        assert_eq!(summary.unrated, ["Dark: MDBList does not know TMDB 70523"]);
+        assert_eq!(mdblist.asked.take(), ["Tv 70523", "Movie 14160"]);
 
         let written = Manifest::read(&manifest).unwrap();
         let up = &written.movie[0];
         assert_eq!(up.imdb.as_deref(), Some("tt14160"));
         assert_eq!(
-            (up.ratings.imdb, up.ratings.rt, up.ratings.metacritic),
-            (Some(Tenths(83)), Some(98), None)
+            (
+                up.ratings.imdb,
+                up.ratings.rt,
+                up.ratings.popcorn,
+                up.ratings.metacritic
+            ),
+            (Some(Tenths(83)), Some(98), Some(90), None)
         );
         assert!(up.rated.is_some());
         assert_eq!(written.show[0].ratings, Scores::default());
         assert!(written.show[0].rated.is_some());
         assert_eq!(written.movie[1].rated, None);
 
-        let again = run(&manifest, &Fake::new(), Some(&omdb), false).unwrap();
-        assert_eq!(again.omdb_requests, 0);
+        let again = run(&manifest, &fake, Some(&mdblist), false).unwrap();
+        assert_eq!(again.requests, 0);
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -531,18 +528,15 @@ added = 2024-05-01
     fn the_daily_limit_keeps_what_was_fetched_and_leaves_the_rest() {
         let dir = films("ratings-limit");
         let manifest = dir.join("library.toml");
-        let summary = run(&manifest, &Fake::new(), Some(&FakeOmdb::new(1)), false).unwrap();
+        let summary = run(&manifest, &Fake::new(), Some(&FakeMdblist::new(1)), false).unwrap();
         assert_eq!((summary.rated, summary.ratings_waiting), (1, 1));
-        assert_eq!(summary.problems, ["OMDb: Request limit reached!"]);
+        assert_eq!(summary.problems, ["MDBList: Daily API limit exceeded!"]);
         let written = Manifest::read(&manifest).unwrap();
         assert!(written.movie[0].rated.is_some());
-        assert_eq!(
-            (written.movie[1].imdb.as_deref(), written.movie[1].rated),
-            (Some("tt949"), None)
-        );
+        assert_eq!((written.movie[1].imdb.as_deref(), written.movie[1].rated), (None, None));
 
-        let next = run(&manifest, &Fake::new(), Some(&FakeOmdb::new(5)), false).unwrap();
-        assert_eq!((next.rated, next.omdb_requests), (1, 1));
+        let next = run(&manifest, &Fake::new(), Some(&FakeMdblist::new(5)), false).unwrap();
+        assert_eq!((next.rated, next.requests), (1, 1));
         fs::remove_dir_all(dir).unwrap();
     }
 
@@ -550,20 +544,15 @@ added = 2024-05-01
     fn refreshing_asks_again_only_for_ratings_a_month_old() {
         let dir = films("ratings-refresh");
         let manifest = dir.join("library.toml");
-        run(&manifest, &Fake::new(), Some(&FakeOmdb::new(5)), false).unwrap();
+        run(&manifest, &Fake::new(), Some(&FakeMdblist::new(5)), false).unwrap();
         let mut written = Manifest::read(&manifest).unwrap();
         written.movie[0].rated = Date::parse("2020-01-01");
         written.write(&manifest).unwrap();
 
-        let omdb = FakeOmdb::new(5);
-        assert_eq!(
-            run(&manifest, &Fake::new(), Some(&omdb), false).unwrap().omdb_requests,
-            0
-        );
-        let fake = Fake::new();
-        assert_eq!(run(&manifest, &fake, Some(&omdb), true).unwrap().omdb_requests, 1);
-        assert_eq!(omdb.asked.take(), ["tt14160"]);
-        assert!(!fake.calls().iter().any(|call| call.starts_with("imdb")));
+        let mdblist = FakeMdblist::new(5);
+        assert_eq!(run(&manifest, &Fake::new(), Some(&mdblist), false).unwrap().requests, 0);
+        assert_eq!(run(&manifest, &Fake::new(), Some(&mdblist), true).unwrap().requests, 1);
+        assert_eq!(mdblist.asked.take(), ["Movie 14160"]);
         fs::remove_dir_all(dir).unwrap();
     }
 

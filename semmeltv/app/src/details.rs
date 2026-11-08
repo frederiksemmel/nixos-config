@@ -1,3 +1,4 @@
+use crate::RatingsData;
 use crate::manifest::Scores;
 use crate::tags::Tags;
 
@@ -39,14 +40,34 @@ pub struct Ratings {
     pub imdb: String,
     pub rt: String,
     pub fresh: bool,
+    pub popcorn: String,
+    pub full: bool,
+}
+
+fn percent(score: Option<u8>) -> String {
+    score.map(|score| format!("{score}%")).unwrap_or_default()
 }
 
 impl From<&Scores> for Ratings {
     fn from(scores: &Scores) -> Self {
         Self {
             imdb: scores.imdb.map(|score| score.to_string()).unwrap_or_default(),
-            rt: scores.rt.map(|score| format!("{score}%")).unwrap_or_default(),
+            rt: percent(scores.rt),
             fresh: scores.rt.is_some_and(|score| score >= FRESH),
+            popcorn: percent(scores.popcorn),
+            full: scores.popcorn.is_some_and(|score| score >= FRESH),
+        }
+    }
+}
+
+impl From<Ratings> for RatingsData {
+    fn from(ratings: Ratings) -> Self {
+        Self {
+            imdb: ratings.imdb.into(),
+            rt: ratings.rt.into(),
+            fresh: ratings.fresh,
+            popcorn: ratings.popcorn.into(),
+            full: ratings.full,
         }
     }
 }
@@ -145,16 +166,32 @@ mod tests {
     }
 
     #[test]
-    fn ratings_read_as_imdb_tenths_and_rotten_tomatoes_percent() {
+    fn ratings_read_as_imdb_tenths_and_rotten_tomatoes_percents() {
         let scores = Scores {
             imdb: Some(Tenths(80)),
             rt: Some(87),
+            popcorn: Some(91),
             metacritic: Some(74),
         };
         let ratings = Ratings::from(&scores);
         assert_eq!(ratings.imdb, "8.0");
         assert_eq!(ratings.rt, "87%");
         assert!(ratings.fresh);
+        assert_eq!(ratings.popcorn, "91%");
+        assert!(ratings.full);
+    }
+
+    #[test]
+    fn the_popcorn_bucket_tips_over_below_sixty_percent() {
+        let full = |popcorn| {
+            Ratings::from(&Scores {
+                popcorn: Some(popcorn),
+                ..Scores::default()
+            })
+            .full
+        };
+        assert!(full(60));
+        assert!(!full(59));
     }
 
     #[test]
@@ -182,6 +219,8 @@ mod tests {
         assert_eq!(only_imdb.imdb, "7.3");
         assert_eq!(only_imdb.rt, "");
         assert!(!only_imdb.fresh);
+        assert_eq!(only_imdb.popcorn, "");
+        assert!(!only_imdb.full);
     }
 
     #[test]

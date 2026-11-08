@@ -10,7 +10,7 @@ Run on beast, with the user present. The library lives in `pcloud:SemmelTV`: `li
 
 `pcloud:Incoming/` may not exist yet. On the first run, create it with `rclone mkdir pcloud:Incoming`, tell the user to put files there, and stop.
 
-Run the app as `nix run ~/repos/nixos-config#semmeltv --`, called `semmeltv` below, unless `semmeltv` is on `PATH`. `TMDB_TOKEN_FILE` and `OMDB_API_KEY_FILE` are set in the user's session; keep both values out of your output.
+Run the app as `nix run ~/repos/nixos-config#semmeltv --`, called `semmeltv` below, unless `semmeltv` is on `PATH`. `TMDB_TOKEN_FILE` and `MDBLIST_API_KEY_FILE` are set in the user's session; keep both values out of your output.
 
 ## 1. List
 
@@ -60,7 +60,7 @@ Take a listing, the current manifest and the artwork, then import against the lo
 
 A missing `pcloud:SemmelTV/library.toml` means something is wrong: stop and tell the user, since a first import dates everything by file and is not this skill's job.
 
-Done when every moved video appears as `added:` in the import output. A moved file that shows up as `video not imported` lost out to a larger copy of the same title; tell the user. The artwork step only fetches what `$work/Artwork` and the manifest lack, writes images into `$work/Artwork` and episode names and runtimes into `$work/library.toml`, and lists titles without a TMDB id. It also stores IMDb, Rotten Tomatoes and Metacritic scores from OMDb for titles not rated yet, and prints the OMDb requests it used. OMDb allows 1000 a day: when a run reports titles left for the next run, run `semmeltv artwork` again the next day before uploading, or upload now and let a later run fill them in.
+Done when every moved video appears as `added:` in the import output. A moved file that shows up as `video not imported` lost out to a larger copy of the same title; tell the user. The artwork step only fetches what `$work/Artwork` and the manifest lack, writes images into `$work/Artwork` and episode names and runtimes into `$work/library.toml`, and lists titles without a TMDB id. It also stores IMDb, Rotten Tomatoes critics and audience, and Metacritic scores from MDBList for titles not rated yet, and prints the MDBList requests it used. MDBList allows 1000 a day: when a run reports titles left for the next run, run `semmeltv artwork` again the next day before uploading, or upload now and let a later run fill them in.
 
 ## 6. Review and upload
 
@@ -77,4 +77,4 @@ List what moved, what is marked for review, the titles without art, and the junk
 
 ## Refreshing artwork and ratings
 
-TMDB's terms allow keeping images for six months, and ratings drift. When the user asks for a refresh, do step 5 without the listing and the import, with `semmeltv artwork --refresh --manifest "$work/library.toml"`, which downloads again every image older than five months and asks OMDb again for ratings 30 days old or older. An image it cannot replace is deleted locally and printed as a `problem:`; `rclone copy` leaves the pCloud copy in place, so name those to the user. Then upload as in step 6, after the user's go-ahead.
+TMDB's terms allow keeping images for six months, and ratings drift. When the user asks for a refresh, do step 5 without the listing and the import, with `semmeltv artwork --refresh --manifest "$work/library.toml"`, which downloads again every image older than five months and asks MDBList again for ratings 30 days old or older. An image it cannot replace is deleted locally and printed as a `problem:`; `rclone copy` leaves the pCloud copy in place, so name those to the user. Then upload as in step 6, after the user's go-ahead.

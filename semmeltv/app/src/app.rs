@@ -19,7 +19,7 @@ use crate::tmdb::Kind;
 use crate::voice::{self, Heard, Voice};
 use crate::watch::{self, Change};
 use crate::watching::{self, Current};
-use crate::{AppWindow, CardData, OfflineState, RatingsData, ShelfData};
+use crate::{AppWindow, CardData, OfflineState, ShelfData};
 use serde_json::json;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
@@ -836,11 +836,7 @@ impl App {
             }),
         };
         let ratings = scores.map(Ratings::from).unwrap_or_default();
-        self.ui.set_ratings(RatingsData {
-            imdb: ratings.imdb.into(),
-            rt: ratings.rt.into(),
-            fresh: ratings.fresh,
-        });
+        self.ui.set_ratings(ratings.into());
     }
 
     fn item_details(&self, item: Item) -> String {

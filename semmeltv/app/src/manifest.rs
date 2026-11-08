@@ -89,7 +89,7 @@ impl Tenths {
         Self::from_float(text.trim().parse().ok()?)
     }
 
-    fn from_float(value: f64) -> Option<Self> {
+    pub fn from_float(value: f64) -> Option<Self> {
         (0.0..=10.0)
             .contains(&value)
             .then(|| Self((value * 10.0).round() as u8))
@@ -118,6 +118,7 @@ impl<'de> Deserialize<'de> for Tenths {
 pub struct Scores {
     pub imdb: Option<Tenths>,
     pub rt: Option<u8>,
+    pub popcorn: Option<u8>,
     pub metacritic: Option<u8>,
 }
 
@@ -130,6 +131,7 @@ impl Scores {
         let parts: Vec<String> = [
             self.imdb.map(|score| format!("imdb = {score}")),
             self.rt.map(|score| format!("rt = {score}")),
+            self.popcorn.map(|score| format!("popcorn = {score}")),
             self.metacritic.map(|score| format!("metacritic = {score}")),
         ]
         .into_iter()
@@ -367,7 +369,7 @@ title = "Marvel's \"Dark\""
 year = 2017
 tmdb = 70523
 imdb = "tt5753856"
-ratings = { imdb = 8.7, metacritic = 74 }
+ratings = { imdb = 8.7, rt = 94, popcorn = 92, metacritic = 74 }
 rated = 2026-11-01
 review = true
 episodes = [
@@ -380,7 +382,7 @@ title = "Airplane!"
 year = 1980
 tmdb = 813
 imdb = "tt0080339"
-ratings = { imdb = 7.7, rt = 97, metacritic = 78 }
+ratings = { imdb = 7.7, rt = 97, popcorn = 89, metacritic = 78 }
 rated = 2026-11-01
 path = "Movies/Airplane 1980/Airplane.1980.mkv"
 added = 2023-01-09
@@ -405,7 +407,8 @@ review = true
         assert_eq!(manifest.review_count(), 3);
         assert_eq!(manifest.movie[0].imdb.as_deref(), Some("tt0080339"));
         assert_eq!(manifest.movie[0].ratings.imdb, Some(Tenths(77)));
-        assert_eq!(manifest.show[0].ratings.rt, None);
+        assert_eq!(manifest.show[0].ratings.rt, Some(94));
+        assert_eq!(manifest.movie[0].ratings.popcorn, Some(89));
         assert_eq!(manifest.movie[1].ratings, Scores::default());
         assert_eq!(manifest.render(), SAMPLE);
     }
