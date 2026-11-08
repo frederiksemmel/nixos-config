@@ -6,12 +6,14 @@ separate mpv window.
 
     semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--cache DIR]
              [--vfs-cache DIR] [--tmdb-token-file FILE]
-             [--manifest FILE] [--listing FILE]
+             [--manifest FILE] [--listing FILE] [--refresh]
 
-`--library` defaults to `$SEMMELTV_LIBRARY`, then `~/pcloud`. `--cache` defaults
-to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`. `--vfs-cache` defaults to
-`$SEMMELTV_VFS_CACHE`. The cache must be outside the library, and the app and the
-artwork step never write to the library.
+The library is `pcloud:SemmelTV`: `library.toml`, `Movies/`, `Series/` and
+`Artwork/`. `--library` defaults to `$SEMMELTV_LIBRARY`, then `~/pcloud/SemmelTV`.
+`--cache` defaults to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`.
+`--vfs-cache` defaults to `$SEMMELTV_VFS_CACHE`. Nothing in the app writes to the
+library: import and artwork work on a local copy of `library.toml`, which the
+`/semmeltv-incoming` skill uploads.
 
 ## library.toml
 
@@ -25,7 +27,7 @@ date.
     year = 2017
     tmdb = 70523
     episodes = [
-      { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.1080p.x265.DD5.1.mkv", added = 2024-05-01, video = "HEVC", resolution = "1080p", audio = "5.1" },
+      { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.1080p.x265.DD5.1.mkv", added = 2024-05-01, runtime = 51, video = "HEVC", resolution = "1080p", audio = "5.1" },
     ]
 
     [[movie]]
@@ -36,7 +38,8 @@ date.
 
 `year`, `tmdb` and an episode's `title` are optional. So are `video`, `resolution`
 and `audio`, which import reads from the release tags in the file name, then from
-the folders above it. `review = true`, on a show, an episode or a film, marks
+the folders above it, and `runtime` in minutes, which the artwork step takes from
+TMDB along with a missing episode `title`. `review = true`, on a show, an episode or a film, marks
 something a person should check; it changes nothing in the app. Unknown keys are
 an error, so typos surface. Import rewrites the file sorted by title, which drops
 comments.
@@ -55,14 +58,14 @@ already there is never replaced. With no manifest yet it is a first import: `add
 `added` is today, because a film sorted today may have an old file date.
 
 `--listing` reads `rclone lsf -R --files-only --format tsp` output instead of the
-tree. A new title takes its TMDB id from `tmdb.json` in the cache when known, and
-otherwise from a search if a token is set. A title with no id, a file with no
+tree. A new title takes its TMDB id from a search if a token is set. A title with no id, a file with no
 episode marker, or a second copy of a title is marked for review. The report also
 names entries whose file is missing and videos that were left out.
 
 New videos reach the library through `pcloud:Incoming`: a person starts a Claude
 session on beast and runs the `/semmeltv-incoming` skill, which sorts them into
-place, runs the import against a local copy, and uploads the result.
+place, runs the import and the artwork step against a local copy, and uploads
+the result.
 
 ## Title details
 
@@ -71,7 +74,7 @@ A quiet line at the bottom of Home and of a show describes the focused card:
     HEVC 10-bit · 1080p · 5.1 · 2h 11m · Stopped at 1h 04m · Downloaded
 
 Encoding and audio come from `library.toml`. The duration is the one mpv reported
-once a file has played, and until then the TMDB runtime in `tmdb.json`. The stopping
+once a file has played, and until then the `runtime` in `library.toml`. The stopping
 point comes from `progress.json`, and a finished title has none, nor does one left
 in its first minute. A show on Home describes its resume episode, named first, as
 in `S2 E3`. Anything unknown is left out. No video file is read for any of this.
@@ -80,8 +83,8 @@ in `S2 E3`. Anything unknown is left out. No video file is read for any of this.
 
 The app checks `library.toml` every 30 seconds and reloads it when it changed.
 Focus stays on the same title and an open show stays open. During playback the
-reload waits until the video ends. New art and new `tmdb.json` data appear the
-same way.
+reload waits until the video ends. Art for cards that had none is looked for
+again on every reload.
 
 ## Streaming and offline
 
@@ -93,7 +96,7 @@ the least recently watched titles are evicted first.
 rclone only keeps what was read, so when a title starts the app reads the rest of
 the file through the mount in the background, slowly, followed by the next
 episode of a show. A file larger than the cache is skipped. `SEMMELTV_VFS_CACHE`
-is the cache's file tree (`.../vfs/pcloud`), `SEMMELTV_VFS_CACHE_BYTES` its size,
+is the cache's file tree (`.../vfs/pcloud/SemmelTV`), `SEMMELTV_VFS_CACHE_BYTES` its size,
 and `SEMMELTV_REMOTE` a `host:port` probed every poll to tell whether pCloud can
 be reached. Without `SEMMELTV_VFS_CACHE` everything counts as streaming and cards
 show no state.
@@ -109,8 +112,8 @@ the rclone cache, which also works when the mount is down or was started without
 a network. Selecting anything else says it can't be reached. rclone's own view of
 a cached file only survives offline until `--dir-cache-time` (1h) runs out, which
 is why the app does not depend on it. Files played straight from the cache do not
-refresh their place in the eviction order, and titles in a mount that never came
-up have no `poster.jpg`.
+refresh their place in the eviction order, and art read through the mount is
+only there offline if rclone kept it.
 
 ## Remote
 
@@ -179,18 +182,30 @@ known. Download requests are understood but not carried out yet.
 
 ## Artwork
 
-`semmeltv artwork` runs apart from the UI, after a sync or on demand. A card uses
-the first of:
+    semmeltv artwork --manifest DIR/library.toml [--refresh]
 
-1. `poster.jpg` or `poster.png` in the title's folder
-2. a TMDB image: a backdrop for shows and films, a still for episodes
-3. a gradient with the title
+Artwork is fetched when titles are added, not on the TVs, which need no TMDB
+token. The step reads the manifest and, for every title with a `tmdb` id, saves
+images into `DIR/Artwork`, beside the manifest:
 
-It also stores episode names and runtimes in `tmdb.json`. The step needs a TMDB API Read Access Token, from `TMDB_TOKEN_FILE`,
-`--tmdb-token-file` or `TMDB_TOKEN`. Images older than six months are refreshed,
-or deleted if that fails, as TMDB's terms require. Titles with no `tmdb` in
-`library.toml` keep the gradient, and are printed and saved to `tmdb-report.txt`
-in the cache.
+    Artwork/movie/<tmdb id>/backdrop.jpg
+    Artwork/tv/<tmdb id>/backdrop.jpg
+    Artwork/tv/<tmdb id>/s01e02.jpg
+
+They are 640x360 JPEGs: a backdrop for shows and films, a still for episodes.
+It also writes a missing `runtime` and episode `title` into the manifest. It only
+asks TMDB for what is missing, so a run over a copy of `pcloud:SemmelTV/Artwork`
+is quick. It refuses a manifest inside `--library`, so it never writes through
+the mount. Titles without a `tmdb` id are listed and keep the gradient.
+
+The app shows `<library>/Artwork/...` when the file is there and a gradient with
+the title otherwise. The TMDB notice on Home appears once any title has an id.
+
+TMDB's terms allow keeping images for six months, so refreshing is a manual
+step: `--refresh` downloads again every image older than five months and deletes
+one it cannot replace. The `/semmeltv-incoming` skill describes the upload. The
+step needs a TMDB API Read Access Token, from `TMDB_TOKEN_FILE`,
+`--tmdb-token-file` or `TMDB_TOKEN`.
 
 ## Development
 

@@ -305,7 +305,7 @@ mod tests {
 
     fn library(text: &str) -> Library {
         let manifest = Manifest::parse(text).unwrap();
-        Library::from_manifest("/lib".as_ref(), &manifest, |_| true, |_| false)
+        Library::from_manifest("/lib".as_ref(), &manifest, |_| true)
     }
 
     fn movie_text(title: &str, added: &str) -> String {

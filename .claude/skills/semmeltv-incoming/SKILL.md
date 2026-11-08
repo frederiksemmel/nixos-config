@@ -1,12 +1,12 @@
 ---
 name: semmeltv-incoming
-description: Sort new videos from pcloud:Incoming into the SemmelTV library and update library.toml.
+description: Sort new videos from pcloud:Incoming into the SemmelTV library, update library.toml and fetch artwork.
 disable-model-invocation: true
 ---
 
 # Sort pCloud Incoming into SemmelTV
 
-Run on beast, with the user present. Every write to pCloud in this skill goes through one of two commands: `rclone moveto` for a video, and `rclone copyto` for `library.toml`, and each of those needs the user's go-ahead from step 3 or 6. Leave everything else on pCloud as it is. Nothing here deletes.
+Run on beast, with the user present. The library lives in `pcloud:SemmelTV`: `library.toml`, `Movies/`, `Series/` and `Artwork/`. Every write to pCloud in this skill goes through one of three commands: `rclone moveto` for a video, `rclone copy` for new images in `Artwork/`, and `rclone copyto` for `library.toml`, and each of those needs the user's go-ahead from step 3 or 6. Leave everything else on pCloud as it is. Nothing here deletes.
 
 `pcloud:Incoming/` may not exist yet. On the first run, create it with `rclone mkdir pcloud:Incoming`, tell the user to put files there, and stop.
 
@@ -35,8 +35,8 @@ Keep the token out of your output.
 
 Show a table of source and destination, and wait for the user's go-ahead. Canonical layout:
 
-    Movies/Title (Year)/Title (Year).ext
-    Series/Show/Season NN/Show - SNNENN - Episode Name.ext
+    SemmelTV/Movies/Title (Year)/Title (Year).ext
+    SemmelTV/Series/Show/Season NN/Show - SNNENN - Episode Name.ext
 
 Use the TMDB title with characters unsafe in a file name replaced. Check the destination first with `rclone lsf`; if it already exists, report it instead of moving onto it.
 
@@ -46,28 +46,35 @@ Use the TMDB title with characters unsafe in a file name replaced. Check the des
 
 Done when `rclone lsf -R --files-only pcloud:Incoming` shows only junk and uncertain items.
 
-## 5. Import
+## 5. Import and artwork
 
-Take a listing and the current manifest, then import against the local copy. A listing is used instead of the `~/pcloud` mount because the mount can lag behind the moves.
+Take a listing, the current manifest and the artwork, then import against the local copy. A listing is used instead of the `~/pcloud` mount because the mount can lag behind the moves.
 
     work=$(mktemp -d)
-    rclone copyto pcloud:library.toml "$work/library.toml"
+    rclone copyto pcloud:SemmelTV/library.toml "$work/library.toml"
     cp "$work/library.toml" "$work/before.toml"
-    rclone lsf -R --files-only --format tsp --include "/Series/**" --include "/Movies/**" pcloud: > "$work/listing.txt"
+    rclone copy pcloud:SemmelTV/Artwork "$work/Artwork"
+    rclone lsf -R --files-only --format tsp --include "/Series/**" --include "/Movies/**" pcloud:SemmelTV > "$work/listing.txt"
     semmeltv import --listing "$work/listing.txt" --manifest "$work/library.toml"
+    semmeltv artwork --manifest "$work/library.toml"
 
-A missing `pcloud:library.toml` means something is wrong: stop and tell the user, since a first import dates everything by file and is not this skill's job.
+A missing `pcloud:SemmelTV/library.toml` means something is wrong: stop and tell the user, since a first import dates everything by file and is not this skill's job.
 
-Done when every moved video appears as `added:` in the output. A moved file that shows up as `video not imported` lost out to a larger copy of the same title; tell the user.
+Done when every moved video appears as `added:` in the import output. A moved file that shows up as `video not imported` lost out to a larger copy of the same title; tell the user. The artwork step only fetches what `$work/Artwork` and the manifest lack, writes images into `$work/Artwork` and episode names and runtimes into `$work/library.toml`, and lists titles without a TMDB id.
 
 ## 6. Review and upload
 
-Show the user `diff "$work/before.toml" "$work/library.toml"` and the import's `review:` lines. For a `review = true` entry the user can settle, edit the local file and drop the flag. When the user agrees:
+Show the user `diff "$work/before.toml" "$work/library.toml"`, the import's `review:` lines and the artwork step's summary. For a `review = true` entry the user can settle, edit the local file and drop the flag; a title given a `tmdb` id that way needs `semmeltv artwork` again. When the user agrees, upload the images first and the manifest last, so the TV never lists a title before its art:
 
-    rclone copyto "$work/library.toml" pcloud:library.toml
+    rclone copy "$work/Artwork" pcloud:SemmelTV/Artwork
+    rclone copyto "$work/library.toml" pcloud:SemmelTV/library.toml
 
-The TV picks it up by itself within a few minutes, and its artwork within the hour.
+The TV picks it up by itself within a few minutes.
 
 ## 7. Report
 
-List what moved, what is marked for review, and the junk and uncertain items left in Incoming.
+List what moved, what is marked for review, the titles without art, and the junk and uncertain items left in Incoming.
+
+## Refreshing artwork
+
+TMDB's terms allow keeping images for six months. When the user asks for a refresh, do step 5 without the listing and the import, with `semmeltv artwork --refresh --manifest "$work/library.toml"`, which downloads again every image older than five months. An image it cannot replace is deleted locally and printed as a `problem:`; `rclone copy` leaves the pCloud copy in place, so name those to the user. Then upload as in step 6, after the user's go-ahead.

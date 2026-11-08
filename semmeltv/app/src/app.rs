@@ -1,10 +1,11 @@
-use crate::artwork::{Cache, Matches};
+use crate::artwork;
+use crate::cache::Cache;
 use crate::cec;
 use crate::command::Command;
 use crate::details::Details;
 use crate::fetch;
 use crate::intent::{self, Action, Control};
-use crate::library::{self, Episode, Item, Library, Show};
+use crate::library::{self, Item, Library};
 use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload};
 use crate::offline::{self, Presence, Source, Store};
@@ -12,6 +13,7 @@ use crate::player::{Finish, Player};
 use crate::progress::{Position, Progress};
 use crate::segments::Title;
 use crate::tags::Tags;
+use crate::tmdb::Kind;
 use crate::voice::{self, Heard, Voice};
 use crate::watch::{self, Change};
 use crate::{AppWindow, CardData, OfflineState, ShelfData};
@@ -71,17 +73,11 @@ struct Playing {
     show: Option<String>,
 }
 
-#[derive(Default)]
-struct Deferred {
-    library: Option<Result<Library, String>>,
-    art: bool,
-}
-
 struct App {
     ui: AppWindow,
     nav: Nav,
     cache: Cache,
-    names: Matches,
+    art: PathBuf,
     images: Sender<Job<Target>>,
     player: Option<Player>,
     progress: Progress,
@@ -93,7 +89,7 @@ struct App {
     downloading: Option<PathBuf>,
     online: bool,
     problem: Option<String>,
-    deferred: Deferred,
+    deferred: Option<Result<Library, String>>,
     voice: Option<Voice>,
     unmute_after_listening: bool,
     queued: Option<PathBuf>,
@@ -109,7 +105,6 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         microphone,
     } = setup;
     let ui = AppWindow::new()?;
-    ui.set_tmdb_notice(cache.has_tmdb_art());
     let handle = ui.as_weak();
     let images = loader::spawn(move |target, pixels| {
         let handle = handle.clone();
@@ -144,16 +139,13 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
 
     let saved = cache.saved_manifest();
     let library = library::load_saved(&root, &saved).unwrap_or_default();
-    let names = cache.load_matches();
     let progress = cache.load_progress();
-    let art = cache.art_dir();
-    let matches = cache.matches_path();
     let app = Rc::new(RefCell::new(App {
         ui: ui.clone_strong(),
         downloaded: store.downloaded(library.paths()),
         nav: Nav::new(library),
         cache,
-        names,
+        art: root.join(artwork::DIR),
         images,
         player: None,
         progress,
@@ -164,7 +156,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         downloading: None,
         online: true,
         problem: None,
-        deferred: Deferred::default(),
+        deferred: None,
         voice,
         unmute_after_listening: false,
         queued: None,
@@ -225,16 +217,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
             }
         }
     });
-    watch::spawn(
-        watch::Paths {
-            root,
-            saved,
-            art,
-            matches,
-            remote,
-        },
-        notify_watch,
-    );
+    watch::spawn(watch::Paths { root, saved, remote }, notify_watch);
     ui.run()
 }
 
@@ -349,10 +332,8 @@ impl App {
                 self.downloading = path;
                 self.refresh_offline();
             }
-            Change::Library(result) if self.player.is_some() => self.deferred.library = Some(result),
-            Change::Art if self.player.is_some() => self.deferred.art = true,
+            Change::Library(result) if self.player.is_some() => self.deferred = Some(result),
             Change::Library(result) => self.reload(result),
-            Change::Art => self.refresh_art(),
         }
     }
 
@@ -378,15 +359,6 @@ impl App {
             Reload::NoShow | Reload::ShowKept => {}
         }
         self.present_home();
-    }
-
-    fn refresh_art(&mut self) {
-        self.ui.set_tmdb_notice(self.cache.has_tmdb_art());
-        self.names = self.cache.load_matches();
-        self.present_home();
-        if self.nav.open_show().is_some() {
-            self.present_show();
-        }
     }
 
     fn refresh_offline(&mut self) {
@@ -485,7 +457,7 @@ impl App {
 
     fn caption(&self, path: &Path) -> String {
         if let Some((show, episode)) = self.nav.library().find_episode(path) {
-            return format!("{} · {}", show.title, self.episode_label(show, episode));
+            return format!("{} · {}", show.title, episode.label());
         }
         let movie = self.nav.library().movies.iter().find(|movie| movie.path == path);
         movie.map_or_else(|| path.display().to_string(), |movie| movie.title.clone())
@@ -540,12 +512,8 @@ impl App {
         if !success {
             self.show_message("This video could not be played".to_string());
         }
-        let deferred = std::mem::take(&mut self.deferred);
-        if let Some(result) = deferred.library {
+        if let Some(result) = self.deferred.take() {
             self.reload(result);
-        }
-        if deferred.art {
-            self.refresh_art();
         }
         self.refresh_offline();
         if let Some(path) = self.queued.take() {
@@ -668,7 +636,7 @@ impl App {
                 .and_then(|season| season.episodes.get(cursor.col()))
                 .map(|episode| {
                     let status = self.file_status(&episode.path).1;
-                    self.file_details(None, &episode.tags, &show.episode_key(episode), &episode.path, &status)
+                    self.file_details(None, &episode.tags, episode.runtime, &episode.path, &status)
                 }),
             None => self.nav.focused_item().map(|item| self.item_details(item)),
         };
@@ -680,22 +648,29 @@ impl App {
         match item {
             Item::Movie(index) => {
                 let movie = self.nav.movie(index);
-                self.file_details(None, &movie.tags, &movie.key, &movie.path, &status)
+                self.file_details(None, &movie.tags, movie.runtime, &movie.path, &status)
             }
             Item::Show(index) => {
                 let show = self.nav.show(index);
                 let next = self.progress.resume_episode(show).or_else(|| show.first_episode());
                 next.map_or(status.clone(), |episode| {
                     let label = show.only_episode().is_none().then(|| episode.short_label());
-                    self.file_details(label, &episode.tags, &show.episode_key(episode), &episode.path, &status)
+                    self.file_details(label, &episode.tags, episode.runtime, &episode.path, &status)
                 })
             }
         }
     }
 
-    fn file_details(&self, episode: Option<String>, tags: &Tags, key: &str, file: &Path, download: &str) -> String {
+    fn file_details(
+        &self,
+        episode: Option<String>,
+        tags: &Tags,
+        runtime: Option<u32>,
+        file: &Path,
+        download: &str,
+    ) -> String {
         let watched = self.progress.files.get(file).copied().unwrap_or_default();
-        let runtime = self.names.runtimes.get(key).map(|minutes| f64::from(*minutes) * 60.0);
+        let runtime = runtime.map(|minutes| f64::from(minutes) * 60.0);
         Details {
             episode,
             tags: Some(tags),
@@ -724,7 +699,7 @@ impl App {
                 let show = self.nav.show(index);
                 (
                     card(&show.key, show.title.clone(), show.subtitle()),
-                    self.cache.card_art(show.poster.as_deref(), &show.key),
+                    show.tmdb.map(|id| artwork::backdrop(&self.art, Kind::Tv, id)),
                 )
             }
             Item::Movie(index) => {
@@ -732,7 +707,7 @@ impl App {
                 let year = movie.year.map(|year| year.to_string()).unwrap_or_default();
                 (
                     card(&movie.key, movie.title.clone(), year),
-                    self.cache.card_art(movie.poster.as_deref(), &movie.key),
+                    movie.tmdb.map(|id| artwork::backdrop(&self.art, Kind::Movie, id)),
                 )
             }
         };
@@ -767,6 +742,7 @@ impl App {
             None => "",
         };
         self.ui.set_empty_note(note.into());
+        self.ui.set_tmdb_notice(self.nav.library().uses_tmdb());
         self.ui.set_home_shelves(ModelRc::new(VecModel::from(shelves)));
         self.present_focus();
     }
@@ -781,7 +757,7 @@ impl App {
             let mut cards = Vec::new();
             for (position, episode) in season.episodes.iter().enumerate() {
                 let key = show.episode_key(episode);
-                let mut card = card(&key, self.episode_label(show, episode), String::new());
+                let mut card = card(&key, episode.label(), String::new());
                 set_status(&mut card, self.file_status(&episode.path));
                 match carried.get(&card.key) {
                     Some(image) => {
@@ -789,7 +765,9 @@ impl App {
                         card.has_art = true;
                     }
                     None => {
-                        let art = self.cache.card_art(None, &key);
+                        let art = show
+                            .tmdb
+                            .map(|id| artwork::still(&self.art, id, episode.season, episode.number));
                         self.request(Screen::Show, shelf, position, card.key.clone(), art);
                     }
                 }
@@ -807,13 +785,6 @@ impl App {
         self.ui.set_show_cols(cols_model(cursor));
         self.ui.set_show_open(true);
         self.present_details();
-    }
-
-    fn episode_label(&self, show: &Show, episode: &Episode) -> String {
-        match (&episode.title, self.names.episode_names.get(&show.episode_key(episode))) {
-            (None, Some(name)) => format!("{}. {name}", episode.number),
-            _ => episode.label(),
-        }
     }
 }
 

@@ -1,5 +1,6 @@
 {
   config,
+  flake,
   lib,
   pkgs,
   ...
@@ -22,13 +23,14 @@ let
         --config "$config" --non-interactive > /dev/null
 
       mkdir -p ${library}
-      exec rclone mount pcloud: ${library} \
+      exec rclone mount pcloud:SemmelTV ${library} \
         --config "$config" \
         --read-only \
         --allow-non-empty \
         --filter '+ /library.toml' \
         --filter '+ /Series/**' \
         --filter '+ /Movies/**' \
+        --filter '+ /Artwork/**' \
         --filter '- **' \
         --cache-dir ${cacheDir} \
         --vfs-cache-mode full \
@@ -41,6 +43,8 @@ let
   };
 in
 {
+  imports = [ flake.inputs.agenix.nixosModules.default ];
+
   options.services.semmeltv.offlineCacheGiB = lib.mkOption {
     type = lib.types.ints.positive;
     description = "Disk space for downloaded titles, in GiB. The least recently watched are evicted first.";
@@ -53,7 +57,7 @@ in
     };
 
     services.cage.environment = {
-      SEMMELTV_VFS_CACHE = "${cacheDir}/vfs/pcloud";
+      SEMMELTV_VFS_CACHE = "${cacheDir}/vfs/pcloud/SemmelTV";
       SEMMELTV_VFS_CACHE_BYTES = toString (cfg.offlineCacheGiB * 1024 * 1024 * 1024);
       SEMMELTV_REMOTE = "${remoteHost}:443";
     };

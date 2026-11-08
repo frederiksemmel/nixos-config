@@ -1,5 +1,4 @@
-use crate::artwork::Matches;
-use crate::library::{self, normalize, sort_title};
+use crate::library::{normalize, sort_title};
 use crate::manifest::{Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
 use crate::parse::{self, FileEntry, Parsed, ParsedEpisode, ParsedMovie, ParsedShow};
 use crate::tags;
@@ -53,7 +52,6 @@ pub struct Sources<'a> {
     pub library: &'a Path,
     pub manifest: &'a Path,
     pub listing: Option<&'a Path>,
-    pub matches: Matches,
     pub client: Option<Client>,
 }
 
@@ -75,8 +73,8 @@ pub fn run(sources: Sources) -> Result<(), String> {
         Err(ReadError::Invalid(error)) => return Err(format!("{}: {error}", sources.manifest.display())),
     };
     let parsed = parse::build(&files);
-    let (matches, client) = (sources.matches, sources.client);
-    let identify = |query: &Query| identify(&matches, client.as_ref(), query);
+    let client = sources.client;
+    let identify = |query: &Query| identify(client.as_ref(), query);
     let (manifest, report) = merge(existing, &parsed, &files, today(), identify);
     manifest
         .write(sources.manifest)
@@ -109,19 +107,7 @@ fn print_report(report: &Report, review_total: usize) {
     );
 }
 
-fn identify(matches: &Matches, client: Option<&Client>, query: &Query) -> Option<Identity> {
-    let key = match query.kind {
-        Kind::Tv => library::show_key(query.title),
-        Kind::Movie => library::movie_key(query.title, query.year),
-    };
-    if let Some(known) = matches.titles.get(&key) {
-        return Some(Identity {
-            id: known.id,
-            name: known.name.clone(),
-            date: known.date.clone(),
-            inferred: false,
-        });
-    }
+fn identify(client: Option<&Client>, query: &Query) -> Option<Identity> {
     let client = client?;
     let lookup = match query.kind {
         Kind::Tv => client.search_tv(query.title, query.year),
@@ -370,6 +356,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             title: parsed.title.clone(),
             path,
             added,
+            runtime: None,
             video: None,
             resolution: None,
             audio: None,
@@ -414,6 +401,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             tmdb: identity.as_ref().map(|identity| identity.id),
             path,
             added: self.added_date(parsed.modified),
+            runtime: None,
             video: None,
             resolution: None,
             audio: None,
@@ -434,7 +422,7 @@ pub fn library_from_paths(paths: &[&str]) -> crate::library::Library {
         .collect();
     let parsed = parse::build(&files);
     let (manifest, _) = merge(None, &parsed, &files, Date::default(), |_| None);
-    crate::library::Library::from_manifest("/lib".as_ref(), &manifest, |_| true, |_| false)
+    crate::library::Library::from_manifest("/lib".as_ref(), &manifest, |_| true)
 }
 
 #[cfg(test)]

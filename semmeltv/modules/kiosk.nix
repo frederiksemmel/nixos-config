@@ -36,15 +36,6 @@ in
       example = "frederik";
       description = "User allowed to restart the kiosk without a password.";
     };
-
-    artwork = {
-      enable = lib.mkEnableOption "an hourly download of posters and backdrops from TMDB into the cache";
-
-      tmdbTokenFile = lib.mkOption {
-        type = lib.types.path;
-        description = "File holding the TMDB API read access token, readable by the `semmeltv` user.";
-      };
-    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -113,30 +104,5 @@ in
 
     systemd.services."getty@tty1".enable = false;
     systemd.services."autovt@tty1".enable = false;
-
-    systemd.services.semmeltv-artwork = lib.mkIf cfg.artwork.enable {
-      description = "Download SemmelTV artwork from TMDB";
-      after = [ "network-online.target" ];
-      wants = [ "network-online.target" ];
-      environment = {
-        SEMMELTV_LIBRARY = "${cfg.stateDir}/library";
-        SEMMELTV_CACHE = "${cfg.stateDir}/cache";
-        TMDB_TOKEN_FILE = cfg.artwork.tmdbTokenFile;
-      };
-      serviceConfig = {
-        Type = "oneshot";
-        User = "semmeltv";
-        ExecStart = "${lib.getExe cfg.package} artwork";
-      };
-    };
-
-    systemd.timers.semmeltv-artwork = lib.mkIf cfg.artwork.enable {
-      wantedBy = [ "timers.target" ];
-      timerConfig = {
-        OnCalendar = "hourly";
-        OnBootSec = "5min";
-        Persistent = true;
-      };
-    };
   };
 }

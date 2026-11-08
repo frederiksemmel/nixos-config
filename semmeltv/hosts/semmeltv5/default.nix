@@ -2,7 +2,6 @@
 {
   imports = with nixos-raspberrypi.nixosModules; [
     ../common.nix
-    ./artwork.nix
     ./mount.nix
     ./whisper.nix
     flake.self.nixosModules.hailo

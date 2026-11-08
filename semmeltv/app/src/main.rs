@@ -1,5 +1,6 @@
 mod app;
 mod artwork;
+mod cache;
 mod cec;
 mod command;
 mod details;
@@ -24,17 +25,17 @@ mod voice;
 mod watch;
 mod wyoming;
 
-use artwork::Cache;
+use cache::Cache;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{self, Path, PathBuf};
 use std::process::ExitCode;
 
 slint::include_modules!();
 
 const USAGE: &str = "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--cache DIR]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--manifest FILE] [--listing FILE]
-                [--whisper HOST:PORT]";
+                [--refresh] [--whisper HOST:PORT]";
 
 struct Args {
     mode: String,
@@ -44,6 +45,7 @@ struct Args {
     token_file: Option<PathBuf>,
     manifest: Option<PathBuf>,
     listing: Option<PathBuf>,
+    refresh: bool,
     transcript: String,
     recording: Option<PathBuf>,
     whisper: Option<String>,
@@ -57,7 +59,7 @@ fn parse_args() -> Result<Args, String> {
     let home = env_path("HOME").unwrap_or_default();
     let mut args = Args {
         mode: "ui".to_string(),
-        library: env_path("SEMMELTV_LIBRARY").unwrap_or_else(|| home.join("pcloud")),
+        library: env_path("SEMMELTV_LIBRARY").unwrap_or_else(|| home.join("pcloud/SemmelTV")),
         cache: env_path("SEMMELTV_CACHE")
             .or_else(|| env_path("XDG_CACHE_HOME").map(|dir| dir.join("semmeltv")))
             .unwrap_or_else(|| home.join(".cache/semmeltv")),
@@ -65,6 +67,7 @@ fn parse_args() -> Result<Args, String> {
         token_file: env_path("TMDB_TOKEN_FILE"),
         manifest: None,
         listing: None,
+        refresh: false,
         transcript: String::new(),
         recording: None,
         whisper: env::var("SEMMELTV_WHISPER").ok().filter(|address| !address.is_empty()),
@@ -89,6 +92,7 @@ fn parse_args() -> Result<Args, String> {
             "--tmdb-token-file" => args.token_file = Some(value("--tmdb-token-file")?.into()),
             "--manifest" => args.manifest = Some(value("--manifest")?.into()),
             "--listing" => args.listing = Some(value("--listing")?.into()),
+            "--refresh" => args.refresh = true,
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
     }
@@ -131,15 +135,44 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     app::run(setup).map_err(|error| error.to_string())
 }
 
-fn run_import(args: &Args, cache: &Cache) -> Result<(), String> {
+fn run_import(args: &Args) -> Result<(), String> {
     let manifest = args.manifest.as_ref().ok_or("import needs --manifest FILE")?;
     import::run(import::Sources {
         library: &args.library,
         manifest,
         listing: args.listing.as_deref(),
-        matches: cache.load_matches(),
         client: tmdb_client(args)?,
     })
+}
+
+fn inside(path: &Path, dir: &Path) -> bool {
+    let absolute = |path: &Path| path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    absolute(path).starts_with(absolute(dir))
+}
+
+fn run_artwork(args: &Args) -> Result<(), String> {
+    let manifest = args.manifest.as_ref().ok_or("artwork needs --manifest FILE")?;
+    if inside(manifest, &args.library) {
+        return Err(format!(
+            "{} is inside the library; run artwork on a local copy",
+            manifest.display()
+        ));
+    }
+    let client = tmdb_client(args)?.ok_or("artwork needs a TMDB token: set TMDB_TOKEN_FILE")?;
+    let summary = artwork::run(manifest, &client, args.refresh)?;
+    for problem in &summary.problems {
+        println!("problem: {problem}");
+    }
+    for title in &summary.without_id {
+        println!("no tmdb id: {title}");
+    }
+    println!(
+        "{} images saved, {} titles without a TMDB id, {} problems",
+        summary.images,
+        summary.without_id.len(),
+        summary.problems.len()
+    );
+    Ok(())
 }
 
 fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
@@ -183,12 +216,8 @@ fn run() -> Result<(), String> {
             "{:?}",
             intent::understand(&args.transcript, &library::load(&args.library)?, &cache.load_progress())
         ),
-        "artwork" => {
-            let client = tmdb_client(&args)?.ok_or("artwork needs a TMDB token: set TMDB_TOKEN_FILE")?;
-            let library = library::load(&args.library)?;
-            artwork::generate(&library, &args.library, &cache, client).map_err(|error| error.to_string())?;
-        }
-        "import" => run_import(&args, &cache)?,
+        "artwork" => run_artwork(&args)?,
+        "import" => run_import(&args)?,
         "hear" => hear(&args, &cache)?,
         _ => run_ui(args, cache)?,
     }
@@ -202,5 +231,21 @@ fn main() -> ExitCode {
             eprintln!("{error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_manifest_inside_the_library_is_refused() {
+        let library = Path::new("/home/me/pcloud/SemmelTV");
+        assert!(inside(Path::new("/home/me/pcloud/SemmelTV/library.toml"), library));
+        assert!(!inside(Path::new("/tmp/work/library.toml"), library));
+        assert!(!inside(
+            Path::new("/home/me/pcloud/SemmelTV-copy/library.toml"),
+            library
+        ));
     }
 }

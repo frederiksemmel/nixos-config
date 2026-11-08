@@ -2,6 +2,7 @@ use crate::artwork::{CARD_HEIGHT, CARD_WIDTH};
 use image::ImageReader;
 use image::imageops::FilterType;
 use slint::{Rgb8Pixel, SharedPixelBuffer};
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
@@ -19,6 +20,7 @@ pub fn spawn<T: Send + 'static>(deliver: impl Fn(T, Pixels) + Send + 'static) ->
         for job in receiver {
             match decode(&job.path) {
                 Ok(pixels) => deliver(job.target, pixels),
+                Err(image::ImageError::IoError(error)) if error.kind() == ErrorKind::NotFound => {}
                 Err(error) => eprintln!("{}: {error}", job.path.display()),
             }
         }

@@ -1,12 +1,10 @@
 use crate::manifest::{self, Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
 use crate::tags::Tags;
 use std::cmp::Reverse;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-
-const POSTER_NAMES: [&str; 2] = ["poster.jpg", "poster.png"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Item {
@@ -26,7 +24,6 @@ pub struct Show {
     pub title: String,
     pub year: Option<u16>,
     pub tmdb: Option<u64>,
-    pub poster: Option<PathBuf>,
     pub seasons: Vec<Season>,
 }
 
@@ -43,6 +40,7 @@ pub struct Episode {
     pub title: Option<String>,
     pub path: PathBuf,
     pub added: Date,
+    pub runtime: Option<u32>,
     pub tags: Tags,
 }
 
@@ -52,31 +50,25 @@ pub struct Movie {
     pub title: String,
     pub year: Option<u16>,
     pub tmdb: Option<u64>,
-    pub poster: Option<PathBuf>,
     pub path: PathBuf,
     pub added: Date,
+    pub runtime: Option<u32>,
     pub tags: Tags,
 }
 
 impl Library {
-    pub fn from_manifest(
-        root: &Path,
-        manifest: &Manifest,
-        present: impl Fn(&Path) -> bool,
-        poster: impl Fn(&Path) -> bool,
-    ) -> Self {
-        let movie_dirs = shared_movie_dirs(&manifest.movie);
+    pub fn from_manifest(root: &Path, manifest: &Manifest, present: impl Fn(&Path) -> bool) -> Self {
         let mut library = Self {
             shows: manifest
                 .show
                 .iter()
-                .filter_map(|entry| build_show(root, entry, &present, &poster))
+                .filter_map(|entry| build_show(root, entry, &present))
                 .collect(),
             movies: manifest
                 .movie
                 .iter()
                 .filter(|entry| present(&root.join(&entry.path)))
-                .map(|entry| build_movie(root, entry, &movie_dirs, &poster))
+                .map(|entry| build_movie(root, entry))
                 .collect(),
         };
         library.sort();
@@ -92,6 +84,13 @@ impl Library {
 
     pub fn is_empty(&self) -> bool {
         self.shows.is_empty() && self.movies.is_empty()
+    }
+
+    pub fn uses_tmdb(&self) -> bool {
+        let shows = self.shows.iter().map(|show| show.tmdb);
+        shows
+            .chain(self.movies.iter().map(|movie| movie.tmdb))
+            .any(|id| id.is_some())
     }
 
     pub fn newest(&self, count: usize) -> Vec<Item> {
@@ -232,12 +231,7 @@ fn plural(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
-fn build_show(
-    root: &Path,
-    entry: &ShowEntry,
-    present: &impl Fn(&Path) -> bool,
-    poster: &impl Fn(&Path) -> bool,
-) -> Option<Show> {
+fn build_show(root: &Path, entry: &ShowEntry, present: &impl Fn(&Path) -> bool) -> Option<Show> {
     let mut seasons: BTreeMap<u32, Vec<Episode>> = BTreeMap::new();
     for episode in &entry.episodes {
         if present(&root.join(&episode.path)) {
@@ -263,7 +257,6 @@ fn build_show(
         title: entry.title.clone(),
         year: entry.year,
         tmdb: entry.tmdb,
-        poster: find_show_poster(root, entry, poster),
         seasons,
     })
 }
@@ -275,62 +268,27 @@ fn build_episode(root: &Path, entry: &EpisodeEntry) -> Episode {
         title: entry.title.clone(),
         path: root.join(&entry.path),
         added: entry.added,
+        runtime: entry.runtime,
         tags: entry.tags(),
     }
 }
 
-fn build_movie(
-    root: &Path,
-    entry: &MovieEntry,
-    dirs: &HashMap<&Path, usize>,
-    poster: &impl Fn(&Path) -> bool,
-) -> Movie {
-    let own_dir = movie_dir(&entry.path).filter(|dir| dirs.get(dir) == Some(&1));
+fn build_movie(root: &Path, entry: &MovieEntry) -> Movie {
     Movie {
         key: movie_key(&entry.title, entry.year),
         title: entry.title.clone(),
         year: entry.year,
         tmdb: entry.tmdb,
-        poster: own_dir.and_then(|dir| find_poster(&root.join(dir), poster)),
         path: root.join(&entry.path),
         added: entry.added,
+        runtime: entry.runtime,
         tags: entry.tags(),
     }
 }
 
-fn movie_dir(path: &str) -> Option<&Path> {
-    Path::new(path).parent().filter(|dir| dir.components().count() > 1)
-}
-
-fn shared_movie_dirs(movies: &[MovieEntry]) -> HashMap<&Path, usize> {
-    let mut dirs = HashMap::new();
-    for dir in movies.iter().filter_map(|movie| movie_dir(&movie.path)) {
-        *dirs.entry(dir).or_default() += 1;
-    }
-    dirs
-}
-
-fn title_dir(path: &str) -> Option<PathBuf> {
-    let mut parts = Path::new(path).components();
-    let (Some(section), Some(top), Some(_)) = (parts.next(), parts.next(), parts.next()) else {
-        return None;
-    };
-    Some(Path::new(section.as_os_str()).join(top.as_os_str()))
-}
-
-fn find_show_poster(root: &Path, entry: &ShowEntry, poster: &impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    let mut dirs: Vec<PathBuf> = entry.episodes.iter().filter_map(|e| title_dir(&e.path)).collect();
-    dirs.dedup();
-    dirs.iter().find_map(|dir| find_poster(&root.join(dir), poster))
-}
-
-fn find_poster(dir: &Path, poster: &impl Fn(&Path) -> bool) -> Option<PathBuf> {
-    POSTER_NAMES.iter().map(|name| dir.join(name)).find(|path| poster(path))
-}
-
 pub fn load(root: &Path) -> Result<Library, String> {
     let manifest = read_manifest(root)?;
-    Ok(Library::from_manifest(root, &manifest, Path::is_file, Path::is_file))
+    Ok(Library::from_manifest(root, &manifest, Path::is_file))
 }
 
 pub fn read_manifest(root: &Path) -> Result<Manifest, String> {
@@ -346,7 +304,7 @@ pub fn read_manifest(root: &Path) -> Result<Manifest, String> {
 
 pub fn load_saved(root: &Path, saved: &Path) -> Result<Library, String> {
     let manifest = Manifest::read(saved).map_err(|_| format!("No saved copy at {}", saved.display()))?;
-    Ok(Library::from_manifest(root, &manifest, |_| true, |_| false))
+    Ok(Library::from_manifest(root, &manifest, |_| true))
 }
 
 pub fn save_copy(root: &Path, saved: &Path) {
@@ -398,7 +356,7 @@ mod tests {
 
     fn library_with(text: &str, present: impl Fn(&Path) -> bool) -> Library {
         let manifest = Manifest::parse(text).unwrap();
-        Library::from_manifest("/lib".as_ref(), &manifest, present, |_| false)
+        Library::from_manifest("/lib".as_ref(), &manifest, present)
     }
 
     fn library(text: &str) -> Library {
@@ -513,46 +471,24 @@ episodes = [
     }
 
     #[test]
-    fn posters_belong_to_the_folder_of_the_title() {
-        let text = r#"[[show]]
+    fn runtimes_and_tmdb_ids_come_from_the_manifest() {
+        let with_ids = library(
+            r#"[[show]]
 title = "Dark"
-episodes = [ { season = 1, episode = 1, path = "Series/Dark/S01/e.mkv", added = 2024-01-01 } ]
+episodes = [ { season = 1, episode = 1, path = "Series/Dark/e.mkv", added = 2024-01-01, runtime = 51 } ]
 
 [[movie]]
 title = "Up"
+tmdb = 14160
 path = "Movies/Up/Up.mkv"
 added = 2024-01-01
-
-[[movie]]
-title = "One"
-path = "Movies/Beasts/One.mkv"
-added = 2024-01-01
-
-[[movie]]
-title = "Two"
-path = "Movies/Beasts/Two.mkv"
-added = 2024-01-01
-
-[[movie]]
-title = "Loose"
-path = "Movies/Loose.mkv"
-added = 2024-01-01
-"#;
-        let manifest = Manifest::parse(text).unwrap();
-        let library = Library::from_manifest(
-            "/lib".as_ref(),
-            &manifest,
-            |_| true,
-            |path| path.to_string_lossy().ends_with("poster.png"),
+runtime = 96
+"#,
         );
-        assert_eq!(library.shows[0].poster, Some("/lib/Series/Dark/poster.png".into()));
-        let poster = |title: &str| {
-            let movie = library.movies.iter().find(|movie| movie.title == title).unwrap();
-            movie.poster.clone()
-        };
-        assert_eq!(poster("Up"), Some("/lib/Movies/Up/poster.png".into()));
-        assert_eq!(poster("One"), None);
-        assert_eq!(poster("Loose"), None);
+        assert_eq!(with_ids.shows[0].episodes().next().unwrap().runtime, Some(51));
+        assert_eq!(with_ids.movies[0].runtime, Some(96));
+        assert!(with_ids.uses_tmdb());
+        assert!(!library(&movies(&[("Wind", "2024-01-01")])).uses_tmdb());
     }
 
     #[test]

@@ -1,279 +1,214 @@
-use crate::library::{Library, Movie, Show};
-use crate::progress::Progress;
-use crate::tmdb::{self, Client, Found, Season};
+use crate::manifest::{Manifest, MovieEntry, ReadError, ShowEntry};
+use crate::tmdb::{Client, Found, Kind, Season};
 use image::ImageReader;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, BufWriter, Cursor};
-use std::path::{self, Path, PathBuf};
-use std::time::Duration;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
+pub const DIR: &str = "Artwork";
 pub const CARD_WIDTH: u32 = 640;
 pub const CARD_HEIGHT: u32 = 360;
-const TMDB_MAX_AGE: Duration = Duration::from_secs(180 * 24 * 60 * 60);
+const REFRESH_AFTER: Duration = Duration::from_secs(150 * 24 * 60 * 60);
 const JPEG_QUALITY: u8 = 85;
+const BACKDROP_SIZE: &str = "w780";
+const STILL_SIZE: &str = "original";
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-pub struct Matches {
-    pub titles: BTreeMap<String, Matched>,
-    pub episode_names: BTreeMap<String, String>,
-    #[serde(default)]
-    pub runtimes: BTreeMap<String, u32>,
-}
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Matched {
-    pub id: u64,
-    pub name: String,
-    pub date: String,
-}
-
-pub struct Cache {
-    root: PathBuf,
-}
-
-impl Cache {
-    pub fn new(root: PathBuf) -> Self {
-        Self { root }
-    }
-
-    pub fn art_dir(&self) -> PathBuf {
-        self.root.join("art")
-    }
-
-    pub fn saved_manifest(&self) -> PathBuf {
-        self.root.join("library.last-good.toml")
-    }
-
-    fn art(&self, key: &str) -> PathBuf {
-        self.art_dir().join(format!("{key}.jpg"))
-    }
-
-    pub fn matches_path(&self) -> PathBuf {
-        self.root.join("tmdb.json")
-    }
-
-    fn progress_path(&self) -> PathBuf {
-        self.root.join("progress.json")
-    }
-
-    pub fn watch_later_dir(&self, file: &Path) -> PathBuf {
-        let parts = file
-            .components()
-            .filter(|part| matches!(part, path::Component::Normal(_)));
-        self.root.join("watch-later").join(parts.collect::<PathBuf>())
-    }
-
-    pub fn load_matches(&self) -> Matches {
-        fs::read(self.matches_path())
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
-    }
-
-    fn save_matches(&self, matches: &Matches) -> io::Result<()> {
-        let path = self.matches_path();
-        let temporary = path.with_extension("json.tmp");
-        fs::write(&temporary, serde_json::to_vec_pretty(matches)?)?;
-        fs::rename(temporary, path)
-    }
-
-    pub fn load_progress(&self) -> Progress {
-        fs::read(self.progress_path())
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default()
-    }
-
-    pub fn save_progress(&self, progress: &Progress) -> io::Result<()> {
-        let path = self.progress_path();
-        let temporary = path.with_extension("json.tmp");
-        fs::create_dir_all(&self.root)?;
-        fs::write(&temporary, serde_json::to_vec_pretty(progress)?)?;
-        fs::rename(temporary, path)
-    }
-
-    pub fn card_art(&self, poster: Option<&Path>, key: &str) -> Option<PathBuf> {
-        poster
-            .map(Path::to_path_buf)
-            .or_else(|| Some(self.art(key)).filter(|path| path.is_file()))
-    }
-
-    pub fn has_tmdb_art(&self) -> bool {
-        fs::read_dir(self.art_dir()).is_ok_and(|mut entries| entries.next().is_some())
-    }
-}
-
-struct Generator<'a> {
-    cache: &'a Cache,
-    client: Client,
-    matches: Matches,
-    report: Vec<String>,
-}
-
-pub fn generate(library: &Library, library_root: &Path, cache: &Cache, client: Client) -> io::Result<()> {
-    if path::absolute(&cache.root)?.starts_with(path::absolute(library_root)?) {
-        return Err(io::Error::other("the cache must stay outside the library"));
-    }
-    fs::create_dir_all(cache.art_dir())?;
-    let matches = cache.load_matches();
-    let mut generator = Generator {
-        cache,
-        client,
-        matches,
-        report: Vec::new(),
+pub fn backdrop(art: &Path, kind: Kind, id: u64) -> PathBuf {
+    let kind = match kind {
+        Kind::Movie => "movie",
+        Kind::Tv => "tv",
     };
-    for show in &library.shows {
-        generator.show(show)?;
-    }
-    for movie in &library.movies {
-        generator.movie(movie)?;
-    }
-    cache.save_matches(&generator.matches)?;
-    let report = generator.report.join("\n");
-    fs::write(cache.root.join("tmdb-report.txt"), &report)?;
-    if !report.is_empty() {
-        println!("\nNeeds attention (set tmdb = <id> in library.toml):\n{report}");
-    }
-    Ok(())
+    art.join(kind).join(id.to_string()).join("backdrop.jpg")
 }
 
-impl Generator<'_> {
-    fn details(&mut self, kind: tmdb::Kind, id: Option<u64>, label: &str) -> Option<Found> {
-        let Some(id) = id else {
-            self.report.push(format!("{label}: no TMDB id"));
-            return None;
+pub fn still(art: &Path, show: u64, season: u32, episode: u32) -> PathBuf {
+    art.join("tv")
+        .join(show.to_string())
+        .join(format!("s{season:02}e{episode:02}.jpg"))
+}
+
+pub trait Source {
+    fn details(&self, kind: Kind, id: u64) -> Result<Found, String>;
+    fn season(&self, id: u64, season: u32) -> Result<Season, String>;
+    fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, String>;
+}
+
+impl Source for Client {
+    fn details(&self, kind: Kind, id: u64) -> Result<Found, String> {
+        Client::details(self, kind, id).map_err(|error| error.to_string())
+    }
+
+    fn season(&self, id: u64, season: u32) -> Result<Season, String> {
+        Client::season(self, id, season).map_err(|error| error.to_string())
+    }
+
+    fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, String> {
+        Client::image(self, size, path).map_err(|error| error.to_string())
+    }
+}
+
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Summary {
+    pub images: usize,
+    pub without_id: Vec<String>,
+    pub problems: Vec<String>,
+}
+
+struct Run<'a, S> {
+    art: PathBuf,
+    source: &'a S,
+    refresh: bool,
+    now: SystemTime,
+    summary: Summary,
+}
+
+pub fn run(manifest_path: &Path, source: &impl Source, refresh: bool) -> Result<Summary, String> {
+    let shown = manifest_path.display();
+    let mut manifest = Manifest::read(manifest_path).map_err(|error| match error {
+        ReadError::Unreadable(error) => format!("{shown}: {error}"),
+        ReadError::Invalid(error) => format!("{shown}: {error}"),
+    })?;
+    let mut run = Run {
+        art: manifest_path.parent().unwrap_or(Path::new(".")).join(DIR),
+        source,
+        refresh,
+        now: SystemTime::now(),
+        summary: Summary::default(),
+    };
+    let save = |manifest: &Manifest| {
+        manifest
+            .write(manifest_path)
+            .map_err(|error| format!("{shown}: {error}"))
+    };
+    for index in 0..manifest.show.len() {
+        let before = manifest.show[index].clone();
+        run.show(&mut manifest.show[index]);
+        if manifest.show[index] != before {
+            save(&manifest)?;
+        }
+    }
+    for index in 0..manifest.movie.len() {
+        let before = manifest.movie[index].clone();
+        run.movie(&mut manifest.movie[index]);
+        if manifest.movie[index] != before {
+            save(&manifest)?;
+        }
+    }
+    Ok(run.summary)
+}
+
+impl<S: Source> Run<'_, S> {
+    fn wanted(&self, path: &Path) -> bool {
+        match fs::metadata(path).and_then(|metadata| metadata.modified()) {
+            Ok(modified) => self.refresh && self.now.duration_since(modified).is_ok_and(|age| age >= REFRESH_AFTER),
+            Err(_) => true,
+        }
+    }
+
+    fn fetch(&mut self, target: &Path, url_path: Option<&str>, size: &str, label: &str) {
+        let Some(url_path) = url_path else {
+            let _ = fs::remove_file(target);
+            return;
         };
-        match self.client.details(kind, id) {
-            Ok(found) => Some(found),
+        let saved = self
+            .source
+            .image(size, url_path)
+            .and_then(|bytes| write_card(&bytes, target).map_err(|error| error.to_string()));
+        match saved {
+            Ok(()) => self.summary.images += 1,
             Err(error) => {
-                self.report.push(format!("{label}: TMDB {id} failed: {error}"));
-                None
+                let _ = fs::remove_file(target);
+                self.summary.problems.push(format!("{label}: image failed: {error}"));
             }
         }
     }
 
-    fn fetch(&mut self, key: &str, url_path: Option<&str>, size: &str, label: &str) -> bool {
-        let target = self.cache.art(key);
-        if is_fresh(&target) {
-            return true;
-        }
-        let downloaded = match url_path {
-            Some(url_path) => self
-                .client
-                .image(size, url_path)
-                .map_err(io::Error::other)
-                .and_then(|bytes| write_card(&bytes, &target)),
-            None => Err(io::Error::other("no image")),
+    fn show(&mut self, show: &mut ShowEntry) {
+        println!("{}", show.title);
+        let Some(id) = show.tmdb else {
+            self.summary.without_id.push(show.title.clone());
+            return;
         };
-        if let Err(error) = &downloaded {
-            let _ = fs::remove_file(&target);
-            if url_path.is_some() {
-                self.report.push(format!("{label}: image failed: {error}"));
+        let seasons: BTreeSet<u32> = show
+            .episodes
+            .iter()
+            .filter(|episode| episode.season > 0)
+            .filter(|episode| {
+                episode.title.is_none()
+                    || episode.runtime.is_none()
+                    || self.wanted(&still(&self.art, id, episode.season, episode.episode))
+            })
+            .map(|episode| episode.season)
+            .collect();
+        let backdrop = backdrop(&self.art, Kind::Tv, id);
+        if self.wanted(&backdrop) {
+            match self.source.details(Kind::Tv, id) {
+                Ok(found) => self.fetch(&backdrop, found.backdrop.as_deref(), BACKDROP_SIZE, &show.title),
+                Err(error) => self
+                    .summary
+                    .problems
+                    .push(format!("{}: TMDB {id}: {error}", show.title)),
             }
         }
-        downloaded.is_ok()
-    }
-
-    fn is_current(&self, key: &str) -> bool {
-        is_fresh(&self.cache.art(key))
-    }
-
-    fn show(&mut self, show: &Show) -> io::Result<()> {
-        let label = show.title.clone();
-        println!("{label}");
-        let episodes_current = show
-            .seasons
-            .iter()
-            .flat_map(|season| &season.episodes)
-            .all(|episode| self.is_current(&show.episode_key(episode)));
-        let card_current = show.poster.is_some() || self.is_current(&show.key);
-        let runtimes_known = show
-            .seasons
-            .iter()
-            .filter(|season| season.number > 0)
-            .flat_map(|season| &season.episodes)
-            .all(|episode| self.matches.runtimes.contains_key(&show.episode_key(episode)));
-        let found = if card_current && episodes_current && runtimes_known {
-            None
-        } else {
-            self.details(tmdb::Kind::Tv, show.tmdb, &label)
-        };
-
-        if show.poster.is_none() {
-            self.fetch(
-                &show.key,
-                found.as_ref().and_then(|f| f.backdrop.as_deref()),
-                "w780",
-                &label,
-            );
-        }
-
-        for season in &show.seasons {
-            let details = match &found {
-                Some(found) if season.number > 0 => match self.client.season(found.id, season.number) {
-                    Ok(details) => Some(details),
-                    Err(error) => {
-                        self.report.push(format!("{label} season {}: {error}", season.number));
-                        None
-                    }
-                },
-                _ => None,
+        for number in seasons {
+            let season = match self.source.season(id, number) {
+                Ok(season) => season,
+                Err(error) => {
+                    let problem = format!("{} season {number}: TMDB {id}: {error}", show.title);
+                    self.summary.problems.push(problem);
+                    continue;
+                }
             };
-            for episode in &season.episodes {
-                let key = show.episode_key(episode);
-                let label = format!("{} {}", show.title, key);
-                let still = details.as_ref().and_then(|d: &Season| d.episode(episode.number));
-                if let Some(name) = still.and_then(|still| still.name.clone()) {
-                    self.matches.episode_names.insert(key.clone(), name);
+            for episode in show.episodes.iter_mut().filter(|episode| episode.season == number) {
+                let Some(found) = season.episode(episode.episode) else {
+                    continue;
+                };
+                if episode.title.is_none() {
+                    episode.title = found.name.clone().filter(|name| !name.trim().is_empty());
                 }
-                if let Some(runtime) = still.and_then(|still| still.runtime).filter(|minutes| *minutes > 0) {
-                    self.matches.runtimes.insert(key.clone(), runtime);
+                if episode.runtime.is_none() {
+                    episode.runtime = found.runtime.filter(|minutes| *minutes > 0);
                 }
-                self.fetch(
-                    &key,
-                    still.and_then(|still| still.still_path.as_deref()),
-                    "original",
-                    &label,
-                );
+                let target = still(&self.art, id, episode.season, episode.episode);
+                if self.wanted(&target) {
+                    let label = format!("{} S{}E{}", show.title, episode.season, episode.episode);
+                    self.fetch(&target, found.still_path.as_deref(), STILL_SIZE, &label);
+                }
             }
         }
-        self.cache.save_matches(&self.matches)
     }
 
-    fn movie(&mut self, movie: &Movie) -> io::Result<()> {
+    fn movie(&mut self, movie: &mut MovieEntry) {
         let label = match movie.year {
             Some(year) => format!("{} ({year})", movie.title),
             None => movie.title.clone(),
         };
         println!("{label}");
-        let art_current = movie.poster.is_some() || self.is_current(&movie.key);
-        if art_current && self.matches.runtimes.contains_key(&movie.key) {
-            return Ok(());
+        let Some(id) = movie.tmdb else {
+            self.summary.without_id.push(label);
+            return;
+        };
+        let target = backdrop(&self.art, Kind::Movie, id);
+        let wanted = self.wanted(&target);
+        if !wanted && movie.runtime.is_some() {
+            return;
         }
-        let found = self.details(tmdb::Kind::Movie, movie.tmdb, &label);
-        if let Some(runtime) = found.as_ref().and_then(|f| f.runtime) {
-            self.matches.runtimes.insert(movie.key.clone(), runtime);
+        match self.source.details(Kind::Movie, id) {
+            Ok(found) => {
+                if movie.runtime.is_none() {
+                    movie.runtime = found.runtime;
+                }
+                if wanted {
+                    self.fetch(&target, found.backdrop.as_deref(), BACKDROP_SIZE, &label);
+                }
+            }
+            Err(error) => self.summary.problems.push(format!("{label}: TMDB {id}: {error}")),
         }
-        if !art_current {
-            self.fetch(
-                &movie.key,
-                found.as_ref().and_then(|f| f.backdrop.as_deref()),
-                "w780",
-                &label,
-            );
-        }
-        self.cache.save_matches(&self.matches)
     }
-}
-
-fn is_fresh(path: &Path) -> bool {
-    fs::metadata(path)
-        .and_then(|metadata| metadata.modified())
-        .is_ok_and(|modified| modified.elapsed().is_ok_and(|age| age < TMDB_MAX_AGE))
 }
 
 fn write_card(bytes: &[u8], target: &Path) -> io::Result<()> {
@@ -283,6 +218,9 @@ fn write_card(bytes: &[u8], target: &Path) -> io::Result<()> {
         .map_err(io::Error::other)?
         .resize_to_fill(CARD_WIDTH, CARD_HEIGHT, FilterType::Triangle)
         .into_rgb8();
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let temporary = target.with_extension("tmp");
     let writer = BufWriter::new(fs::File::create(&temporary)?);
     JpegEncoder::new_with_quality(writer, JPEG_QUALITY)
@@ -294,42 +232,202 @@ fn write_card(bytes: &[u8], target: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::{ImageFormat, RgbImage};
+    use std::cell::RefCell;
     use std::env;
+    use std::fs::File;
 
-    #[test]
-    fn the_cache_may_not_live_inside_the_library() {
-        let root = env::temp_dir().join(format!("semmeltv-test-{}", std::process::id()));
-        let cache = Cache::new(root.join("library/cache"));
-        let client = Client::new(String::new());
-        assert!(generate(&Library::default(), &root.join("library"), &cache, client).is_err());
-        assert!(!root.exists());
+    const MANIFEST: &str = r#"[[show]]
+title = "Dark"
+tmdb = 70523
+episodes = [
+  { season = 0, episode = 1, path = "Series/Dark/Special.mkv", added = 2024-05-01 },
+  { season = 1, episode = 1, path = "Series/Dark/S01E01.mkv", added = 2024-05-01 },
+  { season = 1, episode = 2, title = "Lies", path = "Series/Dark/S01E02.mkv", added = 2024-05-01 },
+]
+
+[[show]]
+title = "Home Videos"
+episodes = [
+  { season = 1, episode = 1, path = "Series/Home/S01E01.mkv", added = 2024-05-01 },
+]
+
+[[movie]]
+title = "Up"
+year = 2009
+tmdb = 14160
+path = "Movies/Up.mkv"
+added = 2024-05-01
+
+[[movie]]
+title = "Wind"
+path = "Movies/Wind.avi"
+added = 2024-05-01
+"#;
+
+    struct Fake {
+        calls: RefCell<Vec<String>>,
+        png: Vec<u8>,
+        images_fail: bool,
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            let mut png = Vec::new();
+            RgbImage::new(64, 36)
+                .write_to(&mut Cursor::new(&mut png), ImageFormat::Png)
+                .unwrap();
+            Self {
+                calls: RefCell::new(Vec::new()),
+                png,
+                images_fail: false,
+            }
+        }
+
+        fn calls(&self) -> Vec<String> {
+            self.calls.take()
+        }
+    }
+
+    impl Source for Fake {
+        fn details(&self, kind: Kind, id: u64) -> Result<Found, String> {
+            self.calls.borrow_mut().push(format!("details {kind:?} {id}"));
+            Ok(Found {
+                id,
+                backdrop: Some(format!("/{id}.jpg")),
+                runtime: (kind == Kind::Movie).then_some(96),
+                ..Found::default()
+            })
+        }
+
+        fn season(&self, id: u64, season: u32) -> Result<Season, String> {
+            self.calls.borrow_mut().push(format!("season {id} {season}"));
+            let json = r#"{"episodes":[
+                {"episode_number":1,"name":"Secrets","still_path":"/s1.jpg","runtime":51},
+                {"episode_number":2,"name":"Wrong","still_path":null,"runtime":44}]}"#;
+            Ok(serde_json::from_str(json).unwrap())
+        }
+
+        fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, String> {
+            self.calls.borrow_mut().push(format!("image {size} {path}"));
+            if self.images_fail {
+                Err("offline".to_string())
+            } else {
+                Ok(self.png.clone())
+            }
+        }
+    }
+
+    fn workdir(name: &str) -> PathBuf {
+        let dir = env::temp_dir().join(format!("semmeltv-{name}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("library.toml"), MANIFEST).unwrap();
+        dir
+    }
+
+    fn age(path: &Path, days: u64) {
+        let then = SystemTime::now() - Duration::from_secs(days * 24 * 60 * 60);
+        File::options()
+            .write(true)
+            .open(path)
+            .unwrap()
+            .set_modified(then)
+            .unwrap();
     }
 
     #[test]
-    fn files_with_the_same_name_keep_their_saved_positions_apart() {
-        let cache = Cache::new("/cache".into());
-        let one = cache.watch_later_dir(Path::new("/lib/Series/One/S01/E01.mkv"));
-        let two = cache.watch_later_dir(Path::new("/lib/Series/Two/S01/E01.mkv"));
-        assert_eq!(one, Path::new("/cache/watch-later/lib/Series/One/S01/E01.mkv"));
-        assert_ne!(one, two);
+    fn art_lives_under_the_kind_and_tmdb_id() {
+        let art = Path::new("/work/Artwork");
+        assert_eq!(
+            backdrop(art, Kind::Movie, 14160),
+            Path::new("/work/Artwork/movie/14160/backdrop.jpg")
+        );
+        assert_eq!(
+            backdrop(art, Kind::Tv, 70523),
+            Path::new("/work/Artwork/tv/70523/backdrop.jpg")
+        );
+        assert_eq!(still(art, 70523, 1, 2), Path::new("/work/Artwork/tv/70523/s01e02.jpg"));
     }
 
     #[test]
-    fn a_tmdb_cache_without_runtimes_still_loads() {
-        let matches: Matches = serde_json::from_str(r#"{"titles":{},"episode_names":{}}"#).unwrap();
-        assert!(matches.runtimes.is_empty());
+    fn a_run_saves_art_beside_the_manifest_and_names_and_runtimes_into_it() {
+        let dir = workdir("art-run");
+        let manifest = dir.join("library.toml");
+        let art = dir.join(DIR);
+        let fake = Fake::new();
+
+        let summary = run(&manifest, &fake, false).unwrap();
+        assert_eq!(summary.images, 3);
+        assert_eq!(summary.without_id, ["Home Videos", "Wind"]);
+        assert!(summary.problems.is_empty());
+        for path in [
+            backdrop(&art, Kind::Tv, 70523),
+            still(&art, 70523, 1, 1),
+            backdrop(&art, Kind::Movie, 14160),
+        ] {
+            let image = image::open(&path).unwrap();
+            assert_eq!((image.width(), image.height()), (CARD_WIDTH, CARD_HEIGHT));
+        }
+        assert!(!still(&art, 70523, 1, 2).exists());
+
+        let written = Manifest::read(&manifest).unwrap();
+        let dark = &written.show[0].episodes;
+        assert_eq!(dark[0].title, None);
+        assert_eq!((dark[1].title.as_deref(), dark[1].runtime), (Some("Secrets"), Some(51)));
+        assert_eq!((dark[2].title.as_deref(), dark[2].runtime), (Some("Lies"), Some(44)));
+        assert_eq!(written.movie[0].runtime, Some(96));
+        assert_eq!(written.movie[1].runtime, None);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
-    fn a_poster_wins_over_tmdb_art_and_no_art_means_none() {
-        let root = env::temp_dir().join(format!("semmeltv-art-{}", std::process::id()));
-        fs::create_dir_all(root.join("art")).unwrap();
-        let cache = Cache::new(root.clone());
-        assert_eq!(cache.card_art(None, "dark"), None);
-        fs::write(cache.art("dark"), b"").unwrap();
-        assert_eq!(cache.card_art(None, "dark"), Some(cache.art("dark")));
-        let poster = Path::new("/lib/Series/Dark/poster.jpg");
-        assert_eq!(cache.card_art(Some(poster), "dark"), Some(poster.to_path_buf()));
-        fs::remove_dir_all(root).unwrap();
+    fn a_second_run_only_asks_for_what_is_still_missing() {
+        let dir = workdir("art-again");
+        let manifest = dir.join("library.toml");
+        let fake = Fake::new();
+        run(&manifest, &fake, false).unwrap();
+        fake.calls();
+
+        let summary = run(&manifest, &fake, false).unwrap();
+        assert_eq!(summary.images, 0);
+        assert_eq!(fake.calls(), ["season 70523 1"]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn refreshing_replaces_only_images_older_than_five_months() {
+        let dir = workdir("art-refresh");
+        let manifest = dir.join("library.toml");
+        let art = dir.join(DIR);
+        let fake = Fake::new();
+        run(&manifest, &fake, false).unwrap();
+        age(&backdrop(&art, Kind::Movie, 14160), 160);
+        age(&backdrop(&art, Kind::Tv, 70523), 100);
+        fake.calls();
+
+        assert_eq!(run(&manifest, &fake, false).unwrap().images, 0);
+        fake.calls();
+        assert_eq!(run(&manifest, &fake, true).unwrap().images, 1);
+        assert!(fake.calls().contains(&"image w780 /14160.jpg".to_string()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn an_old_image_that_cannot_be_refreshed_is_deleted() {
+        let dir = workdir("art-expire");
+        let manifest = dir.join("library.toml");
+        let target = backdrop(&dir.join(DIR), Kind::Movie, 14160);
+        run(&manifest, &Fake::new(), false).unwrap();
+        age(&target, 200);
+
+        let failing = Fake {
+            images_fail: true,
+            ..Fake::new()
+        };
+        let summary = run(&manifest, &failing, true).unwrap();
+        assert!(!target.exists());
+        assert_eq!(summary.problems, ["Up (2009): image failed: offline"]);
+        fs::remove_dir_all(dir).unwrap();
     }
 }
