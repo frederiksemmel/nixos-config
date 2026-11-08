@@ -185,6 +185,9 @@ Continuing plays the next episode once the last one ended. Titles match the
 library loosely, so transcription slips are forgiven; translated titles are not
 known. Download requests are understood but not carried out yet.
 
+The wake word, any colour key on the remote, or V on a keyboard starts
+listening.
+
 `SEMMELTV_LED` names a Linux LED, such as `/sys/class/leds/ACT`, that lights
 while the app listens and works out what was said. The app's user must be able
 to write its `brightness`.
@@ -249,6 +252,13 @@ without one the step skips them. The TVs never get the key.
 `devenv shell` picks it up anywhere under `semmeltv/`. The shell sets
 `SEMMELTV_LIBRARY` to `~/pcloud/SemmelTV`, where the desktop's rclone mount of
 the whole pCloud account has the library, unless it is already set.
+
+Loading the library stats every file, which over that mount means one pCloud
+listing per folder, about a minute in all. Entering the shell runs
+`semmeltv:warm-library`, which asks the mount over its rc socket
+(`$XDG_RUNTIME_DIR/rclone-pcloud.sock`) to list the library recursively in one
+go, about two seconds, after which a load takes about as long. The mount keeps
+listings for 30 days and learns of changes from pCloud within a minute.
 
 For voice commands, `devenv up` runs the two servers semmeltv5 runs as system
 services: `speech` (Parakeet) and `wake` (openWakeWord, "hey jarvis"), on ports

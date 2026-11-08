@@ -185,6 +185,10 @@ in
         options = {
           vfs-cache-max-size = "10G";
           vfs-cache-max-age = "720h";
+          dir-cache-time = "720h";
+          rc = true;
+          rc-no-auth = true;
+          rc-addr = "unix://%t/rclone-pcloud.sock";
         };
       };
     };

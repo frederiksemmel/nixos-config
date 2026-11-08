@@ -29,6 +29,8 @@ impl Command {
             Some(Self::Back)
         } else if text == " " {
             Some(Self::PlayPause)
+        } else if text == "v" {
+            Some(Self::Listen)
         } else {
             None
         }
