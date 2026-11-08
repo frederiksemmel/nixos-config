@@ -212,9 +212,11 @@ step needs a TMDB API Read Access Token, from `TMDB_TOKEN_FILE`,
     cd semmeltv/app
     devenv shell
     cargo test
-    cargo run -- ui --library /path/to/library
+    cargo run -- ui
 
 `semmeltv/devenv.nix` holds the tooling: the Rust toolchain, `slint-lsp`, `mpv`,
 `wlr-randr` and `bacon`, with the build environment the package uses
 (`app/build-env.nix`). It imports the light root `devenv.nix` of the repo, and
-`devenv shell` picks it up anywhere under `semmeltv/`.
+`devenv shell` picks it up anywhere under `semmeltv/`. The shell sets
+`SEMMELTV_LIBRARY` to `~/pcloud/SemmelTV`, where the desktop's rclone mount of
+the whole pCloud account has the library, unless it is already set.

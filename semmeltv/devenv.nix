@@ -18,4 +18,8 @@ in
   ];
 
   env.SEMMELTV_FONT_DIR = buildEnv.SEMMELTV_FONT_DIR;
+
+  enterShell = ''
+    export SEMMELTV_LIBRARY="''${SEMMELTV_LIBRARY:-$HOME/pcloud/SemmelTV}"
+  '';
 }
