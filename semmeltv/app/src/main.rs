@@ -39,7 +39,7 @@ slint::include_modules!();
 const USAGE: &str = "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--cache DIR]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--omdb-key-file FILE]
                 [--manifest FILE] [--listing FILE]
-                [--refresh] [--whisper HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]";
+                [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]";
 const DEFAULT_WAKE_WORD: &str = "hey_jarvis";
 
 struct Args {
@@ -54,7 +54,7 @@ struct Args {
     refresh: bool,
     transcript: String,
     recording: Option<PathBuf>,
-    whisper: Option<String>,
+    speech: Option<String>,
     wake: Option<String>,
     wake_word: String,
 }
@@ -79,7 +79,7 @@ fn parse_args() -> Result<Args, String> {
         refresh: false,
         transcript: String::new(),
         recording: None,
-        whisper: env::var("SEMMELTV_WHISPER").ok().filter(|address| !address.is_empty()),
+        speech: env::var("SEMMELTV_SPEECH").ok().filter(|address| !address.is_empty()),
         wake: env::var("SEMMELTV_WAKE").ok().filter(|address| !address.is_empty()),
         wake_word: env::var("SEMMELTV_WAKE_WORD")
             .ok()
@@ -99,7 +99,7 @@ fn parse_args() -> Result<Args, String> {
                 args.recording = Some(value("hear")?.into());
                 args.mode = argument;
             }
-            "--whisper" => args.whisper = Some(value("--whisper")?),
+            "--speech" => args.speech = Some(value("--speech")?),
             "--wake" => args.wake = Some(value("--wake")?),
             "--wake-word" => args.wake_word = value("--wake-word")?,
             "--library" => args.library = value("--library")?.into(),
@@ -166,7 +166,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         remote: env::var("SEMMELTV_REMOTE").ok().filter(|remote| !remote.is_empty()),
         cache,
         wake_word,
-        whisper: args.whisper,
+        speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
     };
     app::run(setup).map_err(|error| error.to_string())
@@ -231,10 +231,10 @@ fn run_artwork(args: &Args) -> Result<(), String> {
 
 fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
     let path = args.recording.as_ref().ok_or("hear needs a WAV file")?;
-    let whisper = args
-        .whisper
+    let speech = args
+        .speech
         .as_deref()
-        .ok_or("hear needs --whisper HOST:PORT or SEMMELTV_WHISPER")?;
+        .ok_or("hear needs --speech HOST:PORT or SEMMELTV_SPEECH")?;
     let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let samples = voice::read_wav(&bytes)?;
     let length = Duration::from_secs_f64(samples.len() as f64 / f64::from(wyoming::RATE));
@@ -246,7 +246,7 @@ fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
     let listen = wake_word.is_none();
     let (heard, received) = mpsc::channel();
     let voice = voice::spawn(
-        whisper.to_string(),
+        speech.to_string(),
         wake_word,
         voice::Source::Recording(samples),
         move |event| {

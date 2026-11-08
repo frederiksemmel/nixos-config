@@ -54,7 +54,7 @@ impl Voice {
 }
 
 pub fn spawn(
-    whisper: String,
+    speech: String,
     wake_word: Option<WakeWord>,
     source: Source,
     heard: impl Fn(Heard) + Send + 'static,
@@ -69,7 +69,7 @@ pub fn spawn(
         }
     };
     let waker = wake_word.map(|wake_word| Waker::new(wake_word, inputs.clone()));
-    thread::spawn(move || run(&whisper, waker, &received, &heard));
+    thread::spawn(move || run(&speech, waker, &received, &heard));
     Voice { inputs }
 }
 
@@ -86,7 +86,7 @@ impl Recording {
     }
 }
 
-fn run(whisper: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard: &impl Fn(Heard)) {
+fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard: &impl Fn(Heard)) {
     let mut present = false;
     let mut recording: Option<Recording> = None;
     while let Ok(input) = received.recv() {
@@ -130,9 +130,9 @@ fn run(whisper: &str, mut waker: Option<Waker>, received: &Receiver<Input>, hear
             }
             Progress::Ended => {
                 let samples = recording.take().map(|recording| recording.samples).unwrap_or_default();
-                heard(match wyoming::transcribe(whisper, &samples) {
+                heard(match wyoming::transcribe(speech, &samples) {
                     Ok(text) => Heard::Transcript(text),
-                    Err(error) => Heard::Failed(format!("Whisper: {error}")),
+                    Err(error) => Heard::Failed(format!("Speech recognition: {error}")),
                 });
                 for input in received.try_iter() {
                     if let Input::Microphone(now) = input {

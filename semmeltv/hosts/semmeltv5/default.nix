@@ -4,7 +4,7 @@
     ../common.nix
     ./mount.nix
     ./wake.nix
-    ./whisper.nix
+    ./speech.nix
     flake.self.nixosModules.hailo
     raspberry-pi-5.base
     raspberry-pi-5.display-vc4

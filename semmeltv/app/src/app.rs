@@ -64,7 +64,7 @@ pub struct Setup {
     pub remote: Option<String>,
     pub store: Store,
     pub cache: Cache,
-    pub whisper: Option<String>,
+    pub speech: Option<String>,
     pub wake_word: Option<voice::WakeWord>,
     pub microphone: Option<String>,
 }
@@ -102,7 +102,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         remote,
         store,
         cache,
-        whisper,
+        speech,
         wake_word,
         microphone,
     } = setup;
@@ -130,10 +130,10 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let fetcher = fetch::spawn(store.clone(), move |path| notify(Change::Downloading(path)));
 
     let (heard, received_heard) = mpsc::channel();
-    let voice = whisper.map(|whisper| {
+    let voice = speech.map(|speech| {
         let handle = ui.as_weak();
         voice::spawn(
-            whisper,
+            speech,
             wake_word,
             voice::Source::Microphone(microphone),
             move |event| {
