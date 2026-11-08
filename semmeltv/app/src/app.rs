@@ -5,6 +5,7 @@ use crate::command::Command;
 use crate::details::{Details, Ratings};
 use crate::fetch;
 use crate::intent::{self, Action, Control};
+use crate::led::Led;
 use crate::library::{self, Item, Library};
 use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload};
@@ -67,6 +68,7 @@ pub struct Setup {
     pub speech: Option<String>,
     pub wake_word: Option<voice::WakeWord>,
     pub microphone: Option<String>,
+    pub led: Option<Led>,
 }
 
 struct Playing {
@@ -94,6 +96,7 @@ struct App {
     voice: Option<Voice>,
     unmute_after_listening: bool,
     queued: Option<PathBuf>,
+    led: Option<Led>,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -105,6 +108,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         speech,
         wake_word,
         microphone,
+        led,
     } = setup;
     let ui = AppWindow::new()?;
     let handle = ui.as_weak();
@@ -132,16 +136,11 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let (heard, received_heard) = mpsc::channel();
     let voice = speech.map(|speech| {
         let handle = ui.as_weak();
-        voice::spawn(
-            speech,
-            wake_word,
-            voice::Source::Microphone(microphone),
-            move |event| {
-                if heard.send(event).is_ok() {
-                    let _ = handle.upgrade_in_event_loop(|ui| ui.invoke_voice_heard());
-                }
-            },
-        )
+        voice::spawn(speech, wake_word, voice::Source::Microphone(microphone), move |event| {
+            if heard.send(event).is_ok() {
+                let _ = handle.upgrade_in_event_loop(|ui| ui.invoke_voice_heard());
+            }
+        })
     });
 
     let saved = cache.saved_manifest();
@@ -167,6 +166,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         voice,
         unmute_after_listening: false,
         queued: None,
+        led,
     }));
     app.borrow_mut().present_home();
 
@@ -536,6 +536,9 @@ impl App {
     }
 
     fn hear(&mut self, heard: Heard) {
+        if let Some(led) = &self.led {
+            led.set(heard == Heard::Listening);
+        }
         if heard == Heard::Listening {
             if let Some(player) = self.player.as_ref().filter(|player| !player.muted()) {
                 player.set_muted(true);

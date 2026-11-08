@@ -8,6 +8,7 @@ mod display;
 mod fetch;
 mod import;
 mod intent;
+mod led;
 mod library;
 mod loader;
 mod manifest;
@@ -168,6 +169,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         wake_word,
         speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
+        led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
     };
     app::run(setup).map_err(|error| error.to_string())
 }

@@ -185,6 +185,10 @@ Continuing plays the next episode once the last one ended. Titles match the
 library loosely, so transcription slips are forgiven; translated titles are not
 known. Download requests are understood but not carried out yet.
 
+`SEMMELTV_LED` names a Linux LED, such as `/sys/class/leds/ACT`, that lights
+while the app listens and works out what was said. The app's user must be able
+to write its `brightness`.
+
 ## Artwork
 
     semmeltv artwork --manifest DIR/library.toml [--refresh]
