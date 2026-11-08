@@ -1,9 +1,10 @@
+use crate::api::{self, Outcome, Pending, Request, Seek, Shared};
 use crate::artwork;
+use crate::bus::{Bus, NowPlaying, Voice as VoiceEvent};
 use crate::cache::Cache;
 use crate::cec;
 use crate::command::Command;
 use crate::details::{self, Details, Ratings};
-use crate::feedback::Feedback;
 use crate::fetch;
 use crate::intent::{self, Action, Control};
 use crate::led::Led;
@@ -20,7 +21,6 @@ use crate::voice::{self, Heard, Voice};
 use crate::watch::{self, Change};
 use crate::watching::{self, Current};
 use crate::{AppWindow, CardData, OfflineState, ShelfData};
-use serde_json::json;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
@@ -28,6 +28,7 @@ use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
@@ -37,6 +38,7 @@ const VOICE_WAITING_TIME: Duration = Duration::from_secs(20);
 const EMPTY_LIBRARY: &str = "The library is empty";
 const OUT_OF_REACH: &str = "Not downloaded, and pCloud can't be reached right now";
 const NOTHING_PLAYING: &str = "Nothing is playing";
+const PLAYBACK_EVERY: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy)]
 enum Screen {
@@ -44,15 +46,28 @@ enum Screen {
     Show,
 }
 
+enum Input {
+    Command(Command),
+    Request(Pending),
+}
+
 #[derive(Clone)]
 pub struct Remote {
-    commands: Sender<Command>,
+    inputs: Sender<Input>,
     ui: slint::Weak<AppWindow>,
 }
 
 impl Remote {
     pub fn send(&self, command: Command) {
-        if self.commands.send(command).is_ok() {
+        self.deliver(Input::Command(command));
+    }
+
+    fn request(&self, pending: Pending) {
+        self.deliver(Input::Request(pending));
+    }
+
+    fn deliver(&self, input: Input) {
+        if self.inputs.send(input).is_ok() {
             let _ = self.ui.upgrade_in_event_loop(|ui| ui.invoke_remote_input());
         }
     }
@@ -74,7 +89,7 @@ pub struct Setup {
     pub wake_word: Option<voice::WakeWord>,
     pub microphone: Option<String>,
     pub led: Option<Led>,
-    pub feedback: Option<Feedback>,
+    pub api: Option<api::Config>,
 }
 
 struct Playing {
@@ -109,7 +124,9 @@ struct App {
     keys: Remote,
     queued: Option<PathBuf>,
     led: Option<Led>,
-    feedback: Option<Feedback>,
+    bus: Bus,
+    shared: Arc<Shared>,
+    now_playing: Option<NowPlaying>,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -122,7 +139,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         wake_word,
         microphone,
         led,
-        feedback,
+        api,
     } = setup;
     let ui = AppWindow::new()?;
     let handle = ui.as_weak();
@@ -157,20 +174,25 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         })
     });
 
-    let (commands, received_commands) = mpsc::channel();
+    let (inputs, received_inputs) = mpsc::channel();
     let keys = Remote {
-        commands,
+        inputs,
         ui: ui.as_weak(),
     };
     let saved = cache.saved_manifest();
     let library = library::load_saved(&root, &saved).unwrap_or_default();
     let progress = cache.load_progress();
+    let bus = Bus::default();
+    let shared = Arc::new(Shared::default());
+    shared.set_library(&library);
+    shared.set_progress(&progress);
+    let art = root.join(artwork::DIR);
     let app = Rc::new(RefCell::new(App {
         ui: ui.clone_strong(),
         downloaded: store.downloaded(library.paths()),
         nav: Nav::new(library),
         cache,
-        art: root.join(artwork::DIR),
+        art: art.clone(),
         images,
         player: None,
         progress,
@@ -192,7 +214,9 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         keys: keys.clone(),
         queued: None,
         led,
-        feedback,
+        bus: bus.clone(),
+        shared: shared.clone(),
+        now_playing: None,
     }));
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
@@ -210,8 +234,14 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let remote_input = Rc::downgrade(&app);
     ui.on_remote_input(move || {
         if let Some(app) = remote_input.upgrade() {
-            for command in received_commands.try_iter() {
-                App::dispatch(&app, command);
+            for input in received_inputs.try_iter() {
+                match input {
+                    Input::Command(command) => App::dispatch(&app, command),
+                    Input::Request(Pending { request, reply }) => {
+                        let outcome = app.borrow_mut().answer(request);
+                        let _ = reply.send(outcome);
+                    }
+                }
             }
         }
     });
@@ -223,7 +253,22 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
             }
         }
     });
+    if let Some(config) = api {
+        let keys = keys.clone();
+        let tv: api::Tv = Arc::new(move |pending| keys.request(pending));
+        api::spawn(config, shared, art, bus, tv);
+    }
     cec::spawn(keys);
+
+    let playback_timer = Timer::default();
+    let ticking = Rc::downgrade(&app);
+    playback_timer.start(TimerMode::Repeated, PLAYBACK_EVERY, move || {
+        if let Some(app) = ticking.upgrade()
+            && let Ok(app) = app.try_borrow()
+        {
+            app.publish_playback();
+        }
+    });
 
     let finished = Rc::downgrade(&app);
     ui.on_playback_finished(move |success, ended| {
@@ -392,6 +437,7 @@ impl App {
             return;
         }
         self.downloaded = self.store.downloaded(library.paths());
+        self.shared.set_library(&library);
         match self.nav.replace(library) {
             Reload::ShowGone => self.ui.set_show_open(false),
             Reload::ShowChanged => self.present_show(),
@@ -487,6 +533,8 @@ impl App {
         ) {
             Ok(player) => {
                 self.player = Some(player);
+                self.now_playing = Some(self.now_playing_for(path));
+                self.publish_playback();
                 self.record_start(path);
                 self.lead = Some(path.to_path_buf());
                 self.queue_downloads(true);
@@ -564,6 +612,8 @@ impl App {
     fn finish_playback(&mut self, success: bool, ended: bool) {
         self.record_place();
         self.player = None;
+        self.now_playing = None;
+        self.publish_playback();
         if let Some(playing) = self.playing.take().filter(|_| ended) {
             self.progress.finish(&playing.file);
             watching::finished(&mut self.progress, self.nav.library(), &playing.file);
@@ -606,12 +656,12 @@ impl App {
             led.set(self.voice_active);
         }
         if heard == Heard::Transcribing {
-            self.report(json!({ "state": "transcribing" }));
+            self.bus.voice(VoiceEvent::Transcribing);
             self.show_voice("", "Working out what you said…", None);
             return;
         }
         if heard == Heard::Listening {
-            self.report(json!({ "state": "listening" }));
+            self.bus.voice(VoiceEvent::Listening);
             if let Some(player) = self.player.as_ref().filter(|player| !player.muted()) {
                 player.set_muted(true);
                 self.unmute_after_listening = true;
@@ -636,25 +686,29 @@ impl App {
             (Heard::Transcript(text), Some(action)) => {
                 let understood = !matches!(action, Action::Refuse(_));
                 let outcome = self.describe(&action);
-                self.report(json!({ "state": "heard", "text": text, "action": outcome, "understood": understood }));
+                self.bus.voice(VoiceEvent::Heard {
+                    text: text.clone(),
+                    action: outcome.clone(),
+                    understood,
+                });
                 self.show_voice(&format!("“{text}”"), &outcome, Some(VOICE_RESULT_TIME));
                 self.act(action);
             }
             (Heard::NoMicrophone, _) => {
-                self.report(json!({ "state": "no-microphone" }));
+                self.bus.voice(VoiceEvent::NoMicrophone);
                 self.show_voice("", "No microphone is connected", Some(VOICE_RESULT_TIME));
             }
             (Heard::Failed(error), _) => {
                 eprintln!("voice: {error}");
-                self.report(json!({ "state": "failed", "message": error }));
+                self.bus.voice(VoiceEvent::Failed { message: error });
                 self.show_voice("", "Voice control failed", Some(VOICE_RESULT_TIME));
             }
             (Heard::Transcript(_), None) => {
-                self.report(json!({ "state": "nothing" }));
+                self.bus.voice(VoiceEvent::Nothing);
                 self.show_voice("", "I didn't catch that", Some(VOICE_RESULT_TIME));
             }
             _ => {
-                self.report(json!({ "state": "nothing" }));
+                self.bus.voice(VoiceEvent::Nothing);
                 self.show_voice("", "I didn't hear anything", Some(VOICE_RESULT_TIME));
             }
         }
@@ -674,7 +728,7 @@ impl App {
         {
             player.set_muted(false);
         }
-        self.report(json!({ "state": "cancelled" }));
+        self.bus.voice(VoiceEvent::Cancelled);
         self.voice_timer.stop();
         self.ui.set_voice_transcript("".into());
         self.ui.set_voice_status("".into());
@@ -683,10 +737,104 @@ impl App {
         }
     }
 
-    fn report(&self, event: serde_json::Value) {
-        if let Some(feedback) = &self.feedback {
-            feedback.send(event);
+    fn answer(&mut self, request: Request) -> Outcome {
+        let action = match request {
+            Request::Understand(text) => intent::understand(&text, self.nav.library(), &self.progress),
+            Request::Play(pick) => intent::choose(&pick, self.nav.library(), &self.progress),
+            Request::Control(control) => Action::Control(control),
+            Request::PlayPause => {
+                let paused = self.player.as_ref().is_some_and(|player| player.state().paused);
+                Action::Control(if paused { Control::Resume } else { Control::Pause })
+            }
+            Request::Seek(seek) => return self.seek(seek),
+            Request::Listen => {
+                return match &self.voice {
+                    Some(voice) => {
+                        voice.listen();
+                        Outcome {
+                            message: "Listening".to_string(),
+                            ok: true,
+                        }
+                    }
+                    None => Outcome {
+                        message: "Voice control is not set up".to_string(),
+                        ok: false,
+                    },
+                };
+            }
+        };
+        let message = self.describe(&action);
+        let ok = match &action {
+            Action::Play(_) | Action::Control(Control::TvOn | Control::TvOff) => true,
+            Action::Control(_) => self.player.is_some(),
+            Action::Download { .. } | Action::Refuse(_) => false,
+        };
+        self.act(action);
+        self.publish_playback();
+        Outcome { message, ok }
+    }
+
+    fn seek(&self, seek: Seek) -> Outcome {
+        let Some(player) = &self.player else {
+            return Outcome {
+                message: NOTHING_PLAYING.to_string(),
+                ok: false,
+            };
+        };
+        match seek {
+            Seek::To(seconds) => player.seek_to(seconds),
+            Seek::By(seconds) => player.seek_by(seconds),
         }
+        self.publish_playback();
+        Outcome {
+            message: "Seeking".to_string(),
+            ok: true,
+        }
+    }
+
+    fn now_playing_for(&self, path: &Path) -> NowPlaying {
+        let library = self.nav.library();
+        if let Some((show, episode)) = library.find_episode(path) {
+            return NowPlaying {
+                title: show.title.clone(),
+                caption: format!("{} · {}", episode.short_label(), episode.label()),
+                show: Some(show.key.clone()),
+                season: Some(episode.season),
+                episode: Some(episode.number),
+                loading: true,
+                ..NowPlaying::default()
+            };
+        }
+        let movie = library.movies.iter().find(|movie| movie.path == path);
+        NowPlaying {
+            title: movie.map_or_else(|| path.display().to_string(), |movie| movie.title.clone()),
+            caption: movie
+                .and_then(|movie| movie.year)
+                .map(|year| year.to_string())
+                .unwrap_or_default(),
+            movie: movie.map(|movie| movie.key.clone()),
+            loading: true,
+            ..NowPlaying::default()
+        }
+    }
+
+    fn publish_playback(&self) {
+        let now_playing = self
+            .player
+            .as_ref()
+            .zip(self.now_playing.as_ref())
+            .map(|(player, base)| {
+                let state = player.state();
+                NowPlaying {
+                    position: state.position,
+                    duration: state.duration,
+                    paused: state.paused,
+                    muted: state.muted,
+                    loading: !state.started,
+                    ..base.clone()
+                }
+            });
+        self.bus.playback(now_playing);
     }
 
     fn describe(&self, action: &Action) -> String {
@@ -768,6 +916,7 @@ impl App {
     }
 
     fn save_progress(&self) {
+        self.shared.set_progress(&self.progress);
         if let Err(error) = self.cache.save_progress(&self.progress) {
             eprintln!("progress: {error}");
         }

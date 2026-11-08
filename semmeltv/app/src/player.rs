@@ -378,6 +378,15 @@ pub struct Player {
     playback: Shared,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct State {
+    pub position: f64,
+    pub duration: f64,
+    pub paused: bool,
+    pub muted: bool,
+    pub started: bool,
+}
+
 impl Player {
     pub fn start(
         path: &Path,
@@ -441,8 +450,36 @@ impl Player {
         self.playback.lock().unwrap().played
     }
 
+    pub fn state(&self) -> State {
+        let playback = self.playback.lock().unwrap();
+        State {
+            position: playback.scrub.target().unwrap_or(playback.position),
+            duration: playback.duration,
+            paused: playback.paused,
+            muted: playback.muted,
+            started: playback.started,
+        }
+    }
+
     pub fn command(&self, command: Command) {
         self.playback.lock().unwrap().command(command, Instant::now());
+    }
+
+    pub fn seek_to(&self, seconds: f64) {
+        let now = Instant::now();
+        let mut playback = self.playback.lock().unwrap();
+        if playback.started {
+            let to = seconds.clamp(0.0, playback.duration.max(0.0));
+            playback.scrub.cancel();
+            playback.seek(Some(Order { to, exact: true }));
+            playback.wake(now);
+            playback.present(now);
+        }
+    }
+
+    pub fn seek_by(&self, seconds: f64) {
+        let position = self.state().position;
+        self.seek_to(position + seconds);
     }
 
     pub fn set_paused(&self, paused: bool) {

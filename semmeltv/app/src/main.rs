@@ -1,11 +1,12 @@
+mod api;
 mod app;
 mod artwork;
+mod bus;
 mod cache;
 mod cec;
 mod command;
 mod details;
 mod display;
-mod feedback;
 mod fetch;
 mod import;
 mod intent;
@@ -42,7 +43,8 @@ slint::include_modules!();
 const USAGE: &str = "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--cache DIR]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
-                [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]";
+                [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
+                [--api HOST:PORT]";
 const DEFAULT_WAKE_WORD: &str = "hey_jarvis";
 
 struct Args {
@@ -60,6 +62,7 @@ struct Args {
     speech: Option<String>,
     wake: Option<String>,
     wake_word: String,
+    api: Option<String>,
 }
 
 fn env_path(name: &str) -> Option<PathBuf> {
@@ -88,6 +91,7 @@ fn parse_args() -> Result<Args, String> {
             .ok()
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| DEFAULT_WAKE_WORD.to_string()),
+        api: env::var("SEMMELTV_API").ok().filter(|address| !address.is_empty()),
     };
     let mut raw = env::args().skip(1);
     while let Some(argument) = raw.next() {
@@ -105,6 +109,7 @@ fn parse_args() -> Result<Args, String> {
             "--speech" => args.speech = Some(value("--speech")?),
             "--wake" => args.wake = Some(value("--wake")?),
             "--wake-word" => args.wake_word = value("--wake-word")?,
+            "--api" => args.api = Some(value("--api")?),
             "--library" => args.library = value("--library")?.into(),
             "--cache" => args.cache = value("--cache")?.into(),
             "--vfs-cache" => args.vfs_cache = Some(value("--vfs-cache")?.into()),
@@ -172,10 +177,12 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
         led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
-        feedback: env::var("SEMMELTV_VOICE_FEEDBACK")
-            .ok()
-            .filter(|url| !url.is_empty())
-            .map(feedback::Feedback::spawn),
+        api: args.api.map(|address| api::Config {
+            address,
+            phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
+                .ok()
+                .filter(|device| !device.is_empty()),
+        }),
     };
     app::run(setup).map_err(|error| error.to_string())
 }

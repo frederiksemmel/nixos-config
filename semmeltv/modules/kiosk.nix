@@ -1,4 +1,4 @@
-{ crane }:
+{ crane, nixpkgs }:
 {
   config,
   lib,
@@ -10,6 +10,8 @@ let
   blankCursor = pkgs.callPackage ../app/blank-cursor.nix { };
 in
 {
+  imports = [ (import ./web.nix { inherit crane nixpkgs; }) ];
+
   options.services.semmeltv = {
     enable = lib.mkEnableOption "the SemmelTV kiosk, the app full screen in cage on tty1";
 

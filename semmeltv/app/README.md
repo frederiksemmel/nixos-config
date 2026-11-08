@@ -207,10 +207,15 @@ Recording ends after 0.8 seconds below three times the noise floor (at least
 while the app listens and works out what was said. The app's user must be able
 to write its `brightness`.
 
-`SEMMELTV_VOICE_FEEDBACK` is a URL the app POSTs one JSON object to for every
-step: `listening`, `transcribing`, `heard` (with `text`, `action` and
-`understood`), `nothing`, `no-microphone` or `failed` (with `message`). The phone
-microphone page on semmeltv5 shows them.
+What the app hears and does goes out on the API's event stream; see
+[API.md](API.md).
+
+## HTTP API
+
+`SEMMELTV_API=127.0.0.1:8090` (or `--api`) serves JSON over HTTP and a WebSocket
+event stream from the app itself: the library, search, details, artwork, playing
+and playback control. [API.md](API.md) lists the endpoints. The TV keeps running
+if the address cannot be bound. The web app in `../web` is built on it.
 
 ## Artwork
 

@@ -13,7 +13,14 @@
 
   networking.hostName = "semmeltv5";
 
-  services.semmeltv.offlineCacheGiB = 80;
+  services.semmeltv = {
+    offlineCacheGiB = 80;
+    api.enable = true;
+    web = {
+      enable = true;
+      tailscale = true;
+    };
+  };
 
   hardware.hailo = {
     enable = true;

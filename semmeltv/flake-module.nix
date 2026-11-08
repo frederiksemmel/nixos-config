@@ -36,7 +36,7 @@ in
     };
 
     nixosModules = {
-      semmeltv = flake-parts-lib.importApply ./modules/kiosk.nix { inherit (inputs) crane; };
+      semmeltv = flake-parts-lib.importApply ./modules/kiosk.nix { inherit (inputs) crane nixpkgs; };
       hailo = ./hailo/module.nix;
     };
   };
@@ -46,6 +46,7 @@ in
     {
       packages = {
         semmeltv = pkgs.callPackage ./app { inherit (inputs) crane; };
+        semmeltv-web = pkgs.callPackage ./web { inherit (inputs) crane; };
         deploy-rs = inputs.deploy-rs.packages.${system}.default;
       }
       // lib.concatMapAttrs (name: hailo: {

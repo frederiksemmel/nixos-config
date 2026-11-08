@@ -176,6 +176,7 @@ const NUMBERS: [(u32, &[&str], &[&str]); 12] = [
 ];
 const MIN_SIMILARITY: f64 = 0.75;
 const CONTAINED_SIMILARITY: f64 = 0.9;
+const PREFIX_SIMILARITY: f64 = 0.95;
 const AMBIGUITY_MARGIN: f64 = 0.05;
 const MIN_CONTAINED_LENGTH: usize = 3;
 
@@ -595,6 +596,77 @@ fn resolve(request: &Request, library: &Library, progress: &Progress) -> Action 
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Pick {
+    Movie(String),
+    Show {
+        key: String,
+        season: Option<u32>,
+        episode: Option<u32>,
+    },
+}
+
+pub fn choose(pick: &Pick, library: &Library, progress: &Progress) -> Action {
+    match pick {
+        Pick::Movie(key) => library
+            .movies
+            .iter()
+            .find(|movie| &movie.key == key)
+            .map_or_else(|| missing(key), |movie| Action::Play(movie.path.clone())),
+        Pick::Show { key, season, episode } => {
+            let Some(show) = library.shows.iter().find(|show| &show.key == key) else {
+                return missing(key);
+            };
+            let season = season.map_or(SeasonChoice::Unspecified, SeasonChoice::Number);
+            play_show(show, season, *episode, progress)
+        }
+    }
+}
+
+fn missing(key: &str) -> Action {
+    Action::Refuse(format!("\"{key}\" is not in the library"))
+}
+
+pub fn search(library: &Library, query: &str) -> Vec<library::Item> {
+    let query = comparable(query);
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let shows = library
+        .shows
+        .iter()
+        .enumerate()
+        .map(|(index, show)| (library::Item::Show(index), &show.title));
+    let movies = library
+        .movies
+        .iter()
+        .enumerate()
+        .map(|(index, movie)| (library::Item::Movie(index), &movie.title));
+    let mut scored: Vec<_> = shows
+        .chain(movies)
+        .filter_map(|(item, title)| {
+            let score = typed_similarity(&query, title);
+            (score >= MIN_SIMILARITY).then(|| (score, library::sort_title(title), item))
+        })
+        .collect();
+    scored.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
+    scored.into_iter().map(|(_, _, item)| item).collect()
+}
+
+fn typed_similarity(query: &str, title: &str) -> f64 {
+    let comparable_title = comparable(title);
+    if comparable_title == query {
+        return 1.0;
+    }
+    if comparable_title.starts_with(query) {
+        return PREFIX_SIMILARITY;
+    }
+    if format!(" {comparable_title}").contains(&format!(" {query}")) {
+        return CONTAINED_SIMILARITY;
+    }
+    similarity(query, title)
+}
+
 fn download(request: &Request, found: &Found) -> Action {
     let show = match found {
         Found::One(Titled::Show(show)) => Some(*show),
@@ -660,6 +732,57 @@ mod tests {
     fn episode_path(season: u32, episode: u32) -> Action {
         let path = format!("/lib/Series/Outlander/Outlander.S{season:02}E{episode:02}.mkv");
         Action::Play(path.into())
+    }
+
+    #[test]
+    fn a_picked_title_plays_like_the_same_spoken_request() {
+        let library = library();
+        let progress = progress(1, 2, true);
+        let show = |season, episode| Pick::Show {
+            key: "outlander".to_string(),
+            season,
+            episode,
+        };
+        assert_eq!(choose(&show(None, None), &library, &progress), episode_path(2, 1));
+        assert_eq!(
+            choose(&show(None, None), &library, &progress),
+            understand("continue Outlander", &library, &progress)
+        );
+        assert_eq!(choose(&show(Some(2), Some(3)), &library, &progress), episode_path(2, 3));
+        assert_eq!(choose(&show(Some(2), None), &library, &progress), episode_path(2, 1));
+        assert_eq!(
+            choose(&show(Some(9), None), &library, &progress),
+            Action::Refuse("Outlander has no season 9".to_string())
+        );
+        assert_eq!(
+            choose(&Pick::Movie("dune-2021".to_string()), &library, &progress),
+            Action::Play("/lib/Movies/Dune (2021)/Dune.2021.1080p.mkv".into())
+        );
+        assert!(matches!(
+            choose(&Pick::Movie("jaws".to_string()), &library, &progress),
+            Action::Refuse(_)
+        ));
+    }
+
+    #[test]
+    fn search_ranks_whole_titles_then_prefixes_then_words_then_near_misses() {
+        let library = library();
+        let titles = |query: &str| -> Vec<String> {
+            search(&library, query)
+                .into_iter()
+                .map(|item| match item {
+                    library::Item::Show(index) => library.shows[index].title.clone(),
+                    library::Item::Movie(index) => library.movies[index].title.clone(),
+                })
+                .collect()
+        };
+        assert_eq!(titles("star wars"), ["Star Wars Ahsoka", "Star Wars Andor"]);
+        assert_eq!(titles("andor"), ["Star Wars Andor"]);
+        assert_eq!(titles("The B"), ["The Bear"]);
+        assert_eq!(titles("dune"), ["Dune"]);
+        assert_eq!(titles("outlnder"), ["Outlander"]);
+        assert!(titles("").is_empty());
+        assert!(titles("x").is_empty());
     }
 
     #[test]
