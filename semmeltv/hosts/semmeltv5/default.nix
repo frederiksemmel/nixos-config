@@ -1,7 +1,7 @@
 { flake, nixos-raspberrypi, ... }:
 {
   imports = with nixos-raspberrypi.nixosModules; [
-    ../semmeltv
+    ../common.nix
     ./artwork.nix
     ./mount.nix
     flake.self.nixosModules.hailo
@@ -11,7 +11,7 @@
 
   networking.hostName = "semmeltv5";
 
-  semmeltv.offlineCacheGiB = 80;
+  services.semmeltv.offlineCacheGiB = 80;
 
   hardware.hailo = {
     enable = true;

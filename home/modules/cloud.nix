@@ -155,13 +155,7 @@ in
       spadesvision_gdrive_token.file = ../../secrets/spadesvision_gdrive_token.age;
       spadesvision_gdrive_client_secret.file = ../../secrets/spadesvision_gdrive_client_secret.age;
       pcloud_token.file = ../../secrets/pcloud_token.age;
-      tmdb_token = {
-        file = ../../secrets/tmdb_token.age;
-        path = "${config.xdg.dataHome}/semmeltv/tmdb-token";
-      };
     };
-
-    home.sessionVariables.TMDB_TOKEN_FILE = config.age.secrets.tmdb_token.path;
 
     programs.rclone.remotes.spadesvision = {
       config = {

@@ -6,8 +6,8 @@
   ...
 }:
 let
-  semmeltv = pkgs.callPackage ../../../packages/semmeltv { inherit (flake.inputs) crane; };
-  stateDir = "/var/lib/semmeltv";
+  semmeltv = pkgs.callPackage ../../app { inherit (flake.inputs) crane; };
+  inherit (config.services.semmeltv) stateDir;
 in
 {
   imports = [ flake.inputs.agenix.nixosModules.default ];

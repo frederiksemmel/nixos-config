@@ -68,6 +68,7 @@
         imports = [
           inputs.home-manager.flakeModules.home-manager
           inputs.treefmt-nix.flakeModule # `nix fmt`
+          ./semmeltv/flake-module.nix
         ];
 
         flake = {
@@ -81,46 +82,13 @@
             ];
           };
 
-          nixosConfigurations."semmeltv3" = inputs.nixos-raspberrypi.lib.nixosSystem {
-            specialArgs = specialArgs // {
-              inherit (inputs) nixos-raspberrypi;
-            };
-            modules = [ ./configurations/nixos/semmeltv3 ];
-          };
-
-          nixosConfigurations."semmeltv5" = inputs.nixos-raspberrypi.lib.nixosSystem {
-            specialArgs = specialArgs // {
-              inherit (inputs) nixos-raspberrypi;
-            };
-            modules = [ ./configurations/nixos/semmeltv5 ];
-          };
-
-          deploy = {
-            sshUser = "frederik";
-            user = "root";
-            nodes = {
-              semmeltv3 = {
-                hostname = "semmeltv3";
-                profiles.system.path = inputs.deploy-rs.lib.aarch64-linux.activate.nixos self.nixosConfigurations.semmeltv3;
-              };
-              semmeltv5 = {
-                hostname = "semmeltv5";
-                profiles.system.path = inputs.deploy-rs.lib.aarch64-linux.activate.nixos self.nixosConfigurations.semmeltv5;
-              };
-            };
-          };
-
           homeModules.frederik = ./home/users/frederik.nix;
-
-          nixosModules.hailo = ./packages/hailo/module.nix;
 
           overlays.default = final: prev: {
             claudebar = final.callPackage ./packages/claudebar.nix { };
-            hailo = final.callPackage ./packages/hailo { };
             claude-notify = final.callPackage ./packages/claude-notify.nix { };
             nordwand-mono = final.callPackage ./packages/nordwand-mono.nix { };
             plymouth-spades-vision = final.callPackage ./packages/plymouth-spades-vision { };
-            semmeltv = final.callPackage ./packages/semmeltv { inherit (inputs) crane; };
             # The viewer makes every recording streamed in from an SDK the active one,
             # so it keeps jumping while several recordings stream in at once. The patch
             # adds a "Switch to newly streamed recordings" setting; with it off, such a
@@ -195,7 +163,6 @@
 
         perSystem =
           {
-            lib,
             pkgs,
             system,
             ...
@@ -210,16 +177,8 @@
               overlays = [ self.overlays.default ];
             };
             packages = {
-              inherit (pkgs) claudebar claude-notify semmeltv;
-              deploy-rs = inputs.deploy-rs.packages.${system}.default;
-            }
-            // lib.concatMapAttrs (name: hailo: {
-              "hailort-${name}" = hailo.hailort;
-              "hailo-firmware-${name}" = hailo.firmware;
-              "gst-hailo-${name}" = hailo.gst-hailo;
-              "pyhailort-${name}" = hailo.pyhailort;
-            }) pkgs.hailo;
-            devShells.semmeltv = pkgs.semmeltv.devShell;
+              inherit (pkgs) claudebar claude-notify;
+            };
             treefmt = {
               projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
               programs = {

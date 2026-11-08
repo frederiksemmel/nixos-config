@@ -13,6 +13,7 @@
     ../modules/ssh.nix
     ../modules/bitwarden.nix
     ../modules/beast-sessions.nix
+    ../modules/semmeltv.nix
   ];
 
   # Building the option docs leaks nixpkgs' store path into options.json without
@@ -25,6 +26,7 @@
   profiles.cloud.enable = true;
   profiles.ssh.enable = true;
   profiles.bitwarden.enable = true;
+  profiles.semmeltv.enable = true;
 
   home.username = "frederik";
   home.homeDirectory = "/home/${config.home.username}";

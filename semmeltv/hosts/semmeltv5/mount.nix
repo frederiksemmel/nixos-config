@@ -5,10 +5,9 @@
   ...
 }:
 let
-  cfg = config.semmeltv;
-  stateDir = "/var/lib/semmeltv";
-  library = "${stateDir}/library";
-  cacheDir = "${stateDir}/rclone-cache";
+  cfg = config.services.semmeltv;
+  library = "${cfg.stateDir}/library";
+  cacheDir = "${cfg.stateDir}/rclone-cache";
   remoteHost = "api.pcloud.com";
 
   mount = pkgs.writeShellApplication {
@@ -42,7 +41,7 @@ let
   };
 in
 {
-  options.semmeltv.offlineCacheGiB = lib.mkOption {
+  options.services.semmeltv.offlineCacheGiB = lib.mkOption {
     type = lib.types.ints.positive;
     description = "Disk space for downloaded titles, in GiB. The least recently watched are evicted first.";
   };

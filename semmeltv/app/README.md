@@ -87,7 +87,7 @@ same way.
 
 On semmeltv5, `/var/lib/semmeltv/library` is a read-only rclone mount of pCloud
 with a full VFS cache on local disk. The cache size is
-`semmeltv.offlineCacheGiB` in `configurations/nixos/semmeltv5/default.nix`, and
+`services.semmeltv.offlineCacheGiB` in `semmeltv/hosts/semmeltv5/default.nix`, and
 the least recently watched titles are evicted first.
 
 rclone only keeps what was read, so when a title starts the app reads the rest of
@@ -194,7 +194,12 @@ in the cache.
 
 ## Development
 
-    nix develop .#semmeltv
-    cd packages/semmeltv
+    cd semmeltv/app
+    devenv shell
     cargo test
     cargo run -- ui --library /path/to/library
+
+`semmeltv/devenv.nix` holds the tooling: the Rust toolchain, `slint-lsp`, `mpv`,
+`wlr-randr` and `bacon`, with the build environment the package uses
+(`app/build-env.nix`). It imports the light root `devenv.nix` of the repo, and
+`devenv shell` picks it up anywhere under `semmeltv/`.
