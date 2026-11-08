@@ -1,4 +1,5 @@
-use crate::manifest::{Manifest, MovieEntry, ReadError, ShowEntry};
+use crate::manifest::{Date, Manifest, MovieEntry, ReadError, Scores, ShowEntry};
+use crate::omdb;
 use crate::tmdb::{Client, Found, Kind, Season};
 use image::ImageReader;
 use image::codecs::jpeg::JpegEncoder;
@@ -7,12 +8,14 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::io::{self, BufWriter, Cursor};
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const DIR: &str = "Artwork";
 pub const CARD_WIDTH: u32 = 640;
 pub const CARD_HEIGHT: u32 = 360;
 const REFRESH_AFTER: Duration = Duration::from_secs(150 * 24 * 60 * 60);
+const RATINGS_REFRESH_DAYS: i64 = 30;
+const OMDB_REQUESTS_PER_RUN: usize = 900;
 const JPEG_QUALITY: u8 = 85;
 const BACKDROP_SIZE: &str = "w780";
 const STILL_SIZE: &str = "original";
@@ -35,9 +38,24 @@ pub trait Source {
     fn details(&self, kind: Kind, id: u64) -> Result<Found, String>;
     fn season(&self, id: u64, season: u32) -> Result<Season, String>;
     fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, String>;
+    fn imdb_id(&self, kind: Kind, id: u64) -> Result<Option<String>, String>;
+}
+
+pub trait Ratings {
+    fn ratings(&self, imdb: &str) -> Result<Option<Scores>, omdb::Error>;
+}
+
+impl Ratings for omdb::Client {
+    fn ratings(&self, imdb: &str) -> Result<Option<Scores>, omdb::Error> {
+        omdb::Client::ratings(self, imdb)
+    }
 }
 
 impl Source for Client {
+    fn imdb_id(&self, kind: Kind, id: u64) -> Result<Option<String>, String> {
+        Client::imdb_id(self, kind, id).map_err(|error| error.to_string())
+    }
+
     fn details(&self, kind: Kind, id: u64) -> Result<Found, String> {
         Client::details(self, kind, id).map_err(|error| error.to_string())
     }
@@ -55,28 +73,52 @@ impl Source for Client {
 pub struct Summary {
     pub images: usize,
     pub without_id: Vec<String>,
+    pub rated: usize,
+    pub unrated: Vec<String>,
+    pub ratings_waiting: usize,
+    pub omdb_requests: usize,
     pub problems: Vec<String>,
 }
 
 struct Run<'a, S> {
     art: PathBuf,
     source: &'a S,
+    ratings: Option<&'a dyn Ratings>,
+    ratings_stopped: bool,
     refresh: bool,
     now: SystemTime,
+    today: Date,
     summary: Summary,
 }
 
-pub fn run(manifest_path: &Path, source: &impl Source, refresh: bool) -> Result<Summary, String> {
+struct Rating<'a> {
+    kind: Kind,
+    tmdb: Option<u64>,
+    imdb: &'a mut Option<String>,
+    scores: &'a mut Scores,
+    rated: &'a mut Option<Date>,
+}
+
+pub fn run(
+    manifest_path: &Path,
+    source: &impl Source,
+    ratings: Option<&dyn Ratings>,
+    refresh: bool,
+) -> Result<Summary, String> {
     let shown = manifest_path.display();
     let mut manifest = Manifest::read(manifest_path).map_err(|error| match error {
         ReadError::Unreadable(error) => format!("{shown}: {error}"),
         ReadError::Invalid(error) => format!("{shown}: {error}"),
     })?;
+    let now = SystemTime::now();
     let mut run = Run {
         art: manifest_path.parent().unwrap_or(Path::new(".")).join(DIR),
         source,
+        ratings,
+        ratings_stopped: false,
         refresh,
-        now: SystemTime::now(),
+        now,
+        today: Date::from_unix(now.duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_secs())),
         summary: Summary::default(),
     };
     let save = |manifest: &Manifest| {
@@ -86,14 +128,38 @@ pub fn run(manifest_path: &Path, source: &impl Source, refresh: bool) -> Result<
     };
     for index in 0..manifest.show.len() {
         let before = manifest.show[index].clone();
-        run.show(&mut manifest.show[index]);
+        let show = &mut manifest.show[index];
+        run.show(show);
+        let label = show.title.clone();
+        run.rate(
+            &label,
+            Rating {
+                kind: Kind::Tv,
+                tmdb: show.tmdb,
+                imdb: &mut show.imdb,
+                scores: &mut show.ratings,
+                rated: &mut show.rated,
+            },
+        );
         if manifest.show[index] != before {
             save(&manifest)?;
         }
     }
     for index in 0..manifest.movie.len() {
         let before = manifest.movie[index].clone();
-        run.movie(&mut manifest.movie[index]);
+        let movie = &mut manifest.movie[index];
+        run.movie(movie);
+        let label = movie_label(movie);
+        run.rate(
+            &label,
+            Rating {
+                kind: Kind::Movie,
+                tmdb: movie.tmdb,
+                imdb: &mut movie.imdb,
+                scores: &mut movie.ratings,
+                rated: &mut movie.rated,
+            },
+        );
         if manifest.movie[index] != before {
             save(&manifest)?;
         }
@@ -182,11 +248,64 @@ impl<S: Source> Run<'_, S> {
         }
     }
 
-    fn movie(&mut self, movie: &mut MovieEntry) {
-        let label = match movie.year {
-            Some(year) => format!("{} ({year})", movie.title),
-            None => movie.title.clone(),
+    fn rate(&mut self, label: &str, rating: Rating) {
+        let (Some(ratings), Some(tmdb)) = (self.ratings, rating.tmdb) else {
+            return;
         };
+        let due = match *rating.rated {
+            None => true,
+            Some(rated) => self.refresh && self.today.days() - rated.days() >= RATINGS_REFRESH_DAYS,
+        };
+        if !due {
+            return;
+        }
+        if self.ratings_stopped || self.summary.omdb_requests >= OMDB_REQUESTS_PER_RUN {
+            self.summary.ratings_waiting += 1;
+            return;
+        }
+        if rating.imdb.is_none() {
+            match self.source.imdb_id(rating.kind, tmdb) {
+                Ok(found) => *rating.imdb = found,
+                Err(error) => {
+                    let problem = format!("{label}: TMDB {tmdb} external ids: {error}");
+                    self.summary.problems.push(problem);
+                    return;
+                }
+            }
+        }
+        let Some(imdb) = rating.imdb.as_deref() else {
+            *rating.scores = Scores::default();
+            *rating.rated = Some(self.today);
+            self.summary.unrated.push(format!("{label}: no IMDb id on TMDB"));
+            return;
+        };
+        self.summary.omdb_requests += 1;
+        match ratings.ratings(imdb) {
+            Ok(Some(scores)) if !scores.is_empty() => {
+                *rating.scores = scores;
+                *rating.rated = Some(self.today);
+                self.summary.rated += 1;
+            }
+            Ok(_) => {
+                *rating.scores = Scores::default();
+                *rating.rated = Some(self.today);
+                self.summary
+                    .unrated
+                    .push(format!("{label}: OMDb has no ratings for {imdb}"));
+            }
+            Err(omdb::Error::Stop(reason)) => {
+                self.ratings_stopped = true;
+                self.summary.ratings_waiting += 1;
+                self.summary.problems.push(format!("OMDb: {reason}"));
+            }
+            Err(omdb::Error::Failed(reason)) => {
+                self.summary.problems.push(format!("{label}: OMDb {imdb}: {reason}"));
+            }
+        }
+    }
+
+    fn movie(&mut self, movie: &mut MovieEntry) {
+        let label = movie_label(movie);
         println!("{label}");
         let Some(id) = movie.tmdb else {
             self.summary.without_id.push(label);
@@ -211,6 +330,13 @@ impl<S: Source> Run<'_, S> {
     }
 }
 
+fn movie_label(movie: &MovieEntry) -> String {
+    match movie.year {
+        Some(year) => format!("{} ({year})", movie.title),
+        None => movie.title.clone(),
+    }
+}
+
 fn write_card(bytes: &[u8], target: &Path) -> io::Result<()> {
     let image = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()?
@@ -232,6 +358,7 @@ fn write_card(bytes: &[u8], target: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::Tenths;
     use image::{ImageFormat, RgbImage};
     use std::cell::RefCell;
     use std::env;
@@ -316,6 +443,128 @@ added = 2024-05-01
                 Ok(self.png.clone())
             }
         }
+
+        fn imdb_id(&self, kind: Kind, id: u64) -> Result<Option<String>, String> {
+            self.calls.borrow_mut().push(format!("imdb {kind:?} {id}"));
+            Ok((kind == Kind::Movie).then(|| format!("tt{id}")))
+        }
+    }
+
+    struct FakeOmdb {
+        asked: RefCell<Vec<String>>,
+        limit: usize,
+    }
+
+    impl FakeOmdb {
+        fn new(limit: usize) -> Self {
+            Self {
+                asked: RefCell::new(Vec::new()),
+                limit,
+            }
+        }
+    }
+
+    impl Ratings for FakeOmdb {
+        fn ratings(&self, imdb: &str) -> Result<Option<Scores>, omdb::Error> {
+            let mut asked = self.asked.borrow_mut();
+            if asked.len() >= self.limit {
+                return Err(omdb::Error::Stop("Request limit reached!".to_string()));
+            }
+            asked.push(imdb.to_string());
+            Ok(Some(Scores {
+                imdb: Some(Tenths(83)),
+                rt: Some(98),
+                metacritic: None,
+            }))
+        }
+    }
+
+    const FILMS: &str = r#"[[movie]]
+title = "Up"
+year = 2009
+tmdb = 14160
+path = "Movies/Up.mkv"
+added = 2024-05-01
+
+[[movie]]
+title = "Heat"
+year = 1995
+tmdb = 949
+path = "Movies/Heat.mkv"
+added = 2024-05-01
+"#;
+
+    fn films(name: &str) -> PathBuf {
+        let dir = workdir(name);
+        fs::write(dir.join("library.toml"), FILMS).unwrap();
+        dir
+    }
+
+    #[test]
+    fn ratings_come_from_omdb_through_the_imdb_id_on_tmdb() {
+        let dir = workdir("ratings");
+        let manifest = dir.join("library.toml");
+        let omdb = FakeOmdb::new(10);
+        let summary = run(&manifest, &Fake::new(), Some(&omdb), false).unwrap();
+        assert_eq!(summary.rated, 1);
+        assert_eq!(summary.omdb_requests, 1);
+        assert_eq!(summary.unrated, ["Dark: no IMDb id on TMDB"]);
+
+        let written = Manifest::read(&manifest).unwrap();
+        let up = &written.movie[0];
+        assert_eq!(up.imdb.as_deref(), Some("tt14160"));
+        assert_eq!(
+            (up.ratings.imdb, up.ratings.rt, up.ratings.metacritic),
+            (Some(Tenths(83)), Some(98), None)
+        );
+        assert!(up.rated.is_some());
+        assert_eq!(written.show[0].ratings, Scores::default());
+        assert!(written.show[0].rated.is_some());
+        assert_eq!(written.movie[1].rated, None);
+
+        let again = run(&manifest, &Fake::new(), Some(&omdb), false).unwrap();
+        assert_eq!(again.omdb_requests, 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn the_daily_limit_keeps_what_was_fetched_and_leaves_the_rest() {
+        let dir = films("ratings-limit");
+        let manifest = dir.join("library.toml");
+        let summary = run(&manifest, &Fake::new(), Some(&FakeOmdb::new(1)), false).unwrap();
+        assert_eq!((summary.rated, summary.ratings_waiting), (1, 1));
+        assert_eq!(summary.problems, ["OMDb: Request limit reached!"]);
+        let written = Manifest::read(&manifest).unwrap();
+        assert!(written.movie[0].rated.is_some());
+        assert_eq!(
+            (written.movie[1].imdb.as_deref(), written.movie[1].rated),
+            (Some("tt949"), None)
+        );
+
+        let next = run(&manifest, &Fake::new(), Some(&FakeOmdb::new(5)), false).unwrap();
+        assert_eq!((next.rated, next.omdb_requests), (1, 1));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn refreshing_asks_again_only_for_ratings_a_month_old() {
+        let dir = films("ratings-refresh");
+        let manifest = dir.join("library.toml");
+        run(&manifest, &Fake::new(), Some(&FakeOmdb::new(5)), false).unwrap();
+        let mut written = Manifest::read(&manifest).unwrap();
+        written.movie[0].rated = Date::parse("2020-01-01");
+        written.write(&manifest).unwrap();
+
+        let omdb = FakeOmdb::new(5);
+        assert_eq!(
+            run(&manifest, &Fake::new(), Some(&omdb), false).unwrap().omdb_requests,
+            0
+        );
+        let fake = Fake::new();
+        assert_eq!(run(&manifest, &fake, Some(&omdb), true).unwrap().omdb_requests, 1);
+        assert_eq!(omdb.asked.take(), ["tt14160"]);
+        assert!(!fake.calls().iter().any(|call| call.starts_with("imdb")));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     fn workdir(name: &str) -> PathBuf {
@@ -357,7 +606,7 @@ added = 2024-05-01
         let art = dir.join(DIR);
         let fake = Fake::new();
 
-        let summary = run(&manifest, &fake, false).unwrap();
+        let summary = run(&manifest, &fake, None, false).unwrap();
         assert_eq!(summary.images, 3);
         assert_eq!(summary.without_id, ["Home Videos", "Wind"]);
         assert!(summary.problems.is_empty());
@@ -386,10 +635,10 @@ added = 2024-05-01
         let dir = workdir("art-again");
         let manifest = dir.join("library.toml");
         let fake = Fake::new();
-        run(&manifest, &fake, false).unwrap();
+        run(&manifest, &fake, None, false).unwrap();
         fake.calls();
 
-        let summary = run(&manifest, &fake, false).unwrap();
+        let summary = run(&manifest, &fake, None, false).unwrap();
         assert_eq!(summary.images, 0);
         assert_eq!(fake.calls(), ["season 70523 1"]);
         fs::remove_dir_all(dir).unwrap();
@@ -401,14 +650,14 @@ added = 2024-05-01
         let manifest = dir.join("library.toml");
         let art = dir.join(DIR);
         let fake = Fake::new();
-        run(&manifest, &fake, false).unwrap();
+        run(&manifest, &fake, None, false).unwrap();
         age(&backdrop(&art, Kind::Movie, 14160), 160);
         age(&backdrop(&art, Kind::Tv, 70523), 100);
         fake.calls();
 
-        assert_eq!(run(&manifest, &fake, false).unwrap().images, 0);
+        assert_eq!(run(&manifest, &fake, None, false).unwrap().images, 0);
         fake.calls();
-        assert_eq!(run(&manifest, &fake, true).unwrap().images, 1);
+        assert_eq!(run(&manifest, &fake, None, true).unwrap().images, 1);
         assert!(fake.calls().contains(&"image w780 /14160.jpg".to_string()));
         fs::remove_dir_all(dir).unwrap();
     }
@@ -418,14 +667,14 @@ added = 2024-05-01
         let dir = workdir("art-expire");
         let manifest = dir.join("library.toml");
         let target = backdrop(&dir.join(DIR), Kind::Movie, 14160);
-        run(&manifest, &Fake::new(), false).unwrap();
+        run(&manifest, &Fake::new(), None, false).unwrap();
         age(&target, 200);
 
         let failing = Fake {
             images_fail: true,
             ..Fake::new()
         };
-        let summary = run(&manifest, &failing, true).unwrap();
+        let summary = run(&manifest, &failing, None, true).unwrap();
         assert!(!target.exists());
         assert_eq!(summary.problems, ["Up (2009): image failed: offline"]);
         fs::remove_dir_all(dir).unwrap();

@@ -1,5 +1,5 @@
 use crate::library::{normalize, sort_title};
-use crate::manifest::{Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
+use crate::manifest::{Date, EpisodeEntry, Manifest, MovieEntry, ReadError, Scores, ShowEntry};
 use crate::parse::{self, FileEntry, Parsed, ParsedEpisode, ParsedMovie, ParsedShow};
 use crate::tags;
 use crate::tmdb::{Client, Found, Kind, Lookup};
@@ -318,6 +318,9 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             title: better_title(&parsed.title, identity.as_ref()),
             year: parsed.year.or(identity.as_ref().and_then(Identity::year)),
             tmdb: identity.map(|identity| identity.id),
+            imdb: None,
+            ratings: Scores::default(),
+            rated: None,
             review,
             episodes: Vec::new(),
         });
@@ -399,6 +402,9 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             title,
             year,
             tmdb: identity.as_ref().map(|identity| identity.id),
+            imdb: None,
+            ratings: Scores::default(),
+            rated: None,
             path,
             added: self.added_date(parsed.modified),
             runtime: None,
@@ -570,6 +576,10 @@ mod tests {
         manifest.movie[0].review = true;
         manifest.show[0].title = "Dunkel".to_string();
         manifest.show[0].episodes[0].title = Some("Secrets".to_string());
+        manifest.movie[0].imdb = Some("tt0080339".to_string());
+        manifest.movie[0].ratings.rt = Some(97);
+        manifest.movie[0].rated = Some(date("2026-11-01"));
+        manifest.show[0].ratings.imdb = Some(crate::manifest::Tenths(87));
         let edited = manifest.clone();
         let (again, report) = import(Some(manifest), &tree);
         assert_eq!(again.render(), edited.render());

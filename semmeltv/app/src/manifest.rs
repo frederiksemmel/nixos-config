@@ -38,6 +38,17 @@ impl Date {
         }
     }
 
+    pub fn days(&self) -> i64 {
+        let month = i64::from(self.month);
+        let year = i64::from(self.year) - i64::from(month <= 2);
+        let era = year.div_euclid(400);
+        let year_of_era = year.rem_euclid(400);
+        let shifted_month = if month > 2 { month - 3 } else { month + 9 };
+        let day_of_year = (153 * shifted_month + 2) / 5 + i64::from(self.day) - 1;
+        let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
+        era * 146_097 + day_of_era - 719_468
+    }
+
     pub fn parse(text: &str) -> Option<Self> {
         let mut parts = text.split('-');
         let year = parts.next()?.parse().ok()?;
@@ -70,6 +81,64 @@ impl<'de> Deserialize<'de> for Date {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Tenths(pub u8);
+
+impl Tenths {
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::from_float(text.trim().parse().ok()?)
+    }
+
+    fn from_float(value: f64) -> Option<Self> {
+        (0.0..=10.0)
+            .contains(&value)
+            .then(|| Self((value * 10.0).round() as u8))
+    }
+}
+
+impl Display for Tenths {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}.{}", self.0 / 10, self.0 % 10)
+    }
+}
+
+impl<'de> Deserialize<'de> for Tenths {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let value = match toml::Value::deserialize(deserializer)? {
+            toml::Value::Float(value) => value,
+            toml::Value::Integer(value) => value as f64,
+            other => return Err(de::Error::custom(format!("{other} is not a rating out of 10"))),
+        };
+        Self::from_float(value).ok_or_else(|| de::Error::custom(format!("{value} is not between 0 and 10")))
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Scores {
+    pub imdb: Option<Tenths>,
+    pub rt: Option<u8>,
+    pub metacritic: Option<u8>,
+}
+
+impl Scores {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    fn render(&self) -> String {
+        let parts: Vec<String> = [
+            self.imdb.map(|score| format!("imdb = {score}")),
+            self.rt.map(|score| format!("rt = {score}")),
+            self.metacritic.map(|score| format!("metacritic = {score}")),
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
+        format!("{{ {} }}", parts.join(", "))
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Manifest {
@@ -85,6 +154,10 @@ pub struct ShowEntry {
     pub title: String,
     pub year: Option<u16>,
     pub tmdb: Option<u64>,
+    pub imdb: Option<String>,
+    #[serde(default)]
+    pub ratings: Scores,
+    pub rated: Option<Date>,
     #[serde(default)]
     pub review: bool,
     #[serde(default)]
@@ -113,6 +186,10 @@ pub struct MovieEntry {
     pub title: String,
     pub year: Option<u16>,
     pub tmdb: Option<u64>,
+    pub imdb: Option<String>,
+    #[serde(default)]
+    pub ratings: Scores,
+    pub rated: Option<Date>,
     pub path: String,
     pub added: Date,
     pub runtime: Option<u32>,
@@ -162,6 +239,7 @@ impl Manifest {
         for show in &self.show {
             let _ = writeln!(text, "[[show]]");
             render_title(&mut text, &show.title, show.year, show.tmdb);
+            render_ratings(&mut text, show.imdb.as_deref(), &show.ratings, show.rated);
             render_review(&mut text, show.review);
             let _ = writeln!(text, "episodes = [");
             for episode in &show.episodes {
@@ -190,6 +268,7 @@ impl Manifest {
         for movie in &self.movie {
             let _ = writeln!(text, "[[movie]]");
             render_title(&mut text, &movie.title, movie.year, movie.tmdb);
+            render_ratings(&mut text, movie.imdb.as_deref(), &movie.ratings, movie.rated);
             let _ = writeln!(text, "path = {}", quoted(&movie.path));
             let _ = writeln!(text, "added = {}", movie.added);
             if let Some(minutes) = movie.runtime {
@@ -261,6 +340,18 @@ fn render_title(text: &mut String, title: &str, year: Option<u16>, tmdb: Option<
     }
 }
 
+fn render_ratings(text: &mut String, imdb: Option<&str>, ratings: &Scores, rated: Option<Date>) {
+    if let Some(imdb) = imdb {
+        let _ = writeln!(text, "imdb = {}", quoted(imdb));
+    }
+    if !ratings.is_empty() {
+        let _ = writeln!(text, "ratings = {}", ratings.render());
+    }
+    if let Some(rated) = rated {
+        let _ = writeln!(text, "rated = {rated}");
+    }
+}
+
 fn render_review(text: &mut String, review: bool) {
     if review {
         let _ = writeln!(text, "review = true");
@@ -275,6 +366,9 @@ mod tests {
 title = "Marvel's \"Dark\""
 year = 2017
 tmdb = 70523
+imdb = "tt5753856"
+ratings = { imdb = 8.7, metacritic = 74 }
+rated = 2026-11-01
 review = true
 episodes = [
   { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.mkv", added = 2024-05-01, runtime = 51, video = "HEVC 10-bit", resolution = "1080p", audio = "5.1" },
@@ -285,6 +379,9 @@ episodes = [
 title = "Airplane!"
 year = 1980
 tmdb = 813
+imdb = "tt0080339"
+ratings = { imdb = 7.7, rt = 97, metacritic = 78 }
+rated = 2026-11-01
 path = "Movies/Airplane 1980/Airplane.1980.mkv"
 added = 2023-01-09
 runtime = 88
@@ -306,6 +403,10 @@ review = true
         assert_eq!(manifest.show[0].episodes[0].runtime, Some(51));
         assert_eq!(manifest.movie[0].runtime, Some(88));
         assert_eq!(manifest.review_count(), 3);
+        assert_eq!(manifest.movie[0].imdb.as_deref(), Some("tt0080339"));
+        assert_eq!(manifest.movie[0].ratings.imdb, Some(Tenths(77)));
+        assert_eq!(manifest.show[0].ratings.rt, None);
+        assert_eq!(manifest.movie[1].ratings, Scores::default());
         assert_eq!(manifest.render(), SAMPLE);
     }
 
@@ -324,6 +425,31 @@ review = true
     fn added_must_be_a_date() {
         let text = "[[movie]]\ntitle = \"Up\"\npath = \"Up.mkv\"\nadded = 2024-01-01T10:00:00\n";
         assert!(Manifest::parse(text).is_err());
+    }
+
+    #[test]
+    fn ratings_are_out_of_ten_and_checked() {
+        let movie = |ratings: &str| {
+            Manifest::parse(&format!(
+                "[[movie]]\ntitle = \"Up\"\npath = \"Up.mkv\"\nadded = 2024-01-01\nratings = {ratings}\n"
+            ))
+        };
+        assert_eq!(movie("{ imdb = 8 }").unwrap().movie[0].ratings.imdb, Some(Tenths(80)));
+        assert_eq!(Tenths(80).to_string(), "8.0");
+        assert!(movie("{ imdb = 11.2 }").is_err());
+        assert!(movie("{ tomatoes = 80 }").is_err());
+        assert_eq!(Tenths::parse("8.06"), Some(Tenths(81)));
+        assert_eq!(Tenths::parse("N/A"), None);
+    }
+
+    #[test]
+    fn days_count_from_the_unix_epoch() {
+        assert_eq!(Date::parse("1970-01-01").unwrap().days(), 0);
+        assert_eq!(Date::parse("2000-03-01").unwrap().days(), 11_017);
+        assert_eq!(
+            Date::from_unix(1_794_009_600).days() * SECONDS_PER_DAY as i64,
+            1_794_009_600
+        );
     }
 
     #[test]

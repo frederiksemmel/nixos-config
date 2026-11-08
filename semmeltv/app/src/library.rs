@@ -1,3 +1,4 @@
+pub use crate::manifest::Scores;
 use crate::manifest::{self, Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
 use crate::tags::Tags;
 use std::cmp::Reverse;
@@ -24,6 +25,8 @@ pub struct Show {
     pub title: String,
     pub year: Option<u16>,
     pub tmdb: Option<u64>,
+    pub imdb: Option<String>,
+    pub ratings: Scores,
     pub seasons: Vec<Season>,
 }
 
@@ -50,6 +53,8 @@ pub struct Movie {
     pub title: String,
     pub year: Option<u16>,
     pub tmdb: Option<u64>,
+    pub imdb: Option<String>,
+    pub ratings: Scores,
     pub path: PathBuf,
     pub added: Date,
     pub runtime: Option<u32>,
@@ -257,6 +262,8 @@ fn build_show(root: &Path, entry: &ShowEntry, present: &impl Fn(&Path) -> bool) 
         title: entry.title.clone(),
         year: entry.year,
         tmdb: entry.tmdb,
+        imdb: entry.imdb.clone(),
+        ratings: entry.ratings,
         seasons,
     })
 }
@@ -279,6 +286,8 @@ fn build_movie(root: &Path, entry: &MovieEntry) -> Movie {
         title: entry.title.clone(),
         year: entry.year,
         tmdb: entry.tmdb,
+        imdb: entry.imdb.clone(),
+        ratings: entry.ratings,
         path: root.join(&entry.path),
         added: entry.added,
         runtime: entry.runtime,
@@ -353,6 +362,7 @@ pub fn sort_title(title: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::Tenths;
 
     fn library_with(text: &str, present: impl Fn(&Path) -> bool) -> Library {
         let manifest = Manifest::parse(text).unwrap();
@@ -489,6 +499,37 @@ runtime = 96
         assert_eq!(with_ids.movies[0].runtime, Some(96));
         assert!(with_ids.uses_tmdb());
         assert!(!library(&movies(&[("Wind", "2024-01-01")])).uses_tmdb());
+    }
+
+    #[test]
+    fn ratings_come_from_the_manifest_and_may_be_partial() {
+        let rated = library(
+            r#"[[show]]
+title = "Dark"
+imdb = "tt5753856"
+ratings = { imdb = 8.7 }
+rated = 2026-11-01
+episodes = [ { season = 1, episode = 1, path = "Series/Dark/e.mkv", added = 2024-01-01 } ]
+
+[[movie]]
+title = "Up"
+imdb = "tt1049413"
+ratings = { imdb = 8.3, rt = 98, metacritic = 88 }
+rated = 2026-11-01
+path = "Movies/Up/Up.mkv"
+added = 2024-01-01
+"#,
+        );
+        let dark = &rated.shows[0];
+        assert_eq!(dark.imdb.as_deref(), Some("tt5753856"));
+        assert_eq!((dark.ratings.imdb, dark.ratings.rt), (Some(Tenths(87)), None));
+        let up = &rated.movies[0];
+        assert_eq!(
+            (up.ratings.imdb, up.ratings.rt, up.ratings.metacritic),
+            (Some(Tenths(83)), Some(98), Some(88))
+        );
+        assert_eq!(up.ratings.imdb.unwrap().to_string(), "8.3");
+        assert!(library(&movies(&[("Wind", "2024-01-01")])).movies[0].ratings.is_empty());
     }
 
     #[test]

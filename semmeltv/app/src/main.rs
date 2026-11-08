@@ -13,6 +13,7 @@ mod loader;
 mod manifest;
 mod nav;
 mod offline;
+mod omdb;
 mod overlay;
 mod parse;
 mod player;
@@ -36,7 +37,8 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str = "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--cache DIR]
-                [--vfs-cache DIR] [--tmdb-token-file FILE] [--manifest FILE] [--listing FILE]
+                [--vfs-cache DIR] [--tmdb-token-file FILE] [--omdb-key-file FILE]
+                [--manifest FILE] [--listing FILE]
                 [--refresh] [--whisper HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]";
 const DEFAULT_WAKE_WORD: &str = "hey_jarvis";
 
@@ -46,6 +48,7 @@ struct Args {
     cache: PathBuf,
     vfs_cache: Option<PathBuf>,
     token_file: Option<PathBuf>,
+    omdb_key_file: Option<PathBuf>,
     manifest: Option<PathBuf>,
     listing: Option<PathBuf>,
     refresh: bool,
@@ -70,6 +73,7 @@ fn parse_args() -> Result<Args, String> {
             .unwrap_or_else(|| home.join(".cache/semmeltv")),
         vfs_cache: env_path("SEMMELTV_VFS_CACHE"),
         token_file: env_path("TMDB_TOKEN_FILE"),
+        omdb_key_file: env_path("OMDB_API_KEY_FILE"),
         manifest: None,
         listing: None,
         refresh: false,
@@ -102,6 +106,7 @@ fn parse_args() -> Result<Args, String> {
             "--cache" => args.cache = value("--cache")?.into(),
             "--vfs-cache" => args.vfs_cache = Some(value("--vfs-cache")?.into()),
             "--tmdb-token-file" => args.token_file = Some(value("--tmdb-token-file")?.into()),
+            "--omdb-key-file" => args.omdb_key_file = Some(value("--omdb-key-file")?.into()),
             "--manifest" => args.manifest = Some(value("--manifest")?.into()),
             "--listing" => args.listing = Some(value("--listing")?.into()),
             "--refresh" => args.refresh = true,
@@ -117,6 +122,17 @@ fn tmdb_client(args: &Args) -> Result<Option<tmdb::Client>, String> {
         None => env::var("TMDB_TOKEN").ok(),
     };
     Ok(token.map(|token| tmdb::Client::new(token.trim().to_string())))
+}
+
+fn omdb_client(args: &Args) -> Result<Option<omdb::Client>, String> {
+    let key = match &args.omdb_key_file {
+        Some(file) => Some(fs::read_to_string(file).map_err(|error| format!("{}: {error}", file.display()))?),
+        None => env::var("OMDB_API_KEY").ok(),
+    };
+    Ok(key
+        .map(|key| key.trim().to_string())
+        .filter(|key| !key.is_empty())
+        .map(omdb::Client::new))
 }
 
 fn list(library: &library::Library) {
@@ -180,12 +196,20 @@ fn run_artwork(args: &Args) -> Result<(), String> {
         ));
     }
     let client = tmdb_client(args)?.ok_or("artwork needs a TMDB token: set TMDB_TOKEN_FILE")?;
-    let summary = artwork::run(manifest, &client, args.refresh)?;
+    let omdb = omdb_client(args)?;
+    if omdb.is_none() {
+        println!("no OMDb key: ratings skipped; set OMDB_API_KEY_FILE");
+    }
+    let ratings = omdb.as_ref().map(|client| client as &dyn artwork::Ratings);
+    let summary = artwork::run(manifest, &client, ratings, args.refresh)?;
     for problem in &summary.problems {
         println!("problem: {problem}");
     }
     for title in &summary.without_id {
         println!("no tmdb id: {title}");
+    }
+    for title in &summary.unrated {
+        println!("no ratings: {title}");
     }
     println!(
         "{} images saved, {} titles without a TMDB id, {} problems",
@@ -193,6 +217,15 @@ fn run_artwork(args: &Args) -> Result<(), String> {
         summary.without_id.len(),
         summary.problems.len()
     );
+    if omdb.is_some() {
+        println!(
+            "{} titles rated, {} without ratings, {} left for the next run, {} OMDb requests",
+            summary.rated,
+            summary.unrated.len(),
+            summary.ratings_waiting,
+            summary.omdb_requests
+        );
+    }
     Ok(())
 }
 

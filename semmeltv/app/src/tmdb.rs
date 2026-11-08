@@ -19,6 +19,28 @@ pub enum Kind {
     Tv,
 }
 
+impl Kind {
+    fn path(self) -> &'static str {
+        match self {
+            Self::Movie => "movie",
+            Self::Tv => "tv",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalIds {
+    imdb_id: Option<String>,
+}
+
+impl ExternalIds {
+    fn imdb(self) -> Option<String> {
+        self.imdb_id
+            .map(|id| id.trim().to_string())
+            .filter(|id| id.starts_with("tt") && id.len() > 2)
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Found {
     pub id: u64,
@@ -210,12 +232,13 @@ impl Client {
     }
 
     pub fn details(&self, kind: Kind, id: u64) -> Result<Found, ureq::Error> {
-        let path = match kind {
-            Kind::Movie => "movie",
-            Kind::Tv => "tv",
-        };
-        let record: Record = self.get(&format!("{API}/{path}/{id}"), &[])?;
+        let record: Record = self.get(&format!("{API}/{}/{id}", kind.path()), &[])?;
         Ok(Found::from(&record))
+    }
+
+    pub fn imdb_id(&self, kind: Kind, id: u64) -> Result<Option<String>, ureq::Error> {
+        let ids: ExternalIds = self.get(&format!("{API}/{}/{id}/external_ids", kind.path()), &[])?;
+        Ok(ids.imdb())
     }
 
     pub fn season(&self, id: u64, season: u32) -> Result<Season, ureq::Error> {
@@ -238,6 +261,15 @@ impl Client {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_real_imdb_id_counts() {
+        let imdb = |json: &str| serde_json::from_str::<ExternalIds>(json).unwrap().imdb();
+        assert_eq!(imdb(r#"{"id":1,"imdb_id":"tt0111161"}"#).as_deref(), Some("tt0111161"));
+        assert_eq!(imdb(r#"{"id":1,"imdb_id":""}"#), None);
+        assert_eq!(imdb(r#"{"id":1,"imdb_id":null}"#), None);
+        assert_eq!(imdb(r#"{"id":1}"#), None);
+    }
 
     fn record(id: u64, title: &str, date: &str) -> Record {
         Record {
