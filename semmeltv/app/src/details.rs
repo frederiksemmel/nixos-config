@@ -1,7 +1,9 @@
+use crate::manifest::Scores;
 use crate::tags::Tags;
 
 const SEPARATOR: &str = " · ";
 const SECONDS_PER_MINUTE: u64 = 60;
+const FRESH: u8 = 60;
 
 #[derive(Debug, Default)]
 pub struct Details<'a> {
@@ -32,6 +34,23 @@ impl Details<'_> {
     }
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct Ratings {
+    pub imdb: String,
+    pub rt: String,
+    pub fresh: bool,
+}
+
+impl From<&Scores> for Ratings {
+    fn from(scores: &Scores) -> Self {
+        Self {
+            imdb: scores.imdb.map(|score| score.to_string()).unwrap_or_default(),
+            rt: scores.rt.map(|score| format!("{score}%")).unwrap_or_default(),
+            fresh: scores.rt.is_some_and(|score| score >= FRESH),
+        }
+    }
+}
+
 fn minutes(seconds: f64) -> u64 {
     seconds.max(0.0) as u64 / SECONDS_PER_MINUTE
 }
@@ -46,6 +65,7 @@ fn clock(minutes: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::manifest::Tenths;
 
     fn tags() -> Tags {
         Tags {
@@ -111,6 +131,46 @@ mod tests {
             ..Details::default()
         };
         assert_eq!(details.line(), "1h 00m");
+    }
+
+    #[test]
+    fn ratings_read_as_imdb_tenths_and_rotten_tomatoes_percent() {
+        let scores = Scores {
+            imdb: Some(Tenths(80)),
+            rt: Some(87),
+            metacritic: Some(74),
+        };
+        let ratings = Ratings::from(&scores);
+        assert_eq!(ratings.imdb, "8.0");
+        assert_eq!(ratings.rt, "87%");
+        assert!(ratings.fresh);
+    }
+
+    #[test]
+    fn rotten_tomatoes_turns_rotten_below_sixty_percent() {
+        let fresh = |rt| {
+            Ratings::from(&Scores {
+                rt: Some(rt),
+                ..Scores::default()
+            })
+            .fresh
+        };
+        assert!(fresh(60));
+        assert!(!fresh(59));
+        assert!(!fresh(0));
+    }
+
+    #[test]
+    fn missing_ratings_stay_empty() {
+        assert_eq!(Ratings::from(&Scores::default()), Ratings::default());
+        let only_imdb = Ratings::from(&Scores {
+            imdb: Some(Tenths(73)),
+            metacritic: Some(60),
+            ..Scores::default()
+        });
+        assert_eq!(only_imdb.imdb, "7.3");
+        assert_eq!(only_imdb.rt, "");
+        assert!(!only_imdb.fresh);
     }
 
     #[test]

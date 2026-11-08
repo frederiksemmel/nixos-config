@@ -2,7 +2,7 @@ use crate::artwork;
 use crate::cache::Cache;
 use crate::cec;
 use crate::command::Command;
-use crate::details::Details;
+use crate::details::{Details, Ratings};
 use crate::fetch;
 use crate::intent::{self, Action, Control};
 use crate::library::{self, Item, Library};
@@ -16,7 +16,7 @@ use crate::tags::Tags;
 use crate::tmdb::Kind;
 use crate::voice::{self, Heard, Voice};
 use crate::watch::{self, Change};
-use crate::{AppWindow, CardData, OfflineState, ShelfData};
+use crate::{AppWindow, CardData, OfflineState, RatingsData, ShelfData};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
@@ -648,6 +648,19 @@ impl App {
             None => self.nav.focused_item().map(|item| self.item_details(item)),
         };
         self.ui.set_details(line.unwrap_or_default().into());
+        let scores = match self.nav.open_show() {
+            Some((show, _)) => Some(&show.ratings),
+            None => self.nav.focused_item().map(|item| match item {
+                Item::Movie(index) => &self.nav.movie(index).ratings,
+                Item::Show(index) => &self.nav.show(index).ratings,
+            }),
+        };
+        let ratings = scores.map(Ratings::from).unwrap_or_default();
+        self.ui.set_ratings(RatingsData {
+            imdb: ratings.imdb.into(),
+            rt: ratings.rt.into(),
+            fresh: ratings.fresh,
+        });
     }
 
     fn item_details(&self, item: Item) -> String {

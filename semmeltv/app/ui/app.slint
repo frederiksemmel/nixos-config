@@ -20,6 +20,12 @@ export struct CardData {
     offline-text: string,
 }
 
+export struct RatingsData {
+    imdb: string,
+    rt: string,
+    fresh: bool,
+}
+
 export struct ShelfData {
     title: string,
     cards: [CardData],
@@ -235,6 +241,7 @@ export component AppWindow inherits Window {
     in property <string> empty-note;
     in property <bool> tmdb-notice;
     in property <string> details;
+    in property <RatingsData> ratings;
 
     callback key(string) -> bool;
     callback remote-input();
@@ -346,14 +353,103 @@ export component AppWindow inherits Window {
             height: 96 * root.u;
             background: #0b0d12;
 
-            Text {
+            HorizontalLayout {
                 x: 96 * root.u;
                 y: 12 * root.u;
                 width: parent.width - 192 * root.u;
-                text: root.details;
-                color: #8f95a3;
-                font-size: 24 * root.u;
-                overflow: elide;
+                height: 30 * root.u;
+                spacing: 9 * root.u;
+                alignment: start;
+
+                if root.ratings.imdb != "": Rectangle {
+                    width: 52 * root.u;
+                    height: 24 * root.u;
+                    y: 3 * root.u;
+                    border-radius: 4 * root.u;
+                    background: #f5c518;
+
+                    Text {
+                        text: "IMDb";
+                        color: #000000;
+                        font-size: 16 * root.u;
+                        font-weight: 900;
+                        letter-spacing: -0.3 * root.u;
+                    }
+                }
+
+                if root.ratings.imdb != "": Text {
+                    text: root.ratings.imdb;
+                    color: #c3c7d1;
+                    font-size: 24 * root.u;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                if root.ratings.imdb != "" && root.ratings.rt != "": Rectangle {
+                    width: 4 * root.u;
+                }
+
+                if root.ratings.rt != "" && root.ratings.fresh: Rectangle {
+                    width: 28 * root.u;
+
+                    Path {
+                        y: -2 * root.u;
+                        width: 28 * root.u;
+                        height: 28 * root.u;
+                        viewbox-width: 24;
+                        viewbox-height: 24;
+                        fill: #fa320a;
+                        commands: "M12 6C17.6 6 22 9.6 22 14.3C22 19.2 17.6 22.6 12 22.6C6.4 22.6 2 19.2 2 14.3C2 9.6 6.4 6 12 6Z";
+                    }
+
+                    Path {
+                        y: -2 * root.u;
+                        width: 28 * root.u;
+                        height: 28 * root.u;
+                        viewbox-width: 24;
+                        viewbox-height: 24;
+                        fill: #0ac855;
+                        commands: "M12 4.4L13.4 6.2L16.9 5.5L14.7 7.5L16.3 9.5L12.9 8.6L12 10.3L11.1 8.6L7.7 9.5L9.3 7.5L7.1 5.5L10.6 6.2ZM11.5 5.2L11.9 1.8L12.9 1.8L12.5 5.2Z";
+                    }
+                }
+
+                if root.ratings.rt != "" && !root.ratings.fresh: Rectangle {
+                    width: 28 * root.u;
+
+                    Path {
+                        y: -2 * root.u;
+                        width: 28 * root.u;
+                        height: 28 * root.u;
+                        viewbox-width: 24;
+                        viewbox-height: 24;
+                        fill: #0ac855;
+                        commands: "M12 3.2L13.6 7.4L17.6 3.8L16.6 8.9L22 8.4L18 12.2L22.4 15.6L16.8 16L18.6 21.2L13.9 18L12 22.8L10.1 18L5.2 21.4L7.2 16L1.6 15.4L6.1 12.1L2.2 8.2L7.5 8.9L6.4 3.8L10.4 7.4Z";
+                    }
+                }
+
+                if root.ratings.rt != "": Text {
+                    text: root.ratings.rt;
+                    color: #c3c7d1;
+                    font-size: 24 * root.u;
+                    font-weight: 600;
+                    vertical-alignment: center;
+                }
+
+                if (root.ratings.imdb != "" || root.ratings.rt != "") && root.details != "": Text {
+                    text: "·";
+                    color: #8f95a3;
+                    font-size: 24 * root.u;
+                    vertical-alignment: center;
+                }
+
+                Text {
+                    horizontal-stretch: 1;
+                    text: root.details;
+                    color: #8f95a3;
+                    font-size: 24 * root.u;
+                    vertical-alignment: center;
+                    overflow: elide;
+                }
             }
 
             if root.tmdb-notice && !root.show-open: Text {
