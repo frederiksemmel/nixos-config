@@ -26,6 +26,7 @@ mod tags;
 mod tmdb;
 mod voice;
 mod watch;
+mod watching;
 mod wyoming;
 
 use cache::Cache;

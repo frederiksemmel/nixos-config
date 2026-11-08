@@ -18,6 +18,7 @@ export struct CardData {
     tint-b: color,
     offline: OfflineState,
     offline-text: string,
+    progress: float,
 }
 
 export struct RatingsData {
@@ -114,6 +115,22 @@ component CardView {
                 opacity: root.focused ? 0 : 0.3;
                 animate opacity { duration: 180ms; }
             }
+
+            if root.card.progress > 0: Rectangle {
+                x: 18 * u;
+                y: parent.height - 24 * u;
+                width: parent.width - 36 * u;
+                height: 6 * u;
+                border-radius: 3 * u;
+                background: #ffffff55;
+
+                Rectangle {
+                    x: 0;
+                    width: max(6 * u, parent.width * root.card.progress);
+                    border-radius: 3 * u;
+                    background: white;
+                }
+            }
         }
 
         Rectangle {
@@ -126,7 +143,7 @@ component CardView {
 
         OfflineBadge {
             x: 12 * root.u;
-            y: parent.height - self.height - 12 * root.u;
+            y: parent.height - self.height - (root.card.progress > 0 ? 40 : 12) * root.u;
             u: root.u;
             state: root.card.offline;
             text: root.card.offline-text;

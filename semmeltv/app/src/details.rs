@@ -51,6 +51,10 @@ impl From<&Scores> for Ratings {
     }
 }
 
+pub fn time_left(seconds: f64) -> String {
+    format!("{} left", clock(minutes(seconds + 30.0).max(1)))
+}
+
 fn minutes(seconds: f64) -> u64 {
     seconds.max(0.0) as u64 / SECONDS_PER_MINUTE
 }
@@ -105,6 +109,13 @@ mod tests {
             details.line(),
             "S2 E3 · HEVC 10-bit · 1080p · 5.1 · 46m · 3 of 10 downloaded"
         );
+    }
+
+    #[test]
+    fn time_left_rounds_to_the_minute_and_never_reads_zero() {
+        assert_eq!(time_left(2700.0), "45m left");
+        assert_eq!(time_left(4350.0), "1h 13m left");
+        assert_eq!(time_left(5.0), "1m left");
     }
 
     #[test]

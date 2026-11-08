@@ -40,6 +40,7 @@ impl Cursor {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HomeRow {
+    Watching,
     Newest,
     Shows,
     Movies,
@@ -62,10 +63,17 @@ pub enum Reload {
     ShowGone,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Watch {
+    pub item: Item,
+    pub file: PathBuf,
+}
+
 pub struct Nav {
     library: Library,
     rows: Vec<HomeRow>,
     newest: Vec<Item>,
+    watching: Vec<Watch>,
     home: Cursor,
     show: Option<(usize, Cursor)>,
 }
@@ -73,24 +81,32 @@ pub struct Nav {
 impl Nav {
     pub fn new(library: Library) -> Self {
         let newest = library.newest(NEWEST_COUNT);
-        let mut rows = Vec::new();
-        if !newest.is_empty() {
-            rows.push(HomeRow::Newest);
-        }
-        if !library.shows.is_empty() {
-            rows.push(HomeRow::Shows);
-        }
-        if !library.movies.is_empty() {
-            rows.push(HomeRow::Movies);
-        }
+        let rows = home_rows(&library, &newest, &[]);
         let home = Cursor::new(rows.len());
         Self {
             library,
             rows,
             newest,
+            watching: Vec::new(),
             home,
             show: None,
         }
+    }
+
+    pub fn set_watching(&mut self, watching: Vec<Watch>) {
+        if watching == self.watching {
+            return;
+        }
+        let old_rows: Vec<_> = self.rows.iter().map(|row| (*row, self.row_keys(*row))).collect();
+        let old_home = self.home.clone();
+        let appears = self.watching.is_empty() && !watching.is_empty();
+        self.watching = watching;
+        self.rows = home_rows(&self.library, &self.newest, &self.watching);
+        self.home = if appears && old_home.row == 0 && old_home.col() == 0 {
+            Cursor::new(self.rows.len())
+        } else {
+            self.follow_home(&old_rows, &old_home)
+        };
     }
 
     pub fn home_rows(&self) -> &[HomeRow] {
@@ -107,6 +123,7 @@ impl Nav {
 
     pub fn row_items(&self, row: HomeRow) -> Vec<Item> {
         match row {
+            HomeRow::Watching => self.watching.iter().map(|watch| watch.item).collect(),
             HomeRow::Newest => self.newest.clone(),
             HomeRow::Shows => (0..self.library.shows.len()).map(Item::Show).collect(),
             HomeRow::Movies => (0..self.library.movies.len()).map(Item::Movie).collect(),
@@ -141,9 +158,22 @@ impl Nav {
             .map(|(index, cursor)| (self.library.shows[index].clone(), cursor));
 
         let fresh = Self::new(library);
+        let watching = self
+            .watching
+            .iter()
+            .filter_map(|watch| {
+                let key = self.library.item_key(watch.item);
+                let item = fresh.library.find_item(watch.item, key)?;
+                Some(Watch {
+                    item,
+                    file: watch.file.clone(),
+                })
+            })
+            .collect();
         self.library = fresh.library;
-        self.rows = fresh.rows;
         self.newest = fresh.newest;
+        self.watching = watching;
+        self.rows = home_rows(&self.library, &self.newest, &self.watching);
         self.home = self.follow_home(&old_rows, &old_home);
 
         let Some((old, cursor)) = old_show else {
@@ -226,6 +256,12 @@ impl Nav {
     }
 
     fn activate_home(&mut self, command: Command) -> Effect {
+        if self.rows.get(self.home.row) == Some(&HomeRow::Watching) {
+            return self
+                .watching
+                .get(self.home.col())
+                .map_or(Effect::None, |watch| Effect::Play(watch.file.clone()));
+        }
         match self.focused_item() {
             Some(Item::Show(index)) => {
                 let show = &self.library.shows[index];
@@ -250,6 +286,19 @@ impl Nav {
     pub fn show(&self, index: usize) -> &Show {
         &self.library.shows[index]
     }
+}
+
+fn home_rows(library: &Library, newest: &[Item], watching: &[Watch]) -> Vec<HomeRow> {
+    let rows = [
+        (HomeRow::Watching, !watching.is_empty()),
+        (HomeRow::Newest, !newest.is_empty()),
+        (HomeRow::Shows, !library.shows.is_empty()),
+        (HomeRow::Movies, !library.movies.is_empty()),
+    ];
+    rows.into_iter()
+        .filter(|(_, shown)| *shown)
+        .map(|(row, _)| row)
+        .collect()
 }
 
 fn follow_show(cursor: &Cursor, old: &Show, new: &Show) -> Cursor {
@@ -544,5 +593,57 @@ mod tests {
         assert_eq!(nav.replace(library(&movie_text("Up", "2026-01-01"))), Reload::ShowGone);
         assert_eq!(nav.open_show(), None);
         assert_eq!(focused_key(&nav), "up");
+    }
+
+    fn watching_dark() -> (Nav, PathBuf) {
+        let text = show_text("Dark", &[(1, 1), (1, 2)], "2026-01-01") + &movie_text("Up", "2026-01-01");
+        let mut nav = Nav::new(library(&text));
+        let file = nav.show(0).episode(1, 2).unwrap().path.clone();
+        nav.set_watching(vec![Watch {
+            item: Item::Show(0),
+            file: file.clone(),
+        }]);
+        (nav, file)
+    }
+
+    #[test]
+    fn currently_watching_comes_first_and_resumes_on_select() {
+        let (mut nav, file) = watching_dark();
+        assert_eq!(nav.home_rows()[0], HomeRow::Watching);
+        assert_eq!(focused_key(&nav), "dark");
+        assert_eq!(nav.apply(Select), Effect::Play(file));
+    }
+
+    #[test]
+    fn focus_stays_on_its_title_when_watching_appears() {
+        let text = show_text("Dark", &[(1, 1), (1, 2)], "2026-01-01") + &movie_text("Up", "2026-01-01");
+        let mut nav = Nav::new(library(&text));
+        nav.apply(Down);
+        let row = nav.home_rows()[nav.home_cursor().row];
+        nav.set_watching(vec![Watch {
+            item: Item::Movie(0),
+            file: PathBuf::from("/lib/Movies/Up.mkv"),
+        }]);
+        assert_eq!(nav.home_rows()[nav.home_cursor().row], row);
+    }
+
+    #[test]
+    fn a_reload_keeps_the_watched_titles_by_key() {
+        let (mut nav, _) = watching_dark();
+        let text = movie_text("Alien", "2026-01-01")
+            + &show_text("Dark", &[(1, 1), (1, 2)], "2026-01-01")
+            + &show_text("Andor", &[(1, 1), (1, 2)], "2026-01-01");
+        nav.replace(library(&text));
+        let items = nav.row_items(HomeRow::Watching);
+        assert_eq!(items.len(), 1);
+        assert_eq!(nav.library().item_key(items[0]), "dark");
+        assert_eq!(focused_key(&nav), "dark");
+    }
+
+    #[test]
+    fn an_empty_watching_list_hides_the_row() {
+        let (mut nav, _) = watching_dark();
+        nav.set_watching(Vec::new());
+        assert!(!nav.home_rows().contains(&HomeRow::Watching));
     }
 }

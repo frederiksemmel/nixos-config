@@ -1,4 +1,5 @@
 use crate::library::{Episode, Show};
+use crate::watching::Watching;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,6 +27,8 @@ pub struct Place {
 pub struct Progress {
     pub shows: HashMap<String, Position>,
     pub files: HashMap<PathBuf, Watched>,
+    #[serde(default)]
+    pub watching: Watching,
 }
 
 impl Progress {

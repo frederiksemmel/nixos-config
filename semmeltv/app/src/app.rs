@@ -2,14 +2,14 @@ use crate::artwork;
 use crate::cache::Cache;
 use crate::cec;
 use crate::command::Command;
-use crate::details::{Details, Ratings};
+use crate::details::{self, Details, Ratings};
 use crate::feedback::Feedback;
 use crate::fetch;
 use crate::intent::{self, Action, Control};
 use crate::led::Led;
 use crate::library::{self, Item, Library};
 use crate::loader::{self, Job, Pixels};
-use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload};
+use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence, Source, Store};
 use crate::player::{Finish, Player};
 use crate::progress::{Position, Progress};
@@ -18,6 +18,7 @@ use crate::tags::Tags;
 use crate::tmdb::Kind;
 use crate::voice::{self, Heard, Voice};
 use crate::watch::{self, Change};
+use crate::watching::{self, Current};
 use crate::{AppWindow, CardData, OfflineState, RatingsData, ShelfData};
 use serde_json::json;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -94,6 +95,8 @@ struct App {
     voice_timer: Timer,
     store: Store,
     fetcher: Sender<Vec<PathBuf>>,
+    lead: Option<PathBuf>,
+    requested: Vec<PathBuf>,
     downloaded: HashSet<PathBuf>,
     downloading: Option<PathBuf>,
     online: bool,
@@ -168,6 +171,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         voice_timer: Timer::default(),
         store,
         fetcher,
+        lead: None,
+        requested: Vec::new(),
         downloading: None,
         online: true,
         problem: None,
@@ -179,6 +184,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         feedback,
     }));
     app.borrow_mut().present_home();
+    app.borrow_mut().queue_downloads(false);
 
     let input = Rc::downgrade(&app);
     ui.on_key(move |text| {
@@ -285,6 +291,7 @@ fn cols_model(cursor: &Cursor) -> ModelRc<i32> {
 
 fn row_title(row: HomeRow) -> &'static str {
     match row {
+        HomeRow::Watching => "Currently Watching",
         HomeRow::Newest => "Newly Added",
         HomeRow::Shows => "TV Shows",
         HomeRow::Movies => "Movies",
@@ -342,8 +349,12 @@ impl App {
     fn apply(&mut self, change: Change) {
         match change {
             Change::Poll { online } => {
+                let reconnected = online && !self.online;
                 self.online = online;
                 self.refresh_offline();
+                if reconnected {
+                    self.queue_downloads(true);
+                }
             }
             Change::Downloading(path) => {
                 self.downloading = path;
@@ -376,16 +387,26 @@ impl App {
             Reload::NoShow | Reload::ShowKept => {}
         }
         self.present_home();
+        self.queue_downloads(false);
     }
 
     fn refresh_offline(&mut self) {
         self.downloaded = self.store.downloaded(self.nav.library().paths());
+        let current = watching::current(self.nav.library(), &self.progress);
         for (index, row) in self.nav.home_rows().iter().enumerate() {
             let Some(shelf) = self.ui.get_home_shelves().row_data(index) else {
                 continue;
             };
-            let statuses = self.nav.row_items(*row).into_iter().map(|item| self.item_status(item));
-            update_statuses(&shelf, statuses);
+            let statuses: Vec<_> = match row {
+                HomeRow::Watching => current.iter().map(|c| self.file_status(&c.file)).collect(),
+                _ => self
+                    .nav
+                    .row_items(*row)
+                    .into_iter()
+                    .map(|item| self.item_status(item))
+                    .collect(),
+            };
+            update_statuses(&shelf, statuses.into_iter());
         }
         if let Some((show, _)) = self.nav.open_show() {
             for (index, season) in show.seasons.iter().enumerate() {
@@ -454,22 +475,22 @@ impl App {
             Ok(player) => {
                 self.player = Some(player);
                 self.record_start(path);
-                self.fetch_for(path);
+                self.lead = Some(path.to_path_buf());
+                self.queue_downloads(true);
             }
             Err(error) => self.show_message(format!("mpv did not start: {error}")),
         }
     }
 
-    fn fetch_for(&self, path: &Path) {
+    fn queue_downloads(&mut self, again: bool) {
         if !self.store.is_enabled() || !self.online {
             return;
         }
-        let next = self.nav.library().find_episode(path).and_then(|(show, episode)| {
-            show.episode_after(episode.season, episode.number)
-                .map(|next| next.path.clone())
-        });
-        let paths = std::iter::once(path.to_path_buf()).chain(next).collect();
-        let _ = self.fetcher.send(paths);
+        let paths = watching::downloads(self.nav.library(), &self.progress, self.lead.as_deref());
+        if again || paths != self.requested {
+            self.requested = paths.clone();
+            let _ = self.fetcher.send(paths);
+        }
     }
 
     fn caption(&self, path: &Path) -> String {
@@ -512,7 +533,18 @@ impl App {
     fn record_place(&mut self) {
         if let (Some(player), Some(playing)) = (&self.player, &self.playing) {
             self.progress.record(&playing.file, player.place());
+            let library = self.nav.library();
+            let joined = watching::record(
+                &mut self.progress,
+                library,
+                &playing.file,
+                player.played(),
+                watching::now(),
+            );
             self.save_progress();
+            if joined {
+                self.queue_downloads(false);
+            }
         }
     }
 
@@ -521,6 +553,7 @@ impl App {
         self.player = None;
         if let Some(playing) = self.playing.take().filter(|_| ended) {
             self.progress.finish(&playing.file);
+            watching::finished(&mut self.progress, self.nav.library(), &playing.file);
             if let Some(position) = playing.show.and_then(|key| self.progress.shows.get_mut(&key)) {
                 position.finished = true;
             }
@@ -532,7 +565,8 @@ impl App {
         if let Some(result) = self.deferred.take() {
             self.reload(result);
         }
-        self.refresh_offline();
+        self.present_home();
+        self.queue_downloads(false);
         if let Some(path) = self.queued.take() {
             self.play(&path);
         }
@@ -836,13 +870,41 @@ impl App {
         (card, art)
     }
 
+    fn watching_card(&self, current: &Current) -> (CardData, Option<PathBuf>) {
+        let (mut card, art) = self.home_card(current.item);
+        let episode = match (current.item, current.episode) {
+            (Item::Show(index), Some((season, number))) => self.nav.show(index).episode(season, number),
+            _ => None,
+        };
+        let parts = [
+            episode.map(|episode| episode.short_label()),
+            current.remaining().map(details::time_left),
+        ];
+        let detail: Vec<_> = parts.into_iter().flatten().collect();
+        if !detail.is_empty() {
+            card.detail = detail.join(" · ").into();
+        }
+        card.progress = current.fraction();
+        set_status(&mut card, self.file_status(&current.file));
+        (card, art)
+    }
+
     fn present_home(&mut self) {
+        let current = watching::current(self.nav.library(), &self.progress);
+        let watches = current.iter().map(|c| Watch {
+            item: c.item,
+            file: c.file.clone(),
+        });
+        self.nav.set_watching(watches.collect());
         let carried = carried_art(&self.ui.get_home_shelves());
         let mut shelves = Vec::new();
         for (index, row) in self.nav.home_rows().iter().enumerate() {
             let mut cards = Vec::new();
             for (position, item) in self.nav.row_items(*row).into_iter().enumerate() {
-                let (mut card, art) = self.home_card(item);
+                let (mut card, art) = match row {
+                    HomeRow::Watching => self.watching_card(&current[position]),
+                    _ => self.home_card(item),
+                };
                 match carried.get(&card.key) {
                     Some(image) => {
                         card.art = image.clone();

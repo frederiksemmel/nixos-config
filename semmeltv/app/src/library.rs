@@ -122,6 +122,13 @@ impl Library {
         }
     }
 
+    pub fn find_item(&self, kind: Item, key: &str) -> Option<Item> {
+        match kind {
+            Item::Show(_) => self.shows.iter().position(|show| show.key == key).map(Item::Show),
+            Item::Movie(_) => self.movies.iter().position(|movie| movie.key == key).map(Item::Movie),
+        }
+    }
+
     pub fn find_episode(&self, path: &Path) -> Option<(&Show, &Episode)> {
         self.shows.iter().find_map(|show| {
             show.seasons

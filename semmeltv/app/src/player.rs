@@ -20,6 +20,7 @@ const STOPPED_EXIT_CODE: i32 = 10;
 const ENDED_EXIT_CODE: i32 = 11;
 const SIGNALLED_EXIT_CODE: i32 = 4;
 const SAVE_EVERY: f64 = 30.0;
+const PLAY_STEP: f64 = 2.0;
 const SHOWN_FOR: Duration = Duration::from_secs(4);
 const TICK: Duration = Duration::from_millis(100);
 const LONG_JUMP: i32 = 60;
@@ -115,6 +116,7 @@ struct Playback {
     name: String,
     position: f64,
     duration: f64,
+    played: f64,
     saved: f64,
     started: bool,
     paused: bool,
@@ -193,6 +195,14 @@ impl Playback {
             self.prompt = prompt;
             self.send(prompt_command(prompt));
         }
+    }
+
+    fn advance(&mut self, position: f64) {
+        let step = position - self.position;
+        if self.started && !self.paused && step > 0.0 && step <= PLAY_STEP {
+            self.played += step;
+        }
+        self.position = position;
     }
 
     fn begin(&mut self, now: Instant) {
@@ -410,6 +420,10 @@ impl Player {
         }
     }
 
+    pub fn played(&self) -> f64 {
+        self.playback.lock().unwrap().played
+    }
+
     pub fn command(&self, command: Command) {
         self.playback.lock().unwrap().command(command, Instant::now());
     }
@@ -480,7 +494,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
         match Event::parse(&line) {
             Some(Event::Position(position)) => {
                 let mut playback = shared.lock().unwrap();
-                playback.position = position;
+                playback.advance(position);
                 playback.update_prompt();
                 playback.save_position();
             }
@@ -557,6 +571,20 @@ fn send(stream: &mut UnixStream, command: Value) -> io::Result<()> {
 mod tests {
     use super::*;
     use std::io::Read;
+
+    #[test]
+    fn only_steady_unpaused_playback_counts_as_watched() {
+        let mut playback = Playback {
+            started: true,
+            ..Playback::default()
+        };
+        for position in [0.5, 1.0, 1.5, 300.0, 300.5, 120.0, 120.4] {
+            playback.advance(position);
+        }
+        playback.paused = true;
+        playback.advance(121.0);
+        assert!((playback.played - 2.4).abs() < 1e-9);
+    }
 
     #[test]
     fn the_exit_code_tells_an_ended_video_from_a_stopped_or_broken_one() {
