@@ -21,6 +21,7 @@ const LONGEST_FRAMES: usize = 334;
 #[derive(Debug, PartialEq, Eq)]
 pub enum Heard {
     Listening,
+    Transcribing,
     Nothing,
     Transcript(String),
     NoMicrophone,
@@ -130,6 +131,7 @@ fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard
             }
             Progress::Ended => {
                 let samples = recording.take().map(|recording| recording.samples).unwrap_or_default();
+                heard(Heard::Transcribing);
                 heard(match wyoming::transcribe(speech, &samples) {
                     Ok(text) => Heard::Transcript(text),
                     Err(error) => Heard::Failed(format!("Speech recognition: {error}")),

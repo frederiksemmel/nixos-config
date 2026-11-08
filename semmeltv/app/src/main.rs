@@ -5,6 +5,7 @@ mod cec;
 mod command;
 mod details;
 mod display;
+mod feedback;
 mod fetch;
 mod import;
 mod intent;
@@ -170,6 +171,10 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
         led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
+        feedback: env::var("SEMMELTV_VOICE_FEEDBACK")
+            .ok()
+            .filter(|url| !url.is_empty())
+            .map(feedback::Feedback::spawn),
     };
     app::run(setup).map_err(|error| error.to_string())
 }
@@ -265,7 +270,7 @@ fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
             .map_err(|_| "nothing happened: no wake word heard")?;
         println!("{:.2}s {event:?}", started.elapsed().as_secs_f64());
         match event {
-            voice::Heard::Listening => {}
+            voice::Heard::Listening | voice::Heard::Transcribing => {}
             voice::Heard::Transcript(text) => break text,
             other => return Err(format!("{other:?}")),
         }

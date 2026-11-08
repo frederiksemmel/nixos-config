@@ -189,6 +189,11 @@ known. Download requests are understood but not carried out yet.
 while the app listens and works out what was said. The app's user must be able
 to write its `brightness`.
 
+`SEMMELTV_VOICE_FEEDBACK` is a URL the app POSTs one JSON object to for every
+step: `listening`, `transcribing`, `heard` (with `text`, `action` and
+`understood`), `nothing`, `no-microphone` or `failed` (with `message`). The phone
+microphone page on semmeltv5 shows them.
+
 ## Artwork
 
     semmeltv artwork --manifest DIR/library.toml [--refresh]

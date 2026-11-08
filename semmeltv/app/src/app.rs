@@ -3,6 +3,7 @@ use crate::cache::Cache;
 use crate::cec;
 use crate::command::Command;
 use crate::details::{Details, Ratings};
+use crate::feedback::Feedback;
 use crate::fetch;
 use crate::intent::{self, Action, Control};
 use crate::led::Led;
@@ -18,6 +19,7 @@ use crate::tmdb::Kind;
 use crate::voice::{self, Heard, Voice};
 use crate::watch::{self, Change};
 use crate::{AppWindow, CardData, OfflineState, RatingsData, ShelfData};
+use serde_json::json;
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::collections::hash_map::DefaultHasher;
@@ -69,6 +71,7 @@ pub struct Setup {
     pub wake_word: Option<voice::WakeWord>,
     pub microphone: Option<String>,
     pub led: Option<Led>,
+    pub feedback: Option<Feedback>,
 }
 
 struct Playing {
@@ -97,6 +100,7 @@ struct App {
     unmute_after_listening: bool,
     queued: Option<PathBuf>,
     led: Option<Led>,
+    feedback: Option<Feedback>,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -109,6 +113,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         wake_word,
         microphone,
         led,
+        feedback,
     } = setup;
     let ui = AppWindow::new()?;
     let handle = ui.as_weak();
@@ -167,6 +172,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         unmute_after_listening: false,
         queued: None,
         led,
+        feedback,
     }));
     app.borrow_mut().present_home();
 
@@ -537,9 +543,14 @@ impl App {
 
     fn hear(&mut self, heard: Heard) {
         if let Some(led) = &self.led {
-            led.set(heard == Heard::Listening);
+            led.set(matches!(heard, Heard::Listening | Heard::Transcribing));
+        }
+        if heard == Heard::Transcribing {
+            self.report(json!({ "state": "transcribing" }));
+            return;
         }
         if heard == Heard::Listening {
+            self.report(json!({ "state": "listening" }));
             if let Some(player) = self.player.as_ref().filter(|player| !player.muted()) {
                 player.set_muted(true);
                 self.unmute_after_listening = true;
@@ -561,13 +572,70 @@ impl App {
             player.set_muted(false);
         }
         match (heard, action) {
-            (_, Some(action)) => self.act(action),
-            (Heard::NoMicrophone, _) => self.tell("No microphone is connected"),
+            (Heard::Transcript(text), Some(action)) => {
+                let understood = !matches!(action, Action::Refuse(_));
+                let outcome = self.describe(&action);
+                self.report(json!({ "state": "heard", "text": text, "action": outcome, "understood": understood }));
+                self.act(action);
+            }
+            (Heard::NoMicrophone, _) => {
+                self.report(json!({ "state": "no-microphone" }));
+                self.tell("No microphone is connected");
+            }
             (Heard::Failed(error), _) => {
                 eprintln!("voice: {error}");
+                self.report(json!({ "state": "failed", "message": error }));
                 self.tell("Voice control failed");
             }
-            _ => self.tell("I didn't catch that"),
+            _ => {
+                self.report(json!({ "state": "nothing" }));
+                self.tell("I didn't catch that");
+            }
+        }
+    }
+
+    fn report(&self, event: serde_json::Value) {
+        if let Some(feedback) = &self.feedback {
+            feedback.send(event);
+        }
+    }
+
+    fn describe(&self, action: &Action) -> String {
+        match action {
+            Action::Play(path) => {
+                let library = self.nav.library();
+                let title = library
+                    .find_episode(path)
+                    .map(|(show, episode)| {
+                        format!("{} · season {}, episode {}", show.title, episode.season, episode.number)
+                    })
+                    .or_else(|| {
+                        let movie = library.movies.iter().find(|movie| &movie.path == path)?;
+                        Some(movie.title.clone())
+                    })
+                    .unwrap_or_else(|| path.display().to_string());
+                format!("Playing {title}")
+            }
+            Action::Download { title, season } => match season {
+                Some(season) => format!("Download {title} season {season} (not set up yet)"),
+                None => format!("Download {title} (not set up yet)"),
+            },
+            Action::Refuse(reason) => reason.clone(),
+            Action::Control(control) => {
+                let name = match control {
+                    Control::Pause => "Pause",
+                    Control::Resume => "Resume",
+                    Control::Stop => "Stop",
+                    Control::Mute => "Mute",
+                    Control::Unmute => "Unmute",
+                    Control::TvOn => return "Turn the TV on".to_string(),
+                    Control::TvOff => return "Turn the TV off".to_string(),
+                };
+                match self.player {
+                    Some(_) => name.to_string(),
+                    None => format!("{name}, but {}", NOTHING_PLAYING.to_lowercase()),
+                }
+            }
         }
     }
 
