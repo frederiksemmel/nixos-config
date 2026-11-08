@@ -3,6 +3,7 @@
   imports = with nixos-raspberrypi.nixosModules; [
     ../common.nix
     ./mount.nix
+    ./wake.nix
     ./whisper.nix
     flake.self.nixosModules.hailo
     raspberry-pi-5.base

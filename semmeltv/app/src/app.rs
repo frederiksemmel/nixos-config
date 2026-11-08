@@ -65,6 +65,7 @@ pub struct Setup {
     pub store: Store,
     pub cache: Cache,
     pub whisper: Option<String>,
+    pub wake_word: Option<voice::WakeWord>,
     pub microphone: Option<String>,
 }
 
@@ -102,6 +103,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         store,
         cache,
         whisper,
+        wake_word,
         microphone,
     } = setup;
     let ui = AppWindow::new()?;
@@ -130,11 +132,16 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let (heard, received_heard) = mpsc::channel();
     let voice = whisper.map(|whisper| {
         let handle = ui.as_weak();
-        voice::spawn(whisper, microphone, move |event| {
-            if heard.send(event).is_ok() {
-                let _ = handle.upgrade_in_event_loop(|ui| ui.invoke_voice_heard());
-            }
-        })
+        voice::spawn(
+            whisper,
+            wake_word,
+            voice::Source::Microphone(microphone),
+            move |event| {
+                if heard.send(event).is_ok() {
+                    let _ = handle.upgrade_in_event_loop(|ui| ui.invoke_voice_heard());
+                }
+            },
+        )
     });
 
     let saved = cache.saved_manifest();

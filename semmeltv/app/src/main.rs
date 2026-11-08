@@ -30,12 +30,15 @@ use std::env;
 use std::fs;
 use std::path::{self, Path, PathBuf};
 use std::process::ExitCode;
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
 
 slint::include_modules!();
 
 const USAGE: &str = "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--cache DIR]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--manifest FILE] [--listing FILE]
-                [--refresh] [--whisper HOST:PORT]";
+                [--refresh] [--whisper HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]";
+const DEFAULT_WAKE_WORD: &str = "hey_jarvis";
 
 struct Args {
     mode: String,
@@ -49,6 +52,8 @@ struct Args {
     transcript: String,
     recording: Option<PathBuf>,
     whisper: Option<String>,
+    wake: Option<String>,
+    wake_word: String,
 }
 
 fn env_path(name: &str) -> Option<PathBuf> {
@@ -71,6 +76,11 @@ fn parse_args() -> Result<Args, String> {
         transcript: String::new(),
         recording: None,
         whisper: env::var("SEMMELTV_WHISPER").ok().filter(|address| !address.is_empty()),
+        wake: env::var("SEMMELTV_WAKE").ok().filter(|address| !address.is_empty()),
+        wake_word: env::var("SEMMELTV_WAKE_WORD")
+            .ok()
+            .filter(|name| !name.is_empty())
+            .unwrap_or_else(|| DEFAULT_WAKE_WORD.to_string()),
     };
     let mut raw = env::args().skip(1);
     while let Some(argument) = raw.next() {
@@ -86,6 +96,8 @@ fn parse_args() -> Result<Args, String> {
                 args.mode = argument;
             }
             "--whisper" => args.whisper = Some(value("--whisper")?),
+            "--wake" => args.wake = Some(value("--wake")?),
+            "--wake-word" => args.wake_word = value("--wake-word")?,
             "--library" => args.library = value("--library")?.into(),
             "--cache" => args.cache = value("--cache")?.into(),
             "--vfs-cache" => args.vfs_cache = Some(value("--vfs-cache")?.into()),
@@ -120,15 +132,24 @@ fn list(library: &library::Library) {
     }
 }
 
+fn wake_word(args: &Args) -> Option<voice::WakeWord> {
+    args.wake.clone().map(|address| voice::WakeWord {
+        address,
+        name: args.wake_word.clone(),
+    })
+}
+
 fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     let capacity = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
         .and_then(|bytes| bytes.parse().ok());
+    let wake_word = wake_word(&args);
     let setup = app::Setup {
         store: offline::Store::new(args.library.clone(), args.vfs_cache, capacity),
         root: args.library,
         remote: env::var("SEMMELTV_REMOTE").ok().filter(|remote| !remote.is_empty()),
         cache,
+        wake_word,
         whisper: args.whisper,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
     };
@@ -183,25 +204,37 @@ fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
         .ok_or("hear needs --whisper HOST:PORT or SEMMELTV_WHISPER")?;
     let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
     let samples = voice::read_wav(&bytes)?;
-    let mut endpointer = voice::Endpointer::default();
-    let mut outcome = voice::Progress::Listening;
-    let mut end = samples.len();
-    for (index, frame) in samples.chunks(voice::FRAME).enumerate() {
-        outcome = endpointer.push(frame);
-        if outcome != voice::Progress::Listening {
-            end = ((index + 1) * voice::FRAME).min(samples.len());
-            break;
-        }
+    let length = Duration::from_secs_f64(samples.len() as f64 / f64::from(wyoming::RATE));
+    let wake_word = wake_word(args);
+    match &wake_word {
+        Some(wake_word) => println!("recording {:.2}s, waiting for {}", length.as_secs_f64(), wake_word.name),
+        None => println!("recording {:.2}s", length.as_secs_f64()),
     }
-    let seconds = |samples: usize| samples as f64 / f64::from(wyoming::RATE);
-    println!(
-        "recording {:.2}s, {outcome:?} at {:.2}s",
-        seconds(samples.len()),
-        seconds(end)
+    let listen = wake_word.is_none();
+    let (heard, received) = mpsc::channel();
+    let voice = voice::spawn(
+        whisper.to_string(),
+        wake_word,
+        voice::Source::Recording(samples),
+        move |event| {
+            let _ = heard.send(event);
+        },
     );
-    let started = std::time::Instant::now();
-    let text = wyoming::transcribe(whisper, &samples[..end]).map_err(|error| error.to_string())?;
-    println!("transcript in {:.2}s: {text:?}", started.elapsed().as_secs_f64());
+    if listen {
+        voice.listen();
+    }
+    let started = Instant::now();
+    let text = loop {
+        let event = received
+            .recv_timeout(length + Duration::from_secs(10))
+            .map_err(|_| "nothing happened: no wake word heard")?;
+        println!("{:.2}s {event:?}", started.elapsed().as_secs_f64());
+        match event {
+            voice::Heard::Listening => {}
+            voice::Heard::Transcript(text) => break text,
+            other => return Err(format!("{other:?}")),
+        }
+    };
     let library = library::load(&args.library)?;
     println!("{:?}", intent::understand(&text, &library, &cache.load_progress()));
     Ok(())

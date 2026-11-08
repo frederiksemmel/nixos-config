@@ -4,10 +4,11 @@ use std::io::{self, Read};
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 pub const FRAME: usize = 480;
 const RETRY: Duration = Duration::from_secs(3);
+const FRAME_TIME: Duration = Duration::from_millis(30);
 const INITIAL_FLOOR: f32 = 150.0;
 const FLOOR_RISE: f32 = 1.005;
 const SPEECH_OVER_FLOOR: f32 = 3.0;
@@ -32,6 +33,16 @@ enum Input {
     Microphone(bool),
 }
 
+pub enum Source {
+    Microphone(Option<String>),
+    Recording(Vec<i16>),
+}
+
+pub struct WakeWord {
+    pub address: String,
+    pub name: String,
+}
+
 pub struct Voice {
     inputs: Sender<Input>,
 }
@@ -42,58 +53,161 @@ impl Voice {
     }
 }
 
-pub fn spawn(whisper: String, microphone: Option<String>, heard: impl Fn(Heard) + Send + 'static) -> Voice {
+pub fn spawn(
+    whisper: String,
+    wake_word: Option<WakeWord>,
+    source: Source,
+    heard: impl Fn(Heard) + Send + 'static,
+) -> Voice {
     let (inputs, received) = mpsc::channel();
     let frames = inputs.clone();
-    thread::spawn(move || capture(microphone, &frames));
-    thread::spawn(move || run(&whisper, &received, &heard));
+    match source {
+        Source::Microphone(device) => thread::spawn(move || capture(device, &frames)),
+        Source::Recording(samples) => {
+            let _ = frames.send(Input::Microphone(true));
+            thread::spawn(move || replay(&samples, &frames))
+        }
+    };
+    let waker = wake_word.map(|wake_word| Waker::new(wake_word, inputs.clone()));
+    thread::spawn(move || run(&whisper, waker, &received, &heard));
     Voice { inputs }
 }
 
-fn run(whisper: &str, received: &Receiver<Input>, heard: &impl Fn(Heard)) {
+#[derive(Default)]
+struct Recording {
+    endpointer: Endpointer,
+    samples: Vec<i16>,
+}
+
+impl Recording {
+    fn push(&mut self, frame: &[i16]) -> Progress {
+        self.samples.extend_from_slice(frame);
+        self.endpointer.push(frame)
+    }
+}
+
+fn run(whisper: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard: &impl Fn(Heard)) {
     let mut present = false;
-    let mut recording: Option<(Endpointer, Vec<i16>)> = None;
+    let mut recording: Option<Recording> = None;
     while let Ok(input) = received.recv() {
-        match input {
+        let progress = match input {
             Input::Microphone(now) => {
                 present = now;
+                if let Some(waker) = waker.as_mut() {
+                    waker.restart();
+                }
                 if !now && recording.take().is_some() {
                     heard(Heard::NoMicrophone);
                 }
+                continue;
             }
-            Input::Listen if !present => heard(Heard::NoMicrophone),
+            Input::Listen if !present => {
+                heard(Heard::NoMicrophone);
+                continue;
+            }
             Input::Listen => {
                 if recording.is_none() {
-                    recording = Some((Endpointer::default(), Vec::new()));
+                    recording = Some(Recording::default());
                     heard(Heard::Listening);
                 }
+                continue;
             }
-            Input::Frame(frame) => {
-                let Some((endpointer, samples)) = recording.as_mut() else {
-                    continue;
-                };
-                samples.extend_from_slice(&frame);
-                match endpointer.push(&frame) {
-                    Progress::Listening => {}
-                    Progress::Nothing => {
-                        recording = None;
-                        heard(Heard::Nothing);
+            Input::Frame(frame) => match recording.as_mut() {
+                Some(recording) => recording.push(&frame),
+                None => {
+                    if let Some(waker) = waker.as_mut() {
+                        waker.hear(&frame);
                     }
-                    Progress::Ended => {
-                        let samples = recording.take().map(|(_, samples)| samples).unwrap_or_default();
-                        heard(match wyoming::transcribe(whisper, &samples) {
-                            Ok(text) => Heard::Transcript(text),
-                            Err(error) => Heard::Failed(format!("Whisper: {error}")),
-                        });
-                        for input in received.try_iter() {
-                            if let Input::Microphone(now) = input {
-                                present = now;
-                            }
-                        }
+                    continue;
+                }
+            },
+        };
+        match progress {
+            Progress::Listening => continue,
+            Progress::Nothing => {
+                recording = None;
+                heard(Heard::Nothing);
+            }
+            Progress::Ended => {
+                let samples = recording.take().map(|recording| recording.samples).unwrap_or_default();
+                heard(match wyoming::transcribe(whisper, &samples) {
+                    Ok(text) => Heard::Transcript(text),
+                    Err(error) => Heard::Failed(format!("Whisper: {error}")),
+                });
+                for input in received.try_iter() {
+                    if let Input::Microphone(now) = input {
+                        present = now;
                     }
                 }
             }
         }
+        if let Some(waker) = waker.as_mut() {
+            waker.restart();
+        }
+    }
+}
+
+struct Waker {
+    wake_word: WakeWord,
+    inputs: Sender<Input>,
+    detector: Option<wyoming::Detector>,
+    next_attempt: Instant,
+}
+
+impl Waker {
+    fn new(wake_word: WakeWord, inputs: Sender<Input>) -> Self {
+        Self {
+            wake_word,
+            inputs,
+            detector: None,
+            next_attempt: Instant::now(),
+        }
+    }
+
+    fn hear(&mut self, frame: &[i16]) {
+        if self.detector.is_none() && Instant::now() >= self.next_attempt {
+            self.connect();
+        }
+        let Some(detector) = self.detector.as_mut() else {
+            return;
+        };
+        if let Err(error) = detector.send(frame) {
+            self.fail(&error);
+        }
+    }
+
+    fn connect(&mut self) {
+        let inputs = self.inputs.clone();
+        match wyoming::detect(&self.wake_word.address, &self.wake_word.name, move || {
+            let _ = inputs.send(Input::Listen);
+        }) {
+            Ok(detector) => self.detector = Some(detector),
+            Err(error) => self.fail(&error),
+        }
+    }
+
+    fn restart(&mut self) {
+        if let Some(detector) = self.detector.as_mut()
+            && let Err(error) = detector.restart()
+        {
+            self.fail(&error);
+        }
+    }
+
+    fn fail(&mut self, error: &io::Error) {
+        eprintln!("wake word {}: {error}", self.wake_word.address);
+        self.detector = None;
+        self.next_attempt = Instant::now() + RETRY;
+    }
+}
+
+fn replay(samples: &[i16], inputs: &Sender<Input>) {
+    let silence = [0; FRAME];
+    for frame in samples.chunks(FRAME).chain(std::iter::repeat(&silence[..])) {
+        if inputs.send(Input::Frame(frame.to_vec())).is_err() {
+            return;
+        }
+        thread::sleep(FRAME_TIME);
     }
 }
 

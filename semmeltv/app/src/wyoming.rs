@@ -1,6 +1,7 @@
 use serde_json::{Value, json};
 use std::io::{self, BufRead, BufReader, Write};
-use std::net::TcpStream;
+use std::net::{Shutdown, TcpStream};
+use std::thread;
 use std::time::Duration;
 
 pub const RATE: u32 = 16_000;
@@ -66,6 +67,44 @@ pub fn transcribe(address: &str, samples: &[i16]) -> io::Result<String> {
     }
 }
 
+pub struct Detector {
+    writer: TcpStream,
+}
+
+impl Detector {
+    pub fn restart(&mut self) -> io::Result<()> {
+        self.writer.write_all(&encode("audio-start", format(), &[]))
+    }
+
+    pub fn send(&mut self, samples: &[i16]) -> io::Result<()> {
+        self.writer
+            .write_all(&encode("audio-chunk", format(), &to_bytes(samples)))
+    }
+}
+
+impl Drop for Detector {
+    fn drop(&mut self) {
+        let _ = self.writer.shutdown(Shutdown::Both);
+    }
+}
+
+pub fn detect(address: &str, name: &str, detected: impl Fn() + Send + 'static) -> io::Result<Detector> {
+    let mut connection = Connection::open(address)?;
+    connection.reader.get_ref().set_read_timeout(None)?;
+    connection.send("detect", json!({ "names": [name] }), &[])?;
+    let Connection { mut reader, writer } = connection;
+    thread::spawn(move || {
+        while let Ok(event) = decode(&mut reader) {
+            if event.kind == "detection" {
+                detected();
+            }
+        }
+    });
+    let mut detector = Detector { writer };
+    detector.restart()?;
+    Ok(detector)
+}
+
 fn to_bytes(samples: &[i16]) -> Vec<u8> {
     samples.iter().flat_map(|sample| sample.to_le_bytes()).collect()
 }
@@ -114,7 +153,7 @@ mod tests {
     use super::*;
     use std::io::Cursor;
     use std::net::TcpListener;
-    use std::thread;
+    use std::sync::mpsc;
 
     #[test]
     fn events_survive_a_round_trip() {
@@ -169,5 +208,39 @@ mod tests {
                 "audio-stop"
             ]
         );
+    }
+
+    #[test]
+    fn detection_streams_audio_and_reports_the_wake_word() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap().to_string();
+        let server = thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let detect = decode(&mut reader).unwrap();
+            let start = decode(&mut reader).unwrap();
+            let chunk = decode(&mut reader).unwrap();
+            let mut writer = stream;
+            writer
+                .write_all(&encode(
+                    "detection",
+                    json!({ "name": "hey_jarvis", "timestamp": 1230 }),
+                    &[],
+                ))
+                .unwrap();
+            (detect, start.kind, chunk.payload.len())
+        });
+        let (detections, received) = mpsc::channel();
+        let mut detector = detect(&address, "hey_jarvis", move || {
+            let _ = detections.send(());
+        })
+        .unwrap();
+        detector.send(&[0; 480]).unwrap();
+        let (detect, start, chunk) = server.join().unwrap();
+        assert_eq!(detect.kind, "detect");
+        assert_eq!(detect.data["names"], json!(["hey_jarvis"]));
+        assert_eq!(start, "audio-start");
+        assert_eq!(chunk, 960);
+        assert_eq!(received.recv_timeout(TIMEOUT), Ok(()));
     }
 }
