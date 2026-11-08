@@ -9,6 +9,7 @@ pub enum Command {
     Select,
     Back,
     PlayPause,
+    Listen,
 }
 
 impl Command {

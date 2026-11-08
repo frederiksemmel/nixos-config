@@ -71,6 +71,64 @@ const DOWNLOAD_PHRASES: [&str; 15] = [
     "bajame",
     "baja",
 ];
+const PAUSE_PHRASES: [&str; 8] = [
+    "pause",
+    "pausa",
+    "pausieren",
+    "pausiere",
+    "anhalten",
+    "halt an",
+    "pon pausa",
+    "hold on",
+];
+const STOP_PHRASES: [&str; 9] = [
+    "stop", "stopp", "quit", "beenden", "beende", "aufhoren", "para", "parar", "detener",
+];
+const MUTE_PHRASES: [&str; 10] = [
+    "mute",
+    "sound off",
+    "stumm",
+    "stummschalten",
+    "schalte stumm",
+    "ton aus",
+    "silencio",
+    "silenciar",
+    "silencia",
+    "quita el sonido",
+];
+const UNMUTE_PHRASES: [&str; 9] = [
+    "unmute",
+    "sound on",
+    "ton an",
+    "ton ein",
+    "stumm aus",
+    "laut",
+    "quita el silencio",
+    "activa el sonido",
+    "pon el sonido",
+];
+const TV_WORDS: [&str; 7] = ["tv", "telly", "television", "fernseher", "glotze", "tele", "televisor"];
+const ON_WORDS: [&str; 9] = [
+    "on",
+    "an",
+    "ein",
+    "einschalten",
+    "anschalten",
+    "anmachen",
+    "enciende",
+    "encender",
+    "prende",
+];
+const OFF_WORDS: [&str; 7] = [
+    "off",
+    "aus",
+    "ausschalten",
+    "ausmachen",
+    "abschalten",
+    "apaga",
+    "apagar",
+];
+const SWITCH_WORDS: [&str; 8] = ["turn", "switch", "schalte", "schalt", "mach", "mache", "den", "put"];
 const FILLERS: [&str; 60] = [
     "a", "an", "and", "at", "bitte", "can", "con", "could", "das", "de", "del", "der", "die", "du", "el", "en",
     "favor", "from", "gerne", "hey", "i", "ich", "kannst", "la", "las", "lass", "lets", "los", "mal", "me", "mir",
@@ -149,14 +207,73 @@ struct Request {
 pub enum Action {
     Play(PathBuf),
     Download { title: String, season: Option<u32> },
+    Control(Control),
     Refuse(String),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Control {
+    Pause,
+    Resume,
+    Stop,
+    Mute,
+    Unmute,
+    TvOn,
+    TvOff,
+}
+
 pub fn understand(transcript: &str, library: &Library, progress: &Progress) -> Action {
+    if let Some(control) = control(transcript) {
+        return Action::Control(control);
+    }
     match parse(transcript) {
         Some(request) => resolve(&request, library, progress),
         None => Action::Refuse(format!("Could not understand \"{}\"", transcript.trim())),
     }
+}
+
+fn control(transcript: &str) -> Option<Control> {
+    let folded = library::normalize(&deunicode(transcript)).replace("t v", "tv");
+    let tokens: Vec<&str> = folded
+        .split_whitespace()
+        .filter(|token| !FILLERS.contains(token))
+        .collect();
+    if tokens.iter().any(|token| TV_WORDS.contains(token)) {
+        return tv_power(&tokens);
+    }
+    let is = |phrases: &[&str]| {
+        phrases.iter().any(|phrase| {
+            phrase
+                .split(' ')
+                .filter(|word| !FILLERS.contains(word))
+                .eq(tokens.iter().copied())
+        })
+    };
+    if is(&PAUSE_PHRASES) {
+        Some(Control::Pause)
+    } else if is(&STOP_PHRASES) {
+        Some(Control::Stop)
+    } else if is(&MUTE_PHRASES) {
+        Some(Control::Mute)
+    } else if is(&UNMUTE_PHRASES) {
+        Some(Control::Unmute)
+    } else if is(&PLAY_PHRASES) {
+        Some(Control::Resume)
+    } else {
+        None
+    }
+}
+
+fn tv_power(tokens: &[&str]) -> Option<Control> {
+    let mut off = false;
+    for token in tokens {
+        if OFF_WORDS.contains(token) {
+            off = true;
+        } else if !TV_WORDS.contains(token) && !ON_WORDS.contains(token) && !SWITCH_WORDS.contains(token) {
+            return None;
+        }
+    }
+    Some(if off { Control::TvOff } else { Control::TvOn })
 }
 
 #[derive(Clone, Copy)]
@@ -371,7 +488,19 @@ enum Found<'a> {
 
 fn comparable(title: &str) -> String {
     let normalized = library::normalize(&deunicode(title));
-    normalized.strip_prefix("the ").unwrap_or(&normalized).to_string()
+    let words: Vec<String> = normalized
+        .split(' ')
+        .map(|word| cardinal(word).map_or_else(|| word.to_string(), |value| value.to_string()))
+        .collect();
+    let joined = words.join(" ");
+    joined.strip_prefix("the ").unwrap_or(&joined).to_string()
+}
+
+fn cardinal(word: &str) -> Option<u32> {
+    NUMBERS
+        .iter()
+        .find(|(_, cardinals, _)| cardinals.contains(&word))
+        .map(|(value, _, _)| *value)
 }
 
 fn similarity(query: &str, title: &str) -> f64 {
@@ -596,6 +725,69 @@ mod tests {
         for text in ["", "please", "play", "weiter", "season 2"] {
             assert_eq!(parse(text), None, "{text}");
         }
+    }
+
+    #[test]
+    fn playback_controls_are_understood_in_every_language() {
+        let cases = [
+            ("Pause.", Control::Pause),
+            ("Pause, please.", Control::Pause),
+            ("Pausa", Control::Pause),
+            ("Halt an", Control::Pause),
+            ("Play.", Control::Resume),
+            ("Continue", Control::Resume),
+            ("Keep watching", Control::Resume),
+            ("Weiter", Control::Resume),
+            ("Sigue", Control::Resume),
+            ("Stop", Control::Stop),
+            ("Mute.", Control::Mute),
+            ("Ton aus", Control::Mute),
+            ("Silencio", Control::Mute),
+            ("Unmute", Control::Unmute),
+            ("Ton an", Control::Unmute),
+        ];
+        for (text, expected) in cases {
+            let understood = understand(text, &library(), &Progress::default());
+            assert_eq!(understood, Action::Control(expected), "{text}");
+        }
+    }
+
+    #[test]
+    fn the_tv_is_switched_in_every_language() {
+        let cases = [
+            ("Turn on the TV.", Control::TvOn),
+            ("Switch the T.V. on", Control::TvOn),
+            ("TV on", Control::TvOn),
+            ("Schalte den Fernseher ein.", Control::TvOn),
+            ("Mach den Fernseher an", Control::TvOn),
+            ("Enciende la tele", Control::TvOn),
+            ("Turn off the TV", Control::TvOff),
+            ("Fernseher aus", Control::TvOff),
+            ("Apaga la televisión", Control::TvOff),
+        ];
+        for (text, expected) in cases {
+            let understood = understand(text, &library(), &Progress::default());
+            assert_eq!(understood, Action::Control(expected), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_control_word_inside_a_longer_sentence_is_not_a_control() {
+        for text in [
+            "Play Outlander",
+            "Stop making sense",
+            "Thank you for watching.",
+            "the tv show Dark",
+        ] {
+            let understood = understand(text, &library(), &Progress::default());
+            assert!(!matches!(understood, Action::Control(_)), "{text}");
+        }
+    }
+
+    #[test]
+    fn numbers_in_titles_match_as_digits_or_words() {
+        assert_eq!(similarity("brooklyn 9 9", "Brooklyn Nine-Nine"), 1.0);
+        assert_eq!(similarity("paddington two", "Paddington 2"), 1.0);
     }
 
     #[test]

@@ -7,6 +7,7 @@
   fontconfig,
   mpv,
   wlr-randr,
+  alsa-utils,
 }:
 
 let
@@ -52,6 +53,7 @@ craneLib.buildPackage (
         lib.makeBinPath [
           mpv
           wlr-randr
+          alsa-utils
         ]
       }
     '';

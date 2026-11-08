@@ -56,6 +56,7 @@ in
         "video"
         "render"
         "input"
+        "audio"
       ];
     };
 

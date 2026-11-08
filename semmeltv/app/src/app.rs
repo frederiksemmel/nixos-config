@@ -3,6 +3,7 @@ use crate::cec;
 use crate::command::Command;
 use crate::details::Details;
 use crate::fetch;
+use crate::intent::{self, Action, Control};
 use crate::library::{self, Episode, Item, Library, Show};
 use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload};
@@ -11,6 +12,7 @@ use crate::player::{Finish, Player};
 use crate::progress::{Position, Progress};
 use crate::segments::Title;
 use crate::tags::Tags;
+use crate::voice::{self, Heard, Voice};
 use crate::watch::{self, Change};
 use crate::{AppWindow, CardData, OfflineState, ShelfData};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
@@ -26,6 +28,7 @@ use std::time::Duration;
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
 const EMPTY_LIBRARY: &str = "The library is empty";
 const OUT_OF_REACH: &str = "Not downloaded, and pCloud can't be reached right now";
+const NOTHING_PLAYING: &str = "Nothing is playing";
 
 #[derive(Clone, Copy)]
 enum Screen {
@@ -59,6 +62,8 @@ pub struct Setup {
     pub remote: Option<String>,
     pub store: Store,
     pub cache: Cache,
+    pub whisper: Option<String>,
+    pub microphone: Option<String>,
 }
 
 struct Playing {
@@ -89,6 +94,9 @@ struct App {
     online: bool,
     problem: Option<String>,
     deferred: Deferred,
+    voice: Option<Voice>,
+    unmute_after_listening: bool,
+    queued: Option<PathBuf>,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -97,6 +105,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         remote,
         store,
         cache,
+        whisper,
+        microphone,
     } = setup;
     let ui = AppWindow::new()?;
     ui.set_tmdb_notice(cache.has_tmdb_art());
@@ -122,6 +132,16 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let notify_watch = notify.clone();
     let fetcher = fetch::spawn(store.clone(), move |path| notify(Change::Downloading(path)));
 
+    let (heard, received_heard) = mpsc::channel();
+    let voice = whisper.map(|whisper| {
+        let handle = ui.as_weak();
+        voice::spawn(whisper, microphone, move |event| {
+            if heard.send(event).is_ok() {
+                let _ = handle.upgrade_in_event_loop(|ui| ui.invoke_voice_heard());
+            }
+        })
+    });
+
     let saved = cache.saved_manifest();
     let library = library::load_saved(&root, &saved).unwrap_or_default();
     let names = cache.load_matches();
@@ -145,6 +165,9 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         online: true,
         problem: None,
         deferred: Deferred::default(),
+        voice,
+        unmute_after_listening: false,
+        queued: None,
     }));
     app.borrow_mut().present_home();
 
@@ -164,6 +187,14 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         if let Some(app) = remote_input.upgrade() {
             for command in received_commands.try_iter() {
                 App::dispatch(&app, command);
+            }
+        }
+    });
+    let voice_input = Rc::downgrade(&app);
+    ui.on_voice_heard(move || {
+        if let Some(app) = voice_input.upgrade() {
+            for event in received_heard.try_iter() {
+                app.borrow_mut().hear(event);
             }
         }
     });
@@ -286,6 +317,10 @@ fn set_status(card: &mut CardData, status: (Presence, String)) {
 
 impl App {
     fn dispatch(app: &Rc<RefCell<Self>>, command: Command) {
+        if command == Command::Listen {
+            app.borrow().listen();
+            return;
+        }
         if let Some(player) = &app.borrow().player {
             player.command(command);
             return;
@@ -513,6 +548,89 @@ impl App {
             self.refresh_art();
         }
         self.refresh_offline();
+        if let Some(path) = self.queued.take() {
+            self.play(&path);
+        }
+    }
+
+    fn listen(&self) {
+        match &self.voice {
+            Some(voice) => voice.listen(),
+            None => self.tell("Voice control is not set up"),
+        }
+    }
+
+    fn hear(&mut self, heard: Heard) {
+        if heard == Heard::Listening {
+            if let Some(player) = self.player.as_ref().filter(|player| !player.muted()) {
+                player.set_muted(true);
+                self.unmute_after_listening = true;
+            }
+            self.tell("Listening…");
+            return;
+        }
+        let action = match &heard {
+            Heard::Transcript(text) if !text.is_empty() => {
+                eprintln!("heard: {text}");
+                Some(intent::understand(text, self.nav.library(), &self.progress))
+            }
+            _ => None,
+        };
+        if std::mem::take(&mut self.unmute_after_listening)
+            && action != Some(Action::Control(Control::Mute))
+            && let Some(player) = &self.player
+        {
+            player.set_muted(false);
+        }
+        match (heard, action) {
+            (_, Some(action)) => self.act(action),
+            (Heard::NoMicrophone, _) => self.tell("No microphone is connected"),
+            (Heard::Failed(error), _) => {
+                eprintln!("voice: {error}");
+                self.tell("Voice control failed");
+            }
+            _ => self.tell("I didn't catch that"),
+        }
+    }
+
+    fn act(&mut self, action: Action) {
+        match action {
+            Action::Play(path) => match &self.player {
+                Some(player) => {
+                    self.queued = Some(path);
+                    player.command(Command::Back);
+                }
+                None => self.play(&path),
+            },
+            Action::Download { title, .. } => self.tell(&format!("Downloading {title} by voice is not set up yet")),
+            Action::Refuse(reason) => self.tell(&reason),
+            Action::Control(control) => self.control(control),
+        }
+    }
+
+    fn control(&self, control: Control) {
+        let player = self.player.as_ref();
+        match (control, player) {
+            (Control::TvOn | Control::TvOff, _) => {
+                if let Err(error) = cec::switch_tv(control == Control::TvOn) {
+                    eprintln!("HDMI-CEC: {error}");
+                    self.tell("The TV did not answer");
+                }
+            }
+            (_, None) => self.tell(NOTHING_PLAYING),
+            (Control::Pause, Some(player)) => player.set_paused(true),
+            (Control::Resume, Some(player)) => player.set_paused(false),
+            (Control::Stop, Some(player)) => player.command(Command::Back),
+            (Control::Mute, Some(player)) => player.set_muted(true),
+            (Control::Unmute, Some(player)) => player.set_muted(false),
+        }
+    }
+
+    fn tell(&self, text: &str) {
+        match &self.player {
+            Some(player) => player.say(text),
+            None => self.show_message(text.to_string()),
+        }
     }
 
     fn save_progress(&self) {

@@ -29,6 +29,23 @@ pub fn spawn(remote: Remote) {
     }
 }
 
+pub fn switch_tv(on: bool) -> io::Result<()> {
+    let mut result = Err(io::Error::other("no HDMI-CEC adapter is connected"));
+    for path in adapters(Path::new("/dev")) {
+        let sent = CecDevice::open(&path).and_then(|device| {
+            if on {
+                turn_on_tv(&device).and_then(|()| announce(&device))
+            } else {
+                device.transmit(own_logical_address(&device)?, CecLogicalAddress::Tv, CecOpcode::Standby)
+            }
+        });
+        if result.is_err() {
+            result = sent;
+        }
+    }
+    result
+}
+
 fn adapters(dev: &Path) -> Vec<PathBuf> {
     let Ok(entries) = fs::read_dir(dev) else {
         return Vec::new();
@@ -178,6 +195,10 @@ fn key_command(code: CecUserControlCode) -> Option<Command> {
         | CecUserControlCode::Pause
         | CecUserControlCode::PlayFunction
         | CecUserControlCode::PausePlayFunction => Some(Command::PlayPause),
+        CecUserControlCode::F1Blue
+        | CecUserControlCode::F2Red
+        | CecUserControlCode::F3Green
+        | CecUserControlCode::F4Yellow => Some(Command::Listen),
         _ => None,
     }
 }

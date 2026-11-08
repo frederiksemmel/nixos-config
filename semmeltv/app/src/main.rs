@@ -20,7 +20,9 @@ mod seek;
 mod segments;
 mod tags;
 mod tmdb;
+mod voice;
 mod watch;
+mod wyoming;
 
 use artwork::Cache;
 use std::env;
@@ -30,8 +32,9 @@ use std::process::ExitCode;
 
 slint::include_modules!();
 
-const USAGE: &str = "usage: semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--cache DIR]
-                [--vfs-cache DIR] [--tmdb-token-file FILE] [--manifest FILE] [--listing FILE]";
+const USAGE: &str = "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--cache DIR]
+                [--vfs-cache DIR] [--tmdb-token-file FILE] [--manifest FILE] [--listing FILE]
+                [--whisper HOST:PORT]";
 
 struct Args {
     mode: String,
@@ -42,6 +45,8 @@ struct Args {
     manifest: Option<PathBuf>,
     listing: Option<PathBuf>,
     transcript: String,
+    recording: Option<PathBuf>,
+    whisper: Option<String>,
 }
 
 fn env_path(name: &str) -> Option<PathBuf> {
@@ -61,6 +66,8 @@ fn parse_args() -> Result<Args, String> {
         manifest: None,
         listing: None,
         transcript: String::new(),
+        recording: None,
+        whisper: env::var("SEMMELTV_WHISPER").ok().filter(|address| !address.is_empty()),
     };
     let mut raw = env::args().skip(1);
     while let Some(argument) = raw.next() {
@@ -71,6 +78,11 @@ fn parse_args() -> Result<Args, String> {
                 args.transcript = value("understand")?;
                 args.mode = argument;
             }
+            "hear" => {
+                args.recording = Some(value("hear")?.into());
+                args.mode = argument;
+            }
+            "--whisper" => args.whisper = Some(value("--whisper")?),
             "--library" => args.library = value("--library")?.into(),
             "--cache" => args.cache = value("--cache")?.into(),
             "--vfs-cache" => args.vfs_cache = Some(value("--vfs-cache")?.into()),
@@ -113,6 +125,8 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         root: args.library,
         remote: env::var("SEMMELTV_REMOTE").ok().filter(|remote| !remote.is_empty()),
         cache,
+        whisper: args.whisper,
+        microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
     };
     app::run(setup).map_err(|error| error.to_string())
 }
@@ -126,6 +140,38 @@ fn run_import(args: &Args, cache: &Cache) -> Result<(), String> {
         matches: cache.load_matches(),
         client: tmdb_client(args)?,
     })
+}
+
+fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
+    let path = args.recording.as_ref().ok_or("hear needs a WAV file")?;
+    let whisper = args
+        .whisper
+        .as_deref()
+        .ok_or("hear needs --whisper HOST:PORT or SEMMELTV_WHISPER")?;
+    let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    let samples = voice::read_wav(&bytes)?;
+    let mut endpointer = voice::Endpointer::default();
+    let mut outcome = voice::Progress::Listening;
+    let mut end = samples.len();
+    for (index, frame) in samples.chunks(voice::FRAME).enumerate() {
+        outcome = endpointer.push(frame);
+        if outcome != voice::Progress::Listening {
+            end = ((index + 1) * voice::FRAME).min(samples.len());
+            break;
+        }
+    }
+    let seconds = |samples: usize| samples as f64 / f64::from(wyoming::RATE);
+    println!(
+        "recording {:.2}s, {outcome:?} at {:.2}s",
+        seconds(samples.len()),
+        seconds(end)
+    );
+    let started = std::time::Instant::now();
+    let text = wyoming::transcribe(whisper, &samples[..end]).map_err(|error| error.to_string())?;
+    println!("transcript in {:.2}s: {text:?}", started.elapsed().as_secs_f64());
+    let library = library::load(&args.library)?;
+    println!("{:?}", intent::understand(&text, &library, &cache.load_progress()));
+    Ok(())
 }
 
 fn run() -> Result<(), String> {
@@ -143,6 +189,7 @@ fn run() -> Result<(), String> {
             artwork::generate(&library, &args.library, &cache, client).map_err(|error| error.to_string())?;
         }
         "import" => run_import(&args, &cache)?,
+        "hear" => hear(&args, &cache)?,
         _ => run_ui(args, cache)?,
     }
     Ok(())

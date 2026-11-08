@@ -4,6 +4,7 @@
     ../common.nix
     ./artwork.nix
     ./mount.nix
+    ./whisper.nix
     flake.self.nixosModules.hailo
     raspberry-pi-5.base
     raspberry-pi-5.display-vc4

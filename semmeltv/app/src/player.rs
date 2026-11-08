@@ -23,6 +23,7 @@ const SAVE_EVERY: f64 = 30.0;
 const SHOWN_FOR: Duration = Duration::from_secs(4);
 const TICK: Duration = Duration::from_millis(100);
 const LONG_JUMP: i32 = 60;
+const SAY_FOR_MS: u64 = 3000;
 const OSD_FONT: &str = "Inter";
 const OSD_FONTS: &str = env!("SEMMELTV_FONT_DIR");
 const POSITION_ID: u64 = 1;
@@ -116,6 +117,7 @@ struct Playback {
     saved: f64,
     started: bool,
     paused: bool,
+    muted: bool,
     ended: bool,
     closed: bool,
     segments: Vec<Segment>,
@@ -147,6 +149,7 @@ impl Playback {
             Command::Right => self.step(Direction::Forward, now),
             Command::Up => self.jump(LONG_JUMP, now),
             Command::Down => self.jump(-LONG_JUMP, now),
+            Command::Listen => {}
         }
         self.wake(now);
         self.present(now);
@@ -385,6 +388,30 @@ impl Player {
 
     pub fn command(&self, command: Command) {
         self.playback.lock().unwrap().command(command, Instant::now());
+    }
+
+    pub fn set_paused(&self, paused: bool) {
+        self.playback
+            .lock()
+            .unwrap()
+            .send(json!(["set_property", "pause", paused]));
+    }
+
+    pub fn muted(&self) -> bool {
+        self.playback.lock().unwrap().muted
+    }
+
+    pub fn set_muted(&self, muted: bool) {
+        let mut playback = self.playback.lock().unwrap();
+        playback.muted = muted;
+        playback.send(json!(["set_property", "mute", muted]));
+    }
+
+    pub fn say(&self, text: &str) {
+        self.playback
+            .lock()
+            .unwrap()
+            .send(json!(["show-text", text, SAY_FOR_MS]));
     }
 }
 
