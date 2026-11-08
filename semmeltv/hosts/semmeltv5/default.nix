@@ -4,6 +4,7 @@
     ../common.nix
     ./mount.nix
     ./wake.nix
+    ./phone-mic.nix
     ./speech.nix
     flake.self.nixosModules.hailo
     raspberry-pi-5.base
