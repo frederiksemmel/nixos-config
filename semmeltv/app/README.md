@@ -244,3 +244,10 @@ without one the step skips them. The TVs never get the key.
 `devenv shell` picks it up anywhere under `semmeltv/`. The shell sets
 `SEMMELTV_LIBRARY` to `~/pcloud/SemmelTV`, where the desktop's rclone mount of
 the whole pCloud account has the library, unless it is already set.
+
+For voice commands, `devenv up` runs the two servers semmeltv5 runs as system
+services: `speech` (Parakeet) and `wake` (openWakeWord, "hey jarvis"), on ports
+from 10300 and 10400 or the next free ones. The shell points `SEMMELTV_SPEECH`
+and `SEMMELTV_WAKE` at them and records from ALSA's `default` device through
+PipeWire, because the sound card itself is held by PipeWire. Run the app in a
+second terminal while they are up.
