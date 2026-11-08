@@ -1,4 +1,6 @@
-"""Wyoming speech-to-text server running Whisper's encoder on a Hailo-8L and its decoder on the CPU."""
+"""Wyoming speech-to-text server running Whisper's encoder on a Hailo-8L and its decoder on the CPU.
+
+The spoken language is detected per command, among the ones the TV understands."""
 
 import argparse
 import asyncio
@@ -22,6 +24,7 @@ from wyoming.server import AsyncEventHandler, AsyncServer
 RATE = 16000
 HOP = 160
 MAX_TOKENS = 48
+LANGUAGES = ("en", "de", "es")
 LOG = logging.getLogger("hailo-whisper")
 
 
@@ -52,9 +55,9 @@ class Whisper:
 
         self.tokenizer = Tokenizer.from_file(str(model / "tokenizer.json"))
         token = self.tokenizer.token_to_id
-        self.prompt = [
-            token(name) for name in ("<|startoftranscript|>", "<|en|>", "<|transcribe|>", "<|notimestamps|>")
-        ]
+        self.start = token("<|startoftranscript|>")
+        self.languages = {name: token(f"<|{name}|>") for name in LANGUAGES}
+        self.task = [token("<|transcribe|>"), token("<|notimestamps|>")]
         self.end = token("<|endoftext|>")
         self.lock = threading.Lock()
 
@@ -71,10 +74,15 @@ class Whisper:
         self.configured.run([self.bindings], 10_000)
         return hidden.reshape(1, *self.output_shape[-2:])
 
-    def decode(self, hidden: np.ndarray) -> str:
-        outputs = self.first.run(
-            None, {"input_ids": np.array([self.prompt], np.int64), "encoder_hidden_states": hidden}
-        )
+    def first_pass(self, prompt: list[int], hidden: np.ndarray) -> list[np.ndarray]:
+        return self.first.run(None, {"input_ids": np.array([prompt], np.int64), "encoder_hidden_states": hidden})
+
+    def language(self, hidden: np.ndarray) -> str:
+        logits = self.first_pass([self.start], hidden)[0][0, -1]
+        return max(LANGUAGES, key=lambda name: logits[self.languages[name]])
+
+    def decode(self, hidden: np.ndarray, language: str) -> str:
+        outputs = self.first_pass([self.start, self.languages[language], *self.task], hidden)
         past = cache(self.first_outputs, outputs)
         tokens = []
         for _ in range(MAX_TOKENS):
@@ -95,14 +103,18 @@ class Whisper:
             featured = time.monotonic()
             hidden = self.encode(mel)
             encoded = time.monotonic()
-            text = self.decode(hidden)
+            language = self.language(hidden)
+            detected = time.monotonic()
+            text = self.decode(hidden, language)
             done = time.monotonic()
         LOG.info(
-            "%.2fs of audio: features %.0f ms, encoder %.0f ms, decoder %.0f ms: %r",
+            "%.2fs of audio: features %.0f ms, encoder %.0f ms, language %s in %.0f ms, decoder %.0f ms: %r",
             len(audio) / RATE,
             (featured - started) * 1000,
             (encoded - featured) * 1000,
-            (done - encoded) * 1000,
+            language,
+            (detected - encoded) * 1000,
+            (done - detected) * 1000,
             text,
         )
         return text
@@ -167,7 +179,7 @@ async def main() -> None:
         attribution=attribution,
         installed=True,
         version=None,
-        languages=["en"],
+        languages=list(LANGUAGES),
     )
     program = AsrProgram(
         name="hailo-whisper",
