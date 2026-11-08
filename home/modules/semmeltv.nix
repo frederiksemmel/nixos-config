@@ -7,7 +7,7 @@ let
   cfg = config.profiles.semmeltv;
 in
 {
-  options.profiles.semmeltv.enable = lib.mkEnableOption "ssh access to the SemmelTV Pis and the TMDB token for the app";
+  options.profiles.semmeltv.enable = lib.mkEnableOption "ssh access to the SemmelTV Pis and the TMDB and OMDb keys for library imports";
 
   config = lib.mkIf cfg.enable {
     age.secrets = {
@@ -19,9 +19,16 @@ in
         file = ../../secrets/tmdb_token.age;
         path = "${config.xdg.dataHome}/semmeltv/tmdb-token";
       };
+      omdb_api_key = {
+        file = ../../secrets/omdb_api_key.age;
+        path = "${config.xdg.dataHome}/semmeltv/omdb-api-key";
+      };
     };
 
-    home.sessionVariables.TMDB_TOKEN_FILE = config.age.secrets.tmdb_token.path;
+    home.sessionVariables = {
+      TMDB_TOKEN_FILE = config.age.secrets.tmdb_token.path;
+      OMDB_API_KEY_FILE = config.age.secrets.omdb_api_key.path;
+    };
 
     programs.ssh.settings."semmeltv*" = {
       User = "frederik";
