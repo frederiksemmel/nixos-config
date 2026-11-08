@@ -186,7 +186,10 @@ library loosely, so transcription slips are forgiven; translated titles are not
 known. Download requests are understood but not carried out yet.
 
 The wake word, any colour key on the remote, or V on a keyboard starts
-listening. A panel above the details line shows Listening…, with a pulsing
+listening, during a video too. While it listens or works out what was said,
+Back or Exit on the remote, or Esc or Backspace, cancels it: the panel goes,
+the video is unmuted, and nothing is done with what was heard. Otherwise they
+go back as usual. A panel above the details line shows Listening…, with a pulsing
 dot, until you stop speaking, then Working out what you said…, then what it
 heard in quotes with what it does below, for 6 seconds. Other messages use the
 same panel, without the dot. During a video the panel is drawn at the top

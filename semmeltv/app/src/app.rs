@@ -103,7 +103,10 @@ struct App {
     problem: Option<String>,
     deferred: Option<Result<Library, String>>,
     voice: Option<Voice>,
+    voice_active: bool,
+    voice_cancelled: bool,
     unmute_after_listening: bool,
+    keys: Remote,
     queued: Option<PathBuf>,
     led: Option<Led>,
     feedback: Option<Feedback>,
@@ -154,6 +157,11 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         })
     });
 
+    let (commands, received_commands) = mpsc::channel();
+    let keys = Remote {
+        commands,
+        ui: ui.as_weak(),
+    };
     let saved = cache.saved_manifest();
     let library = library::load_saved(&root, &saved).unwrap_or_default();
     let progress = cache.load_progress();
@@ -178,7 +186,10 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         problem: None,
         deferred: None,
         voice,
+        voice_active: false,
+        voice_cancelled: false,
         unmute_after_listening: false,
+        keys: keys.clone(),
         queued: None,
         led,
         feedback,
@@ -196,7 +207,6 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         }
         true
     });
-    let (commands, received_commands) = mpsc::channel();
     let remote_input = Rc::downgrade(&app);
     ui.on_remote_input(move || {
         if let Some(app) = remote_input.upgrade() {
@@ -213,10 +223,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
             }
         }
     });
-    cec::spawn(Remote {
-        commands,
-        ui: ui.as_weak(),
-    });
+    cec::spawn(keys);
 
     let finished = Rc::downgrade(&app);
     ui.on_playback_finished(move |success, ended| {
@@ -326,6 +333,10 @@ impl App {
     fn dispatch(app: &Rc<RefCell<Self>>, command: Command) {
         if command == Command::Listen {
             app.borrow().listen();
+            return;
+        }
+        if command == Command::Back && app.borrow().voice_active {
+            app.borrow_mut().cancel_voice();
             return;
         }
         if let Some(player) = &app.borrow().player {
@@ -463,6 +474,7 @@ impl App {
                 ui.invoke_playback_finished(finish != Finish::Failed, finish == Finish::Ended)
             });
         };
+        let keys = self.keys.clone();
         let watch_later_dir = self.cache.watch_later_dir(path);
         match Player::start(
             &source,
@@ -470,6 +482,7 @@ impl App {
             self.caption(path),
             self.title(path),
             saved,
+            move |command| keys.send(command),
             finished,
         ) {
             Ok(player) => {
@@ -580,8 +593,17 @@ impl App {
     }
 
     fn hear(&mut self, heard: Heard) {
+        if heard == Heard::Listening {
+            self.voice_cancelled = false;
+        } else if self.voice_cancelled {
+            if heard != Heard::Transcribing {
+                self.voice_cancelled = false;
+            }
+            return;
+        }
+        self.voice_active = matches!(heard, Heard::Listening | Heard::Transcribing);
         if let Some(led) = &self.led {
-            led.set(matches!(heard, Heard::Listening | Heard::Transcribing));
+            led.set(self.voice_active);
         }
         if heard == Heard::Transcribing {
             self.report(json!({ "state": "transcribing" }));
@@ -635,6 +657,29 @@ impl App {
                 self.report(json!({ "state": "nothing" }));
                 self.show_voice("", "I didn't hear anything", Some(VOICE_RESULT_TIME));
             }
+        }
+    }
+
+    fn cancel_voice(&mut self) {
+        if let Some(voice) = &self.voice {
+            voice.cancel();
+        }
+        self.voice_active = false;
+        self.voice_cancelled = true;
+        if let Some(led) = &self.led {
+            led.set(false);
+        }
+        if std::mem::take(&mut self.unmute_after_listening)
+            && let Some(player) = &self.player
+        {
+            player.set_muted(false);
+        }
+        self.report(json!({ "state": "cancelled" }));
+        self.voice_timer.stop();
+        self.ui.set_voice_transcript("".into());
+        self.ui.set_voice_status("".into());
+        if let Some(player) = &self.player {
+            player.hide_toast();
         }
     }
 

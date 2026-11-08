@@ -15,7 +15,6 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 const POLL: Duration = Duration::from_millis(50);
-const STOP: &str = "quit-watch-later 10";
 const STOPPED_EXIT_CODE: i32 = 10;
 const ENDED_EXIT_CODE: i32 = 11;
 const SIGNALLED_EXIT_CODE: i32 = 4;
@@ -37,9 +36,10 @@ const LOADING_ID: u64 = 2;
 const OVERLAY_ID: u64 = 3;
 const TOAST_ID: u64 = 4;
 const LOADING_TEXT: &str = r"{\an5\pos(960,540)\bord0\shad0\b1\fs64\1c&HFFFFFF&}Loading…";
-const KEYBINDS: [(&str, &str); 9] = [
-    ("ESC", STOP),
-    ("BS", STOP),
+const KEYBINDS: [(&str, &str); 10] = [
+    ("ESC", "script-message semmeltv-back"),
+    ("BS", "script-message semmeltv-back"),
+    ("v", "script-message semmeltv-listen"),
     ("ENTER", "script-message semmeltv-select"),
     ("KP_ENTER", "script-message semmeltv-select"),
     ("SPACE", "script-message semmeltv-play-pause"),
@@ -106,6 +106,8 @@ fn key_command(message: &str) -> Option<Command> {
         "semmeltv-right" => Some(Command::Right),
         "semmeltv-up" => Some(Command::Up),
         "semmeltv-down" => Some(Command::Down),
+        "semmeltv-back" => Some(Command::Back),
+        "semmeltv-listen" => Some(Command::Listen),
         _ => None,
     }
 }
@@ -131,6 +133,7 @@ struct Playback {
     drawn: String,
     toast_until: Option<Instant>,
     on_save: Option<Box<dyn Fn() + Send>>,
+    on_key: Option<Box<dyn Fn(Command) + Send>>,
 }
 
 impl Playback {
@@ -217,15 +220,27 @@ impl Playback {
         self.shown_until = Some(now + SHOWN_FOR);
     }
 
+    fn key(&mut self, command: Command, now: Instant) {
+        match (command, &self.on_key) {
+            (Command::Back | Command::Listen, Some(on_key)) => on_key(command),
+            _ => self.command(command, now),
+        }
+    }
+
     fn toast(&mut self, heading: &str, message: &str, until: Instant) {
         self.toast_until = Some(until);
         self.send(toast_command(&overlay::toast(heading, message)));
     }
 
+    fn hide_toast(&mut self) {
+        if self.toast_until.take().is_some() {
+            self.send(toast_command(""));
+        }
+    }
+
     fn tick(&mut self, now: Instant) {
         if self.toast_until.is_some_and(|until| now >= until) {
-            self.toast_until = None;
-            self.send(toast_command(""));
+            self.hide_toast();
         }
         if !self.ended {
             let order = self.scrub.poll(now);
@@ -370,6 +385,7 @@ impl Player {
         name: String,
         title: Option<Title>,
         on_save: impl Fn() + Send + 'static,
+        on_key: impl Fn(Command) + Send + 'static,
         on_exit: impl FnOnce(Finish) + Send + 'static,
     ) -> io::Result<Self> {
         let socket_path = socket_path();
@@ -397,6 +413,7 @@ impl Player {
         let playback = Shared::new(Mutex::new(Playback {
             name,
             on_save: Some(Box::new(on_save)),
+            on_key: Some(Box::new(on_key)),
             ..Playback::default()
         }));
         let shared = playback.clone();
@@ -447,6 +464,10 @@ impl Player {
 
     pub fn say(&self, text: &str) {
         self.toast("", text, SAY_FOR);
+    }
+
+    pub fn hide_toast(&self) {
+        self.playback.lock().unwrap().hide_toast();
     }
 
     pub fn toast(&self, heading: &str, message: &str, time: Duration) {
@@ -531,7 +552,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                     playback.begin(Instant::now());
                 }
             }
-            Some(Event::Key(command)) => shared.lock().unwrap().command(command, Instant::now()),
+            Some(Event::Key(command)) => shared.lock().unwrap().key(command, Instant::now()),
             None => {}
         }
     }
@@ -704,6 +725,29 @@ mod tests {
                 assert!(key_command(message).is_some(), "{message}");
             }
         }
+    }
+
+    #[test]
+    fn back_and_listen_keys_go_to_the_app_which_decides() {
+        let (keys, received) = std::sync::mpsc::channel();
+        let playback = Playback {
+            on_key: Some(Box::new(move |command| keys.send(command).unwrap())),
+            ..playing()
+        };
+        let sent = sent_by(
+            |playback| {
+                playback.key(Command::Back, Instant::now());
+                playback.key(Command::Listen, Instant::now());
+            },
+            playback,
+        );
+        assert!(sent.iter().all(|command| command[0] != "quit-watch-later"));
+        assert_eq!(
+            received.try_iter().collect::<Vec<_>>(),
+            [Command::Back, Command::Listen]
+        );
+        let sent = sent_by(|playback| playback.command(Command::Back, Instant::now()), playing());
+        assert_eq!(sent[0], json!(["quit-watch-later", STOPPED_EXIT_CODE]));
     }
 
     fn sent_by(act: impl FnOnce(&mut Playback), mut playback: Playback) -> Vec<Value> {

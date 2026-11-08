@@ -69,6 +69,7 @@ const STATES = {
   listening: "Listening…",
   transcribing: "Working it out…",
   nothing: "Didn't hear anything",
+  cancelled: "Cancelled",
   "no-microphone": "The TV has no microphone",
 };
 const state = document.getElementById("state");

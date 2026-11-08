@@ -30,6 +30,7 @@ pub enum Heard {
 
 enum Input {
     Listen,
+    Cancel,
     Frame(Vec<i16>),
     Microphone(bool),
 }
@@ -51,6 +52,10 @@ pub struct Voice {
 impl Voice {
     pub fn listen(&self) {
         let _ = self.inputs.send(Input::Listen);
+    }
+
+    pub fn cancel(&self) {
+        let _ = self.inputs.send(Input::Cancel);
     }
 }
 
@@ -110,6 +115,15 @@ fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard
                 if recording.is_none() {
                     recording = Some(Recording::default());
                     heard(Heard::Listening);
+                }
+                continue;
+            }
+            Input::Cancel => {
+                if let Some(recording) = recording.take() {
+                    eprintln!("voice: cancelled after {}", recording.endpointer.summary());
+                }
+                if let Some(waker) = waker.as_mut() {
+                    waker.restart();
                 }
                 continue;
             }
