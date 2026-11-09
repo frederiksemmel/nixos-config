@@ -25,6 +25,7 @@ mod player;
 mod progress;
 mod seek;
 mod segments;
+mod storage;
 mod subtitles;
 mod tags;
 mod tmdb;
@@ -178,9 +179,18 @@ fn wake_word(args: &Args) -> Option<voice::WakeWord> {
 }
 
 fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
-    let capacity = env::var("SEMMELTV_VFS_CACHE_BYTES")
+    let capacity: Option<u64> = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
         .and_then(|bytes| bytes.parse().ok());
+    let storage = match (&args.vfs_cache, env_path("SEMMELTV_VFS_CACHE_META"), capacity) {
+        (Some(data), Some(meta), Some(capacity)) => Some(storage::Cache {
+            library: args.library.clone(),
+            data: data.clone(),
+            meta,
+            marks: storage::Marks::new(capacity),
+        }),
+        _ => None,
+    };
     let wake_word = wake_word(&args);
     let meta = args.meta().to_path_buf();
     let kind = env::var("SEMMELTV_TV_KIND").ok().filter(|kind| !kind.is_empty());
@@ -191,6 +201,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     };
     let setup = app::Setup {
         store: offline::Store::new(args.library.clone(), args.vfs_cache, capacity),
+        storage,
         meta,
         root: args.library,
         remote: env::var("SEMMELTV_REMOTE").ok().filter(|remote| !remote.is_empty()),

@@ -105,8 +105,7 @@ new artwork, renames the manifest into place, then deletes artwork pCloud no
 longer has, so every entry's artwork is on disk before the app sees the entry.
 A failed run leaves the previous copy as it was. Run it by hand with
 `systemctl start semmeltv-sync`. The cache size is
-`services.semmeltv.offlineCacheGiB` in `semmeltv/hosts/semmeltv5/default.nix`, and
-the least recently watched titles are evicted first.
+`services.semmeltv.offlineCacheGiB` in `semmeltv/hosts/semmeltv5/default.nix`.
 
 rclone only keeps what was read, so when a title starts the app reads the rest of
 the file through the mount in the background, slowly, followed by the next
@@ -115,6 +114,24 @@ is the cache's file tree (`.../vfs/pcloud/SemmelTV`), `SEMMELTV_VFS_CACHE_BYTES`
 and `SEMMELTV_REMOTE` a `host:port` probed every poll to tell whether pCloud can
 be reached. Without `SEMMELTV_VFS_CACHE` everything counts as streaming and cards
 show no state.
+
+The app keeps the cache in bounds itself, by title. Every poll it adds up the
+blocks the cache files take, and when that passes `SEMMELTV_VFS_CACHE_BYTES`, or
+the disk has less than 10 GiB free, it deletes whole titles, a movie or all of
+a show's cached episodes, until the cache is under 90% of its size and the disk
+has room again. Titles go least recently watched first, by the newest
+`last_played` among their files or their Currently watching entry; a title never
+played counts from when its newest file was cached. Files the library does not
+list go first. It never removes what is playing, in Currently watching, in the
+download queue, or has a resume point, and it logs each removal to the journal
+with its title and size. It deletes the data and metadata files from rclone's
+cache directly (`SEMMELTV_VFS_CACHE_META` is the metadata tree): rclone notices a
+missing cache file when it next opens the item, forgets its ranges and downloads
+again. rclone itself has no size limit, because it counts the ranges it holds in
+memory, which stay stale after such a deletion until the item is opened again;
+its `--vfs-cache-min-free-space 5G`, which reads the real free space, is the
+last resort below the app's 10 GiB. The web app's Storage page shows all this
+and removes a title by hand.
 
 Cards show what is on the device: Downloaded, Downloading or Not downloaded, and
 for a show a count such as 3 of 10 downloaded. A file counts as downloaded when

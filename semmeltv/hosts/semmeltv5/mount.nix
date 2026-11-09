@@ -36,7 +36,6 @@ let
         --filter '- **' \
         --cache-dir ${cacheDir} \
         --vfs-cache-mode full \
-        --vfs-cache-max-size ${toString cfg.offlineCacheGiB}G \
         --vfs-cache-max-age 8760h \
         --vfs-cache-min-free-space 5G \
         --vfs-read-ahead 256M \
@@ -78,7 +77,7 @@ in
 
   options.services.semmeltv.offlineCacheGiB = lib.mkOption {
     type = lib.types.ints.positive;
-    description = "Disk space for downloaded titles, in GiB. The least recently watched are evicted first.";
+    description = "Disk space for downloaded titles, in GiB. Past it the app removes whole titles, least recently watched first, until they fit in 90% of it.";
   };
 
   config = {
@@ -90,6 +89,7 @@ in
     services.cage.environment = {
       SEMMELTV_META = meta;
       SEMMELTV_VFS_CACHE = "${cacheDir}/vfs/pcloud/SemmelTV";
+      SEMMELTV_VFS_CACHE_META = "${cacheDir}/vfsMeta/pcloud/SemmelTV";
       SEMMELTV_VFS_CACHE_BYTES = toString (cfg.offlineCacheGiB * 1024 * 1024 * 1024);
       SEMMELTV_REMOTE = "${remoteHost}:443";
     };

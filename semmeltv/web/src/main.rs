@@ -6,6 +6,7 @@ mod live;
 mod pages;
 mod playing;
 mod public;
+mod storage;
 mod subtitles;
 
 use std::env;

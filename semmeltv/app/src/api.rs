@@ -6,6 +6,7 @@ use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::progress::Progress;
 use crate::seek::Direction;
+use crate::storage;
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
@@ -46,6 +47,7 @@ pub enum Request {
     Seek(Seek),
     Listen,
     Subtitles(subtitles::Change),
+    Storage(storage::Change),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -71,6 +73,7 @@ pub type Ask = Arc<dyn Fn(Pending) + Send + Sync>;
 #[derive(Default)]
 pub struct Shared {
     subtitles: Subtitles,
+    pub storage: storage::Board,
     library: RwLock<Arc<Library>>,
     progress: RwLock<Arc<Progress>>,
 }
@@ -184,6 +187,7 @@ fn router(api: Api) -> Router {
         .route("/api/microphone", get(microphone))
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
         .merge(tv::routes(api.television.clone()))
+        .merge(storage::routes(api.shared.storage.clone(), api.app.clone()))
         .with_state(api)
 }
 

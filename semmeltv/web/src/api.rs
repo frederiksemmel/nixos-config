@@ -205,6 +205,53 @@ struct Outcome {
     message: String,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+pub struct Disk {
+    pub total: u64,
+    pub free: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub struct Marks {
+    pub high: u64,
+    pub low: u64,
+    pub floor: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct TitleKey {
+    pub kind: String,
+    pub key: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Download {
+    #[serde(flatten)]
+    pub title: TitleKey,
+    pub name: String,
+    pub bytes: u64,
+    pub complete: usize,
+    pub total: usize,
+    pub last_watched: Option<u64>,
+    pub cached_at: u64,
+    pub keep: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Storage {
+    pub disk: Disk,
+    pub used: u64,
+    pub marks: Option<Marks>,
+    pub titles: Vec<Download>,
+    pub next: Vec<TitleKey>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Answer {
+    message: String,
+    ok: bool,
+}
+
 #[derive(Debug, Deserialize)]
 struct Problem {
     error: String,
@@ -344,6 +391,34 @@ impl Api {
 
     pub async fn choose_subtitles(&self, track: Option<i64>) -> String {
         self.post("/api/subtitles/track", json!({ "track": track })).await
+    }
+
+    pub async fn storage(&self) -> Result<Storage, String> {
+        match self.get("/api/storage").await? {
+            Found::Here(storage) => Ok(storage),
+            Found::Missing => Err("This TV keeps no downloads".to_string()),
+        }
+    }
+
+    pub async fn remove_download(&self, title: &TitleKey) -> (bool, String) {
+        let sent = self
+            .client
+            .post(format!("{}/api/storage/remove", self.base))
+            .json(&json!({ "kind": title.kind, "key": title.key }))
+            .send()
+            .await;
+        let response = match sent {
+            Ok(response) => response,
+            Err(error) => return (false, format!("The TV is not answering: {error}")),
+        };
+        let text = response.text().await.unwrap_or_default();
+        match serde_json::from_str::<Answer>(&text) {
+            Ok(answer) => (answer.ok, answer.message),
+            Err(_) => (
+                false,
+                serde_json::from_str::<Problem>(&text).map_or(text, |problem| problem.error),
+            ),
+        }
     }
 }
 

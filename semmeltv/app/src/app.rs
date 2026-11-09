@@ -18,6 +18,7 @@ use crate::player::{Finish, Player};
 use crate::progress::{Position, Progress};
 use crate::seek::Direction;
 use crate::segments::Title;
+use crate::storage::{self, Keep};
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
@@ -96,6 +97,7 @@ pub struct Setup {
     pub meta: PathBuf,
     pub remote: Option<String>,
     pub store: Store,
+    pub storage: Option<storage::Cache>,
     pub cache: Cache,
     pub speech: Option<String>,
     pub wake_word: Option<voice::WakeWord>,
@@ -122,6 +124,8 @@ struct App {
     message_timer: Timer,
     voice_timer: Timer,
     store: Store,
+    storage: Option<storage::Cache>,
+    storage_stuck: bool,
     fetcher: Sender<Vec<PathBuf>>,
     lead: Option<PathBuf>,
     requested: Vec<PathBuf>,
@@ -150,6 +154,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         meta,
         remote,
         store,
+        storage,
         cache,
         speech,
         wake_word,
@@ -220,6 +225,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         message_timer: Timer::default(),
         voice_timer: Timer::default(),
         store,
+        storage,
+        storage_stuck: false,
         fetcher,
         lead: None,
         requested: Vec::new(),
@@ -242,6 +249,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     }));
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
+    app.borrow_mut().tend_storage();
 
     let input = Rc::downgrade(&app);
     ui.on_key(move |text| {
@@ -465,6 +473,7 @@ impl App {
                 let reconnected = online && !self.online;
                 self.online = online;
                 self.refresh_offline();
+                self.tend_storage();
                 if reconnected {
                     self.queue_downloads(true);
                 }
@@ -472,6 +481,7 @@ impl App {
             Change::Downloading(path) => {
                 self.downloading = path;
                 self.refresh_offline();
+                self.tend_storage();
             }
             Change::Library(result) if self.player.is_some() => self.deferred = Some(result),
             Change::Library(result) => self.reload(result),
@@ -645,13 +655,15 @@ impl App {
         });
         if let Some((key, position)) = show {
             self.progress.shows.insert(key, position);
-            self.save_progress();
         }
+        self.progress.played(path, watching::now());
+        self.save_progress();
     }
 
     fn record_place(&mut self) {
         if let (Some(player), Some(playing)) = (&self.player, &self.playing) {
             self.progress.record(&playing.file, player.place());
+            self.progress.played(&playing.file, watching::now());
             let library = self.nav.library();
             let joined = watching::record(
                 &mut self.progress,
@@ -806,6 +818,7 @@ impl App {
             }
             Request::Seek(seek) => return self.seek(seek),
             Request::Subtitles(change) => return self.change_subtitles(change),
+            Request::Storage(change) => return self.change_storage(change),
             Request::Listen => {
                 return match &self.voice {
                     Some(voice) => {
@@ -832,6 +845,115 @@ impl App {
         self.act(action);
         self.publish_playback();
         Outcome { message, ok }
+    }
+
+    fn cached_titles(&self, cache: &storage::Cache) -> Vec<storage::Cached> {
+        let activity = storage::Activity {
+            playing: self.playing.as_ref().map(|playing| playing.file.as_path()),
+            queued: &self.requested,
+        };
+        storage::titles(
+            &cache.library,
+            self.nav.library(),
+            &self.progress,
+            cache.scan(),
+            &activity,
+        )
+    }
+
+    fn tend_storage(&mut self) {
+        let Some(cache) = self.storage.clone() else {
+            return;
+        };
+        let disk = match cache.disk() {
+            Ok(disk) => disk,
+            Err(error) => return eprintln!("storage: {}: {error}", cache.data.display()),
+        };
+        let titles = self.cached_titles(&cache);
+        let used: u64 = titles.iter().map(|title| title.bytes).sum();
+        let excess = storage::excess(used, disk.free, cache.marks);
+        let chosen = storage::plan(&titles, used, disk.free, cache.marks);
+        let freeing: u64 = chosen.iter().map(|&index| titles[index].bytes).sum();
+        let now = watching::now();
+        let why = format!(
+            "the offline cache holds {} of {} with {} free on the disk",
+            storage::size(used),
+            storage::size(cache.marks.high),
+            storage::size(disk.free)
+        );
+        for &index in &chosen {
+            let title = &titles[index];
+            match cache.remove(&title.files) {
+                Ok(()) => eprintln!(
+                    "storage: removed {}, {}: {why}",
+                    title.describe(now),
+                    storage::size(title.bytes)
+                ),
+                Err(error) => eprintln!("storage: could not remove {}: {error}", title.describe(now)),
+            }
+        }
+        let stuck = freeing < excess;
+        if stuck && !self.storage_stuck {
+            eprintln!("storage: {why}, and every other title is kept");
+        }
+        self.storage_stuck = stuck;
+        if chosen.is_empty() {
+            self.shared.storage.set(storage::Report::new(disk, cache.marks, titles));
+        } else {
+            self.refresh_offline();
+            self.publish_storage();
+        }
+    }
+
+    fn publish_storage(&self) {
+        let Some(cache) = &self.storage else {
+            return;
+        };
+        match cache.disk() {
+            Ok(disk) => self
+                .shared
+                .storage
+                .set(storage::Report::new(disk, cache.marks, self.cached_titles(cache))),
+            Err(error) => eprintln!("storage: {}: {error}", cache.data.display()),
+        }
+    }
+
+    fn change_storage(&mut self, change: storage::Change) -> Outcome {
+        let refuse = |message: String| Outcome { message, ok: false };
+        let storage::Change::Remove(title) = change;
+        let Some(cache) = self.storage.clone() else {
+            return refuse("This TV keeps no downloads".to_string());
+        };
+        let titles = self.cached_titles(&cache);
+        let Some(cached) = titles.iter().find(|cached| cached.title == title) else {
+            return refuse("That title is not downloaded".to_string());
+        };
+        match cached.keep {
+            Some(Keep::Playing) => return refuse(format!("{} is playing", cached.name)),
+            Some(Keep::UpNext) => {
+                return refuse(format!(
+                    "{} is up next, so it would download again straight away",
+                    cached.name
+                ));
+            }
+            _ => {}
+        }
+        if let Err(error) = cache.remove(&cached.files) {
+            eprintln!(
+                "storage: could not remove {}: {error}",
+                cached.describe(watching::now())
+            );
+            return refuse(format!("Could not remove {}: {error}", cached.name));
+        }
+        eprintln!(
+            "storage: removed {}, {}: asked to from the web app",
+            cached.describe(watching::now()),
+            storage::size(cached.bytes)
+        );
+        let message = format!("Removed {}, {} freed", cached.name, storage::size(cached.bytes));
+        self.refresh_offline();
+        self.publish_storage();
+        Outcome { message, ok: true }
     }
 
     fn change_subtitles(&self, change: subtitles::Change) -> Outcome {

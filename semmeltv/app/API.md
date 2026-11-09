@@ -169,6 +169,35 @@ example `{ "message": "Subtitles: English", "ok": true }`, and the TV shows
 the same message on screen. They refuse with "Nothing is playing" or "No
 subtitles in this file".
 
+## Storage
+
+| Method | Path | Body |
+| --- | --- | --- |
+| GET | `/api/storage` | |
+| POST | `/api/storage/remove` | `{ "kind": "movie" \| "series" \| "other", "key": "dune-2021" }` |
+
+`GET /api/storage` answers what the offline cache holds, as of the app's last
+poll (every 30 s, and after each download or removal):
+
+    { "disk": { "total", "free" }, "used", "marks": { "high", "low", "floor" },
+      "titles": [ { "kind", "key", "name", "bytes", "complete", "total",
+                    "last_watched", "cached_at", "keep" } ],
+      "next": [ { "kind", "key" } ] }
+
+Sizes are bytes; `bytes` and `used` count the blocks the sparse cache files
+take on disk. `complete` of `total` is how many of the title's files are fully
+downloaded. `last_watched` and `cached_at` are Unix seconds, and `last_watched`
+is null for a title never played. `keep` says why automatic removal skips the
+title: `playing`, `watching` (in Currently watching), `up-next` (in the
+download queue) or `started` (a file has a resume point), or null. A file the
+library does not list is grouped by its folder as kind `other`, keyed by its
+path under the library. `next` is the order titles would be removed in. The
+status is 404 when the TV keeps no downloads.
+
+`POST /api/storage/remove` deletes a title's files from the cache, and answers
+like the other requests. It refuses a title that is playing or up next, since
+it would download again straight away.
+
 ## Event stream
 
 `GET /api/events` upgrades to a WebSocket that sends one JSON text message per

@@ -40,6 +40,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     <nav class="top-links">
                         link(href: "/subtitles", attrs: attributes! { cx => class="top-link" aria-label="Subtitle settings" }, playing::subtitles_icon())
                         link(href: "/controls", attrs: attributes! { cx => class="top-link" aria-label="Controls" }, playing::controls_icon())
+                        link(href: "/storage", attrs: attributes! { cx => class="top-link" aria-label="Storage" }, crate::storage::storage_icon())
                     </nav>
                     <div class="microphone" id="microphone" data-state="off">
                         <span class="microphone-note" id="microphone-note"></span>
