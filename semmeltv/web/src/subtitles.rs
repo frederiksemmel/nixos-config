@@ -8,7 +8,7 @@ use topcoat::view::{View, component, view};
 
 const OFF: i64 = -1;
 const SLOTS: [&str; 3] = ["Preferred language", "Second choice", "Third choice"];
-const LANGUAGES: [(&str, &str); 16] = [
+const LANGUAGES: &[(&str, &str)] = &[
     ("en", "English"),
     ("de", "German"),
     ("fr", "French"),
@@ -20,11 +20,31 @@ const LANGUAGES: [(&str, &str); 16] = [
     ("da", "Danish"),
     ("no", "Norwegian"),
     ("fi", "Finnish"),
+    ("is", "Icelandic"),
     ("pl", "Polish"),
+    ("cs", "Czech"),
+    ("sk", "Slovak"),
+    ("hu", "Hungarian"),
+    ("ro", "Romanian"),
+    ("bg", "Bulgarian"),
+    ("hr", "Croatian"),
+    ("sr", "Serbian"),
+    ("sl", "Slovenian"),
+    ("el", "Greek"),
+    ("tr", "Turkish"),
     ("ru", "Russian"),
+    ("uk", "Ukrainian"),
+    ("he", "Hebrew"),
+    ("ar", "Arabic"),
+    ("hi", "Hindi"),
+    ("th", "Thai"),
+    ("vi", "Vietnamese"),
+    ("id", "Indonesian"),
+    ("ms", "Malay"),
     ("ja", "Japanese"),
     ("ko", "Korean"),
     ("zh", "Chinese"),
+    ("ca", "Catalan"),
 ];
 
 fn change(name: &str, value: &str) -> Option<Value> {
@@ -125,7 +145,10 @@ fn track_name(track: &SubtitleTrack) -> String {
 }
 
 fn track_detail(track: &SubtitleTrack) -> Option<String> {
-    track.title.clone().filter(|title| *title != track.label)
+    track.title.clone().filter(|title| {
+        let said = title.to_ascii_lowercase();
+        *title != track.label && !(track.hearing_impaired && said == "sdh") && !(track.forced && said == "forced")
+    })
 }
 
 #[component]
@@ -209,7 +232,7 @@ async fn language_order(cx: &Cx, initial: String) -> Result<impl View> {
                         order.set(answer);
                     })>
                         <option value="" selected=(picked.is_empty())>(if slot == 0 { "Any" } else { "Nothing else" })</option>
-                        for (code, name) in LANGUAGES {
+                        for &(code, name) in LANGUAGES {
                             <option value=(code) selected=(picked == code)>(name)</option>
                         }
                     </select>

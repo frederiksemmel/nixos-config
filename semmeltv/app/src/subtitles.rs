@@ -13,7 +13,7 @@ use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
 pub const OBSERVED: [&str; 3] = ["track-list", "sid", "sub-visibility"];
-const LANGUAGES: [(&[&str], &str); 16] = [
+const LANGUAGES: &[(&[&str], &str)] = &[
     (&["de", "ger", "deu"], "German"),
     (&["en", "eng"], "English"),
     (&["fr", "fre", "fra"], "French"),
@@ -23,13 +23,33 @@ const LANGUAGES: [(&[&str], &str); 16] = [
     (&["pt", "por"], "Portuguese"),
     (&["sv", "swe"], "Swedish"),
     (&["da", "dan"], "Danish"),
-    (&["no", "nor", "nob"], "Norwegian"),
+    (&["no", "nor", "nob", "nb", "nn", "nno"], "Norwegian"),
     (&["fi", "fin"], "Finnish"),
+    (&["is", "ice", "isl"], "Icelandic"),
     (&["pl", "pol"], "Polish"),
+    (&["cs", "cze", "ces"], "Czech"),
+    (&["sk", "slo", "slk"], "Slovak"),
+    (&["hu", "hun"], "Hungarian"),
+    (&["ro", "rum", "ron"], "Romanian"),
+    (&["bg", "bul"], "Bulgarian"),
+    (&["hr", "hrv"], "Croatian"),
+    (&["sr", "srp"], "Serbian"),
+    (&["sl", "slv"], "Slovenian"),
+    (&["el", "gre", "ell"], "Greek"),
+    (&["tr", "tur"], "Turkish"),
     (&["ru", "rus"], "Russian"),
+    (&["uk", "ukr"], "Ukrainian"),
+    (&["he", "heb"], "Hebrew"),
+    (&["ar", "ara"], "Arabic"),
+    (&["hi", "hin"], "Hindi"),
+    (&["th", "tha"], "Thai"),
+    (&["vi", "vie"], "Vietnamese"),
+    (&["id", "ind"], "Indonesian"),
+    (&["ms", "may", "msa"], "Malay"),
     (&["ja", "jpn"], "Japanese"),
     (&["ko", "kor"], "Korean"),
     (&["zh", "chi", "zho"], "Chinese"),
+    (&["ca", "cat"], "Catalan"),
 ];
 const MOST_LANGUAGES: usize = 8;
 const PER_FILE_STYLE: [&str; 3] = ["sub-pos", "sub-scale", "sub-ass-override"];
@@ -169,8 +189,12 @@ pub struct Track {
     pub external: bool,
 }
 
+fn primary(code: &str) -> String {
+    code.split(['-', '_']).next().unwrap_or_default().to_ascii_lowercase()
+}
+
 fn language_name(code: &str) -> Option<&'static str> {
-    let code = code.to_ascii_lowercase();
+    let code = primary(code);
     LANGUAGES
         .iter()
         .find(|(codes, _)| codes.contains(&code.as_str()))
@@ -178,8 +202,7 @@ fn language_name(code: &str) -> Option<&'static str> {
 }
 
 fn same_language(code: &str, wanted: &str) -> bool {
-    let code = code.to_ascii_lowercase();
-    code == wanted || language_name(&code).is_some_and(|name| language_name(wanted) == Some(name))
+    primary(code) == primary(wanted) || language_name(code).is_some_and(|name| language_name(wanted) == Some(name))
 }
 
 impl Track {
@@ -530,6 +553,27 @@ mod tests {
                 .label,
             "German"
         );
+    }
+
+    #[test]
+    fn region_tags_name_and_match_their_language() {
+        let maul = json!([
+            { "id": 1, "type": "sub", "lang": "en-US" },
+            { "id": 2, "type": "sub", "lang": "en-US", "title": "SDH", "hearing-impaired": true },
+            { "id": 3, "type": "sub", "lang": "zh-Hant-HK", "title": "Hong Kong" },
+            { "id": 7, "type": "sub", "lang": "de-DE" },
+            { "id": 10, "type": "sub", "lang": "es-419", "title": "Latin America" },
+            { "id": 13, "type": "sub", "lang": "hu-HU" },
+        ]);
+        let playing = playing(maul, None, false);
+        let labels: Vec<_> = playing.tracks.iter().map(|track| track.label.as_str()).collect();
+        assert_eq!(
+            labels,
+            ["English", "English", "Chinese", "German", "Spanish", "Hungarian"]
+        );
+        assert_eq!(playing.preferred(&["de".to_string(), "en".to_string()]), Some(7));
+        assert_eq!(playing.preferred(&["spa".to_string()]), Some(10));
+        assert_eq!(playing.preferred(&["en".to_string()]), Some(1));
     }
 
     #[test]
