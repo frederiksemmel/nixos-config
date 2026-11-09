@@ -195,8 +195,14 @@ Continuing plays the next episode once the last one ended. Titles match the
 library loosely, so transcription slips are forgiven; translated titles are not
 known. Download requests are understood but not carried out yet.
 
-The wake word, any colour key on the remote, or V on a keyboard starts
-listening, during a video too. While it listens or works out what was said,
+The wake word "Stevie the TV", any colour key on the remote, or V on a
+keyboard starts listening, during a video too. The wake word is detected a
+few hundred milliseconds after it ends, so the recording begins with the last
+0.6 seconds of audio. That keeps a command said in the same breath ("Stevie
+the TV, play Chernobyl"), and a leading "TV", "the TV" or "Stevie the TV" in
+what was heard is dropped. The pre-roll doesn't count as speech, so after the
+wake word alone it still waits for the command. The model and how it was
+trained are in [../wake](../wake/README.md). While it listens or works out what was said,
 Back or Exit on the remote, or Esc or Backspace, cancels it: the panel goes,
 the video is unmuted, and nothing is done with what was heard. Otherwise they
 go back as usual. A panel above the details line shows Listening…, with a pulsing
