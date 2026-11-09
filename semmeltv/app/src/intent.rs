@@ -130,6 +130,31 @@ const OFF_WORDS: [&str; 7] = [
     "apagar",
 ];
 const SWITCH_WORDS: [&str; 8] = ["turn", "switch", "schalte", "schalt", "mach", "mache", "den", "put"];
+const SEMMELTV: &str = "semmeltv";
+const INPUT_WORDS: [&str; 22] = [
+    "change",
+    "go",
+    "input",
+    "source",
+    "hdmi",
+    "back",
+    "select",
+    "open",
+    "auf",
+    "um",
+    "umschalten",
+    "zu",
+    "zum",
+    "zuruck",
+    "wechsel",
+    "wechsle",
+    "wechseln",
+    "eingang",
+    "quelle",
+    "zeig",
+    "zeige",
+    "cambia",
+];
 const FILLERS: [&str; 60] = [
     "a", "an", "and", "at", "bitte", "can", "con", "could", "das", "de", "del", "der", "die", "du", "el", "en",
     "favor", "from", "gerne", "hey", "i", "ich", "kannst", "la", "las", "lass", "lets", "los", "mal", "me", "mir",
@@ -183,6 +208,8 @@ const MIN_CONTAINED_LENGTH: usize = 3;
 
 static SEASON_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^s(\d{1,2})(?:e(\d{1,3}))?$").unwrap());
 static ORDINAL_DIGITS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{1,2})(?:st|nd|rd|th)$").unwrap());
+static SEMMELTV_SPOKEN: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b(?:s[aeiouy]{1,2}mm?[aeiouy]{1,2}ll?|simple) ?tv\b").unwrap());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 enum Verb {
@@ -222,6 +249,7 @@ pub enum Control {
     Unmute,
     TvOn,
     TvOff,
+    ShowSemmelTv,
 }
 
 pub fn understand(transcript: &str, library: &Library, progress: &Progress) -> Action {
@@ -261,10 +289,14 @@ fn interpret(transcript: &str, library: &Library, progress: &Progress) -> Action
 
 fn control(transcript: &str) -> Option<Control> {
     let folded = library::normalize(&deunicode(transcript)).replace("t v", "tv");
+    let folded = SEMMELTV_SPOKEN.replace_all(&folded, SEMMELTV);
     let tokens: Vec<&str> = folded
         .split_whitespace()
         .filter(|token| !FILLERS.contains(token))
         .collect();
+    if tokens.contains(&SEMMELTV) {
+        return show_semmeltv(&tokens);
+    }
     if tokens.iter().any(|token| TV_WORDS.contains(token)) {
         return tv_power(&tokens);
     }
@@ -301,6 +333,19 @@ fn tv_power(tokens: &[&str]) -> Option<Control> {
         }
     }
     Some(if off { Control::TvOff } else { Control::TvOn })
+}
+
+fn show_semmeltv(tokens: &[&str]) -> Option<Control> {
+    tokens
+        .iter()
+        .all(|token| {
+            *token == SEMMELTV
+                || INPUT_WORDS.contains(token)
+                || SWITCH_WORDS.contains(token)
+                || ON_WORDS.contains(token)
+                || TV_WORDS.contains(token)
+        })
+        .then_some(Control::ShowSemmelTv)
 }
 
 #[derive(Clone, Copy)]
@@ -917,6 +962,39 @@ mod tests {
         for (text, expected) in cases {
             let understood = understand(text, &library(), &Progress::default());
             assert_eq!(understood, Action::Control(expected), "{text}");
+        }
+    }
+
+    #[test]
+    fn switching_to_semmeltv_is_understood_however_it_is_transcribed() {
+        for text in [
+            "Switch to SemmelTV",
+            "Switch to Semmel TV.",
+            "SemmelTV input",
+            "Semmel-TV Eingang",
+            "Auf SemmelTV umschalten",
+            "Schalte auf Semmel TV um",
+            "Wechsel zu SemmelTV",
+            "Switch the TV to SimilTV",
+            "simil tv",
+            "Simmel TV, please.",
+            "Go to semel tv",
+            "Sammel T.V.",
+            "Samuel TV input",
+            "Simple TV",
+            "Turn on SemmelTV",
+            "Stevie the TV, switch to SemmelTV.",
+        ] {
+            let understood = understand(text, &library(), &Progress::default());
+            assert_eq!(understood, Action::Control(Control::ShowSemmelTv), "{text}");
+        }
+    }
+
+    #[test]
+    fn semmeltv_next_to_other_words_is_not_an_input_switch() {
+        for text in ["SemmelTV aus", "Switch SemmelTV off", "Play Outlander on SemmelTV"] {
+            let understood = understand(text, &library(), &Progress::default());
+            assert_ne!(understood, Action::Control(Control::ShowSemmelTv), "{text}");
         }
     }
 

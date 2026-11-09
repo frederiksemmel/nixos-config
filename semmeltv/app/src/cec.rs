@@ -8,6 +8,7 @@ use std::fs;
 use std::io;
 use std::mem;
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -17,6 +18,11 @@ const POWER_ON: u8 = 0;
 const REPEAT_WINDOW: Duration = Duration::from_millis(600);
 const MIN_UNPLUGGED: Duration = Duration::from_secs(10);
 const COLD_BOOT_UPTIME: Duration = Duration::from_secs(180);
+const POWER_ON_WAIT: Duration = Duration::from_secs(15);
+const POWER_POLL: Duration = Duration::from_millis(500);
+const HOLD_INPUT: Duration = Duration::from_secs(5);
+
+static INPUT_HELD_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 
 pub fn spawn(remote: Remote) {
     for path in adapters(Path::new("/dev")) {
@@ -29,21 +35,70 @@ pub fn spawn(remote: Remote) {
     }
 }
 
-pub fn switch_tv(on: bool) -> io::Result<()> {
+pub fn show_semmeltv() -> io::Result<()> {
+    each_adapter(show_on)
+}
+
+pub fn turn_tv_off() -> io::Result<()> {
+    each_adapter(|_, device| device.transmit(own_logical_address(&device)?, CecLogicalAddress::Tv, CecOpcode::Standby))
+}
+
+fn each_adapter(send: impl Fn(&Path, CecDevice) -> io::Result<()>) -> io::Result<()> {
     let mut result = Err(io::Error::other("no HDMI-CEC adapter is connected"));
     for path in adapters(Path::new("/dev")) {
-        let sent = CecDevice::open(&path).and_then(|device| {
-            if on {
-                turn_on_tv(&device).and_then(|()| announce(&device))
-            } else {
-                device.transmit(own_logical_address(&device)?, CecLogicalAddress::Tv, CecOpcode::Standby)
-            }
-        });
+        let sent = CecDevice::open(&path).and_then(|device| send(&path, device));
         if result.is_err() {
             result = sent;
         }
     }
     result
+}
+
+fn show_on(path: &Path, device: CecDevice) -> io::Result<()> {
+    turn_on_tv(&device)?;
+    hold_input(Instant::now() + POWER_ON_WAIT + HOLD_INPUT);
+    let path = path.to_path_buf();
+    thread::spawn(move || {
+        wait_for_power_on(&device);
+        log_failure(&path, "Active Source", announce(&device));
+        hold_input(Instant::now() + HOLD_INPUT);
+    });
+    Ok(())
+}
+
+fn wait_for_power_on(device: &CecDevice) {
+    let deadline = Instant::now() + POWER_ON_WAIT;
+    while Instant::now() < deadline {
+        if tv_power(device).is_ok_and(|status| status == POWER_ON) {
+            return;
+        }
+        thread::sleep(POWER_POLL);
+    }
+}
+
+fn tv_power(device: &CecDevice) -> io::Result<u8> {
+    let reply = device.request_data(
+        own_logical_address(device)?,
+        CecLogicalAddress::Tv,
+        CecOpcode::GiveDevicePowerStatus,
+        &[],
+        CecOpcode::ReportPowerStatus,
+    )?;
+    reply
+        .first()
+        .copied()
+        .ok_or_else(|| io::Error::other("empty power status"))
+}
+
+fn hold_input(until: Instant) {
+    *INPUT_HELD_UNTIL.lock().unwrap_or_else(PoisonError::into_inner) = Some(until);
+}
+
+fn holding_input(now: Instant) -> bool {
+    INPUT_HELD_UNTIL
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .is_some_and(|until| now < until)
 }
 
 fn adapters(dev: &Path) -> Vec<PathBuf> {
@@ -77,10 +132,11 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
                 match wake.link_changed(plugged, !state.log_addr_mask.is_empty(), Instant::now()) {
                     Greeting::Silent => {}
                     Greeting::Announce => log_failure(path, "Active Source", announce(&device)),
-                    Greeting::Wake => {
-                        log_failure(path, "Image View On", turn_on_tv(&device));
-                        log_failure(path, "Active Source", announce(&device));
-                    }
+                    Greeting::Wake => log_failure(
+                        path,
+                        "switch to SemmelTV",
+                        CecDevice::open(path).and_then(|device| show_on(path, device)),
+                    ),
                 }
             }
         }
@@ -103,6 +159,13 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
                 }
                 Reaction::Release => keys.release(),
                 Reaction::Announce => log_failure(path, "Active Source", announce(&device)),
+                Reaction::Stop if holding_input(Instant::now()) => {
+                    eprintln!(
+                        "{}: {opcode:?} while switching to SemmelTV, claiming the input back",
+                        path.display()
+                    );
+                    log_failure(path, "Active Source", announce(&device));
+                }
                 Reaction::Stop => {
                     eprintln!(
                         "{}: {opcode:?} moved the TV to another input, stopping playback",

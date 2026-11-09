@@ -145,6 +145,16 @@ seconds. Restarting the app never wakes it, and neither does a shorter hot-plug
 pulse. Once the TV sends Standby, plugging in leaves it off until the TV shows it
 is on again. A cold boot wakes it regardless.
 
+Waking the TV, by voice or on plug-in, sends Image View On, asks the TV for its
+power status every half second until it reports on (at most 15 seconds), then
+claims the input with Active Source. Until 5 seconds after that, the app takes
+the input back if the TV routes elsewhere while it starts up.
+
+Switching the TV to another input stops playback and closes the player, with the
+position saved, the same as Stop. The app takes a Routing Change or Set Stream
+Path to another address, or an Active Source from another device, as that
+switch.
+
 ## Playing a video
 
 The remote and the keyboard do the same thing in mpv. Left and Right skip 10
@@ -194,6 +204,11 @@ German or Spanish:
 Continuing plays the next episode once the last one ended. Titles match the
 library loosely, so transcription slips are forgiven; translated titles are not
 known. Download requests are understood but not carried out yet.
+
+"Turn on the TV" and "switch to SemmelTV" ("auf SemmelTV umschalten",
+"SemmelTV input") both end with the TV on and showing SemmelTV. The name is
+recognised however speech recognition spells it: Semmel TV, SimilTV, Simmel TV,
+Semel TV, Samuel TV, Simple TV and the like.
 
 The wake word "Stevie the TV", any colour key on the remote, or V on a
 keyboard starts listening, during a video too. The wake word is detected a
