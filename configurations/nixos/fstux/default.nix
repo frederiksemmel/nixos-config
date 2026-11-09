@@ -224,10 +224,25 @@ in
   # hardware.tuxedo-control-center.enable = true;
   # The PixArt touchpad (UNIW0001, 093A:0255) sometimes NAKs the power-on
   # command on resume from s2idle and stays dead until i2c_hid_acpi is reloaded
-  # ("failed to change power setting", resume error -121). The driver is
-  # unloaded for every sleep, so each wake probes the touchpad from scratch.
-  powerManagement.powerDownCommands = "${pkgs.kmod}/bin/modprobe -r i2c_hid_acpi";
-  powerManagement.resumeCommands = "${pkgs.kmod}/bin/modprobe i2c_hid_acpi";
+  # ("failed to resume async: error -121"), about once in 200 wakes. After every
+  # wake the kernel log is checked for that error; a hit reloads the driver and
+  # raises a notification. Once a kernel goes months without one
+  # (`journalctl -u sleep-actions -g touchpad`), this block can go.
+  powerManagement.resumeCommands = ''
+    if ${pkgs.util-linux}/bin/dmesg | ${pkgs.gawk}/bin/awk '
+      /PM: suspend entry/ { failed = 0 }
+      /i2c-UNIW0001:00: PM: failed to resume/ { failed = 1 }
+      END { exit !failed }
+    '; then
+      kernel=$(${pkgs.coreutils}/bin/uname -r)
+      echo "touchpad failed to resume on kernel $kernel, reloading i2c_hid_acpi"
+      ${pkgs.kmod}/bin/modprobe -r i2c_hid_acpi
+      ${pkgs.kmod}/bin/modprobe i2c_hid_acpi
+      ${config.systemd.package}/bin/systemd-run --machine=frederik@ --user --quiet --collect \
+        ${pkgs.libnotify}/bin/notify-send -a touchpad -i input-touchpad -u critical \
+        "Touchpad resume bug" "Still present on kernel $kernel; the driver was reloaded." || true
+    fi
+  '';
   hardware.bluetooth = {
     enable = true;
     settings.General.FastConnectable = true;
