@@ -437,6 +437,8 @@ pub struct State {
     pub paused: bool,
     pub muted: bool,
     pub speed: f64,
+    pub subtitle: Option<i64>,
+    pub audio: Option<i64>,
     pub started: bool,
     pub jump: Option<i32>,
 }
@@ -513,12 +515,15 @@ impl Player {
 
     pub fn state(&self) -> State {
         let playback = self.playback.lock().unwrap();
+        let (subtitle, audio) = playback.subtitles.chosen();
         State {
             position: playback.scrub.target().unwrap_or(playback.position),
             duration: playback.duration,
             paused: playback.paused,
             muted: playback.muted,
             speed: playback.speed,
+            subtitle,
+            audio,
             started: playback.started,
             jump: playback.scrub.jump_shown(Instant::now()),
         }

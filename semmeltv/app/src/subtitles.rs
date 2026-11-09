@@ -417,6 +417,12 @@ impl Subtitles {
         self.state.lock().unwrap().playing.clone()
     }
 
+    pub fn chosen(&self) -> (Option<i64>, Option<i64>) {
+        self.playing().map_or((None, None), |playing| {
+            (playing.track.filter(|_| playing.visible), playing.audio)
+        })
+    }
+
     fn save(&self, settings: Settings) -> io::Result<()> {
         if let Some(path) = &self.path {
             let temporary = path.with_extension("json.tmp");
@@ -771,6 +777,10 @@ mod tests {
         subtitles.observe(Observed::Track(Some(1)));
         subtitles.observe(Observed::Visible(true));
         assert_eq!(subtitles.change(Change::Toggle).message, "Subtitles off");
+        assert_eq!(subtitles.chosen(), (Some(1), None));
+        subtitles.observe(Observed::Visible(false));
+        subtitles.observe(Observed::Audio(Some(1)));
+        assert_eq!(subtitles.chosen(), (None, Some(1)));
         subtitles.stopped();
         assert_eq!(subtitles.playing(), None);
     }

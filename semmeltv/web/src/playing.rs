@@ -136,6 +136,8 @@ struct Look {
     line: String,
     paused: bool,
     speed: String,
+    subtitle: Option<i64>,
+    audio: Option<i64>,
 }
 
 fn look(now: Option<&NowPlaying>) -> Option<Look> {
@@ -145,7 +147,13 @@ fn look(now: Option<&NowPlaying>) -> Option<Look> {
         line: line(now),
         paused: now.paused || now.loading,
         speed: speed_value(now.speed),
+        subtitle: now.subtitle,
+        audio: now.audio,
     })
+}
+
+fn track_state(chosen: Option<i64>) -> String {
+    chosen.map_or_else(|| "off".to_string(), |id| id.to_string())
 }
 
 fn speed_value(speed: f64) -> String {
@@ -227,20 +235,20 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                             </div>
                             <div class="pick">
                                 <h3>"Speed"</h3>
-                                <div class="choices speeds">
+                                <div class="choices speeds" data-state="speed">
                                     for &(speed, label) in &SPEEDS {
-                                        <button type="button" class="choice" data-speed=(speed_value(speed))
+                                        <button type="button" class="choice" data-value=(speed_value(speed))
                                             data-post="/api/playback/speed" data-body=(format!("{{\"speed\":{speed}}}"))>(label)</button>
                                     }
                                 </div>
                             </div>
                             <div class="pick" data-tracks="subtitles" hidden=(true)>
                                 <h3>"Subtitles"</h3>
-                                <div class="choices"></div>
+                                <div class="choices" data-state="subtitle"></div>
                             </div>
                             <div class="pick" data-tracks="audio" hidden=(true)>
                                 <h3>"Audio"</h3>
-                                <div class="choices"></div>
+                                <div class="choices" data-state="audio"></div>
                             </div>
                             <p class="answer" data-said="true" aria-live="polite"></p>
                             <button type="button" class="stop" data-post="/api/playback/stop">
@@ -337,7 +345,8 @@ async fn bar_info(cx: &Cx) -> Result<impl View> {
                             <strong>(now.title.as_str())</strong>
                             <span>(line(&now))</span>
                         </span>
-                        <i class=(now_class(&now)) data-key=(key(&now)) data-speed=(speed_value(now.speed)) hidden=(true)></i>
+                        <i class=(now_class(&now)) data-key=(key(&now)) data-speed=(speed_value(now.speed))
+                            data-subtitle=(track_state(now.subtitle)) data-audio=(track_state(now.audio)) hidden=(true)></i>
                     }?
                 }
                 None => emit! {

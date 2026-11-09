@@ -1,7 +1,7 @@
 const api = document.documentElement.dataset.api || "";
 const root = document.documentElement;
 const CLOSE_DRAG = 90;
-const SETTLE = 800;
+const UNCONFIRMED = 10000;
 
 let returnFocus = null;
 let shownKey = null;
@@ -24,7 +24,7 @@ function setOpen(open) {
     element.querySelector(".sheet-scroll").scrollTop = 0;
     element.querySelector(".sheet-close").focus({ preventScroll: true });
     refreshTracks();
-    markSpeed();
+    markChoices();
   } else if (returnFocus && document.contains(returnFocus)) {
     returnFocus.focus({ preventScroll: true });
   }
@@ -76,6 +76,7 @@ async function post(button) {
   const said = answerFor(button);
   if (button.dataset.pending) say(said, button.dataset.pending, true);
   button.setAttribute("aria-busy", "true");
+  let ok = false;
   try {
     const response = await fetch(`${api}${button.dataset.post}`, {
       method: "POST",
@@ -83,19 +84,22 @@ async function post(button) {
       body: button.dataset.body || "{}",
     });
     const answer = await response.json().catch(() => ({}));
-    say(said, answer.message || (response.ok ? "" : `The TV answered ${response.status}`), response.ok && answer.ok !== false);
+    ok = response.ok && answer.ok !== false;
+    say(said, answer.message || (response.ok ? "" : `The TV answered ${response.status}`), ok);
   } catch {
     say(said, "The TV is not answering", false);
   } finally {
     button.removeAttribute("aria-busy");
   }
-  if (button.dataset.after === "tracks") setTimeout(refreshTracks, SETTLE);
+  if (!ok) button.classList.remove("pending");
 }
 
 function choose(button) {
   const list = button.closest(".choices");
   if (!list) return;
-  for (const other of list.querySelectorAll(".choice")) other.setAttribute("aria-pressed", String(other === button));
+  for (const other of list.querySelectorAll(".choice")) other.classList.toggle("pending", other === button);
+  setTimeout(() => button.classList.remove("pending"), UNCONFIRMED);
+  markChoices();
 }
 
 document.addEventListener("click", (event) => {
@@ -151,15 +155,14 @@ function trackNames(tracks) {
   });
 }
 
-function choice(label, pressed, path, body) {
+function choice(label, track, path) {
   const button = document.createElement("button");
   button.type = "button";
   button.className = "choice";
   button.textContent = label;
-  button.setAttribute("aria-pressed", String(pressed));
+  button.dataset.value = track === null ? "off" : String(track);
   button.dataset.post = path;
-  button.dataset.body = JSON.stringify(body);
-  button.dataset.after = "tracks";
+  button.dataset.body = JSON.stringify({ track });
   return button;
 }
 
@@ -181,28 +184,29 @@ async function refreshTracks() {
   const subtitleNames = playing ? trackNames(playing.tracks) : [];
   const subtitles = playing && playing.tracks.length > 0
     ? [
-        choice("Off", !(playing.visible && playing.track !== null), "/api/subtitles/track", { track: null }),
-        ...playing.tracks.map((track, index) =>
-          choice(subtitleNames[index], playing.visible && playing.track === track.id, "/api/subtitles/track", { track: track.id }),
-        ),
+        choice("Off", null, "/api/subtitles/track"),
+        ...playing.tracks.map((track, index) => choice(subtitleNames[index], track.id, "/api/subtitles/track")),
       ]
     : [];
   const audioTracks = (playing && playing.audio_tracks) || [];
   const audioNames = trackNames(audioTracks);
   const audio = audioTracks.length > 1
-    ? audioTracks.map((track, index) =>
-        choice(audioNames[index], playing.audio === track.id, "/api/audio/track", { track: track.id }),
-      )
+    ? audioTracks.map((track, index) => choice(audioNames[index], track.id, "/api/audio/track"))
     : [];
   fill("subtitles", subtitles);
   fill("audio", audio);
+  markChoices();
 }
 
-function markSpeed() {
+function markChoices() {
   const state = document.querySelector(".now-state");
-  const speed = state ? state.dataset.speed : null;
-  for (const button of document.querySelectorAll(".choice[data-speed]")) {
-    button.setAttribute("aria-pressed", String(button.dataset.speed === speed));
+  for (const list of document.querySelectorAll(".choices[data-state]")) {
+    const value = state ? state.dataset[list.dataset.state] : null;
+    for (const button of list.querySelectorAll(".choice")) {
+      const chosen = button.dataset.value === value;
+      button.setAttribute("aria-pressed", String(chosen));
+      if (chosen) button.classList.remove("pending");
+    }
   }
 }
 
@@ -213,7 +217,7 @@ new MutationObserver(() => {
     shownKey = key;
     if (isOpen()) refreshTracks();
   }
-  markSpeed();
+  markChoices();
 }).observe(document.body, { childList: true, subtree: true });
 
 function dragTo(offset) {
@@ -250,4 +254,4 @@ document.addEventListener("pointerup", endDrag);
 document.addEventListener("pointercancel", endDrag);
 
 if (history.state && history.state.sheet) setOpen(true);
-markSpeed();
+markChoices();

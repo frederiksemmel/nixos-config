@@ -1087,6 +1087,8 @@ impl App {
                     paused: state.paused,
                     muted: state.muted,
                     speed: state.speed,
+                    subtitle: state.subtitle,
+                    audio: state.audio,
                     loading: !state.started,
                     jump: state.jump,
                     ..base.clone()

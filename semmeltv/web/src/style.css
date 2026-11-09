@@ -826,6 +826,11 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
 }
 
 .choice[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #1a1406; }
+.choice.pending { border-color: var(--accent); color: var(--accent); animation: pulse 0.8s infinite alternate; }
+
+@media (prefers-reduced-motion: reduce) {
+  .choice.pending { animation: none; }
+}
 .choice:active { transform: scale(0.96); }
 .sheet-playback > .answer { margin: -8px 0 0; }
 
