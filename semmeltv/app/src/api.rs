@@ -5,6 +5,7 @@ use crate::heatmap;
 use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::progress::Progress;
+use crate::seek::Direction;
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
@@ -52,6 +53,7 @@ pub enum Request {
 pub enum Seek {
     To(f64),
     By(f64),
+    Step(Direction),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -176,6 +178,7 @@ fn router(api: Api) -> Router {
         .route("/api/listen", post(listen))
         .route("/api/playback", get(playback))
         .route("/api/playback/seek", post(seek))
+        .route("/api/playback/skip", post(skip))
         .route("/api/playback/{control}", post(control))
         .route("/api/tv/{control}", post(tv))
         .route("/api/events", get(events))
@@ -671,6 +674,15 @@ async fn seek(State(api): State<Api>, Json(body): Json<SeekBody>) -> Response {
     ask(&api, Request::Seek(seek)).await
 }
 
+#[derive(Deserialize)]
+struct SkipBody {
+    direction: Direction,
+}
+
+async fn skip(State(api): State<Api>, Json(body): Json<SkipBody>) -> Response {
+    ask(&api, Request::Seek(Seek::Step(body.direction))).await
+}
+
 async fn ask(api: &Api, request: Request) -> Response {
     ask_tv(&api.tv, request).await
 }
@@ -987,6 +999,9 @@ mod tests {
         assert_eq!(server.asked.recv().unwrap(), "Control(Pause)");
         assert_eq!(post(&server, "/api/playback/seek", json!({ "by": -30.0 })).0, 200);
         assert_eq!(server.asked.recv().unwrap(), "Seek(By(-30.0))");
+        assert_eq!(post(&server, "/api/playback/skip", json!({ "direction": "back" })).0, 200);
+        assert_eq!(server.asked.recv().unwrap(), "Seek(Step(Back))");
+        assert_eq!(post(&server, "/api/playback/skip", json!({ "direction": "up" })).0, 422);
         assert_eq!(post(&server, "/api/playback/dance", json!({})).0, 404);
         for (name, control) in [("on", "TvOn"), ("off", "TvOff"), ("semmeltv", "ShowSemmelTv")] {
             assert_eq!(post(&server, &format!("/api/tv/{name}"), json!({})).0, 200, "{name}");

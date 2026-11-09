@@ -42,6 +42,7 @@ pub struct NowPlaying {
     pub paused: bool,
     pub muted: bool,
     pub loading: bool,
+    pub jump: Option<i32>,
 }
 
 impl NowPlaying {

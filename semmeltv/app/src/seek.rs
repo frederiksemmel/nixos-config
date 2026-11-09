@@ -1,3 +1,4 @@
+use serde::Deserialize;
 use std::time::{Duration, Instant};
 
 const STEPS: [i32; 6] = [10, 10, 20, 30, 60, 120];
@@ -7,7 +8,8 @@ const SEND_EVERY: Duration = Duration::from_millis(250);
 const SETTLE: Duration = Duration::from_millis(600);
 const END_MARGIN: f64 = 5.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Direction {
     Back,
     Forward,
@@ -127,6 +129,14 @@ impl Scrub {
         }
         self.sent = Some((order, now));
         Some(order)
+    }
+}
+
+pub fn within(to: f64, duration: f64) -> f64 {
+    if duration > 0.0 {
+        to.clamp(0.0, (duration - END_MARGIN).max(0.0))
+    } else {
+        to.max(0.0)
     }
 }
 
@@ -292,6 +302,14 @@ mod tests {
     #[test]
     fn a_forward_seek_never_moves_back_from_the_last_seconds() {
         assert_eq!(land(FILM - 2.0, 10, FILM), FILM - 2.0);
+    }
+
+    #[test]
+    fn a_seek_to_a_time_stops_just_before_the_end() {
+        assert_eq!(within(FILM, FILM), FILM - END_MARGIN);
+        assert_eq!(within(-3.0, FILM), 0.0);
+        assert_eq!(within(2.0, 4.0), 0.0);
+        assert_eq!(within(700.0, 0.0), 700.0);
     }
 
     #[test]

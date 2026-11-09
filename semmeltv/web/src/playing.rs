@@ -2,11 +2,14 @@ use crate::api::{Api, NowPlaying, Pick, Voice};
 use crate::live::{Live, VoiceLog};
 use std::time::Duration;
 use topcoat::Result;
+use topcoat::asset::{Asset, asset};
 use topcoat::context::{Cx, app_context};
 use topcoat::runtime::{connected, link, procedure, shard};
 use topcoat::view::{View, attributes, component, emit, live, view};
 
 const SETTLE: Duration = Duration::from_secs(4);
+const SCRUB: Asset = asset!("./scrub.js");
+const DIRECTIONS: [&str; 2] = ["back", "forward"];
 const ALLOWED_CONTROLS: [&str; 4] = ["pause", "resume", "toggle", "stop"];
 const LONGEST_COMMAND: usize = 200;
 
@@ -51,6 +54,14 @@ pub async fn seek(cx: &Cx, seconds: i32) -> Result<String> {
 }
 
 #[procedure]
+pub async fn skip(cx: &Cx, direction: String) -> Result<String> {
+    if !DIRECTIONS.contains(&direction.as_str()) {
+        return Ok(format!("No such direction: {direction}"));
+    }
+    Ok(app_context::<Api>(cx).skip(&direction).await)
+}
+
+#[procedure]
 pub async fn tell(cx: &Cx, text: String) -> Result<String> {
     let text: String = text.chars().take(LONGEST_COMMAND).collect();
     Ok(app_context::<Api>(cx).command(&text).await)
@@ -63,6 +74,10 @@ pub fn clock(seconds: f64) -> String {
         0 => format!("{minutes}:{seconds:02}"),
         _ => format!("{hours}:{minutes:02}:{seconds:02}"),
     }
+}
+
+fn left(now: &NowPlaying) -> String {
+    format!("-{}", clock(now.duration - now.position))
 }
 
 fn percent(now: &NowPlaying) -> f64 {
@@ -106,20 +121,24 @@ pub async fn controls_icon() -> Result<impl View> {
 pub async fn now_playing(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <section class="playing" aria-label="Now playing">
-            <div class="playing-track">track()</div>
+            <div class="scrub" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0">track()</div>
             <div class="playing-row">
                 <div class="playing-info">info()</div>
                 <div class="playing-controls">
-                    <button type="button" aria-label="Back 30 seconds" @click=$(async |_e| { seek(-30i32).await; })>
+                    <button type="button" class="skip" data-skip="back" aria-label="Skip back"
+                        @click=$(async |_e| { skip("back".to_owned()).await; })>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 5 12l6 6M19 6l-6 6 6 6"></path></svg>
+                        <span class="skip-amount" aria-hidden="true"></span>
                     </button>
                     <button type="button" class="playing-toggle" aria-label="Play or pause"
                         @click=$(async |_e| { control("toggle".to_owned()).await; })>
                         <svg class="when-paused" viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M7 4.5v15l12.5-7.5z"></path></svg>
                         <svg class="when-playing" viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M6.5 4.5h4v15h-4zM13.5 4.5h4v15h-4z"></path></svg>
                     </button>
-                    <button type="button" aria-label="Forward 30 seconds" @click=$(async |_e| { seek(30i32).await; })>
+                    <button type="button" class="skip" data-skip="forward" aria-label="Skip forward"
+                        @click=$(async |_e| { skip("forward".to_owned()).await; })>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m13 6 6 6-6 6M5 6l6 6-6 6"></path></svg>
+                        <span class="skip-amount" aria-hidden="true"></span>
                     </button>
                     <button type="button" aria-label="Stop" @click=$(async |_e| { control("stop".to_owned()).await; })>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M6 6h12v12H6z"></path></svg>
@@ -127,6 +146,7 @@ pub async fn now_playing(cx: &Cx) -> Result<impl View> {
                     link(href: "/controls", attrs: attributes! { cx => class="playing-more" aria-label="Controls" }, controls_icon())
                 </div>
             </div>
+            <script type="module" src=(SCRUB)></script>
         </section>
     })
 }
@@ -136,8 +156,22 @@ async fn track(cx: &Cx) -> Result<impl View> {
     Ok(live! {
         let mut playback = app_context::<Live>(cx).playback.clone();
         loop {
-            let width = playback.borrow_and_update().as_ref().map_or(0.0, percent);
-            let token = emit! { <i style=(format!("width:{width:.2}%"))></i> }?;
+            let now = playback.borrow_and_update().clone().unwrap_or_default();
+            let at = format!("{:.2}%", percent(&now));
+            let time = if now.duration >= 3600.0 { "scrub-time long" } else { "scrub-time" };
+            let token = emit! {
+                <span class=(time)>(clock(now.position))</span>
+                <span class="scrub-rail"
+                    data-position=(format!("{:.3}", now.position))
+                    data-duration=(format!("{:.3}", now.duration))
+                    data-paused=(if now.paused || now.loading { "1" } else { "0" })
+                    data-jump=(now.jump.map(|jump| jump.to_string()).unwrap_or_default())>
+                    <i class="scrub-fill" style=(format!("width:{at}"))></i>
+                    <b class="scrub-thumb" style=(format!("left:{at}"))></b>
+                    <output class="scrub-bubble"></output>
+                </span>
+                <span class=(time)>(left(&now))</span>
+            }?;
             if !connected(cx) || playback.changed().await.is_err() {
                 break Ok(token);
             }
@@ -153,15 +187,7 @@ async fn info(cx: &Cx) -> Result<impl View> {
             let now = playback.borrow_and_update().clone();
             let token = match now {
                 Some(now) => {
-                    let line = if now.loading {
-                        "Loading…".to_string()
-                    } else {
-                        let at = format!("{} / {}", clock(now.position), clock(now.duration));
-                        match now.caption.as_str() {
-                            "" => at,
-                            caption => format!("{at} · {caption}"),
-                        }
-                    };
+                    let line = if now.loading { "Loading…".to_string() } else { now.caption.clone() };
                     emit! {
                         link(href: destination(&now), attrs: attributes! { cx => class="playing-title" },
                             <strong>(now.title.as_str())</strong>
@@ -266,5 +292,15 @@ mod tests {
         assert_eq!(clock(65.4), "1:05");
         assert_eq!(clock(3725.0), "1:02:05");
         assert_eq!(clock(-3.0), "0:00");
+    }
+
+    #[test]
+    fn the_time_left_counts_down_to_the_end() {
+        let now = NowPlaying {
+            position: 754.0,
+            duration: 5400.0,
+            ..NowPlaying::default()
+        };
+        assert_eq!(left(&now), "-1:17:26");
     }
 }

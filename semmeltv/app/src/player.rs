@@ -2,7 +2,7 @@ use crate::command::Command;
 use crate::display::{self, Video};
 use crate::overlay::{self, View};
 use crate::progress::Place;
-use crate::seek::{Direction, Order, Scrub};
+use crate::seek::{self, Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
 use crate::subtitles::{self, Answer, Change, Observed, Subtitles};
 use serde_json::{Value, json};
@@ -423,6 +423,7 @@ pub struct State {
     pub paused: bool,
     pub muted: bool,
     pub started: bool,
+    pub jump: Option<i32>,
 }
 
 impl Player {
@@ -502,6 +503,7 @@ impl Player {
             paused: playback.paused,
             muted: playback.muted,
             started: playback.started,
+            jump: playback.scrub.jump_shown(Instant::now()),
         }
     }
 
@@ -513,7 +515,7 @@ impl Player {
         let now = Instant::now();
         let mut playback = self.playback.lock().unwrap();
         if playback.started {
-            let to = seconds.clamp(0.0, playback.duration.max(0.0));
+            let to = seek::within(seconds, playback.duration);
             playback.scrub.cancel();
             playback.seek(Some(Order { to, exact: true }));
             playback.wake(now);

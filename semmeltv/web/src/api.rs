@@ -172,6 +172,7 @@ pub struct NowPlaying {
     pub duration: f64,
     pub paused: bool,
     pub loading: bool,
+    pub jump: Option<i32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -296,6 +297,10 @@ impl Api {
 
     pub async fn seek_by(&self, seconds: f64) -> String {
         self.post("/api/playback/seek", json!({ "by": seconds })).await
+    }
+
+    pub async fn skip(&self, direction: &str) -> String {
+        self.post("/api/playback/skip", json!({ "direction": direction })).await
     }
 
     pub async fn command(&self, text: &str) -> String {

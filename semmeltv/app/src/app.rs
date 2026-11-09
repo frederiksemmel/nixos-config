@@ -16,6 +16,7 @@ use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence, Source, Store};
 use crate::player::{Finish, Player};
 use crate::progress::{Position, Progress};
+use crate::seek::Direction;
 use crate::segments::Title;
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
@@ -857,6 +858,8 @@ impl App {
         match seek {
             Seek::To(seconds) => player.seek_to(seconds),
             Seek::By(seconds) => player.seek_by(seconds),
+            Seek::Step(Direction::Back) => player.command(Command::Left),
+            Seek::Step(Direction::Forward) => player.command(Command::Right),
         }
         self.publish_playback();
         Outcome {
@@ -904,6 +907,7 @@ impl App {
                     paused: state.paused,
                     muted: state.muted,
                     loading: !state.started,
+                    jump: state.jump,
                     ..base.clone()
                 }
             });

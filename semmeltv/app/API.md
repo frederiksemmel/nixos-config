@@ -64,11 +64,13 @@ such image.
 | GET | `/api/playback` | `{ now_playing }`, see below |
 | POST | `/api/playback/{control}` | none. `control` is `pause`, `resume`, `toggle`, `stop`, `mute` or `unmute` |
 | POST | `/api/playback/seek` | `{ "to": seconds }` or `{ "by": seconds }`, negative to go back |
+| POST | `/api/playback/skip` | `{ "direction": "back" }` or `"forward"`: a press of the remote's left or right key, so presses in a row skip further |
 
 `now_playing` is null or
-`{ title, caption, movie, show, season, episode, position, duration, paused, muted, loading }`.
+`{ title, caption, movie, show, season, episode, position, duration, paused, muted, loading, jump }`.
 For a movie, `movie` is its key. For an episode, `show`, `season` and `episode`
-are set.
+are set. `jump` is the last skip in seconds, negative going back, while a run of
+skips can still continue, and null otherwise.
 
 ## TV
 

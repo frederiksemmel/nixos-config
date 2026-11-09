@@ -29,7 +29,7 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-body:has(.playing-title) { --dock: 112px; }
+body:has(.playing-title) { --dock: 140px; }
 
 .playing:not(:has(.playing-title)) { display: none; }
 
@@ -613,19 +613,6 @@ button.heat-cell:active { outline: 2px solid var(--text); }
   border-top: 1px solid var(--line);
 }
 
-.playing-track {
-  height: 3px;
-  margin: 0 calc(-1 * var(--gutter));
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.playing-track i {
-  display: block;
-  height: 100%;
-  background: var(--text);
-  transition: width 0.5s linear;
-}
-
 .playing-row {
   display: flex;
   align-items: center;
@@ -840,3 +827,91 @@ button.heat-cell:active { outline: 2px solid var(--text); }
 
 .track span { color: var(--muted); font-size: 13px; }
 .track.on { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+
+/* Scrubber (semmeltv-scrub) */
+
+.scrub {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 1280px;
+  height: 30px;
+  margin: 0 auto;
+  padding-top: 4px;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: pointer;
+  outline: none;
+}
+
+.scrub-time {
+  flex: none;
+  width: 3.4em;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.scrub-time.long { width: 4.4em; }
+.scrub-time:last-child { text-align: right; }
+
+.scrub-rail {
+  position: relative;
+  flex: 1;
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.18);
+  transition: height 0.15s;
+}
+
+.scrub-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--text);
+}
+
+.scrub-thumb {
+  position: absolute;
+  top: 50%;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: var(--text);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.5);
+  transform: scale(0);
+  transition: transform 0.15s;
+}
+
+.scrub-bubble {
+  position: absolute;
+  bottom: 18px;
+  padding: 4px 9px;
+  border-radius: 8px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: pre;
+  transform: translateX(-50%);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+}
+
+.scrub:is(:hover, .dragging, .jumping, :focus-visible) .scrub-rail { height: 6px; }
+.scrub:is(:hover, .dragging, .jumping, :focus-visible) .scrub-thumb { transform: scale(1); }
+.scrub:is(.dragging, .hovering, .jumping) .scrub-bubble { opacity: 1; }
+.scrub.dragging .scrub-bubble { bottom: 30px; }
+
+@media (hover: none) {
+  .scrub-thumb { transform: scale(0.8); }
+}
+
+.playing-controls .skip { position: relative; }
+.skip-amount { display: none; font-size: 12px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.skip.skipped svg { display: none; }
+.skip.skipped .skip-amount { display: block; }
