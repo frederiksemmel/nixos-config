@@ -1,4 +1,5 @@
 use crate::wyoming;
+use std::collections::VecDeque;
 use std::fs;
 use std::io::{self, Read};
 use std::process::{Child, Command as Process, Stdio};
@@ -17,6 +18,7 @@ const MIN_SPEECH_FRAMES: usize = 4;
 const END_QUIET_FRAMES: usize = 27;
 const GIVE_UP_FRAMES: usize = 167;
 const LONGEST_FRAMES: usize = 334;
+const PRE_ROLL_FRAMES: usize = 20;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Heard {
@@ -95,6 +97,7 @@ impl Recording {
 fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard: &impl Fn(Heard)) {
     let mut present = false;
     let mut recording: Option<Recording> = None;
+    let mut recent: VecDeque<Vec<i16>> = VecDeque::with_capacity(PRE_ROLL_FRAMES + 1);
     while let Ok(input) = received.recv() {
         let progress = match input {
             Input::Microphone(now) => {
@@ -113,7 +116,11 @@ fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard
             }
             Input::Listen => {
                 if recording.is_none() {
-                    recording = Some(Recording::default());
+                    let mut started = Recording::default();
+                    for frame in recent.drain(..) {
+                        started.push(&frame);
+                    }
+                    recording = Some(started);
                     heard(Heard::Listening);
                 }
                 continue;
@@ -132,6 +139,10 @@ fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard
                 None => {
                     if let Some(waker) = waker.as_mut() {
                         waker.hear(&frame);
+                    }
+                    recent.push_back(frame);
+                    if recent.len() > PRE_ROLL_FRAMES {
+                        recent.pop_front();
                     }
                     continue;
                 }

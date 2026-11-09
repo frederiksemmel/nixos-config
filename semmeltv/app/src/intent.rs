@@ -107,6 +107,7 @@ const UNMUTE_PHRASES: [&str; 9] = [
     "activa el sonido",
     "pon el sonido",
 ];
+const WAKE_WORDS: [&str; 3] = ["stevie", "the", "tv"];
 const TV_WORDS: [&str; 7] = ["tv", "telly", "television", "fernseher", "glotze", "tele", "televisor"];
 const ON_WORDS: [&str; 9] = [
     "on",
@@ -224,6 +225,28 @@ pub enum Control {
 }
 
 pub fn understand(transcript: &str, library: &Library, progress: &Progress) -> Action {
+    if let Some(command) = after_wake_word(transcript) {
+        let action = interpret(&command, library, progress);
+        if !matches!(action, Action::Refuse(_)) {
+            return action;
+        }
+    }
+    interpret(transcript, library, progress)
+}
+
+fn after_wake_word(transcript: &str) -> Option<String> {
+    let words: Vec<&str> = transcript.split_whitespace().collect();
+    let key = |word: &str| library::normalize(&deunicode(word)).replace(' ', "");
+    let leftover = (0..WAKE_WORDS.len())
+        .map(|start| &WAKE_WORDS[start..])
+        .chain([&["v"][..]])
+        .find(|tail| {
+            words.len() > tail.len() && words.iter().zip(tail.iter()).all(|(word, wake)| key(word) == *wake)
+        })?;
+    Some(words[leftover.len()..].join(" "))
+}
+
+fn interpret(transcript: &str, library: &Library, progress: &Progress) -> Action {
     if let Some(control) = control(transcript) {
         return Action::Control(control);
     }
@@ -905,6 +928,32 @@ mod tests {
             let understood = understand(text, &library(), &Progress::default());
             assert!(!matches!(understood, Action::Control(_)), "{text}");
         }
+    }
+
+    #[test]
+    fn the_end_of_the_wake_word_before_a_command_is_ignored() {
+        let library = library();
+        let progress = Progress::default();
+        for (heard, meant) in [
+            ("TV, play Outlander.", "play Outlander"),
+            ("V. Play Outlander", "play Outlander"),
+            ("the TV pause", "pause"),
+            ("Stevie the TV, stop.", "stop"),
+        ] {
+            assert_eq!(
+                understand(heard, &library, &progress),
+                understand(meant, &library, &progress),
+                "{heard}"
+            );
+        }
+        assert_eq!(
+            understand("TV off", &library, &progress),
+            Action::Control(Control::TvOff)
+        );
+        assert_eq!(
+            understand("TV, TV off", &library, &progress),
+            Action::Control(Control::TvOff)
+        );
     }
 
     #[test]
