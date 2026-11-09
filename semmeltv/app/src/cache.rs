@@ -16,6 +16,10 @@ impl Cache {
         self.root.join("library.last-good.toml")
     }
 
+    pub fn subtitles_path(&self) -> PathBuf {
+        self.root.join("subtitles.json")
+    }
+
     fn progress_path(&self) -> PathBuf {
         self.root.join("progress.json")
     }

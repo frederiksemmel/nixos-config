@@ -5,6 +5,7 @@ mod live;
 mod pages;
 mod playing;
 mod public;
+mod subtitles;
 
 use std::env;
 use std::path::PathBuf;

@@ -23,6 +23,7 @@ mod player;
 mod progress;
 mod seek;
 mod segments;
+mod subtitles;
 mod tags;
 mod tmdb;
 mod voice;

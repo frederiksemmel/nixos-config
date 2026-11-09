@@ -57,7 +57,7 @@ such image.
 | --- | --- | --- |
 | POST | `/api/play` | `{ "movie": key }`, or `{ "show": key }` to carry on, or `{ "show": key, "season": 2, "episode": 3 }` |
 | POST | `/api/command` | `{ "text": "play outlander season 2" }`, understood exactly like speech |
-| POST | `/api/listen` | none: start listening, as the remote's colour keys do |
+| POST | `/api/listen` | none: start listening, as the remote's red, green and blue keys do |
 | GET | `/api/playback` | `{ now_playing }`, see below |
 | POST | `/api/playback/{control}` | none. `control` is `pause`, `resume`, `toggle`, `stop`, `mute` or `unmute` |
 | POST | `/api/playback/seek` | `{ "to": seconds }` or `{ "by": seconds }`, negative to go back |
@@ -66,6 +66,46 @@ such image.
 `{ title, caption, movie, show, season, episode, position, duration, paused, muted, loading }`.
 For a movie, `movie` is its key. For an episode, `show`, `season` and `episode`
 are set.
+
+## Subtitles
+
+| Method | Path | Body |
+| --- | --- | --- |
+| GET | `/api/subtitles` | none |
+| PUT | `/api/subtitles` | any of the settings below; fields left out keep their value |
+| POST | `/api/subtitles/track` | `{ "track": id }` to show that track, `{ "track": null }` to hide subtitles |
+| POST | `/api/subtitles/toggle` | none: show or hide, as the remote's yellow key does |
+
+GET and PUT answer `{ settings, playing }`. The TV keeps the settings in
+`subtitles.json` in its cache directory (`/var/lib/semmeltv/cache` on a Pi),
+and every video starts with them. A PUT also restyles what is playing at once.
+It answers 400 when a value is malformed or a field is unknown, and clamps
+numbers into their range.
+
+| Setting | Meaning | Default |
+| --- | --- | --- |
+| `shown` | subtitles show when a video starts | `false` |
+| `languages` | preferred languages in order, as ISO 639 codes | `["en", "de"]` |
+| `size` | text scale, 0.5 to 2.5 | `1.0` |
+| `position` | how far down the screen, 50 (middle) to 100 (bottom) | `100` |
+| `color` | text colour, `#RRGGBB` | `"#FFFFFF"` |
+| `outline` | outline width, 0 to 6 | `1.65` |
+| `outline_color` | outline colour, `#RRGGBB` | `"#000000"` |
+| `shadow` | shadow offset, 0 to 6 | `0` |
+| `background` | opacity of a black box behind the text, 0 (no box) to 1 | `0` |
+| `restyle` | also restyle subtitles that bring their own styling | `false` |
+
+`playing` is null when nothing plays, or `{ visible, track, tracks }`.
+`track` is the selected track's id or null, and `visible` says whether it
+shows. Each track is
+`{ id, language, title, label, forced, hearing_impaired, external }`, where
+`label` is the language's English name, or the title when the language is
+unknown.
+
+The track and toggle requests answer like the playing requests above, for
+example `{ "message": "Subtitles: English", "ok": true }`, and the TV shows
+the same message on screen. They refuse with "Nothing is playing" or "No
+subtitles in this file".
 
 ## Event stream
 
@@ -98,4 +138,5 @@ set up.
     curl -s localhost:8090/api/search?q=lotus | jq '.results[].title'
     curl -s -X POST localhost:8090/api/play -d '{"show":"the-white-lotus"}' -H 'content-type: application/json'
     curl -s -X POST localhost:8090/api/playback/toggle
+    curl -s -X PUT localhost:8090/api/subtitles -d '{"size":1.3,"background":0.5}' -H 'content-type: application/json'
     websocat ws://localhost:8090/api/events

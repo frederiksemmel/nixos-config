@@ -274,10 +274,8 @@ fn key_command(code: CecUserControlCode) -> Option<Command> {
         | CecUserControlCode::Pause
         | CecUserControlCode::PlayFunction
         | CecUserControlCode::PausePlayFunction => Some(Command::PlayPause),
-        CecUserControlCode::F1Blue
-        | CecUserControlCode::F2Red
-        | CecUserControlCode::F3Green
-        | CecUserControlCode::F4Yellow => Some(Command::Listen),
+        CecUserControlCode::F1Blue | CecUserControlCode::F2Red | CecUserControlCode::F3Green => Some(Command::Listen),
+        CecUserControlCode::F4Yellow => Some(Command::Subtitles),
         _ => None,
     }
 }
@@ -393,6 +391,10 @@ mod tests {
             (0x49, Command::Right),
             (0x60, Command::PlayPause),
             (0x61, Command::PlayPause),
+            (0x71, Command::Listen),
+            (0x72, Command::Listen),
+            (0x73, Command::Listen),
+            (0x74, Command::Subtitles),
         ];
         for (code, command) in cases {
             assert_eq!(press(code), Reaction::Press(command), "{code:#x}");

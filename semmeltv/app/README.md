@@ -178,6 +178,22 @@ cache, one folder per library file, so a position saved while streaming also
 applies to the same file played from the rclone cache, and two files with the
 same name stay apart.
 
+## Subtitles
+
+The yellow key on the remote, or S on a keyboard, shows or hides subtitles
+during a video and says which: "Subtitles: English", "Subtitles off", or "No
+subtitles in this file". Showing them with no track selected picks the first
+preferred language that has a full track, ahead of its hearing-impaired one.
+Subtitle files next to the video with a similar name load too.
+
+`subtitles.json` in the cache holds the settings: whether subtitles show when a
+video starts, the preferred languages in order, and the size, position, colours,
+outline, shadow and background box. Every video starts with them. The web app
+changes them through the [HTTP API](API.md#subtitles), and a change restyles the
+playing video at once. A resumed video keeps its own track and whether its
+subtitles showed, but always takes the current style: mpv's watch-later files
+leave out `sub-pos`, `sub-scale` and `sub-ass-override`.
+
 ## Skipping intros and recaps
 
 During an episode's recap or intro a Skip button shows in mpv, and OK presses it.
@@ -210,7 +226,7 @@ known. Download requests are understood but not carried out yet.
 recognised however speech recognition spells it: Semmel TV, SimilTV, Simmel TV,
 Semel TV, Samuel TV, Simple TV and the like.
 
-The wake word "Stevie the TV", any colour key on the remote, or V on a
+The wake word "Stevie the TV", the red, green or blue key on the remote, or V on a
 keyboard starts listening, during a video too. The wake word is detected a
 few hundred milliseconds after it ends, so the recording begins with the last
 0.6 seconds of audio. That keeps a command said in the same breath ("Stevie

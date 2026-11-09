@@ -15,6 +15,7 @@ use crate::offline::{self, Presence, Source, Store};
 use crate::player::{Finish, Player};
 use crate::progress::{Position, Progress};
 use crate::segments::Title;
+use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
 use crate::voice::{self, Heard, Voice};
@@ -133,6 +134,7 @@ struct App {
     bus: Bus,
     shared: Arc<Shared>,
     now_playing: Option<NowPlaying>,
+    subtitles: Subtitles,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -191,7 +193,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let library = library::load_saved(&root, &saved).unwrap_or_default();
     let progress = cache.load_progress();
     let bus = Bus::default();
-    let shared = Arc::new(Shared::default());
+    let subtitles = Subtitles::load(cache.subtitles_path());
+    let shared = Arc::new(Shared::new(subtitles.clone()));
     shared.set_library(&library);
     shared.set_progress(&progress);
     let art = meta.join(artwork::DIR);
@@ -225,6 +228,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         bus: bus.clone(),
         shared: shared.clone(),
         now_playing: None,
+        subtitles,
     }));
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
@@ -420,6 +424,9 @@ impl App {
             player.command(command);
             return;
         }
+        if command == Command::Subtitles {
+            return;
+        }
         let effect = app.borrow_mut().nav.apply(command);
         match effect {
             Effect::None => {}
@@ -559,6 +566,7 @@ impl App {
             &watch_later_dir,
             self.caption(path),
             self.title(path),
+            self.subtitles.clone(),
             saved,
             move |command| keys.send(command),
             finished,
@@ -779,6 +787,7 @@ impl App {
                 Action::Control(if paused { Control::Resume } else { Control::Pause })
             }
             Request::Seek(seek) => return self.seek(seek),
+            Request::Subtitles(change) => return self.change_subtitles(change),
             Request::Listen => {
                 return match &self.voice {
                     Some(voice) => {
@@ -804,6 +813,26 @@ impl App {
         self.act(action);
         self.publish_playback();
         Outcome { message, ok }
+    }
+
+    fn change_subtitles(&self, change: subtitles::Change) -> Outcome {
+        match (&self.player, change) {
+            (Some(player), change) => {
+                let answer = player.subtitles(change);
+                Outcome {
+                    message: answer.message,
+                    ok: answer.ok,
+                }
+            }
+            (None, subtitles::Change::Restyle) => Outcome {
+                message: "Saved".to_string(),
+                ok: true,
+            },
+            (None, _) => Outcome {
+                message: NOTHING_PLAYING.to_string(),
+                ok: false,
+            },
+        }
     }
 
     fn seek(&self, seek: Seek) -> Outcome {

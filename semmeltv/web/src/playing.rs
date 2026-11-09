@@ -81,8 +81,18 @@ fn destination(now: &NowPlaying) -> String {
     }
 }
 
+#[component]
+pub async fn subtitles_icon() -> Result<impl View> {
+    Ok(view! {
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3" y="5" width="18" height="14" rx="2.5"></rect>
+            <path d="M7 12.5h4M13 12.5h4M7 15.5h7"></path>
+        </svg>
+    })
+}
+
 #[shard]
-pub async fn now_playing() -> Result<impl View> {
+pub async fn now_playing(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <section class="playing" aria-label="Now playing">
             <div class="playing-track">track()</div>
@@ -103,6 +113,7 @@ pub async fn now_playing() -> Result<impl View> {
                     <button type="button" aria-label="Stop" @click=$(async |_e| { control("stop".to_owned()).await; })>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M6 6h12v12H6z"></path></svg>
                     </button>
+                    link(href: "/subtitles", attrs: attributes! { cx => class="playing-subtitles" aria-label="Subtitles" }, subtitles_icon())
                 </div>
             </div>
         </section>

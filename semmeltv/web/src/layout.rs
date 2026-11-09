@@ -37,6 +37,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
             <body>
                 <header class="top">
                     link(href: "/", attrs: attributes! { cx => class="brand" }, <img src=(brand::WORDMARK) alt="SemmelTV">)
+                    link(href: "/subtitles", attrs: attributes! { cx => class="top-subtitles" aria-label="Subtitle settings" }, playing::subtitles_icon())
                     <div class="microphone" id="microphone" data-state="off">
                         <span class="microphone-note" id="microphone-note"></span>
                         <button class="microphone-off" id="microphone-off" type="button" aria-label="Turn the microphone off" hidden=(true)>

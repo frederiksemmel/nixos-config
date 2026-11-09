@@ -4,6 +4,7 @@ use crate::overlay::{self, View};
 use crate::progress::Place;
 use crate::seek::{Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
+use crate::subtitles::{self, Answer, Change, Observed, Subtitles};
 use serde_json::{Value, json};
 use std::env;
 use std::io::{self, BufRead, BufReader, Write};
@@ -31,15 +32,17 @@ const DURATION_ID: u64 = 2;
 const ENDED_ID: u64 = 3;
 const FRAME_RATE_ID: u64 = 4;
 const PAUSE_ID: u64 = 5;
+const SUBTITLES_ID: u64 = 6;
 const PROMPT_ID: u64 = 1;
 const LOADING_ID: u64 = 2;
 const OVERLAY_ID: u64 = 3;
 const TOAST_ID: u64 = 4;
 const LOADING_TEXT: &str = r"{\an5\pos(960,540)\bord0\shad0\b1\fs64\1c&HFFFFFF&}Loading…";
-const KEYBINDS: [(&str, &str); 10] = [
+const KEYBINDS: [(&str, &str); 11] = [
     ("ESC", "script-message semmeltv-back"),
     ("BS", "script-message semmeltv-back"),
     ("v", "script-message semmeltv-listen"),
+    ("s", "script-message semmeltv-subtitles"),
     ("ENTER", "script-message semmeltv-select"),
     ("KP_ENTER", "script-message semmeltv-select"),
     ("SPACE", "script-message semmeltv-play-pause"),
@@ -77,6 +80,7 @@ enum Event {
     Paused(bool),
     Key(Command),
     Started,
+    Subtitles(Observed),
 }
 
 impl Event {
@@ -89,6 +93,7 @@ impl Event {
                 FRAME_RATE_ID => Some(Self::FrameRate(message["data"].as_f64()?)),
                 ENDED_ID => message["data"].as_bool()?.then_some(Self::Ended),
                 PAUSE_ID => Some(Self::Paused(message["data"].as_bool()?)),
+                SUBTITLES_ID => Observed::parse(&message).map(Self::Subtitles),
                 _ => None,
             },
             "client-message" => key_command(message["args"][0].as_str()?).map(Self::Key),
@@ -108,6 +113,7 @@ fn key_command(message: &str) -> Option<Command> {
         "semmeltv-down" => Some(Command::Down),
         "semmeltv-back" => Some(Command::Back),
         "semmeltv-listen" => Some(Command::Listen),
+        "semmeltv-subtitles" => Some(Command::Subtitles),
         _ => None,
     }
 }
@@ -132,6 +138,7 @@ struct Playback {
     shown_until: Option<Instant>,
     drawn: String,
     toast_until: Option<Instant>,
+    subtitles: Subtitles,
     on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
 }
@@ -157,6 +164,10 @@ impl Playback {
             Command::Up => self.jump(LONG_JUMP, now),
             Command::Down => self.jump(-LONG_JUMP, now),
             Command::Listen => {}
+            Command::Subtitles => {
+                self.change_subtitles(Change::Toggle, now);
+                return;
+            }
         }
         self.wake(now);
         self.present(now);
@@ -230,6 +241,17 @@ impl Playback {
     fn toast(&mut self, heading: &str, message: &str, until: Instant) {
         self.toast_until = Some(until);
         self.send(toast_command(&overlay::toast(heading, message)));
+    }
+
+    fn change_subtitles(&mut self, change: Change, now: Instant) -> Answer {
+        let answer = self.subtitles.change(change);
+        for command in &answer.commands {
+            self.send(command.clone());
+        }
+        if change != Change::Restyle {
+            self.toast("", &answer.message, now + SAY_FOR);
+        }
+        answer
     }
 
     fn hide_toast(&mut self) {
@@ -393,6 +415,7 @@ impl Player {
         watch_later_dir: &Path,
         name: String,
         title: Option<Title>,
+        subtitles: Subtitles,
         on_save: impl Fn() + Send + 'static,
         on_key: impl Fn(Command) + Send + 'static,
         on_exit: impl FnOnce(Finish) + Send + 'static,
@@ -416,12 +439,15 @@ impl Player {
             .arg(format!("--osd-font={OSD_FONT}"))
             .arg(format!("--osd-fonts-dir={OSD_FONTS}"))
             .arg(format!("--input-ipc-server={}", socket_path.display()))
+            .args(subtitles.settings().mpv_args())
             .arg("--")
             .arg(path)
             .stdin(Stdio::null())
             .spawn()?;
+        subtitles.started();
         let playback = Shared::new(Mutex::new(Playback {
             name,
+            subtitles,
             on_save: Some(Box::new(on_save)),
             on_key: Some(Box::new(on_key)),
             ..Playback::default()
@@ -430,6 +456,7 @@ impl Player {
         thread::spawn(move || {
             connect(&mut child, &socket_path, &shared, title);
             let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
+            shared.lock().unwrap().subtitles.stopped();
             if let Some(mode) = shared.lock().unwrap().display_mode.take() {
                 mode.apply();
             }
@@ -508,6 +535,10 @@ impl Player {
         self.playback.lock().unwrap().hide_toast();
     }
 
+    pub fn subtitles(&self, change: Change) -> Answer {
+        self.playback.lock().unwrap().change_subtitles(change, Instant::now())
+    }
+
     pub fn toast(&self, heading: &str, message: &str, time: Duration) {
         self.playback
             .lock()
@@ -534,6 +565,9 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             let _ = send(&mut stream, json!(["observe_property", FRAME_RATE_ID, "container-fps"]));
             let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
             let _ = send(&mut stream, json!(["observe_property", PAUSE_ID, "pause"]));
+            for name in subtitles::OBSERVED {
+                let _ = send(&mut stream, json!(["observe_property", SUBTITLES_ID, name]));
+            }
             let events = stream.try_clone();
             shared.lock().unwrap().stream = Some(stream);
             if let Ok(events) = events {
@@ -591,6 +625,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 }
             }
             Some(Event::Key(command)) => shared.lock().unwrap().key(command, Instant::now()),
+            Some(Event::Subtitles(observed)) => shared.lock().unwrap().subtitles.observe(observed),
             None => {}
         }
     }
@@ -929,6 +964,35 @@ mod tests {
         );
         let seeks: Vec<_> = sent.iter().filter(|command| command[0] == "seek").collect();
         assert_eq!(seeks.last(), Some(&&json!(["seek", 20.0, "absolute"])));
+    }
+
+    #[test]
+    fn the_subtitle_key_toggles_and_says_what_it_did() {
+        let subtitles = Subtitles::default();
+        subtitles.started();
+        let tracks = json!({ "event": "property-change", "id": SUBTITLES_ID, "name": "track-list",
+            "data": [{ "id": 1, "type": "sub", "lang": "en" }] });
+        let Some(Event::Subtitles(observed)) = Event::parse(&tracks.to_string()) else {
+            panic!("a subtitle event");
+        };
+        subtitles.observe(observed);
+        let playback = Playback {
+            subtitles: subtitles.clone(),
+            ..playing()
+        };
+        let sent = sent_by(
+            |playback| playback.command(Command::Subtitles, Instant::now()),
+            playback,
+        );
+        assert_eq!(sent[0], json!(["set_property", "sid", 1]));
+        assert_eq!(sent[1], json!(["set_property", "sub-visibility", true]));
+        assert!(sent[2]["data"].as_str().unwrap().contains("Subtitles: English"));
+        assert!(!sent.iter().any(is_overlay));
+        let sent = sent_by(
+            |playback| playback.command(Command::Subtitles, Instant::now()),
+            playing(),
+        );
+        assert!(sent[0]["data"].as_str().unwrap().contains("No subtitles in this file"));
     }
 
     fn during_the_intro() -> Playback {

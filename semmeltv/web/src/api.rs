@@ -259,6 +259,70 @@ impl Api {
     pub async fn command(&self, text: &str) -> String {
         self.post("/api/command", json!({ "text": text })).await
     }
+
+    pub async fn subtitles(&self) -> Result<Subtitles, String> {
+        match self.get("/api/subtitles").await? {
+            Found::Here(subtitles) => Ok(subtitles),
+            Found::Missing => Err("the TV has no subtitle settings".to_string()),
+        }
+    }
+
+    pub async fn change_subtitles(&self, changes: Value) -> Result<Subtitles, String> {
+        let response = self
+            .client
+            .put(format!("{}/api/subtitles", self.base))
+            .json(&changes)
+            .send()
+            .await
+            .map_err(|error| format!("The TV is not answering: {error}"))?;
+        let success = response.status().is_success();
+        let text = response.text().await.map_err(|error| error.to_string())?;
+        if success {
+            serde_json::from_str(&text).map_err(|error| error.to_string())
+        } else {
+            Err(serde_json::from_str::<Problem>(&text).map_or(text, |problem| problem.error))
+        }
+    }
+
+    pub async fn choose_subtitles(&self, track: Option<i64>) -> String {
+        self.post("/api/subtitles/track", json!({ "track": track })).await
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct SubtitleSettings {
+    pub shown: bool,
+    pub languages: Vec<String>,
+    pub size: f64,
+    pub position: f64,
+    pub color: String,
+    pub outline: f64,
+    pub outline_color: String,
+    pub shadow: f64,
+    pub background: f64,
+    pub restyle: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct SubtitleTrack {
+    pub id: i64,
+    pub title: Option<String>,
+    pub label: String,
+    pub forced: bool,
+    pub hearing_impaired: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct SubtitlesPlaying {
+    pub visible: bool,
+    pub track: Option<i64>,
+    pub tracks: Vec<SubtitleTrack>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Subtitles {
+    pub settings: SubtitleSettings,
+    pub playing: Option<SubtitlesPlaying>,
 }
 
 #[derive(Debug, Serialize)]
@@ -322,6 +386,23 @@ mod tests {
             serde_json::to_value(episode).unwrap(),
             json!({ "show": "outlander", "season": 2, "episode": 3 })
         );
+    }
+
+    #[test]
+    fn subtitle_settings_and_tracks_are_understood() {
+        let settings = json!({ "shown": false, "languages": ["en", "de"], "size": 1.0, "position": 100.0,
+            "color": "#FFFFFF", "outline": 1.65, "outline_color": "#000000", "shadow": 0.0, "background": 0.0,
+            "restyle": false });
+        let track = json!({ "id": 2, "language": "en", "title": "English SRT-SDH", "label": "English",
+            "forced": false, "hearing_impaired": true, "external": false });
+        let body = json!({ "settings": settings, "playing": { "visible": true, "track": 2, "tracks": [track] } });
+        let subtitles: Subtitles = serde_json::from_value(body).unwrap();
+        assert_eq!(subtitles.settings.languages, ["en", "de"]);
+        let playing = subtitles.playing.unwrap();
+        assert_eq!(playing.track, Some(2));
+        assert!(playing.tracks[0].hearing_impaired);
+        let idle: Subtitles = serde_json::from_value(json!({ "settings": settings, "playing": null })).unwrap();
+        assert_eq!(idle.playing, None);
     }
 
     #[test]

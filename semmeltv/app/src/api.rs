@@ -4,6 +4,7 @@ use crate::details::{self, Details};
 use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::progress::Progress;
+use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
 use crate::watching::{self, Current};
@@ -41,6 +42,7 @@ pub enum Request {
     PlayPause,
     Seek(Seek),
     Listen,
+    Subtitles(subtitles::Change),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -64,11 +66,19 @@ pub type Tv = Arc<dyn Fn(Pending) + Send + Sync>;
 
 #[derive(Default)]
 pub struct Shared {
+    subtitles: Subtitles,
     library: RwLock<Arc<Library>>,
     progress: RwLock<Arc<Progress>>,
 }
 
 impl Shared {
+    pub fn new(subtitles: Subtitles) -> Self {
+        Self {
+            subtitles,
+            ..Self::default()
+        }
+    }
+
     pub fn set_library(&self, library: &Library) {
         *self.library.write().unwrap() = Arc::new(library.clone());
     }
@@ -164,6 +174,7 @@ fn router(api: Api) -> Router {
         .route("/api/playback/{control}", post(control))
         .route("/api/events", get(events))
         .route("/api/microphone", get(microphone))
+        .merge(subtitles::routes(api.shared.subtitles.clone(), api.tv.clone()))
         .with_state(api)
 }
 
@@ -637,8 +648,12 @@ async fn seek(State(api): State<Api>, Json(body): Json<SeekBody>) -> Response {
 }
 
 async fn ask(api: &Api, request: Request) -> Response {
+    ask_tv(&api.tv, request).await
+}
+
+pub async fn ask_tv(tv: &Tv, request: Request) -> Response {
     let (reply, answer) = oneshot::channel();
-    (api.tv)(Pending { request, reply });
+    tv(Pending { request, reply });
     match tokio::time::timeout(ANSWER_TIME, answer).await {
         Ok(Ok(outcome)) => {
             let status = if outcome.ok {
@@ -657,7 +672,7 @@ struct Problem {
     error: String,
 }
 
-fn problem(status: StatusCode, error: String) -> Response {
+pub fn problem(status: StatusCode, error: String) -> Response {
     (status, Json(Problem { error })).into_response()
 }
 

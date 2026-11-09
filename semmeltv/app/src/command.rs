@@ -10,6 +10,7 @@ pub enum Command {
     Back,
     PlayPause,
     Listen,
+    Subtitles,
 }
 
 impl Command {
@@ -31,6 +32,8 @@ impl Command {
             Some(Self::PlayPause)
         } else if text == "v" {
             Some(Self::Listen)
+        } else if text == "s" {
+            Some(Self::Subtitles)
         } else {
             None
         }
