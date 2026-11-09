@@ -19,7 +19,9 @@ in
     enable = true;
     adminUser = "frederik";
     mpv = pkgs.mpv.override {
-      mpv-unwrapped = pkgs.mpv-unwrapped.override { inherit ffmpeg; };
+      mpv-unwrapped = (pkgs.mpv-unwrapped.override { inherit ffmpeg; }).overrideAttrs (old: {
+        patches = (old.patches or [ ]) ++ [ ./mpv-gpu-next-gl-fence-leak.patch ];
+      });
     };
   };
 }

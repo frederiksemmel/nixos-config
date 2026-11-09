@@ -1,0 +1,10 @@
+--- a/video/out/gpu_next/context.c
++++ b/video/out/gpu_next/context.c
+@@ -161,7 +161,6 @@
+         mppl_log_set_probing(ctx->pllog, false);
+
+         ctx->swapchain = pl_opengl_create_swapchain(opengl, pl_opengl_swapchain_params(
+-            .max_swapchain_depth = vo->opts->swapchain_depth,
+             .framebuffer.flipped = gl->flipped,
+         ));
+         if (!ctx->swapchain)
