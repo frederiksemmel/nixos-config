@@ -1,5 +1,5 @@
 use crate::command::Command;
-use crate::display::{self, Mode};
+use crate::display::{self, Mode, Video};
 use crate::overlay::{self, View};
 use crate::progress::Place;
 use crate::seek::{Direction, Order, Scrub};
@@ -30,7 +30,7 @@ const OSD_FONTS: &str = env!("SEMMELTV_FONT_DIR");
 const POSITION_ID: u64 = 1;
 const DURATION_ID: u64 = 2;
 const ENDED_ID: u64 = 3;
-const FRAME_RATE_ID: u64 = 4;
+const VIDEO_ID: u64 = 4;
 const PAUSE_ID: u64 = 5;
 const SUBTITLES_ID: u64 = 6;
 const PROMPT_ID: u64 = 1;
@@ -76,7 +76,7 @@ enum Event {
     Position(f64),
     Duration(f64),
     Ended,
-    FrameRate(f64),
+    Video(Video),
     Paused(bool),
     Key(Command),
     Started,
@@ -90,7 +90,7 @@ impl Event {
             "property-change" => match message["id"].as_u64()? {
                 POSITION_ID => Some(Self::Position(message["data"].as_f64()?)),
                 DURATION_ID => Some(Self::Duration(message["data"].as_f64()?)),
-                FRAME_RATE_ID => Some(Self::FrameRate(message["data"].as_f64()?)),
+                VIDEO_ID => video(&message["data"]).map(Self::Video),
                 ENDED_ID => message["data"].as_bool()?.then_some(Self::Ended),
                 PAUSE_ID => Some(Self::Paused(message["data"].as_bool()?)),
                 SUBTITLES_ID => Observed::parse(&message).map(Self::Subtitles),
@@ -101,6 +101,22 @@ impl Event {
             _ => None,
         }
     }
+}
+
+fn video(track: &Value) -> Option<Video> {
+    let width = track["demux-w"].as_f64()?;
+    let height = track["demux-h"].as_f64()?;
+    let par = track["demux-par"].as_f64().unwrap_or(1.0);
+    let (width, height) = if par > 1.0 {
+        (width * par, height)
+    } else {
+        (width, height / par)
+    };
+    Some(Video {
+        width: width.round() as u64,
+        height: height.round() as u64,
+        fps: track["demux-fps"].as_f64()?,
+    })
 }
 
 fn key_command(message: &str) -> Option<Command> {
@@ -562,7 +578,10 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             let _ = send(&mut stream, json!(["observe_property", POSITION_ID, "time-pos"]));
             let _ = send(&mut stream, json!(["observe_property", ENDED_ID, "eof-reached"]));
             let _ = send(&mut stream, loading_command(true));
-            let _ = send(&mut stream, json!(["observe_property", FRAME_RATE_ID, "container-fps"]));
+            let _ = send(
+                &mut stream,
+                json!(["observe_property", VIDEO_ID, "current-tracks/video"]),
+            );
             let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
             let _ = send(&mut stream, json!(["observe_property", PAUSE_ID, "pause"]));
             for name in subtitles::OBSERVED {
@@ -606,13 +625,13 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 playback.wake(now);
                 playback.present(now);
             }
-            Some(Event::FrameRate(fps)) => {
+            Some(Event::Video(video)) => {
                 let matched = {
                     let playback = shared.lock().unwrap();
                     playback.started || playback.display_mode.is_some()
                 };
                 if !matched {
-                    let previous = display::match_frame_rate(fps);
+                    let previous = display::match_video(video);
                     shared.lock().unwrap().display_mode = previous;
                 }
             }
@@ -700,10 +719,28 @@ mod tests {
         assert_eq!(Event::parse(position), Some(Event::Position(12.5)));
         assert_eq!(Event::parse(duration), Some(Event::Duration(2730.0)));
         assert_eq!(Event::parse(end), Some(Event::Ended));
-        let frame_rate = r#"{"event":"property-change","id":4,"name":"container-fps","data":23.976}"#;
-        assert_eq!(Event::parse(frame_rate), Some(Event::FrameRate(23.976)));
         assert_eq!(Event::parse(pause), Some(Event::Paused(true)));
         assert_eq!(Event::parse(key), Some(Event::Key(Command::Select)));
+    }
+
+    #[test]
+    fn mpv_reports_the_size_and_rate_of_the_video_track() {
+        let film = json!({ "event": "property-change", "id": VIDEO_ID, "name": "current-tracks/video",
+            "data": { "id": 1, "type": "video", "demux-w": 1920, "demux-h": 800, "demux-fps": 23.976 } });
+        let expected = Video {
+            width: 1920,
+            height: 800,
+            fps: 23.976,
+        };
+        assert_eq!(Event::parse(&film.to_string()), Some(Event::Video(expected)));
+        let anamorphic = json!({ "event": "property-change", "id": VIDEO_ID, "name": "current-tracks/video",
+            "data": { "demux-w": 720, "demux-h": 576, "demux-par": 1.4222, "demux-fps": 25.0 } });
+        let Some(Event::Video(dvd)) = Event::parse(&anamorphic.to_string()) else {
+            panic!("a video event");
+        };
+        assert_eq!((dvd.width, dvd.height), (1024, 576));
+        let none = r#"{"event":"property-change","id":4,"name":"current-tracks/video"}"#;
+        assert_eq!(Event::parse(none), None);
     }
 
     #[test]
