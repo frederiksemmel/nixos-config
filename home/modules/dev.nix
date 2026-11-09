@@ -162,7 +162,7 @@ in
       git-graph
       serie
       gitui
-      (callPackage ../../packages/muxdiff.nix { })
+      tuicr
 
       # Networking & Communication
       bluetui
