@@ -182,7 +182,7 @@ in
 
       # Miscellaneous Utilities
       rage
-      ragenix
+      flake.inputs.agenix.packages.${system}.agenix
       zip
       unzip
       ncdu

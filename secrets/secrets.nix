@@ -13,7 +13,7 @@ in
   "spadesvision_ssh_config.age".publicKeys = [ frederik ];
   "spadesvision_ssh_config_agent.age".publicKeys = [ frederik ];
   "beast_linear_api_key.age".publicKeys = [ frederik ];
-  "omdb_api_key.age".publicKeys = [ frederik ];
+  "mdblist_api_key.age".publicKeys = [ frederik ];
   "spadesvision_nixbuild_ssh_key.age".publicKeys = [
     frederik
     fstux
