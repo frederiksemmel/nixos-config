@@ -1,6 +1,8 @@
+use crate::artwork;
 pub use crate::manifest::Scores;
 use crate::manifest::{self, Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
 use crate::tags::Tags;
+use crate::tmdb::Kind;
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::fs;
@@ -145,7 +147,16 @@ impl Library {
     }
 }
 
+fn poster(root: &Path, kind: Kind, tmdb: Option<u64>) -> Option<PathBuf> {
+    let relative = artwork::poster(Path::new(artwork::DIR), kind, tmdb?);
+    root.join(&relative).is_file().then_some(relative)
+}
+
 impl Show {
+    pub fn poster(&self, root: &Path) -> Option<PathBuf> {
+        poster(root, Kind::Tv, self.tmdb)
+    }
+
     pub fn episodes(&self) -> impl Iterator<Item = &Episode> {
         self.seasons.iter().flat_map(|season| &season.episodes)
     }
@@ -366,10 +377,17 @@ pub fn sort_title(title: &str) -> String {
         .unwrap_or(normalized)
 }
 
+impl Movie {
+    pub fn poster(&self, root: &Path) -> Option<PathBuf> {
+        poster(root, Kind::Movie, self.tmdb)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::manifest::Tenths;
+    use std::env;
 
     fn library_with(text: &str, present: impl Fn(&Path) -> bool) -> Library {
         let manifest = Manifest::parse(text).unwrap();
@@ -506,6 +524,41 @@ runtime = 96
         assert_eq!(with_ids.movies[0].runtime, Some(96));
         assert!(with_ids.uses_tmdb());
         assert!(!library(&movies(&[("Wind", "2024-01-01")])).uses_tmdb());
+    }
+
+    #[test]
+    fn posters_are_found_beside_the_manifest_by_tmdb_id() {
+        let root = env::temp_dir().join(format!("semmeltv-posters-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let saved = root.join("Artwork/movie/14160/poster.jpg");
+        fs::create_dir_all(saved.parent().unwrap()).unwrap();
+        fs::write(&saved, b"jpeg").unwrap();
+        let manifest = Manifest::parse(
+            r#"[[show]]
+title = "Dark"
+tmdb = 70523
+episodes = [ { season = 1, episode = 1, path = "Series/Dark/e.mkv", added = 2024-01-01 } ]
+
+[[movie]]
+title = "Up"
+tmdb = 14160
+path = "Movies/Up/Up.mkv"
+added = 2024-01-01
+
+[[movie]]
+title = "Wind"
+path = "Movies/Wind/Wind.avi"
+added = 2024-01-01
+"#,
+        )
+        .unwrap();
+        let library = Library::from_manifest(&root, &manifest, |_| true);
+        let up = library.movies.iter().find(|movie| movie.title == "Up").unwrap();
+        let wind = library.movies.iter().find(|movie| movie.title == "Wind").unwrap();
+        assert_eq!(up.poster(&root), Some(PathBuf::from("Artwork/movie/14160/poster.jpg")));
+        assert_eq!(wind.poster(&root), None);
+        assert_eq!(library.shows[0].poster(&root), None);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

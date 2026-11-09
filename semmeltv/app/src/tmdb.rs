@@ -34,6 +34,7 @@ pub struct Found {
     pub name: String,
     pub date: String,
     pub backdrop: Option<String>,
+    pub poster: Option<String>,
     pub runtime: Option<u32>,
 }
 
@@ -55,6 +56,7 @@ struct Record {
     #[serde(default, alias = "first_air_date")]
     release_date: Option<String>,
     backdrop_path: Option<String>,
+    poster_path: Option<String>,
     runtime: Option<u32>,
     #[serde(default)]
     vote_count: f64,
@@ -91,6 +93,7 @@ impl From<&Record> for Found {
             name: record.title.clone().unwrap_or_default(),
             date: record.release_date.clone().unwrap_or_default(),
             backdrop: record.backdrop_path.clone(),
+            poster: record.poster_path.clone(),
             runtime: record.runtime.filter(|minutes| *minutes > 0),
         }
     }
@@ -251,6 +254,7 @@ mod tests {
             original_title: Some(title.to_string()),
             release_date: Some(date.to_string()),
             backdrop_path: None,
+            poster_path: None,
             runtime: None,
             vote_count: 0.0,
         }

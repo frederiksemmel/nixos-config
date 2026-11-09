@@ -226,10 +226,16 @@ token. The step reads the manifest and, for every title with a `tmdb` id, saves
 images into `DIR/Artwork`, beside the manifest:
 
     Artwork/movie/<tmdb id>/backdrop.jpg
+    Artwork/movie/<tmdb id>/poster.jpg
     Artwork/tv/<tmdb id>/backdrop.jpg
+    Artwork/tv/<tmdb id>/poster.jpg
     Artwork/tv/<tmdb id>/s01e02.jpg
 
-They are 640x360 JPEGs: a backdrop for shows and films, a still for episodes.
+Backdrops and episode stills are 640x360 JPEGs. Posters are 342x513 portrait
+JPEGs from TMDB's `w342` size, for the web app's grid; the TV cards use the
+backdrops. Neither is named in the manifest: the path follows from the `tmdb`
+id, and `Show::poster` / `Movie::poster` give it relative to the library root
+when the file is there.
 It also writes a missing `runtime` and episode `title` into the manifest. It only
 asks TMDB for what is missing, so a run over a copy of `pcloud:SemmelTV/Artwork`
 is quick. It refuses a manifest inside `--library`, so it never writes through

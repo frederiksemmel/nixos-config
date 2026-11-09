@@ -13,19 +13,32 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 pub const DIR: &str = "Artwork";
 pub const CARD_WIDTH: u32 = 640;
 pub const CARD_HEIGHT: u32 = 360;
+pub const POSTER_WIDTH: u32 = 342;
+pub const POSTER_HEIGHT: u32 = 513;
 const REFRESH_AFTER: Duration = Duration::from_secs(150 * 24 * 60 * 60);
 const RATINGS_REFRESH_DAYS: i64 = 30;
 const REQUESTS_PER_RUN: usize = 900;
 const JPEG_QUALITY: u8 = 85;
 const BACKDROP_SIZE: &str = "w780";
 const STILL_SIZE: &str = "original";
+const POSTER_SIZE: &str = "w342";
+const CARD: (u32, u32) = (CARD_WIDTH, CARD_HEIGHT);
+const POSTER: (u32, u32) = (POSTER_WIDTH, POSTER_HEIGHT);
 
-pub fn backdrop(art: &Path, kind: Kind, id: u64) -> PathBuf {
+fn title_dir(art: &Path, kind: Kind, id: u64) -> PathBuf {
     let kind = match kind {
         Kind::Movie => "movie",
         Kind::Tv => "tv",
     };
-    art.join(kind).join(id.to_string()).join("backdrop.jpg")
+    art.join(kind).join(id.to_string())
+}
+
+pub fn backdrop(art: &Path, kind: Kind, id: u64) -> PathBuf {
+    title_dir(art, kind, id).join("backdrop.jpg")
+}
+
+pub fn poster(art: &Path, kind: Kind, id: u64) -> PathBuf {
+    title_dir(art, kind, id).join("poster.jpg")
 }
 
 pub fn still(art: &Path, show: u64, season: u32, episode: u32) -> PathBuf {
@@ -170,7 +183,7 @@ impl<S: Source> Run<'_, S> {
         }
     }
 
-    fn fetch(&mut self, target: &Path, url_path: Option<&str>, size: &str, label: &str) {
+    fn fetch(&mut self, target: &Path, url_path: Option<&str>, size: &str, frame: (u32, u32), label: &str) {
         let Some(url_path) = url_path else {
             let _ = fs::remove_file(target);
             return;
@@ -178,7 +191,7 @@ impl<S: Source> Run<'_, S> {
         let saved = self
             .source
             .image(size, url_path)
-            .and_then(|bytes| write_card(&bytes, target).map_err(|error| error.to_string()));
+            .and_then(|bytes| write_image(&bytes, target, frame).map_err(|error| error.to_string()));
         match saved {
             Ok(()) => self.summary.images += 1,
             Err(error) => {
@@ -206,9 +219,18 @@ impl<S: Source> Run<'_, S> {
             .map(|episode| episode.season)
             .collect();
         let backdrop = backdrop(&self.art, Kind::Tv, id);
-        if self.wanted(&backdrop) {
+        let poster = poster(&self.art, Kind::Tv, id);
+        let (wants_backdrop, wants_poster) = (self.wanted(&backdrop), self.wanted(&poster));
+        if wants_backdrop || wants_poster {
             match self.source.details(Kind::Tv, id) {
-                Ok(found) => self.fetch(&backdrop, found.backdrop.as_deref(), BACKDROP_SIZE, &show.title),
+                Ok(found) => {
+                    if wants_backdrop {
+                        self.fetch(&backdrop, found.backdrop.as_deref(), BACKDROP_SIZE, CARD, &show.title);
+                    }
+                    if wants_poster {
+                        self.fetch(&poster, found.poster.as_deref(), POSTER_SIZE, POSTER, &show.title);
+                    }
+                }
                 Err(error) => self
                     .summary
                     .problems
@@ -237,7 +259,7 @@ impl<S: Source> Run<'_, S> {
                 let target = still(&self.art, id, episode.season, episode.episode);
                 if self.wanted(&target) {
                     let label = format!("{} S{}E{}", show.title, episode.season, episode.episode);
-                    self.fetch(&target, found.still_path.as_deref(), STILL_SIZE, &label);
+                    self.fetch(&target, found.still_path.as_deref(), STILL_SIZE, CARD, &label);
                 }
             }
         }
@@ -299,9 +321,10 @@ impl<S: Source> Run<'_, S> {
             self.summary.without_id.push(label);
             return;
         };
-        let target = backdrop(&self.art, Kind::Movie, id);
-        let wanted = self.wanted(&target);
-        if !wanted && movie.runtime.is_some() {
+        let backdrop = backdrop(&self.art, Kind::Movie, id);
+        let poster = poster(&self.art, Kind::Movie, id);
+        let (wants_backdrop, wants_poster) = (self.wanted(&backdrop), self.wanted(&poster));
+        if !wants_backdrop && !wants_poster && movie.runtime.is_some() {
             return;
         }
         match self.source.details(Kind::Movie, id) {
@@ -309,8 +332,11 @@ impl<S: Source> Run<'_, S> {
                 if movie.runtime.is_none() {
                     movie.runtime = found.runtime;
                 }
-                if wanted {
-                    self.fetch(&target, found.backdrop.as_deref(), BACKDROP_SIZE, &label);
+                if wants_backdrop {
+                    self.fetch(&backdrop, found.backdrop.as_deref(), BACKDROP_SIZE, CARD, &label);
+                }
+                if wants_poster {
+                    self.fetch(&poster, found.poster.as_deref(), POSTER_SIZE, POSTER, &label);
                 }
             }
             Err(error) => self.summary.problems.push(format!("{label}: TMDB {id}: {error}")),
@@ -325,12 +351,12 @@ fn movie_label(movie: &MovieEntry) -> String {
     }
 }
 
-fn write_card(bytes: &[u8], target: &Path) -> io::Result<()> {
+fn write_image(bytes: &[u8], target: &Path, (width, height): (u32, u32)) -> io::Result<()> {
     let image = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()?
         .decode()
         .map_err(io::Error::other)?
-        .resize_to_fill(CARD_WIDTH, CARD_HEIGHT, FilterType::Triangle)
+        .resize_to_fill(width, height, FilterType::Triangle)
         .into_rgb8();
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent)?;
@@ -410,6 +436,7 @@ added = 2024-05-01
             Ok(Found {
                 id,
                 backdrop: Some(format!("/{id}.jpg")),
+                poster: Some(format!("/poster-{id}.jpg")),
                 runtime: (kind == Kind::Movie).then_some(96),
                 ..Found::default()
             })
@@ -586,6 +613,14 @@ added = 2024-05-01
             Path::new("/work/Artwork/tv/70523/backdrop.jpg")
         );
         assert_eq!(still(art, 70523, 1, 2), Path::new("/work/Artwork/tv/70523/s01e02.jpg"));
+        assert_eq!(
+            poster(art, Kind::Movie, 14160),
+            Path::new("/work/Artwork/movie/14160/poster.jpg")
+        );
+        assert_eq!(
+            poster(art, Kind::Tv, 70523),
+            Path::new("/work/Artwork/tv/70523/poster.jpg")
+        );
     }
 
     #[test]
@@ -596,7 +631,7 @@ added = 2024-05-01
         let fake = Fake::new();
 
         let summary = run(&manifest, &fake, None, false).unwrap();
-        assert_eq!(summary.images, 3);
+        assert_eq!(summary.images, 5);
         assert_eq!(summary.without_id, ["Home Videos", "Wind"]);
         assert!(summary.problems.is_empty());
         for path in [
@@ -606,6 +641,10 @@ added = 2024-05-01
         ] {
             let image = image::open(&path).unwrap();
             assert_eq!((image.width(), image.height()), (CARD_WIDTH, CARD_HEIGHT));
+        }
+        for path in [poster(&art, Kind::Tv, 70523), poster(&art, Kind::Movie, 14160)] {
+            let image = image::open(&path).unwrap();
+            assert_eq!((image.width(), image.height()), (POSTER_WIDTH, POSTER_HEIGHT));
         }
         assert!(!still(&art, 70523, 1, 2).exists());
 
@@ -648,6 +687,41 @@ added = 2024-05-01
         fake.calls();
         assert_eq!(run(&manifest, &fake, None, true).unwrap().images, 1);
         assert!(fake.calls().contains(&"image w780 /14160.jpg".to_string()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn a_missing_poster_is_fetched_on_its_own() {
+        let dir = workdir("poster-missing");
+        let manifest = dir.join("library.toml");
+        let art = dir.join(DIR);
+        let fake = Fake::new();
+        run(&manifest, &fake, None, false).unwrap();
+        fs::remove_file(poster(&art, Kind::Movie, 14160)).unwrap();
+        fake.calls();
+
+        assert_eq!(run(&manifest, &fake, None, false).unwrap().images, 1);
+        let calls = fake.calls();
+        assert!(calls.contains(&"image w342 /poster-14160.jpg".to_string()));
+        assert!(!calls.iter().any(|call| call.starts_with("image w780")));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn refreshing_replaces_posters_older_than_five_months() {
+        let dir = workdir("poster-refresh");
+        let manifest = dir.join("library.toml");
+        let art = dir.join(DIR);
+        let fake = Fake::new();
+        run(&manifest, &fake, None, false).unwrap();
+        age(&poster(&art, Kind::Tv, 70523), 160);
+        age(&poster(&art, Kind::Movie, 14160), 100);
+        fake.calls();
+
+        assert_eq!(run(&manifest, &fake, None, true).unwrap().images, 1);
+        let calls = fake.calls();
+        assert!(calls.contains(&"image w342 /poster-70523.jpg".to_string()));
+        assert!(!calls.contains(&"image w342 /poster-14160.jpg".to_string()));
         fs::remove_dir_all(dir).unwrap();
     }
 
