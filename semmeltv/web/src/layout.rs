@@ -10,7 +10,7 @@ use topcoat::view::{View, attributes, component, view};
 
 const STYLE: Asset = asset!("./style.css");
 const MICROPHONE: Asset = asset!("./microphone.js");
-const BACK: Asset = asset!("./back.js");
+const APP: Asset = asset!("./app.js");
 
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
@@ -20,7 +20,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
         <html lang="en" data-api=(public.api.as_str())>
             <head>
                 <meta charset="utf-8">
-                <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+                <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
                 <meta name="theme-color" content=(brand::THEME)>
                 <meta name="color-scheme" content="dark">
                 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -34,16 +34,11 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <link rel="stylesheet" href=(STYLE)>
                 topcoat::runtime::script()
                 <script type="module" src=(MICROPHONE)></script>
-                <script type="module" src=(BACK)></script>
+                <script type="module" src=(APP)></script>
             </head>
             <body>
                 <header class="top">
                     link(href: "/", attrs: attributes! { cx => class="brand" }, <img src=(brand::WORDMARK) alt="SemmelTV">)
-                    <nav class="top-links">
-                        link(href: "/subtitles", attrs: attributes! { cx => class="top-link" aria-label="Subtitle settings" }, playing::subtitles_icon())
-                        link(href: "/controls", attrs: attributes! { cx => class="top-link" aria-label="Controls" }, playing::controls_icon())
-                        link(href: "/storage", attrs: attributes! { cx => class="top-link" aria-label="Storage" }, crate::storage::storage_icon())
-                    </nav>
                     <div class="microphone" id="microphone" data-state="off">
                         <span class="microphone-note" id="microphone-note"></span>
                         <button class="microphone-off" id="microphone-off" type="button" aria-label="Turn the microphone off" hidden=(true)>
@@ -57,10 +52,11 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                             <i class="microphone-level" id="microphone-level"></i>
                         </button>
                     </div>
+                    link(href: "/settings", attrs: attributes! { cx => class="top-link" aria-label="Settings" }, playing::settings_icon())
                 </header>
                 playing::voice_feedback()
                 <main>(slot)</main>
-                playing::now_playing()
+                playing::player()
             </body>
         </html>
     })

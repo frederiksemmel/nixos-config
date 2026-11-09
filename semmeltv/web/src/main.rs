@@ -1,12 +1,12 @@
 mod api;
 mod brand;
-mod controls;
 mod downloads;
 mod layout;
 mod live;
 mod pages;
 mod playing;
 mod public;
+mod settings;
 mod storage;
 mod subtitles;
 

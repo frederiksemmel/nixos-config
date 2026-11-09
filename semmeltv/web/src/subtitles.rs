@@ -1,13 +1,10 @@
-use crate::api::{Api, SubtitleSettings, SubtitleTrack, Subtitles};
-use crate::layout::back;
+use crate::api::{Api, SubtitleSettings, Subtitles};
 use serde_json::{Value, json};
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
-use topcoat::router::page;
 use topcoat::runtime::{Event, procedure, shard, signal};
 use topcoat::view::{View, component, view};
 
-const OFF: i64 = -1;
 const SLOTS: [&str; 3] = ["Preferred language", "Second choice", "Third choice"];
 const LANGUAGES: &[(&str, &str)] = &[
     ("en", "English"),
@@ -128,30 +125,6 @@ pub async fn set_language(cx: &Cx, slot: u32, code: String) -> Result<String> {
     })
 }
 
-#[procedure]
-pub async fn choose_track(cx: &Cx, track: i64) -> Result<String> {
-    let track = (track != OFF).then_some(track);
-    Ok(app_context::<Api>(cx).choose_subtitles(track).await)
-}
-
-fn track_name(track: &SubtitleTrack) -> String {
-    let mut name = track.label.clone();
-    if track.hearing_impaired {
-        name.push_str(" (SDH)");
-    }
-    if track.forced {
-        name.push_str(" (forced)");
-    }
-    name
-}
-
-fn track_detail(track: &SubtitleTrack) -> Option<String> {
-    track.title.clone().filter(|title| {
-        let said = title.to_ascii_lowercase();
-        *title != track.label && !(track.hearing_impaired && said == "sdh") && !(track.forced && said == "forced")
-    })
-}
-
 #[component]
 async fn slider(
     cx: &Cx,
@@ -196,7 +169,7 @@ async fn colour(cx: &Cx, name: &'static str, label: &'static str, value: &str) -
 }
 
 #[component]
-async fn switch(cx: &Cx, name: &'static str, label: &'static str, detail: &'static str, on: bool) -> Result<impl View> {
+pub async fn switch(cx: &Cx, name: &'static str, label: &'static str, detail: &'static str, on: bool) -> Result<impl View> {
     let said = signal(cx, String::new);
     Ok(view! {
         <label class="setting setting-row">
@@ -212,7 +185,7 @@ async fn switch(cx: &Cx, name: &'static str, label: &'static str, detail: &'stat
 }
 
 #[shard]
-async fn language_order(cx: &Cx, initial: String) -> Result<impl View> {
+pub async fn language_order(cx: &Cx, initial: String) -> Result<impl View> {
     let order = signal(cx, move || initial);
     let current: Vec<String> = order
         .get()
@@ -244,62 +217,10 @@ async fn language_order(cx: &Cx, initial: String) -> Result<impl View> {
 }
 
 #[component]
-async fn tracks(cx: &Cx, subtitles: &Subtitles) -> Result<impl View> {
-    let playing = subtitles.playing.clone();
-    let initial = playing
-        .as_ref()
-        .and_then(|playing| playing.track.filter(|_| playing.visible))
-        .unwrap_or(OFF);
-    let track = signal(cx, move || initial);
-    let said = signal(cx, String::new);
+pub async fn style(settings: &SubtitleSettings) -> Result<impl View> {
     Ok(view! {
-        <section class="settings">
-            <h2>"Now playing"</h2>
-            match playing {
-                None => <p class="setting-note">"Nothing is playing. While a video plays, its subtitle tracks show up here."</p>,
-                Some(playing) => {
-                    if playing.tracks.is_empty() {
-                        <p class="setting-note">"This video has no subtitles."</p>
-                    } else {
-                        <div class="tracks">
-                            <button type="button" :class=$(if track.get() == OFF { "track on" } else { "track" })
-                                @click=$(async |_e| {
-                                    track.set(OFF);
-                                    let answer = choose_track(OFF).await;
-                                    said.set(answer);
-                                })>
-                                <b>"Off"</b>
-                            </button>
-                            #[key(choice.id)]
-                            for choice in &playing.tracks {
-                                let id = choice.id;
-                                <button type="button" :class=$(if track.get() == id { "track on" } else { "track" })
-                                    @click=$(async |_e| {
-                                        track.set(id);
-                                        let answer = choose_track(id).await;
-                                        said.set(answer);
-                                    })>
-                                    <b>(track_name(choice))</b>
-                                    if let Some(detail) = track_detail(choice) {
-                                        <span>(detail)</span>
-                                    }
-                                </button>
-                            }
-                        </div>
-                        <p class="setting-said" :hidden=$(said.get().is_empty())>$(said.get())</p>
-                    }
-                },
-            }
-        </section>
-    })
-}
-
-#[component]
-async fn style(settings: &SubtitleSettings) -> Result<impl View> {
-    Ok(view! {
-        <section class="settings">
-            <h2>"Look"</h2>
-            <div class="setting-group">
+        <h3>"Look"</h3>
+        <div class="setting-group">
             slider(name: "size", label: "Size", unit: "%", value: (settings.size * 100.0).round(), min: 50.0, max: 250.0, step: 5.0)
             slider(name: "lift", label: "Height above the bottom", unit: "%", value: 100.0 - settings.position, min: 0.0, max: 50.0, step: 1.0)
             colour(name: "color", label: "Text colour", value: &settings.color)
@@ -308,30 +229,7 @@ async fn style(settings: &SubtitleSettings) -> Result<impl View> {
             slider(name: "shadow", label: "Shadow", unit: "", value: settings.shadow, min: 0.0, max: 6.0, step: 0.5)
             slider(name: "background", label: "Background box", unit: "%", value: (settings.background * 100.0).round(), min: 0.0, max: 100.0, step: 5.0)
             switch(name: "restyle", label: "Restyle styled subtitles", detail: "Anime and other subtitles with their own fonts and colours", on: settings.restyle)
-            </div>
-        </section>
-    })
-}
-
-#[page("/subtitles")]
-async fn subtitles_page(cx: &Cx) -> Result<impl View> {
-    let subtitles = app_context::<Api>(cx).subtitles().await.map_err(topcoat::Error::msg)?;
-    let settings = subtitles.settings.clone();
-    Ok(view! {
-        <article class="subtitles">
-            back(href: "/")
-            <h1>"Subtitles"</h1>
-            <p class="setting-note">"The yellow key on the remote shows and hides them while a video plays."</p>
-            tracks(subtitles: &subtitles)
-            <section class="settings">
-                <h2>"Every video"</h2>
-                <div class="setting-group">
-                    switch(name: "shown", label: "Show when a video starts", detail: "", on: settings.shown)
-                    language_order(initial: settings.languages.join(","))
-                </div>
-            </section>
-            style(settings: &settings)
-        </article>
+        </div>
     })
 }
 

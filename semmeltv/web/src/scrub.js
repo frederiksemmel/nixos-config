@@ -29,6 +29,7 @@ function read(element, now) {
     position: Number(data.position) || 0,
     duration: Number(data.duration) || 0,
     paused: data.paused === "1",
+    speed: Number(data.speed) || 1,
     jump: data.jump ? Number(data.jump) : null,
     at: now,
   };
@@ -36,7 +37,7 @@ function read(element, now) {
 
 function playing(now) {
   if (!base) return 0;
-  const moved = base.paused ? 0 : (now - base.at) / 1000;
+  const moved = base.paused ? 0 : ((now - base.at) / 1000) * base.speed;
   const position = base.position + moved;
   return base.duration > 0 ? Math.min(position, base.duration) : position;
 }
@@ -83,7 +84,7 @@ function render(now = performance.now()) {
   if (!found) return;
   rail = found;
   const data = found.dataset;
-  const state = `${data.position} ${data.duration} ${data.paused} ${data.jump}`;
+  const state = `${data.position} ${data.duration} ${data.paused} ${data.speed} ${data.jump}`;
   if (state !== seen) {
     seen = state;
     base = read(found, now);
@@ -113,7 +114,7 @@ function render(now = performance.now()) {
   scrub.classList.toggle("hovering", !drag && hover !== null);
   scrub.classList.toggle("jumping", jumping);
 
-  for (const button of document.querySelectorAll(".playing [data-skip]")) {
+  for (const button of document.querySelectorAll("[data-skip]")) {
     const sign = button.dataset.skip === "back" ? -1 : 1;
     const amount = base.jump !== null && Math.sign(base.jump) === sign ? jumpLabel(base.jump) : "";
     set(button.querySelector(".skip-amount"), "textContent", amount);
@@ -209,7 +210,7 @@ new MutationObserver(() => render()).observe(document.documentElement, {
   childList: true,
   subtree: true,
   attributes: true,
-  attributeFilter: ["data-position", "data-duration", "data-paused", "data-jump"],
+  attributeFilter: ["data-position", "data-duration", "data-paused", "data-speed", "data-jump"],
 });
 
 function frame(now) {

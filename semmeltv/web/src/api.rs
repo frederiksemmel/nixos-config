@@ -168,11 +168,19 @@ pub struct NowPlaying {
     pub caption: String,
     pub movie: Option<String>,
     pub show: Option<String>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
     pub position: f64,
     pub duration: f64,
     pub paused: bool,
+    #[serde(default = "normal_speed")]
+    pub speed: f64,
     pub loading: bool,
     pub jump: Option<i32>,
+}
+
+fn normal_speed() -> f64 {
+    1.0
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -342,10 +350,6 @@ impl Api {
         self.post(&format!("/api/playback/{}", encode(name)), json!({})).await
     }
 
-    pub async fn seek_by(&self, seconds: f64) -> String {
-        self.post("/api/playback/seek", json!({ "by": seconds })).await
-    }
-
     pub async fn skip(&self, direction: &str) -> String {
         self.post("/api/playback/skip", json!({ "direction": direction })).await
     }
@@ -378,19 +382,11 @@ impl Api {
         }
     }
 
-    pub async fn tv(&self, control: &str) -> String {
-        self.post(&format!("/api/tv/{}", encode(control)), json!({})).await
-    }
-
     pub async fn tv_abilities(&self) -> Result<TvAbilities, String> {
         match self.get("/api/tv").await? {
             Found::Here(abilities) => Ok(abilities),
             Found::Missing => Err("the TV has no TV controls".to_string()),
         }
-    }
-
-    pub async fn choose_subtitles(&self, track: Option<i64>) -> String {
-        self.post("/api/subtitles/track", json!({ "track": track })).await
     }
 
     pub async fn storage(&self) -> Result<Storage, String> {
@@ -454,8 +450,11 @@ pub struct SubtitlesPlaying {
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct TvAbilities {
+    pub kind: Option<String>,
     pub volume: bool,
     pub pairing: bool,
+    #[serde(default)]
+    pub paired: Option<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

@@ -205,7 +205,7 @@ async fn storage_page(cx: &Cx) -> Result<impl View> {
         .map(|title| (title.name.clone(), title.bytes));
     Ok(view! {
         <article class="storage">
-            back(href: "/")
+            back(href: "/settings")
             <h1>"Storage"</h1>
             <section class="settings">
                 <h2>"Disk"</h2>

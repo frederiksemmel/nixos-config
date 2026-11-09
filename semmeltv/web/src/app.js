@@ -9,3 +9,7 @@ window.addEventListener("click", (event) => {
   event.stopPropagation();
   history.back();
 }, true);
+
+for (const name of ["gesturestart", "gesturechange", "gestureend"]) {
+  document.addEventListener(name, (event) => event.preventDefault(), { passive: false });
+}
