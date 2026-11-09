@@ -411,6 +411,7 @@ impl Player {
             .arg("--hwdec=drm")
             .arg("--gpu-context=wayland")
             .arg("--profile=fast")
+            .arg("--video-sync=display-resample")
             .arg("--no-osc")
             .arg(format!("--osd-font={OSD_FONT}"))
             .arg(format!("--osd-fonts-dir={OSD_FONTS}"))

@@ -4,7 +4,7 @@ use std::thread;
 use std::time::Duration;
 
 const SETTLE: Duration = Duration::from_secs(2);
-const TOLERANCE: f64 = 0.02;
+const TOLERANCE: f64 = 0.005;
 const MAX_MULTIPLE: u32 = 5;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -28,11 +28,13 @@ impl Mode {
     }
 }
 
-fn fits(refresh: f64, fps: f64) -> bool {
-    (1..=MAX_MULTIPLE).any(|multiple| {
-        let multiple = f64::from(multiple);
-        (refresh - fps * multiple).abs() <= TOLERANCE * multiple
-    })
+fn mismatch(refresh: f64, fps: f64) -> f64 {
+    (1..=MAX_MULTIPLE)
+        .map(|multiple| {
+            let target = fps * f64::from(multiple);
+            (refresh - target).abs() / target
+        })
+        .fold(f64::INFINITY, f64::min)
 }
 
 fn modes_of(output: &Value) -> Vec<(u64, u64, f64, bool)> {
@@ -60,14 +62,15 @@ fn choose(outputs: &Value, fps: f64) -> Option<(Mode, Mode)> {
     let name = output["name"].as_str()?.to_string();
     let modes = modes_of(output);
     let &(width, height, current, _) = modes.iter().find(|mode| mode.3)?;
-    if fits(current, fps) {
-        return None;
-    }
     let refresh = modes
         .iter()
-        .filter(|mode| mode.0 == width && mode.1 == height && fits(mode.2, fps))
+        .filter(|mode| mode.0 == width && mode.1 == height)
         .map(|mode| mode.2)
-        .max_by(f64::total_cmp)?;
+        .filter(|&refresh| mismatch(refresh, fps) <= TOLERANCE)
+        .min_by(|a, b| mismatch(*a, fps).total_cmp(&mismatch(*b, fps)))?;
+    if mismatch(refresh, fps) >= mismatch(current, fps) {
+        return None;
+    }
     let mode = |refresh| Mode {
         output: name.clone(),
         width,
@@ -116,6 +119,18 @@ mod tests {
         assert_eq!(matching.refresh, 23.976);
         assert_eq!(previous.refresh, 30.0);
         assert_eq!(matching.width, 3840);
+    }
+
+    #[test]
+    fn a_film_slightly_off_its_nominal_rate_gets_the_nearest_mode() {
+        let (matching, _) = choose(&tv(), 23.944723).unwrap();
+        assert_eq!(matching.refresh, 23.976);
+    }
+
+    #[test]
+    fn an_exact_rate_beats_a_close_one() {
+        assert_eq!(choose(&tv(), 24.0).unwrap().0.refresh, 24.0);
+        assert_eq!(choose(&tv(), 29.97003).unwrap().0.refresh, 29.969999);
     }
 
     #[test]
