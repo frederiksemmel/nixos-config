@@ -13,7 +13,10 @@ in
   "spadesvision_ssh_config.age".publicKeys = [ frederik ];
   "spadesvision_ssh_config_agent.age".publicKeys = [ frederik ];
   "beast_linear_api_key.age".publicKeys = [ frederik ];
-  "mdblist_api_key.age".publicKeys = [ frederik ];
+  "mdblist_api_key.age".publicKeys = [
+    frederik
+    semmeltv5
+  ];
   "spadesvision_nixbuild_ssh_key.age".publicKeys = [
     frederik
     fstux
@@ -31,5 +34,8 @@ in
     fstux
   ];
   "semmeltv_ssh_key.age".publicKeys = [ frederik ];
-  "tmdb_token.age".publicKeys = [ frederik ];
+  "tmdb_token.age".publicKeys = [
+    frederik
+    semmeltv5
+  ];
 }
