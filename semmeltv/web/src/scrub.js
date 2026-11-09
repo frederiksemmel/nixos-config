@@ -5,6 +5,7 @@ const SLIP = 80;
 const EDGE = 40;
 
 let rail = null;
+let seen = null;
 let base = null;
 let drag = null;
 let hover = null;
@@ -80,8 +81,11 @@ function render(now = performance.now()) {
   const scrub = document.querySelector(".scrub");
   const found = scrub && scrub.querySelector(".scrub-rail");
   if (!found) return;
-  if (found !== rail) {
-    rail = found;
+  rail = found;
+  const data = found.dataset;
+  const state = `${data.position} ${data.duration} ${data.paused} ${data.jump}`;
+  if (state !== seen) {
+    seen = state;
     base = read(found, now);
   }
   const duration = base.duration;
@@ -201,7 +205,12 @@ document.addEventListener("keydown", (event) => {
   post("/api/playback/skip", { direction }).catch(() => {});
 });
 
-new MutationObserver(() => render()).observe(document.documentElement, { childList: true, subtree: true });
+new MutationObserver(() => render()).observe(document.documentElement, {
+  childList: true,
+  subtree: true,
+  attributes: true,
+  attributeFilter: ["data-position", "data-duration", "data-paused", "data-jump"],
+});
 
 function frame(now) {
   render(now);
