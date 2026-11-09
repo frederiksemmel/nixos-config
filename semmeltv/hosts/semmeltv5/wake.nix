@@ -18,7 +18,12 @@ in
     enable = true;
     package = pkgs.wyoming-openwakeword.override { inherit python3Packages; };
     uri = "tcp://127.0.0.1:10400";
-    customModelsDirectories = [ ../../wake/models ];
+    customModelsDirectories = [
+      (builtins.path {
+        name = "semmeltv-wake-models";
+        path = ../../wake/models;
+      })
+    ];
     threshold = 0.9;
   };
 }
