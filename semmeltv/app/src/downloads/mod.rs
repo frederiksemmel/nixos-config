@@ -48,7 +48,7 @@ pub struct Config {
     pub reserve: u64,
     pub meta: PathBuf,
     pub remote: String,
-    pub mount_unit: String,
+    pub mount_rc: PathBuf,
     pub sync_unit: String,
     pub tmdb_token: String,
     pub mdblist: Option<crate::mdblist::Client>,
@@ -753,7 +753,7 @@ impl Service {
                 Err(error) => log(format!("{}: {error}", folder.display())),
             }
         }
-        shelf.show_in_library(&log);
+        shelf.show_in_library(&placed, &log);
         let uploaded: u64 = job.parts.iter().map(|part| part.uploaded).sum();
         self.update(id, |job| {
             job.stage = Stage::Done;
@@ -926,7 +926,7 @@ pub fn run(config: Config) -> Result<(), String> {
             work: config.state.join("work"),
             tmdb: tmdb::Client::new(config.tmdb_token),
             mdblist: config.mdblist,
-            mount_unit: config.mount_unit,
+            mount_rc: config.mount_rc,
             sync_unit: config.sync_unit,
         }),
         deliveries: Mutex::new(send),

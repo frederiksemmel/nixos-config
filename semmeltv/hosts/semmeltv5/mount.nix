@@ -39,7 +39,10 @@ let
         --vfs-cache-max-age 8760h \
         --vfs-cache-min-free-space 5G \
         --vfs-read-ahead 256M \
-        --dir-cache-time 1h
+        --dir-cache-time 1h \
+        --rc \
+        --rc-addr "unix://$RUNTIME_DIRECTORY/rc.sock" \
+        --rc-no-auth
     '';
   };
 

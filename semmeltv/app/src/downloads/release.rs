@@ -38,6 +38,7 @@ static INFO_START: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:^|[^a-z0-9])((?:2160|1080|720|576|480)[pi]|[xh]\.?26[45]|hevc|av1)(?:[^a-z0-9]|$)").unwrap()
 });
 static DECIMAL_DOT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d)\.(\d)").unwrap());
+static SITE_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[^\]\s]*\.[A-Za-z]{2,}[^\]\s]*\]").unwrap());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Coverage {
@@ -140,7 +141,8 @@ fn coverage(name: &str) -> (Coverage, Option<usize>) {
 }
 
 fn info(name: &str) -> Option<String> {
-    let start = INFO_START.captures(name)?.get(1)?.start();
+    let name = SITE_TAG.replace_all(name, "");
+    let start = INFO_START.captures(&name)?.get(1)?.start();
     let rest = &name[start..];
     let spaced = if rest.contains(' ') {
         rest.to_string()
@@ -257,5 +259,22 @@ mod tests {
         assert!(Release::parse("Dune.Part.Two.2024.TS.x264").bad_source);
         assert!(!Release::parse("Dune.Part.Two.2024.1080p.DTS-HD.MA.5.1").bad_source);
         assert!(Release::parse("Dune.Part.Two.2024.1080p.Sample").sample);
+    }
+
+    #[test]
+    fn site_tags_in_brackets_are_left_out_of_the_release_facts() {
+        let info = |name: &str| Release::parse(name).info;
+        assert_eq!(
+            info("Bridgerton.S01E01.1080p.WEBRip.x265-RARBG[eztv.re]").as_deref(),
+            Some("1080p WEBRip x265-RARBG")
+        );
+        assert_eq!(
+            info("Dune Part Two (2024) [REPACK] [1080p] [WEBRip] [x265] [10bit] [5.1] [YTS.MX]").as_deref(),
+            Some("1080p WEBRip x265 10bit 5.1")
+        );
+        assert_eq!(
+            info("Outlander S08e01-10 [1080p Ita Eng Spa h265 10bit SubS] byMe7alh [MIRCrew]").as_deref(),
+            Some("1080p Ita Eng Spa h265 10bit SubS byMe7alh MIRCrew")
+        );
     }
 }

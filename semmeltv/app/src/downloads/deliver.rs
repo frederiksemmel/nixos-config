@@ -20,7 +20,7 @@ pub struct Shelf {
     pub work: PathBuf,
     pub tmdb: Client,
     pub mdblist: Option<mdblist::Client>,
-    pub mount_unit: String,
+    pub mount_rc: PathBuf,
     pub sync_unit: String,
 }
 
@@ -100,6 +100,20 @@ pub fn destination(target: &Target, file: &Path, part_info: Option<&str>) -> Opt
             ))
         }
     }
+}
+
+pub fn folders(placed: &[Placed]) -> Vec<String> {
+    let mut folders: Vec<String> = Vec::new();
+    for place in placed {
+        let parts: Vec<&str> = place.destination.split('/').collect();
+        for depth in 1..parts.len() {
+            let folder = parts[..depth].join("/");
+            if !folders.contains(&folder) {
+                folders.push(folder);
+            }
+        }
+    }
+    folders
 }
 
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
@@ -282,14 +296,14 @@ impl Shelf {
         Ok(manifest_path)
     }
 
-    pub fn show_in_library(&self, log: &dyn Fn(String)) {
-        match run("systemctl", &["show", "--property=MainPID", "--value", &self.mount_unit]) {
-            Ok(pid) if pid.trim() != "0" && !pid.trim().is_empty() => match run("kill", &["-HUP", pid.trim()]) {
-                Ok(_) => log(format!("flushed the directory cache of {}", self.mount_unit)),
-                Err(error) => log(format!("could not flush the mount's directory cache: {error}")),
-            },
-            Ok(_) => log(format!("{} is not running", self.mount_unit)),
-            Err(error) => log(format!("could not find the mount: {error}")),
+    pub fn show_in_library(&self, placed: &[Placed], log: &dyn Fn(String)) {
+        let socket = self.mount_rc.to_string_lossy();
+        for dir in folders(placed) {
+            let argument = format!("dir={dir}");
+            match run("rclone", &["rc", "--unix-socket", &socket, "vfs/refresh", &argument]) {
+                Ok(_) => log(format!("refreshed {dir} on the mount")),
+                Err(error) => log(format!("could not refresh {dir} on the mount: {error}")),
+            }
         }
         match run("systemctl", &["start", "--no-block", &self.sync_unit]) {
             Ok(_) => log(format!("started {}", self.sync_unit)),
@@ -336,6 +350,27 @@ mod tests {
         assert_eq!(
             destination(&outlander(), dotted, None).unwrap(),
             "Series/Outlander/Season 08/Outlander (2014) - S08E02 (1080p WEB h264-GRACE).mkv"
+        );
+    }
+
+    #[test]
+    fn only_the_folders_above_new_files_are_refreshed_from_the_top_down() {
+        let place = |destination: &str| Placed {
+            local: PathBuf::new(),
+            destination: destination.to_string(),
+            size: 1,
+        };
+        let placed = [
+            place("Series/Bridgerton/Season 01/Bridgerton (2020) - S01E01.mp4"),
+            place("Series/Bridgerton/Season 01/Bridgerton (2020) - S01E02.mp4"),
+        ];
+        assert_eq!(
+            folders(&placed),
+            ["Series", "Series/Bridgerton", "Series/Bridgerton/Season 01"]
+        );
+        assert_eq!(
+            folders(&[place("Movies/Up (2009)/Up (2009).mkv")]),
+            ["Movies", "Movies/Up (2009)"]
         );
     }
 

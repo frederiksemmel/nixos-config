@@ -267,6 +267,7 @@ in
             SEMMELTV_RQBIT = "http://${namespaceAddress}:${toString rqbitPort}";
             SEMMELTV_META = "${semmeltv.stateDir}/meta";
             SEMMELTV_LIBRARY_REMOTE = "pcloud:SemmelTV";
+            SEMMELTV_MOUNT_RC = "/run/semmeltv-mount/rc.sock";
             RCLONE_CONFIG = "${runtimeDir}/rclone.conf";
             TMDB_TOKEN_FILE = config.age.secrets.tmdb_token.path;
             MDBLIST_API_KEY_FILE = config.age.secrets.mdblist_api_key.path;

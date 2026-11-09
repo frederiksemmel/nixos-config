@@ -315,7 +315,7 @@ fn run_downloads(args: &Args) -> Result<(), String> {
         reserve: env_number("SEMMELTV_DOWNLOADS_RESERVE_GIB", 10)? * GIB,
         meta: args.meta().to_path_buf(),
         remote: needed("SEMMELTV_LIBRARY_REMOTE")?,
-        mount_unit: env_text("SEMMELTV_MOUNT_UNIT").unwrap_or_else(|| "semmeltv-mount.service".to_string()),
+        mount_rc: needed("SEMMELTV_MOUNT_RC")?.into(),
         sync_unit: env_text("SEMMELTV_SYNC_UNIT").unwrap_or_else(|| "semmeltv-sync.service".to_string()),
         tmdb_token: token.trim().to_string(),
         mdblist: mdblist_client(args)?,
