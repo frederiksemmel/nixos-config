@@ -286,7 +286,7 @@ impl<S: Source> Run<'_, S> {
                 if found.imdb.is_some() {
                     *rating.imdb = found.imdb;
                 }
-                *rating.scores = found.scores;
+                *rating.scores = found.scores.or(*rating.scores);
                 *rating.rated = Some(self.today);
                 if found.scores.is_empty() {
                     self.summary.unrated.push(format!("{label}: MDBList has no ratings"));
@@ -295,7 +295,6 @@ impl<S: Source> Run<'_, S> {
                 }
             }
             Ok(None) => {
-                *rating.scores = Scores::default();
                 *rating.rated = Some(self.today);
                 self.summary
                     .unrated
@@ -463,6 +462,7 @@ added = 2024-05-01
     struct FakeMdblist {
         asked: RefCell<Vec<String>>,
         limit: usize,
+        rt: Option<u8>,
     }
 
     impl FakeMdblist {
@@ -470,7 +470,12 @@ added = 2024-05-01
             Self {
                 asked: RefCell::new(Vec::new()),
                 limit,
+                rt: Some(98),
             }
+        }
+
+        fn without_rt(self) -> Self {
+            Self { rt: None, ..self }
         }
     }
 
@@ -488,7 +493,7 @@ added = 2024-05-01
                 imdb: Some(format!("tt{tmdb}")),
                 scores: Scores {
                     imdb: Some(Tenths(83)),
-                    rt: Some(98),
+                    rt: self.rt,
                     popcorn: Some(90),
                     metacritic: None,
                 },
@@ -548,6 +553,31 @@ added = 2024-05-01
 
         let again = run(&manifest, &fake, Some(&mdblist), false).unwrap();
         assert_eq!(again.requests, 0);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn scores_missing_from_mdblist_keep_the_stored_ones() {
+        let dir = films("ratings-keep");
+        let manifest = dir.join("library.toml");
+        let stored = FILMS.replacen(
+            "path = \"Movies/Up.mkv\"",
+            "ratings = { imdb = 8.0, rt = 97, metacritic = 88 }\npath = \"Movies/Up.mkv\"",
+            1,
+        );
+        fs::write(&manifest, stored).unwrap();
+        let mdblist = FakeMdblist::new(10).without_rt();
+        run(&manifest, &Fake::new(), Some(&mdblist), false).unwrap();
+        let up = &Manifest::read(&manifest).unwrap().movie[0];
+        assert_eq!(
+            (
+                up.ratings.imdb,
+                up.ratings.rt,
+                up.ratings.popcorn,
+                up.ratings.metacritic
+            ),
+            (Some(Tenths(83)), Some(97), Some(90), Some(88))
+        );
         fs::remove_dir_all(dir).unwrap();
     }
 

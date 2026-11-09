@@ -127,6 +127,15 @@ impl Scores {
         *self == Self::default()
     }
 
+    pub fn or(self, older: Self) -> Self {
+        Self {
+            imdb: self.imdb.or(older.imdb),
+            rt: self.rt.or(older.rt),
+            popcorn: self.popcorn.or(older.popcorn),
+            metacritic: self.metacritic.or(older.metacritic),
+        }
+    }
+
     fn render(&self) -> String {
         let parts: Vec<String> = [
             self.imdb.map(|score| format!("imdb = {score}")),
