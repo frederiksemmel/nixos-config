@@ -7,7 +7,7 @@ use topcoat::runtime::{connected, link, procedure, shard};
 use topcoat::view::{View, attributes, component, emit, live, view};
 
 const SETTLE: Duration = Duration::from_secs(4);
-const ALLOWED_CONTROLS: [&str; 6] = ["pause", "resume", "toggle", "stop", "mute", "unmute"];
+const ALLOWED_CONTROLS: [&str; 4] = ["pause", "resume", "toggle", "stop"];
 const LONGEST_COMMAND: usize = 200;
 
 #[procedure]

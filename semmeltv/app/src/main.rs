@@ -28,6 +28,7 @@ mod segments;
 mod subtitles;
 mod tags;
 mod tmdb;
+mod tv_volume;
 mod voice;
 mod watch;
 mod watching;
@@ -197,6 +198,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
             phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
                 .ok()
                 .filter(|device| !device.is_empty()),
+            tv_renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
         }),
     };
     app::run(setup).map_err(|error| error.to_string())

@@ -30,6 +30,13 @@ in
         example = "plughw:Loopback,0,0";
         description = "ALSA device that audio streamed to /api/microphone is played into, or null to refuse it.";
       };
+
+      tvRenderer = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "http://192.168.1.148:9197/dmr";
+        description = "The TV's UPnP MediaRenderer description, whose RenderingControl sets the TV's volume for /api/tv/volume-up, volume-down and mute, or null for no volume control.";
+      };
     };
 
     web = {
@@ -62,6 +69,9 @@ in
         }
         // lib.optionalAttrs (cfg.api.phoneMicrophone != null) {
           SEMMELTV_PHONE_MICROPHONE = cfg.api.phoneMicrophone;
+        }
+        // lib.optionalAttrs (cfg.api.tvRenderer != null) {
+          SEMMELTV_TV_RENDERER = cfg.api.tvRenderer;
         };
       })
 

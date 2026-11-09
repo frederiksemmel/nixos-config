@@ -43,22 +43,6 @@ pub fn turn_tv_off() -> io::Result<()> {
     each_adapter(|_, device| device.transmit(own_logical_address(&device)?, CecLogicalAddress::Tv, CecOpcode::Standby))
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Volume {
-    Up,
-    Down,
-    Mute,
-}
-
-pub fn press_volume(volume: Volume) -> io::Result<()> {
-    let key = match volume {
-        Volume::Up => CecUserControlCode::VolumeUp,
-        Volume::Down => CecUserControlCode::VolumeDown,
-        Volume::Mute => CecUserControlCode::Mute,
-    };
-    each_adapter(|_, device| device.keypress(own_logical_address(&device)?, CecLogicalAddress::Tv, key))
-}
-
 fn each_adapter(send: impl Fn(&Path, CecDevice) -> io::Result<()>) -> io::Result<()> {
     let mut result = Err(io::Error::other("no HDMI-CEC adapter is connected"));
     for path in adapters(Path::new("/dev")) {

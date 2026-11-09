@@ -86,12 +86,12 @@ async fn controls_page(cx: &Cx) -> Result<impl View> {
                     </button>
                 </div>
                 <p class="controls-said" aria-live="polite">$(volume_said.get())</p>
-                <p class="setting-note">"Pressed on the TV over HDMI-CEC, like its own remote's volume keys."</p>
+                <p class="setting-note">"The TV's own volume, set over the network."</p>
             </section>
             <section class="settings">
                 <h2>"Playback"</h2>
                 status()
-                <div class="pad">
+                <div class="pad four">
                     <button type="button" @click=$(async |_e| { playback_said.set(seek(-30i32).await); })>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M11 6 5 12l6 6M19 6l-6 6 6 6"></path></svg>
                         <span>"Back 30s"</span>
@@ -107,14 +107,6 @@ async fn controls_page(cx: &Cx) -> Result<impl View> {
                     <button type="button" @click=$(async |_e| { playback_said.set(control("stop".to_owned()).await); })>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M6 6h12v12H6z"></path></svg>
                         <span>"Stop"</span>
-                    </button>
-                    <button type="button" @click=$(async |_e| { playback_said.set(control("mute".to_owned()).await); })>
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="m15.5 9.5 5 5M20.5 9.5l-5 5"></path></svg>
-                        <span>"Mute video"</span>
-                    </button>
-                    <button type="button" @click=$(async |_e| { playback_said.set(control("unmute".to_owned()).await); })>
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 9a4.5 4.5 0 0 1 0 6M18 6.5a8 8 0 0 1 0 11"></path></svg>
-                        <span>"Unmute video"</span>
                     </button>
                 </div>
                 <p class="controls-said" aria-live="polite">$(playback_said.get())</p>

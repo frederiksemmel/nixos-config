@@ -703,6 +703,7 @@ button.heat-cell:active { outline: 2px solid var(--text); }
 .controls-status { margin: 0 0 10px; color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
 
 .pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.pad.four { grid-template-columns: repeat(4, 1fr); }
 
 .pad button {
   display: grid;

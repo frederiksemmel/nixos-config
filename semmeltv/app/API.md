@@ -76,12 +76,20 @@ are set.
 | --- | --- | --- |
 | POST | `/api/tv/{control}` | none. `control` is `on`, `off`, `semmeltv`, `volume-up`, `volume-down` or `mute` |
 
-These go to the TV over HDMI-CEC and do what the same voice commands do. `on`
-turns the TV on and switches it to SemmelTV, `semmeltv` switches an already-on
-TV to SemmelTV, and `off` puts it in standby. The volume controls press the
-TV's own Volume Up, Volume Down and Mute keys; `mute` toggles. They answer
-like the playing requests, with `ok` true once the command is sent. The TV
-gives no reply to tell whether it obeyed a volume key.
+`on`, `off` and `semmeltv` go to the TV over HDMI-CEC and do what the same
+voice commands do. `on` turns the TV on and switches it to SemmelTV,
+`semmeltv` switches an already-on TV to SemmelTV, and `off` puts it in standby.
+They answer like the playing requests, with `ok` true once the command is sent.
+
+The volume controls set the TV's own volume over the network, through the UPnP
+RenderingControl of the renderer that `SEMMELTV_TV_RENDERER` names (its device
+description, such as `http://192.168.1.148:9197/dmr`). A Samsung ignores volume
+keys sent over CEC by a playback device. `volume-up` and `volume-down` move the
+volume by 2 and answer with the new value, `{ "message": "TV volume 13", "ok":
+true }`; `mute` toggles and answers "TV muted" or "TV sound on". They answer 422
+with `ok` false when the TV is unreachable, when no renderer is configured, or
+when the TV refuses. A Samsung refuses until the Pi is allowed under Settings >
+General > External Device Manager > Device Connection Manager > Device List.
 
 ## Subtitles
 

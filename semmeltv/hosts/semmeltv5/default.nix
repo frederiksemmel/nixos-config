@@ -15,7 +15,10 @@
 
   services.semmeltv = {
     offlineCacheGiB = 80;
-    api.enable = true;
+    api = {
+      enable = true;
+      tvRenderer = "http://192.168.1.148:9197/dmr";
+    };
     web = {
       enable = true;
       tailscale = true;

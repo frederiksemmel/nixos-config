@@ -8,6 +8,7 @@ use crate::progress::Progress;
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
+use crate::tv_volume;
 use crate::watching::{self, Current};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -33,6 +34,7 @@ const TRY_AGAIN_LATER: u16 = 1013;
 pub struct Config {
     pub address: String,
     pub phone_microphone: Option<String>,
+    pub tv_renderer: Option<String>,
 }
 
 #[derive(Debug)]
@@ -104,6 +106,7 @@ struct Api {
     bus: Bus,
     tv: Tv,
     microphone: Option<Arc<Microphone>>,
+    renderer: Option<tv_volume::Renderer>,
 }
 
 impl Api {
@@ -129,6 +132,7 @@ pub fn spawn(config: Config, shared: Arc<Shared>, root: PathBuf, bus: Bus, tv: T
                 busy: tokio::sync::Mutex::new(()),
             })
         }),
+        renderer: config.tv_renderer.map(tv_volume::Renderer::new),
     };
     let address = config.address;
     let spawned = thread::Builder::new().name("api".to_string()).spawn(move || {
@@ -177,6 +181,7 @@ fn router(api: Api) -> Router {
         .route("/api/events", get(events))
         .route("/api/microphone", get(microphone))
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.tv.clone()))
+        .merge(tv_volume::routes(api.renderer.clone()))
         .with_state(api)
 }
 
@@ -646,9 +651,6 @@ async fn tv(State(api): State<Api>, Path(name): Path<String>) -> Response {
         "on" => Control::TvOn,
         "off" => Control::TvOff,
         "semmeltv" => Control::ShowSemmelTv,
-        "volume-up" => Control::VolumeUp,
-        "volume-down" => Control::VolumeDown,
-        "mute" => Control::VolumeMute,
         _ => return not_found(format!("no TV control {name}")),
     };
     ask(&api, Request::Control(control)).await
@@ -850,6 +852,7 @@ mod tests {
                     busy: tokio::sync::Mutex::new(()),
                 })
             }),
+            renderer: None,
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
@@ -985,14 +988,7 @@ mod tests {
         assert_eq!(post(&server, "/api/playback/seek", json!({ "by": -30.0 })).0, 200);
         assert_eq!(server.asked.recv().unwrap(), "Seek(By(-30.0))");
         assert_eq!(post(&server, "/api/playback/dance", json!({})).0, 404);
-        for (name, control) in [
-            ("on", "TvOn"),
-            ("off", "TvOff"),
-            ("semmeltv", "ShowSemmelTv"),
-            ("volume-up", "VolumeUp"),
-            ("volume-down", "VolumeDown"),
-            ("mute", "VolumeMute"),
-        ] {
+        for (name, control) in [("on", "TvOn"), ("off", "TvOff"), ("semmeltv", "ShowSemmelTv")] {
             assert_eq!(post(&server, &format!("/api/tv/{name}"), json!({})).0, 200, "{name}");
             assert_eq!(server.asked.recv().unwrap(), format!("Control({control})"));
         }
