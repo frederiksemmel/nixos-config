@@ -6,8 +6,9 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
 use serde_json::Value;
 use std::fs;
-use std::io;
+use std::io::{self, Write};
 use std::net::{TcpStream, ToSocketAddrs};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -105,7 +106,9 @@ impl Pairing for Remote {
 
 fn answer(text: &str) -> Option<Result<Option<String>, Failure>> {
     let message: Value = serde_json::from_str(text).ok()?;
-    match message["event"].as_str()? {
+    let event = message["event"].as_str()?;
+    eprintln!("TV pairing: {event}");
+    match event {
         "ms.channel.connect" => Some(Ok(message["data"]["token"].as_str().map(str::to_string))),
         "ms.channel.unauthorized" => Some(Err(Failure::Denied)),
         "ms.channel.timeOut" => Some(Err(Failure::NoAnswer)),
@@ -115,7 +118,13 @@ fn answer(text: &str) -> Option<Result<Option<String>, Failure>> {
 
 fn save(path: &PathBuf, token: &str) -> io::Result<()> {
     let partial = path.with_extension("partial");
-    fs::write(&partial, token)?;
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&partial)?
+        .write_all(token.as_bytes())?;
     fs::rename(partial, path)
 }
 
