@@ -1,5 +1,5 @@
 use crate::command::Command;
-use crate::display::{self, Mode, Video};
+use crate::display::{self, Video};
 use crate::overlay::{self, View};
 use crate::progress::Place;
 use crate::seek::{Direction, Order, Scrub};
@@ -149,7 +149,7 @@ struct Playback {
     closed: bool,
     segments: Vec<Segment>,
     prompt: Option<Kind>,
-    display_mode: Option<Mode>,
+    matched: bool,
     scrub: Scrub,
     shown_until: Option<Instant>,
     drawn: String,
@@ -473,8 +473,8 @@ impl Player {
             connect(&mut child, &socket_path, &shared, title);
             let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
             shared.lock().unwrap().subtitles.stopped();
-            if let Some(mode) = shared.lock().unwrap().display_mode.take() {
-                mode.apply();
+            if shared.lock().unwrap().matched {
+                display::show_ui();
             }
             let _ = std::fs::remove_file(&socket_path);
             on_exit(finish);
@@ -626,13 +626,13 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 playback.present(now);
             }
             Some(Event::Video(video)) => {
-                let matched = {
+                let settled = {
                     let playback = shared.lock().unwrap();
-                    playback.started || playback.display_mode.is_some()
+                    playback.started || playback.matched
                 };
-                if !matched {
-                    let previous = display::match_video(video);
-                    shared.lock().unwrap().display_mode = previous;
+                if !settled {
+                    let matched = display::match_video(video);
+                    shared.lock().unwrap().matched = matched;
                 }
             }
             Some(Event::Started) => {

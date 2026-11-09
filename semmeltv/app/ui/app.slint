@@ -757,6 +757,7 @@ export component AppWindow inherits Window {
     callback changed();
     callback playback-finished(bool, bool);
     callback position-saved();
+    callback resized();
 
     property <length> u: self.height / 1080;
     in property <bool> painted;
@@ -770,6 +771,10 @@ export component AppWindow inherits Window {
     background: #0b0d12;
     default-font-family: "Inter Variable";
     forward-focus: scope;
+
+    changed height => {
+        root.resized();
+    }
 
     scope := FocusScope {
         key-pressed(event) => {

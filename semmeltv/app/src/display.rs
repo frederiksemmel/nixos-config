@@ -6,6 +6,7 @@ use std::time::Duration;
 const SETTLE: Duration = Duration::from_secs(2);
 const TOLERANCE: f64 = 0.005;
 const MAX_MULTIPLE: u32 = 5;
+const UI_SIZE: (u64, u64) = (1920, 1080);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Video {
@@ -61,14 +62,40 @@ fn modes_of(output: &Value) -> Vec<(u64, u64, f64, bool)> {
         .collect()
 }
 
-fn choose(outputs: &Value, video: Video) -> Option<(Mode, Mode)> {
-    let output = outputs
-        .as_array()?
-        .iter()
-        .find(|output| output["enabled"].as_bool() == Some(true))?;
-    let name = output["name"].as_str()?.to_string();
-    let modes = modes_of(output);
-    let current = modes.iter().find(|mode| mode.3)?;
+struct Output {
+    name: String,
+    modes: Vec<(u64, u64, f64, bool)>,
+}
+
+impl Output {
+    fn enabled(outputs: &Value) -> Option<Self> {
+        let output = outputs
+            .as_array()?
+            .iter()
+            .find(|output| output["enabled"].as_bool() == Some(true))?;
+        Some(Self {
+            name: output["name"].as_str()?.to_string(),
+            modes: modes_of(output),
+        })
+    }
+
+    fn change_to(&self, (width, height, refresh): (u64, u64, f64)) -> Option<Mode> {
+        let current = self.modes.iter().find(|mode| mode.3)?;
+        if (width, height, refresh) == (current.0, current.1, current.2) {
+            return None;
+        }
+        Some(Mode {
+            output: self.name.clone(),
+            width,
+            height,
+            refresh,
+        })
+    }
+}
+
+fn choose(outputs: &Value, video: Video) -> Option<Mode> {
+    let output = Output::enabled(outputs)?;
+    let modes = &output.modes;
     let area = |mode: &(u64, u64, f64, bool)| mode.0 * mode.1;
     let covering: Vec<_> = modes
         .iter()
@@ -89,29 +116,41 @@ fn choose(outputs: &Value, video: Video) -> Option<(Mode, Mode)> {
                 .then(mismatch(a.2, video.fps).total_cmp(&mismatch(b.2, video.fps)))
                 .then(a.2.total_cmp(&b.2))
         })?;
-    if (width, height, refresh) == (current.0, current.1, current.2) {
-        return None;
-    }
-    let mode = |width, height, refresh| Mode {
-        output: name.clone(),
-        width,
-        height,
-        refresh,
-    };
-    Some((mode(width, height, refresh), mode(current.0, current.1, current.2)))
+    output.change_to((width, height, refresh))
 }
 
-pub fn match_video(video: Video) -> Option<Mode> {
+fn choose_ui(outputs: &Value) -> Option<Mode> {
+    let output = Output::enabled(outputs)?;
+    let &(width, height, refresh, _) = output
+        .modes
+        .iter()
+        .filter(|mode| (mode.0, mode.1) == UI_SIZE)
+        .max_by(|a, b| a.2.total_cmp(&b.2))?;
+    output.change_to((width, height, refresh))
+}
+
+fn outputs() -> Option<Value> {
     let output = Command::new("wlr-randr")
         .arg("--json")
         .stdin(Stdio::null())
         .output()
         .ok()?;
-    let outputs = serde_json::from_slice(&output.stdout).ok()?;
-    let (matching, previous) = choose(&outputs, video)?;
+    serde_json::from_slice(&output.stdout).ok()
+}
+
+pub fn match_video(video: Video) -> bool {
+    let Some(matching) = outputs().and_then(|outputs| choose(&outputs, video)) else {
+        return false;
+    };
     matching.apply();
     thread::sleep(SETTLE);
-    Some(previous)
+    true
+}
+
+pub fn show_ui() {
+    if let Some(mode) = outputs().and_then(|outputs| choose_ui(&outputs)) {
+        mode.apply();
+    }
 }
 
 #[cfg(test)]
@@ -157,13 +196,12 @@ mod tests {
     }
 
     #[test]
-    fn a_1080p_film_plays_at_1080p_and_its_exact_rate_and_remembers_the_old_mode() {
-        let (matching, previous) = choose(&tv(), hd(23.976024)).unwrap();
+    fn a_1080p_film_plays_at_1080p_and_its_exact_rate() {
+        let matching = choose(&tv(), hd(23.976024)).unwrap();
         assert_eq!(
             (matching.width, matching.height, matching.refresh),
             (1920, 1080, 23.976)
         );
-        assert_eq!((previous.width, previous.height, previous.refresh), (3840, 2160, 30.0));
     }
 
     #[test]
@@ -173,13 +211,13 @@ mod tests {
             height: 800,
             fps: 24.0,
         };
-        let (matching, _) = choose(&tv(), video).unwrap();
+        let matching = choose(&tv(), video).unwrap();
         assert_eq!((matching.width, matching.height, matching.refresh), (1920, 1080, 24.0));
     }
 
     #[test]
     fn a_4k_film_keeps_4k() {
-        let (matching, _) = choose(&tv(), uhd(23.976)).unwrap();
+        let matching = choose(&tv(), uhd(23.976)).unwrap();
         assert_eq!((matching.width, matching.height), (3840, 2160));
     }
 
@@ -190,7 +228,7 @@ mod tests {
             height: 4320,
             fps: 24.0,
         };
-        let (matching, _) = choose(&tv(), video).unwrap();
+        let matching = choose(&tv(), video).unwrap();
         assert_eq!((matching.width, matching.height, matching.refresh), (3840, 2160, 24.0));
     }
 
@@ -201,22 +239,22 @@ mod tests {
             height: 720,
             fps: 25.0,
         };
-        let (matching, _) = choose(&tv(), small).unwrap();
+        let matching = choose(&tv(), small).unwrap();
         assert_eq!((matching.width, matching.height, matching.refresh), (1920, 1080, 25.0));
-        let (matching, _) = choose(&tv(), Video { fps: 60.0, ..small }).unwrap();
+        let matching = choose(&tv(), Video { fps: 60.0, ..small }).unwrap();
         assert_eq!((matching.width, matching.height), (1280, 720));
     }
 
     #[test]
     fn a_film_slightly_off_its_nominal_rate_gets_the_nearest_mode() {
-        let (matching, _) = choose(&tv(), hd(23.944723)).unwrap();
+        let matching = choose(&tv(), hd(23.944723)).unwrap();
         assert_eq!(matching.refresh, 23.976);
     }
 
     #[test]
     fn an_exact_rate_beats_a_close_one() {
-        assert_eq!(choose(&tv(), uhd(24.0)).unwrap().0.refresh, 24.0);
-        assert_eq!(choose(&tv(), uhd(29.97003)).unwrap().0.refresh, 29.969999);
+        assert_eq!(choose(&tv(), uhd(24.0)).unwrap().refresh, 24.0);
+        assert_eq!(choose(&tv(), uhd(29.97003)).unwrap().refresh, 29.969999);
     }
 
     #[test]
@@ -229,5 +267,31 @@ mod tests {
     fn a_rate_the_display_lacks_changes_nothing() {
         assert_eq!(choose(&tv(), uhd(50.0)), None);
         assert_eq!(choose(&tv(), hd(1000.0)), None);
+    }
+
+    #[test]
+    fn the_ui_runs_at_1080p_and_the_fastest_rate_there() {
+        let mode = choose_ui(&tv()).unwrap();
+        assert_eq!((mode.width, mode.height, mode.refresh), (1920, 1080, 60.0));
+    }
+
+    #[test]
+    fn the_ui_mode_changes_nothing_once_it_is_set() {
+        let mut outputs = tv();
+        for mode in outputs[0]["modes"].as_array_mut().unwrap() {
+            let ui = mode["width"] == 1920 && mode["refresh"] == 60.0;
+            mode["current"] = json!(ui);
+        }
+        assert_eq!(choose_ui(&outputs), None);
+    }
+
+    #[test]
+    fn a_display_without_1080p_keeps_its_mode() {
+        let outputs = json!([{
+            "name": "HDMI-A-1",
+            "enabled": true,
+            "modes": [{ "width": 1280, "height": 720, "refresh": 60.0, "current": true }],
+        }]);
+        assert_eq!(choose_ui(&outputs), None);
     }
 }

@@ -5,6 +5,7 @@ use crate::cache::Cache;
 use crate::cec;
 use crate::command::Command;
 use crate::details::{self, Details, Ratings};
+use crate::display;
 use crate::fetch;
 use crate::heatmap;
 use crate::intent::{self, Action, Control};
@@ -32,6 +33,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
+use std::thread;
 use std::time::Duration;
 
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
@@ -297,6 +299,14 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
             app.borrow_mut().record_place();
         }
     });
+
+    let resized = Rc::downgrade(&app);
+    ui.on_resized(move || {
+        if resized.upgrade().is_some_and(|app| app.borrow().player.is_none()) {
+            thread::spawn(display::show_ui);
+        }
+    });
+    thread::spawn(display::show_ui);
 
     let changed = Rc::downgrade(&app);
     ui.on_changed(move || {
