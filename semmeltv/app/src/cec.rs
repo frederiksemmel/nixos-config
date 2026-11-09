@@ -103,6 +103,13 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
                 }
                 Reaction::Release => keys.release(),
                 Reaction::Announce => log_failure(path, "Active Source", announce(&device)),
+                Reaction::Stop => {
+                    eprintln!(
+                        "{}: {opcode:?} moved the TV to another input, stopping playback",
+                        path.display()
+                    );
+                    remote.stop();
+                }
                 Reaction::Reply(reply, status) => {
                     let sent = own_logical_address(&device)
                         .and_then(|from| device.transmit_data(from, message.initiator(), reply, &[status]));
@@ -164,6 +171,7 @@ enum Reaction {
     Press(Command),
     Release,
     Announce,
+    Stop,
     Reply(CecOpcode, u8),
 }
 
@@ -177,10 +185,18 @@ fn react(opcode: CecOpcode, parameters: &[u8], own_address: CecPhysicalAddress) 
         CecOpcode::UserControlReleased => Reaction::Release,
         CecOpcode::RequestActiveSource => Reaction::Announce,
         CecOpcode::SetStreamPath if own_address == parameters => Reaction::Announce,
+        CecOpcode::SetStreamPath | CecOpcode::ActiveSource if elsewhere(parameters.get(..2), own_address) => {
+            Reaction::Stop
+        }
+        CecOpcode::RoutingChange if elsewhere(parameters.get(2..4), own_address) => Reaction::Stop,
         CecOpcode::MenuRequest => Reaction::Reply(CecOpcode::MenuStatus, MENU_ACTIVATED),
         CecOpcode::GiveDevicePowerStatus => Reaction::Reply(CecOpcode::ReportPowerStatus, POWER_ON),
         _ => Reaction::Ignore,
     }
+}
+
+fn elsewhere(address: Option<&[u8]>, own_address: CecPhysicalAddress) -> bool {
+    address.is_some_and(|address| own_address != address)
 }
 
 fn key_command(code: CecUserControlCode) -> Option<Command> {
@@ -341,9 +357,41 @@ mod tests {
     }
 
     #[test]
-    fn stream_paths_only_matter_when_they_point_here() {
+    fn a_stream_path_here_announces_and_one_elsewhere_stops() {
         assert_eq!(react(CecOpcode::SetStreamPath, &[0x10, 0x00], OWN), Reaction::Announce);
-        assert_eq!(react(CecOpcode::SetStreamPath, &[0x20, 0x00], OWN), Reaction::Ignore);
+        assert_eq!(react(CecOpcode::SetStreamPath, &[0x20, 0x00], OWN), Reaction::Stop);
+    }
+
+    #[test]
+    fn switching_the_tv_to_another_input_stops_playback() {
+        assert_eq!(
+            react(CecOpcode::RoutingChange, &[0x10, 0x00, 0x20, 0x00], OWN),
+            Reaction::Stop
+        );
+        assert_eq!(
+            react(CecOpcode::RoutingChange, &[0x10, 0x00, 0x00, 0x00], OWN),
+            Reaction::Stop
+        );
+        assert_eq!(react(CecOpcode::ActiveSource, &[0x30, 0x00], OWN), Reaction::Stop);
+    }
+
+    #[test]
+    fn switching_the_tv_to_this_input_does_not_stop() {
+        assert_eq!(
+            react(CecOpcode::RoutingChange, &[0x20, 0x00, 0x10, 0x00], OWN),
+            Reaction::Ignore
+        );
+        assert_eq!(react(CecOpcode::ActiveSource, &[0x10, 0x00], OWN), Reaction::Ignore);
+    }
+
+    #[test]
+    fn truncated_routing_messages_are_ignored() {
+        assert_eq!(
+            react(CecOpcode::RoutingChange, &[0x10, 0x00, 0x20], OWN),
+            Reaction::Ignore
+        );
+        assert_eq!(react(CecOpcode::ActiveSource, &[0x30], OWN), Reaction::Ignore);
+        assert_eq!(react(CecOpcode::SetStreamPath, &[], OWN), Reaction::Ignore);
     }
 
     #[test]

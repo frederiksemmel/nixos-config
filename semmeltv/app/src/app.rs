@@ -49,6 +49,7 @@ enum Screen {
 enum Input {
     Command(Command),
     Request(Pending),
+    Stop,
 }
 
 #[derive(Clone)]
@@ -60,6 +61,10 @@ pub struct Remote {
 impl Remote {
     pub fn send(&self, command: Command) {
         self.deliver(Input::Command(command));
+    }
+
+    pub fn stop(&self) {
+        self.deliver(Input::Stop);
     }
 
     fn request(&self, pending: Pending) {
@@ -244,6 +249,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
                         let outcome = app.borrow_mut().answer(request);
                         let _ = reply.send(outcome);
                     }
+                    Input::Stop => app.borrow().control(Control::Stop),
                 }
             }
         }
