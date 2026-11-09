@@ -1,33 +1,32 @@
-# shpool sessions on beast, in terminal windows that reattach after a dropped connection.
-
-use session-picker.nu *
+# Claude sessions on beast, from the laptop or on beast itself.
+#
+# A session is one Claude conversation. The daemon (`claude --bg`) hosts it, the app
+# reaches it through Remote Control, and a terminal attaches with `claude attach`.
 
 const self = path self
-const shpool_defs = path self shpool-sessions.nu
-const connect_options = [-o ConnectTimeout=5 -o BatchMode=yes]
-# A shpool session reaches the agent through the attaching client's SSH_AUTH_SOCK,
-# and `ssh beast <command>` runs without nushell's env file, which sets it.
-const agent_env = '$env.SSH_AUTH_SOCK = $"($env.XDG_RUNTIME_DIR)/gcr/ssh";'
+const sessions_nu = path self sessions.nu
+const connect_options = [-o ConnectTimeout=5]
 const reset_terminal = "\e[?25h\e[?1000;1002;1003;1006;2004l\e[<99u"
 
-# Evaluates a nushell expression on beast, with shpool-sessions.nu loaded.
-def on-beast [expression: string] {
-  ^ssh -o ConnectTimeout=5 beast $"(open --raw $shpool_defs | decode utf-8)\n($expression) | to json" | from json
+def on-beast-itself [] {
+  (sys host).hostname == "beast"
 }
 
-def complete-sessions [] {
-  let sessions = try { list } catch { [] }
-  {
-    options: { sort: false, completion_algorithm: fuzzy }
-    completions: ($sessions | each {|s| { value: $s.name, description: $s.title } })
+# Evaluates a nushell expression on beast with sessions.nu loaded.
+def on-beast [expression: string] {
+  let script = $"(open --raw $sessions_nu | decode utf-8)\n($expression) | to json"
+  if (on-beast-itself) {
+    ^nu --no-config-file --commands $script | from json
+  } else {
+    ^ssh ...$connect_options beast $script | from json
   }
 }
 
-def complete-phone-sessions [] {
-  let sessions = try { on-beast phone-sessions } catch { [] }
+def complete-sessions [] {
+  let sessions = try { on-beast sessions } catch { [] }
   {
     options: { sort: false, completion_algorithm: fuzzy }
-    completions: ($sessions | each {|s| { value: $s.session, description: $s.title } })
+    completions: ($sessions | each {|s| { value: $s.id, description: $s.title } })
   }
 }
 
@@ -37,22 +36,75 @@ def complete-groups [] {
 }
 
 def complete-repos [] {
-  let repos = try { on-beast shpool-repos } catch { [] }
+  let repos = try { on-beast repos } catch { [] }
   {
     options: { completion_algorithm: fuzzy }
     completions: ($repos | each {|r| { value: $r.name, description: $r.path } })
   }
 }
 
-def free-name [prefix: string, taken: list<string>] {
-  1..(($taken | length) + 1)
-  | each {|n| $"($prefix)($n)" }
-  | where $it not-in $taken
-  | first
+# Orders sessions by group, the group with the newest activity first, and gives
+# each group a colour. Sessions without a group come last.
+def by-group [] {
+  let sessions = $in
+  let colours = [cyan yellow magenta green blue]
+  $sessions
+  | where group != null
+  | group-by group --to-table
+  | sort-by {|g| $g.items.last | math max } --reverse
+  | enumerate
+  | each {|g|
+    let colour = $colours | get ($g.index mod ($colours | length))
+    $g.item.items | sort-by last --reverse | insert colour $colour
+  }
+  | flatten
+  | append ($sessions | where group == null | sort-by last --reverse | insert colour null)
 }
 
-def window-title [session: record] {
-  $session.title | str replace --regex ' \([a-z]+\)$' ""
+def ago [ms: int] {
+  $ms * 1_000_000 | into datetime | date humanize | str replace " ago" ""
+}
+
+# Picker lines for by-group sessions. Every line carries its group name so typing
+# it filters to the group: bold on the group's first line, dimmed on the rest,
+# with a bar in the group's colour joining them. A session outside the daemon is
+# marked with what hosts it, opening it moves it into the daemon.
+def session-rows [sessions: list] {
+  if ($sessions | is-empty) { return [] }
+  let group_width = $sessions.group | compact | each { str length } | append 0 | math max
+  let title_width = [($sessions.title | str length | math max) 50] | math min
+  let columns = (term size).columns - $group_width - 8
+  $sessions | enumerate | each {|row|
+    let s = $row.item
+    let group = $s.group | default "" | fill -w $group_width
+    let leads = $row.index == 0 or ($sessions | get ($row.index - 1) | get group) != $s.group
+    let label = if $s.colour == null { $"($group)  " } else {
+      let style = if $leads { ansi $"($s.colour)_bold" } else { ansi attr_dimmed }
+      $"($style)($group)(ansi reset) (ansi $s.colour)▌(ansi reset)"
+    }
+    let marker = if $s.host == "bg" { "" } else { $s.host }
+    let copies = if $s.processes > 1 { $"($s.processes) processes!" } else { "" }
+    let line = [
+      ($s.title | str substring ..<$title_width | fill -w $title_width)
+      (ago $s.last | fill -w 14)
+      ($s.state | fill -w 7)
+      ($marker | fill -w 4)
+      $s.repo
+      $copies
+    ] | str join "  " | str substring ..<$columns
+    $"($label) ($line)"
+  }
+}
+
+# Picks lines in fzf and returns their indexes, none on esc.
+def fzf-pick [header: string, --multi] {
+  let lines = $in | enumerate | each {|line| $"($line.index)\t($line.item)" } | str join "\n"
+  try {
+    $lines
+    | ^fzf ...(if $multi { [--multi] } else { [] }) --ansi --no-sort --layout reverse --height "~100%" --gutter " " --info inline-right --delimiter "\t" --with-nth "2.." --accept-nth 1 --header $header
+    | lines
+    | each { into int }
+  } catch { [] }
 }
 
 def set-title [title: string] {
@@ -67,31 +119,20 @@ def wait-to-retry [title: string, delay: duration, reason: string] {
   print --no-newline "\r\e[K"
 }
 
-# Keeps a window on one session and exits with it. Only ssh failing (exit 255)
-# reconnects. With --create, the first attach may make the session from those
-# `shpool attach` arguments; otherwise a missing session is an error.
-def connect [session: string, title: string, --create: list<string>] {
-  let name = $session | to json
-  mut creating = $create != null
+# Keeps this terminal on one background session and exits with it. Only ssh
+# failing (exit 255) reconnects; on beast itself there is no connection to lose.
+def connect [id: string, title: string] {
+  set-title $title
+  if (on-beast-itself) {
+    ^claude attach $id
+    return
+  }
   mut delay = 1sec
   loop {
     set-title $title
-    let listing = do --ignore-errors { ^ssh ...$connect_options beast shpool list --json } | complete
-    if $listing.exit_code != 0 {
-      wait-to-retry $title $delay ($listing.stderr | str trim | lines | last)
-      $delay = [($delay * 2) 30sec] | math min
-      continue
-    }
-    let exists = $session in ($listing.stdout | from json | get sessions.name)
-    if $exists {
-      $creating = false
-    } else if not $creating {
-      error make --unspanned { msg: $"no session ($session) on beast" }
-    }
-    let mode = if $exists { [-f] } else { $create }
     let started = date now
     let code = try {
-      ^ssh -t ...$connect_options beast $agent_env shpool attach ...$mode $name
+      ^ssh -t ...$connect_options beast claude attach $id
       0
     } catch {|failure|
       $failure.exit_code? | default 1
@@ -108,78 +149,72 @@ def connect [session: string, title: string, --create: list<string>] {
   }
 }
 
-# Picks a session on beast and attaches this window to it.
+# Picks a session on beast and attaches this terminal to it.
 #
-# Esc opens a plain shell on beast instead.
+# Esc leaves a plain shell on beast instead.
 #
 # Subcommands:
-#   list     Lists the sessions on beast, newest activity first.
-#   attach   Attaches this window to a session and keeps it attached across dropped connections.
-#   new      Starts a session: Claude with Remote Control in a repo, inside devenv when the repo has one.
-#   spare    Attaches this window to the newest detached Remote Control spare.
-#   take     Moves a session started in the app into shpool and attaches this window to it.
-#   group    Puts a session in a group, or gives every session without one a group.
-#   clean    Kills the sessions matching every given filter, after listing them and asking.
-#   restore  Opens every detached session fullscreen on its own workspace, skipping unused spares.
+#   list     Lists the sessions on beast, newest message first.
+#   attach   Attaches this terminal to a session, across dropped connections.
+#   new      Starts a session in a repo on beast and attaches to it.
+#   group    Puts a session in a group, or groups every session that has none.
+#   clean    Ends the sessions matching every given filter, after listing them.
+#   restore  Opens every running session in its own window on its own workspace.
 export def main [] {
-  let found = on-beast "{ sessions: (shpool-sessions), phone: (phone-sessions) }"
-  let listed = $found.sessions | append $found.phone | by-group
-  let new_entry = "new session"
-  let kill_entry = "kill sessions…"
-  let count = $listed | length
-  let choice = if $count == 0 { $count } else {
-    session-rows $listed
-    | append [$new_entry $kill_entry]
-    | fzf-pick "type to filter, esc for a plain shell"
-    | get -o 0
-  }
+  let sessions = on-beast sessions | by-group
+  let rows = session-rows $sessions
+  let count = $sessions | length
+  let choice = $rows | append ["new session" "end sessions…"] | fzf-pick "type to filter, esc for a plain shell" | get -o 0
   if $choice == null {
-    do --ignore-errors { ^ssh -t beast "hide-env SSH_CONNECTION; exec nu --login" }
-    exit
-  } else if $choice < $count {
-    let session = $listed | get $choice
-    if $session.status == "phone" {
-      take $session.session
-    } else {
-      connect $session.name (window-title $session)
+    if not (on-beast-itself) {
+      do --ignore-errors { ^ssh -t beast "hide-env SSH_CONNECTION; exec nu --login" }
+      exit
     }
+  } else if $choice < $count {
+    let session = $sessions | get $choice
+    connect (on-beast $"open-session ($session.session | to json)" | get id) $session.title
   } else if $choice == $count {
     new
   } else {
-    let sessions = $listed | where status != "phone"
-    let names = session-rows $sessions
-    | fzf-pick --multi "tab marks, enter kills, esc cancels"
-    | each {|i| $sessions | get $i | get name | to json }
-    if ($names | is-not-empty) { ^ssh beast shpool kill ...$names }
+    let picked = $rows | fzf-pick --multi "tab marks, enter ends them, esc cancels"
+    if ($picked | is-not-empty) {
+      on-beast $"stop-sessions ($picked | each {|i| $sessions | get $i | get session } | to json --raw)" | ignore
+    }
     main
   }
 }
 
-# Lists the sessions on beast, newest activity first.
+# Lists the sessions on beast, newest message first.
 export def list [] {
-  on-beast shpool-sessions
+  on-beast sessions | update last {|s| $s.last * 1_000_000 | into datetime }
 }
 
-# Attaches this window to a session and keeps it attached across dropped connections.
-export def attach [
-  session: string@complete-sessions # session to attach
-  --title: string                   # window title, default the session name
-] {
-  connect $session ($title | default $session)
-}
-
-# Starts a session: Claude with Remote Control in a repo, inside devenv when the repo has one.
+# Attaches this terminal to a session, across dropped connections.
 #
-# Without a repo it asks for one, or for a plain shell.
+# A session started from the app or in a terminal moves into the daemon first: its
+# process stops and the conversation resumes in the background with Remote
+# Control. The app shows that as a new conversation; don't write in the old one.
+# A session that is working is refused until it is idle.
+export def attach [
+  session: string@complete-sessions # session id, or its start
+  --title: string                   # window title, default the session's title
+] {
+  let target = on-beast $"open-session ($session | to json)"
+  connect $target.id ($title | default $target.title)
+}
+
+# Starts a session in a repo on beast and attaches this terminal to it.
+#
+# The session runs in the daemon with Remote Control, so the app shows it too.
 export def new [
   repo?: string@complete-repos # repo under ~/repos on beast, or a unique part of its name
-  --name (-n): string          # session name, default <repo>-<number>
+  --name (-n): string          # session name, default the title Claude gives it
 ] {
-  let repos = on-beast shpool-repos
+  let repos = on-beast repos
   let target = if $repo == null {
-    let choice = ["plain shell" ...$repos.name] | input list --fuzzy --index "new session in (esc cancels)"
+    let choice = $repos.name | input list --fuzzy --index "new session in (esc cancels)"
     if $choice == null { return }
-    if $choice == 0 { null } else { $repos | get ($choice - 1) }
+    $repos | get $choice
   } else {
     let exact = $repos | where name == $repo
     let found = if ($exact | is-empty) { $repos | where name =~ $repo } else { $exact }
@@ -188,94 +223,17 @@ export def new [
     }
     $found | first
   }
-  let taken = list | get name
-  let prefix = if $target == null { "s" } else { $"($target.name)-" }
-  let default_name = free-name $prefix $taken
-  let session = if $name != null {
-    $name
-  } else if $repo != null {
-    $default_name
-  } else {
-    input $"session name \(enter for ($default_name)\): "
-    | str trim
-    | str replace --all --regex '\s+' '-'
-    | if ($in | is-empty) { $default_name } else { $in }
-  }
-  if $session in $taken {
-    error make --unspanned { msg: $"($session) already exists, use beast attach" }
-  }
-  let create = if $target == null { [] } else {
-    let claude = $"claude --remote-control --remote-control-session-name-prefix ($target.name)"
-    let command = if $target.devenv { $"devenv shell --no-tui -- ($claude)" } else { $claude }
-    [--dir ($target.path | to json) --cmd ($command | to json)]
-  }
-  connect $session $session --create $create
+  let created = on-beast $"new-session ($target.path | to json) ($target.name | to json) ($name | to json)"
+  connect $created.id $created.title
 }
 
-# Attaches this window to the newest detached Remote Control spare.
-export def spare [] {
-  let spares = list | where $it.spare and $it.status == "disconnected"
-  if ($spares | is-empty) {
-    error make --unspanned { msg: "no detached spare on beast yet, claude-rc-spare starts one within a few seconds" }
-  }
-  attach ($spares | first | get name)
-}
-
-def pick-phone-session [] {
-  let sessions = on-beast phone-sessions
-  if ($sessions | is-empty) {
-    error make --unspanned { msg: "no phone sessions on beast" }
-  }
-  let columns = (term size).columns - 4
-  let choice = $sessions
-  | each {|s|
-    [
-      ($s.title | str substring ..<60 | fill -w 60)
-      ($s.claude | fill -w 4)
-      ($s.ago | str replace " ago" "" | fill -w 14)
-      ($s.dir | path basename)
-    ] | str join "  " | str substring ..<$columns
-  }
-  | input list --fuzzy --index "take which session (type to filter, esc cancels)"
-  if $choice != null { $sessions | get $choice | get session }
-}
-
-# Moves a session started in the app into shpool and attaches this window to it.
+# Puts a session in a group, or groups every session that has none.
 #
-# Without a session it asks for one. Stops the session's process and resumes the conversation in the same directory
-# with Remote Control on. The app gets a new conversation for it and the old one
-# stops updating. A session that is working is refused until it is idle. The
-# generated name becomes the shpool, Claude and Remote Control session name.
-export def take [
-  session?: string@complete-phone-sessions # session id, default asks for one
-  --name (-n): string                      # session name, default generated from its opening request
-] {
-  let session = if $session == null { pick-phone-session } else { $session }
-  if $session == null { return }
-  let taken = list | get name
-  if $name in $taken {
-    error make --unspanned { msg: $"($name) already exists, use beast attach" }
-  }
-  let claude = on-beast $"stop-phone-session ($session | to json)"
-  let wanted = $name | default $claude.name
-  let session_name = if $wanted == null {
-    free-name $"($claude.repo)-" $taken
-  } else if $wanted in $taken {
-    free-name $"($wanted)-" $taken
-  } else {
-    $wanted
-  }
-  let command = $"claude --resume ($session) --name ($session_name) --remote-control ($session_name)"
-  connect $session_name $session_name --create [--dir ($claude.dir | to json) --cmd ($command | to json)]
-}
-
-# Puts a session in a group, or gives every session without one a group.
-#
-# Claude groups a session by itself after its first turn, and the picker sorts by group.
+# beast groups new sessions by itself every few minutes, and the picker sorts by group.
 @example "Group the sessions that have none yet" { beast group }
-@example "Move a session" { beast group testcases-v5 zurich-casino }
+@example "Move a session" { beast group 51ccc78f zurich-casino }
 export def group [
-  session?: string@complete-sessions # shpool session name or Claude session id
+  session?: string@complete-sessions # session id, or its start
   group?: string@complete-groups     # group to put it in
 ] {
   if $session == null {
@@ -283,59 +241,45 @@ export def group [
   } else if $group == null {
     error make --unspanned { msg: "give the group to put the session in, or no arguments" }
   } else {
-    on-beast $"set-session-group ($session | to json) ($group | to json)"
+    on-beast $"set-group ($session | to json) ($group | to json)"
   }
 }
 
-# Kills the sessions matching every given filter, after listing them and asking.
+# Ends the sessions matching every given filter, after listing them and asking.
 #
-# Attached sessions and busy Claude sessions are kept unless included. Unused
-# spares are always kept.
-@example "See what has been silent for three days" { beast clean --no-message-for 3day --dry-run }
-@example "Clean one repo" { beast clean --no-message-for 2day --repo blackjackeye }
+# Working sessions are always kept. Ending one keeps its transcript, so
+# `claude --resume` still opens it.
+@example "See what has been quiet for three days" { beast clean --quiet-for 3day --dry-run }
+@example "Clean one repo" { beast clean --quiet-for 2day --repo blackjackeye }
 export def clean [
-  --no-message-for: duration   # no message from you for this long; shells count attaches and detaches
-  --detached-for: duration     # detached for this long
-  --older-than: duration       # started this long ago
-  --repo: string@complete-repos # in this repo
+  --quiet-for: duration           # no message for this long
+  --repo: string@complete-repos   # in this repo
   --group: string@complete-groups # in this group
-  --match: string              # name or title matches this regex
-  --include-attached           # also consider attached sessions
-  --include-busy               # also consider Claude sessions that are working
-  --dry-run (-n)               # list the matches without killing them
-  --yes (-y)                   # kill without asking
+  --match: string                 # title matches this regex
+  --stopped                       # only sessions that are already stopped
+  --dry-run (-n)                  # list the matches without ending them
+  --yes (-y)                      # end them without asking
 ] {
-  if ([$no_message_for $detached_for $older_than $repo $group $match] | compact | is-empty) {
+  if ([$quiet_for $repo $group $match] | compact | is-empty) and not $stopped {
     error make --unspanned { msg: "give at least one filter, see beast clean --help" }
   }
-  let age = {|ms| (date now) - ($ms * 1_000_000 | into datetime) }
-  let matches = list
-  | where not $it.spare
-  | where {|s| $include_attached or $s.status != "attached" }
-  | where {|s| $include_busy or $s.claude != "busy" }
-  | where {|s| $no_message_for == null or (do $age ($s.message | default $s.last)) >= $no_message_for }
-  | where {|s| $detached_for == null or ($s.status != "attached" and $s.detached != null and (do $age $s.detached) >= $detached_for) }
-  | where {|s| $older_than == null or (do $age $s.started) >= $older_than }
+  let matches = on-beast sessions
+  | where state != "working"
+  | where {|s| $quiet_for == null or (date now) - ($s.last * 1_000_000 | into datetime) >= $quiet_for }
   | where {|s| $repo == null or $s.repo == $repo }
   | where {|s| $group == null or $s.group == $group }
-  | where {|s| $match == null or $s.name =~ $match or $s.title =~ $match }
+  | where {|s| $match == null or $s.title =~ $match }
+  | where {|s| not $stopped or $s.state == "stopped" }
   if ($matches | is-empty) {
     print "no sessions match"
     return
   }
   print ($matches | each {|s|
-    {
-      name: $s.name
-      title: ($s.title | str substring ..<50)
-      repo: $s.repo
-      group: $s.group
-      status: $s.status
-      "last message": (if $s.message == null { "" } else { $s.message * 1_000_000 | into datetime | date humanize })
-    }
+    { id: $s.id, title: ($s.title | str substring ..<50), repo: $s.repo, group: $s.group, state: $s.state, "last message": (ago $s.last) }
   })
   if $dry_run { return }
-  if $yes or ((input $"kill these ($matches | length) sessions? [y/N] ") in [y Y]) {
-    ^ssh beast shpool kill ...($matches | each { $in.name | to json })
+  if $yes or ((input $"end these ($matches | length) sessions? [y/N] ") in [y Y]) {
+    on-beast $"stop-sessions ($matches.session | to json --raw)" | ignore
   }
 }
 
@@ -358,18 +302,18 @@ def wait-for-new-window [known: list<int>] {
   error make --unspanned { msg: "no foot window appeared within 5 seconds" }
 }
 
-# Opens every detached session fullscreen on its own workspace, skipping unused spares.
+# Opens every running background session in a fullscreen window on its own workspace.
 export def restore [
   --group: string@complete-groups # only this group
-  --dry-run (-n) # list the windows without opening them
+  --dry-run (-n)                  # list the windows without opening them
 ] {
-  let windows = list
-  | where $it.status == "disconnected" and not $it.spare
+  let windows = on-beast sessions
+  | where host == "bg" and state != "stopped"
   | where {|s| $group == null or $s.group == $group }
-  | each {|s| { session: $s.name, title: (window-title $s) } }
+  | each {|s| { id: $s.id, title: $s.title } }
   if $dry_run { return $windows }
   for window in $windows {
-    let command = $"use ($self); beast attach ($window.session | to json) --title ($window.title | to json)"
+    let command = $"use ($self); beast attach ($window.id | to json) --title ($window.title | to json)"
     let known = niri-window-ids
     # A window lands on the workspace focused when it appears, so each one has
     # to appear before the next workspace gets focus.

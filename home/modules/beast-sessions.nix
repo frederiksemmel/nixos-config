@@ -4,7 +4,7 @@
   ...
 }:
 {
-  options.profiles.beastSessions.enable = lib.mkEnableOption "the beast nushell command: beast's shpool sessions in terminal windows that reattach after the connection drops";
+  options.profiles.beastSessions.enable = lib.mkEnableOption "the beast nushell command: Claude sessions on beast in terminal windows that reattach after the connection drops";
 
   config = lib.mkIf config.profiles.beastSessions.enable {
     programs.ssh.settings.beast = {
