@@ -69,7 +69,7 @@ Show the user `diff "$work/before.toml" "$work/library.toml"`, the import's `rev
     rclone copy "$work/Artwork" pcloud:SemmelTV/Artwork
     rclone copyto "$work/library.toml" pcloud:SemmelTV/library.toml
 
-The TV picks it up by itself within a few minutes.
+semmeltv5 copies both to local disk within 15 minutes; to show it now, run `ssh semmeltv5 sudo systemctl start semmeltv-sync`.
 
 ## 7. Report
 

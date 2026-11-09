@@ -17,6 +17,7 @@ pub enum Change {
 
 pub struct Paths {
     pub root: PathBuf,
+    pub meta: PathBuf,
     pub saved: PathBuf,
     pub remote: Option<String>,
 }
@@ -34,10 +35,10 @@ fn reachable(remote: &str) -> bool {
         .is_ok_and(|mut addresses| addresses.any(|address| TcpStream::connect_timeout(&address, PROBE_TIMEOUT).is_ok()))
 }
 
-pub fn read(root: &Path, saved: &Path) -> Result<Library, String> {
-    match library::load(root) {
+pub fn read(root: &Path, meta: &Path, saved: &Path) -> Result<Library, String> {
+    match library::load(root, meta) {
         Ok(library) => {
-            library::save_copy(root, saved);
+            library::save_copy(meta, saved);
             Ok(library)
         }
         Err(error) => library::load_saved(root, saved).map_err(|_| error),
@@ -46,7 +47,7 @@ pub fn read(root: &Path, saved: &Path) -> Result<Library, String> {
 
 pub fn spawn(paths: Paths, deliver: impl Fn(Change) + Send + 'static) {
     thread::spawn(move || {
-        let manifest_file = paths.root.join(manifest::FILE_NAME);
+        let manifest_file = paths.meta.join(manifest::FILE_NAME);
         let mut manifest_seen = None;
         loop {
             let online = paths.remote.as_deref().is_none_or(reachable);
@@ -55,7 +56,7 @@ pub fn spawn(paths: Paths, deliver: impl Fn(Change) + Send + 'static) {
                 let current = stamp(&manifest_file);
                 if manifest_seen != Some(current) {
                     manifest_seen = Some(current);
-                    deliver(Change::Library(read(&paths.root, &paths.saved)));
+                    deliver(Change::Library(read(&paths.root, &paths.meta, &paths.saved)));
                 }
             } else {
                 manifest_seen = None;
@@ -77,17 +78,17 @@ mod tests {
         let saved = root.join("saved.toml");
         let good = "[[movie]]\ntitle = \"Up\"\npath = \"Movies/Up.mkv\"\nadded = 2024-01-01\n";
         fs::write(root.join(manifest::FILE_NAME), good).unwrap();
-        assert_eq!(read(&root, &saved).unwrap().movies.len(), 1);
+        assert_eq!(read(&root, &root, &saved).unwrap().movies.len(), 1);
         assert_eq!(fs::read_to_string(&saved).unwrap(), good);
 
         fs::write(root.join(manifest::FILE_NAME), "not toml [").unwrap();
-        assert_eq!(read(&root, &saved).unwrap().movies.len(), 1);
+        assert_eq!(read(&root, &root, &saved).unwrap().movies.len(), 1);
         fs::remove_file(root.join(manifest::FILE_NAME)).unwrap();
         fs::remove_file(root.join("Movies/Up.mkv")).unwrap();
-        assert_eq!(read(&root, &saved).unwrap().movies.len(), 1);
+        assert_eq!(read(&root, &root, &saved).unwrap().movies.len(), 1);
 
         fs::remove_file(&saved).unwrap();
-        assert!(read(&root, &saved).unwrap_err().contains("library.toml"));
+        assert!(read(&root, &root, &saved).unwrap_err().contains("library.toml"));
         fs::remove_dir_all(root).unwrap();
     }
 

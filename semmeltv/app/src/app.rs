@@ -82,6 +82,7 @@ struct Target {
 
 pub struct Setup {
     pub root: PathBuf,
+    pub meta: PathBuf,
     pub remote: Option<String>,
     pub store: Store,
     pub cache: Cache,
@@ -132,6 +133,7 @@ struct App {
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let Setup {
         root,
+        meta,
         remote,
         store,
         cache,
@@ -186,7 +188,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let shared = Arc::new(Shared::default());
     shared.set_library(&library);
     shared.set_progress(&progress);
-    let art = root.join(artwork::DIR);
+    let art = meta.join(artwork::DIR);
     let app = Rc::new(RefCell::new(App {
         ui: ui.clone_strong(),
         downloaded: store.downloaded(library.paths()),
@@ -256,7 +258,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     if let Some(config) = api {
         let keys = keys.clone();
         let tv: api::Tv = Arc::new(move |pending| keys.request(pending));
-        api::spawn(config, shared, root.clone(), bus, tv);
+        api::spawn(config, shared, meta.clone(), bus, tv);
     }
     cec::spawn(keys);
 
@@ -292,7 +294,15 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
             }
         }
     });
-    watch::spawn(watch::Paths { root, saved, remote }, notify_watch);
+    watch::spawn(
+        watch::Paths {
+            root,
+            meta,
+            saved,
+            remote,
+        },
+        notify_watch,
+    );
     ui.run()
 }
 

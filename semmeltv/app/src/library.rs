@@ -313,16 +313,16 @@ fn build_movie(root: &Path, entry: &MovieEntry) -> Movie {
     }
 }
 
-pub fn load(root: &Path) -> Result<Library, String> {
-    let manifest = read_manifest(root)?;
+pub fn load(root: &Path, meta: &Path) -> Result<Library, String> {
+    let manifest = read_manifest(meta)?;
     Ok(Library::from_manifest(root, &manifest, Path::is_file))
 }
 
-pub fn read_manifest(root: &Path) -> Result<Manifest, String> {
-    let path = root.join(manifest::FILE_NAME);
+pub fn read_manifest(meta: &Path) -> Result<Manifest, String> {
+    let path = meta.join(manifest::FILE_NAME);
     Manifest::read(&path).map_err(|error| match error {
         ReadError::Unreadable(error) if error.kind() == ErrorKind::NotFound => {
-            format!("No {} in {} yet", manifest::FILE_NAME, root.display())
+            format!("No {} in {} yet", manifest::FILE_NAME, meta.display())
         }
         ReadError::Unreadable(error) => format!("{}: {error}", path.display()),
         ReadError::Invalid(error) => format!("{}: {error}", path.display()),
@@ -334,8 +334,8 @@ pub fn load_saved(root: &Path, saved: &Path) -> Result<Library, String> {
     Ok(Library::from_manifest(root, &manifest, |_| true))
 }
 
-pub fn save_copy(root: &Path, saved: &Path) {
-    let current = fs::read(root.join(manifest::FILE_NAME));
+pub fn save_copy(meta: &Path, saved: &Path) {
+    let current = fs::read(meta.join(manifest::FILE_NAME));
     if let Ok(bytes) = current
         && fs::read(saved).ok().as_ref() != Some(&bytes)
         && let Err(error) = manifest::write_atomically(saved, &bytes)
@@ -600,16 +600,40 @@ added = 2024-01-01
     }
 
     #[test]
+    fn the_manifest_and_artwork_may_live_apart_from_the_videos() {
+        let dir = env::temp_dir().join(format!("semmeltv-meta-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let (root, meta) = (dir.join("mount"), dir.join("meta"));
+        fs::create_dir_all(root.join("Movies/Up")).unwrap();
+        fs::write(root.join("Movies/Up/Up.mkv"), b"x").unwrap();
+        let poster = meta.join("Artwork/movie/14160/poster.jpg");
+        fs::create_dir_all(poster.parent().unwrap()).unwrap();
+        fs::write(&poster, b"jpeg").unwrap();
+        fs::write(
+            meta.join(manifest::FILE_NAME),
+            "[[movie]]\ntitle = \"Up\"\ntmdb = 14160\npath = \"Movies/Up/Up.mkv\"\nadded = 2024-01-01\n",
+        )
+        .unwrap();
+        let library = load(&root, &meta).unwrap();
+        let up = &library.movies[0];
+        assert_eq!(up.path, root.join("Movies/Up/Up.mkv"));
+        assert_eq!(up.poster(&meta), Some(PathBuf::from("Artwork/movie/14160/poster.jpg")));
+        assert_eq!(up.poster(&root), None);
+        assert!(load(&meta, &root).unwrap_err().contains(&root.display().to_string()));
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
     fn a_saved_copy_keeps_titles_whose_files_are_out_of_reach() {
         let dir = std::env::temp_dir().join(format!("semmeltv-saved-{}", std::process::id()));
         let root = dir.join("mount");
         fs::create_dir_all(&root).unwrap();
         let saved = dir.join("saved.toml");
         fs::write(root.join(manifest::FILE_NAME), movies(&[("Up", "2024-01-01")])).unwrap();
-        assert!(load(&root).unwrap().movies.is_empty());
+        assert!(load(&root, &root).unwrap().movies.is_empty());
         save_copy(&root, &saved);
         fs::remove_file(root.join(manifest::FILE_NAME)).unwrap();
-        assert!(load(&root).is_err());
+        assert!(load(&root, &root).is_err());
         assert_eq!(load_saved(&root, &saved).unwrap().movies[0].title, "Up");
         fs::remove_dir_all(dir).unwrap();
     }

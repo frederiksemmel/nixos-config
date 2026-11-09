@@ -40,7 +40,8 @@ use std::time::{Duration, Instant};
 
 slint::include_modules!();
 
-const USAGE: &str = "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--cache DIR]
+const USAGE: &str =
+    "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--meta DIR] [--cache DIR]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -50,6 +51,7 @@ const DEFAULT_WAKE_WORD: &str = "hey_jarvis";
 struct Args {
     mode: String,
     library: PathBuf,
+    meta: Option<PathBuf>,
     cache: PathBuf,
     vfs_cache: Option<PathBuf>,
     token_file: Option<PathBuf>,
@@ -65,6 +67,12 @@ struct Args {
     api: Option<String>,
 }
 
+impl Args {
+    fn meta(&self) -> &Path {
+        self.meta.as_deref().unwrap_or(&self.library)
+    }
+}
+
 fn env_path(name: &str) -> Option<PathBuf> {
     env::var_os(name).filter(|value| !value.is_empty()).map(PathBuf::from)
 }
@@ -74,6 +82,7 @@ fn parse_args() -> Result<Args, String> {
     let mut args = Args {
         mode: "ui".to_string(),
         library: env_path("SEMMELTV_LIBRARY").unwrap_or_else(|| home.join("pcloud/SemmelTV")),
+        meta: env_path("SEMMELTV_META"),
         cache: env_path("SEMMELTV_CACHE")
             .or_else(|| env_path("XDG_CACHE_HOME").map(|dir| dir.join("semmeltv")))
             .unwrap_or_else(|| home.join(".cache/semmeltv")),
@@ -111,6 +120,7 @@ fn parse_args() -> Result<Args, String> {
             "--wake-word" => args.wake_word = value("--wake-word")?,
             "--api" => args.api = Some(value("--api")?),
             "--library" => args.library = value("--library")?.into(),
+            "--meta" => args.meta = Some(value("--meta")?.into()),
             "--cache" => args.cache = value("--cache")?.into(),
             "--vfs-cache" => args.vfs_cache = Some(value("--vfs-cache")?.into()),
             "--tmdb-token-file" => args.token_file = Some(value("--tmdb-token-file")?.into()),
@@ -168,8 +178,10 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         .ok()
         .and_then(|bytes| bytes.parse().ok());
     let wake_word = wake_word(&args);
+    let meta = args.meta().to_path_buf();
     let setup = app::Setup {
         store: offline::Store::new(args.library.clone(), args.vfs_cache, capacity),
+        meta,
         root: args.library,
         remote: env::var("SEMMELTV_REMOTE").ok().filter(|remote| !remote.is_empty()),
         cache,
@@ -283,7 +295,7 @@ fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
             other => return Err(format!("{other:?}")),
         }
     };
-    let library = library::load(&args.library)?;
+    let library = library::load(&args.library, args.meta())?;
     println!("{:?}", intent::understand(&text, &library, &cache.load_progress()));
     Ok(())
 }
@@ -292,10 +304,14 @@ fn run() -> Result<(), String> {
     let args = parse_args()?;
     let cache = Cache::new(args.cache.clone());
     match args.mode.as_str() {
-        "list" => list(&library::load(&args.library)?),
+        "list" => list(&library::load(&args.library, args.meta())?),
         "understand" => println!(
             "{:?}",
-            intent::understand(&args.transcript, &library::load(&args.library)?, &cache.load_progress())
+            intent::understand(
+                &args.transcript,
+                &library::load(&args.library, args.meta())?,
+                &cache.load_progress()
+            )
         ),
         "artwork" => run_artwork(&args)?,
         "import" => run_import(&args)?,

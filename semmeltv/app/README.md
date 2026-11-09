@@ -4,12 +4,14 @@ Apple TV style interface for a personal video library. It reads `library.toml`
 at the root of a library folder, draws menus with Slint, and plays video in a
 separate mpv window.
 
-    semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--cache DIR]
+    semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--meta DIR] [--cache DIR]
              [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
              [--manifest FILE] [--listing FILE] [--refresh]
 
 The library is `pcloud:SemmelTV`: `library.toml`, `Movies/`, `Series/` and
 `Artwork/`. `--library` defaults to `$SEMMELTV_LIBRARY`, then `~/pcloud/SemmelTV`.
+`--meta` is where `library.toml` and `Artwork/` are read from, when they live apart
+from the videos; it defaults to `$SEMMELTV_META`, then the library.
 `--cache` defaults to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`.
 `--vfs-cache` defaults to `$SEMMELTV_VFS_CACHE`. Nothing in the app writes to the
 library: import and artwork work on a local copy of `library.toml`, which the
@@ -93,8 +95,16 @@ again on every reload.
 
 ## Streaming and offline
 
-On semmeltv5, `/var/lib/semmeltv/library` is a read-only rclone mount of pCloud
-with a full VFS cache on local disk. The cache size is
+On semmeltv5, `/var/lib/semmeltv/library` is a read-only rclone mount of pCloud's
+`Movies/` and `Series/` with a full VFS cache on local disk. `library.toml` and
+`Artwork/` are not read through the mount: `semmeltv-sync` copies them to
+`/var/lib/semmeltv/meta` (`SEMMELTV_META`), at boot and every 15 minutes. It
+compares `library.toml`'s SHA-1 with pCloud's and does nothing more while they
+match. When they differ it downloads the new manifest beside the old one, copies
+new artwork, renames the manifest into place, then deletes artwork pCloud no
+longer has, so every entry's artwork is on disk before the app sees the entry.
+A failed run leaves the previous copy as it was. Run it by hand with
+`systemctl start semmeltv-sync`. The cache size is
 `services.semmeltv.offlineCacheGiB` in `semmeltv/hosts/semmeltv5/default.nix`, and
 the least recently watched titles are evicted first.
 
@@ -117,8 +127,8 @@ the rclone cache, which also works when the mount is down or was started without
 a network. Selecting anything else says it can't be reached. rclone's own view of
 a cached file only survives offline until `--dir-cache-time` (1h) runs out, which
 is why the app does not depend on it. Files played straight from the cache do not
-refresh their place in the eviction order, and art read through the mount is
-only there offline if rclone kept it.
+refresh their place in the eviction order. Artwork, ratings and posters come from
+the local copy, so they are all there offline.
 
 ## Remote
 
