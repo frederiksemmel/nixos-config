@@ -88,8 +88,9 @@ keys sent over CEC by a playback device. `volume-up` and `volume-down` move the
 volume by 2 and answer with the new value, `{ "message": "TV volume 13", "ok":
 true }`; `mute` toggles and answers "TV muted" or "TV sound on". They answer 422
 with `ok` false when the TV is unreachable, when no renderer is configured, or
-when the TV refuses. A Samsung refuses until the Pi is allowed under Settings >
-General > External Device Manager > Device Connection Manager > Device List.
+when the TV refuses, which a SOAP fault or any status other than 2xx means.
+The message for a refusal is "The TV refused the volume change"; the TV's
+error code goes to the app's log.
 
 ## Subtitles
 

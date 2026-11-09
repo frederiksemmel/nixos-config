@@ -24,11 +24,7 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Unreachable(error) => write!(f, "The TV is off or not on the network ({error})"),
-            Self::Refused(reason) => write!(
-                f,
-                "The TV refused ({reason}). Allow semmeltv5 on the TV under Settings > General > \
-                 External Device Manager > Device Connection Manager > Device List"
-            ),
+            Self::Refused(_) => write!(f, "The TV refused the volume change"),
             Self::Garbled(what) => write!(f, "The TV answered something unexpected: {what}"),
         }
     }
@@ -196,7 +192,10 @@ async fn act(
     };
     let done = tokio::task::spawn_blocking(move || change(&renderer)).await;
     answer(match done {
-        Ok(result) => result.map_err(|failure| failure.to_string()),
+        Ok(result) => result.map_err(|failure| {
+            eprintln!("TV volume: {failure:?}");
+            failure.to_string()
+        }),
         Err(error) => Err(error.to_string()),
     })
 }
@@ -338,14 +337,14 @@ mod tests {
     }
 
     #[test]
-    fn a_refusal_says_where_to_allow_the_pi() {
+    fn a_refusal_is_reported_as_one() {
         let fake = fake(Tv {
             refuse: true,
             ..Tv::default()
         });
         let failure = renderer(&fake).step(STEP).unwrap_err();
         assert_eq!(failure, Failure::Refused("501 Action Failed".to_string()));
-        assert!(failure.to_string().contains("Device Connection Manager"));
+        assert_eq!(failure.to_string(), "The TV refused the volume change");
     }
 
     #[test]
