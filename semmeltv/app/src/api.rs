@@ -1,6 +1,7 @@
 use crate::artwork;
 use crate::bus::{Bus, Event};
 use crate::details::{self, Details};
+use crate::heatmap;
 use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::progress::Progress;
@@ -403,6 +404,8 @@ struct EpisodeView {
     label: String,
     short_label: String,
     still: Option<String>,
+    ratings: Ratings,
+    band: Option<String>,
     #[serde(flatten)]
     watch: Watch,
 }
@@ -442,6 +445,11 @@ fn episode_view(show: &Show, episode: &Episode, progress: &Progress) -> EpisodeV
                 show.key, episode.season, episode.number
             )
         }),
+        ratings: Ratings::from(&episode.ratings),
+        band: episode
+            .ratings
+            .imdb
+            .map(|rating| heatmap::band(rating).label.to_lowercase()),
         watch: watch(progress, &episode.path, &episode.tags, episode.runtime),
     }
 }
@@ -783,6 +791,8 @@ mod tests {
             "Movies/Up (2009)/Up.2009.mkv",
         ]);
         library.movies[0].tmdb = Some(438_631);
+        let outlander = library.shows.iter_mut().find(|show| show.key == "outlander").unwrap();
+        outlander.seasons[0].episodes[0].ratings.imdb = Some(crate::manifest::Tenths(84));
         library
     }
 
@@ -920,6 +930,16 @@ mod tests {
         assert_eq!(body["next"], json!({ "season": 2, "episode": 1, "label": "S2 E1" }));
         assert_eq!(body["seasons"].as_array().unwrap().len(), 2);
         assert_eq!(body["seasons"][0]["episodes"][1]["label"], "Episode 2");
+        let first = &body["seasons"][0]["episodes"][0];
+        assert_eq!(
+            (&first["ratings"]["imdb"], &first["band"]),
+            (&json!(8.4), &json!("great"))
+        );
+        let second = &body["seasons"][0]["episodes"][1];
+        assert_eq!(
+            (&second["ratings"]["imdb"], &second["band"]),
+            (&Value::Null, &Value::Null)
+        );
         assert_eq!(get(&server, "/api/shows/nothing").0, 404);
         assert_eq!(get(&server, "/api/movies/dune-2021").1["title"], "Dune");
     }

@@ -184,6 +184,8 @@ pub struct EpisodeEntry {
     pub path: String,
     pub added: Date,
     pub runtime: Option<u32>,
+    #[serde(default)]
+    pub ratings: Scores,
     pub video: Option<String>,
     pub resolution: Option<String>,
     pub audio: Option<String>,
@@ -264,10 +266,15 @@ impl Manifest {
                 let runtime = episode
                     .runtime
                     .map_or(String::new(), |minutes| format!(", runtime = {minutes}"));
+                let ratings = if episode.ratings.is_empty() {
+                    String::new()
+                } else {
+                    format!(", ratings = {}", episode.ratings.render())
+                };
                 let review = if episode.review { ", review = true" } else { "" };
                 let _ = writeln!(
                     text,
-                    "  {{ season = {}, episode = {}, {title}path = {}, added = {}{runtime}{tags}{review} }},",
+                    "  {{ season = {}, episode = {}, {title}path = {}, added = {}{runtime}{ratings}{tags}{review} }},",
                     episode.season,
                     episode.episode,
                     quoted(&episode.path),
@@ -382,7 +389,7 @@ ratings = { imdb = 8.7, rt = 94, popcorn = 92, metacritic = 74 }
 rated = 2026-11-01
 review = true
 episodes = [
-  { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.mkv", added = 2024-05-01, runtime = 51, video = "HEVC 10-bit", resolution = "1080p", audio = "5.1" },
+  { season = 1, episode = 1, title = "Secrets", path = "Series/Dark/S01/Dark.S01E01.mkv", added = 2024-05-01, runtime = 51, ratings = { imdb = 8.1 }, video = "HEVC 10-bit", resolution = "1080p", audio = "5.1" },
   { season = 1, episode = 2, path = "Series/Dark/S01/Dark.S01E02.mkv", added = 2024-05-02, review = true },
 ]
 
@@ -412,6 +419,8 @@ review = true
         let manifest = Manifest::parse(SAMPLE).unwrap();
         assert_eq!(manifest.show[0].episodes[1].added, Date::parse("2024-05-02").unwrap());
         assert_eq!(manifest.show[0].episodes[0].runtime, Some(51));
+        assert_eq!(manifest.show[0].episodes[0].ratings.imdb, Some(Tenths(81)));
+        assert!(manifest.show[0].episodes[1].ratings.is_empty());
         assert_eq!(manifest.movie[0].runtime, Some(88));
         assert_eq!(manifest.review_count(), 3);
         assert_eq!(manifest.movie[0].imdb.as_deref(), Some("tt0080339"));

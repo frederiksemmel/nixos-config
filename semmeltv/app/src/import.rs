@@ -360,6 +360,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             path,
             added,
             runtime: None,
+            ratings: Scores::default(),
             video: None,
             resolution: None,
             audio: None,

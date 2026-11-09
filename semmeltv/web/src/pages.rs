@@ -10,6 +10,14 @@ use topcoat::runtime::{Event, link, shard, signal};
 use topcoat::view::{View, attributes, component, view};
 
 const LONGEST_QUERY: usize = 100;
+const BANDS: [(&str, &str); 6] = [
+    ("awesome", "9+"),
+    ("great", "8+"),
+    ("good", "7+"),
+    ("regular", "6+"),
+    ("bad", "5+"),
+    ("garbage", "<5"),
+];
 
 path_param!(key);
 
@@ -327,6 +335,8 @@ async fn show(cx: &Cx) -> Result<impl View> {
         .as_ref()
         .map_or_else(|| "Play".to_string(), |next| format!("Play {}", next.label));
     let next_key = key.clone();
+    let heat = show.heat();
+    let columns = heat.first().map_or(0, |row| row.cells.len() as u32);
     Ok(view! {
         <article class="title">
             hero(public: &public, card: &show.card)
@@ -379,12 +389,60 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                     </span>
                                     <span class="episode-text">
                                         <b>(episode.label.as_str())</b>
+                                        scores(of: &episode.ratings)
                                         <span>(episode.short_label.as_str()) " · " (episode.watch.details.as_str())</span>
                                     </span>
                                 </button>
                             </li>
                         }
                     </ol>
+                }
+                if !heat.is_empty() {
+                    <section class="heat">
+                        <h2>"Episode ratings"</h2>
+                        <div class="heat-scroll">
+                            <table class="heat-grid">
+                                <thead>
+                                    <tr>
+                                        <th></th>
+                                        for number in 1..=columns {
+                                            <th>(number.to_string())</th>
+                                        }
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for row in &heat {
+                                        <tr>
+                                            <th>(format!("S{}", row.season))</th>
+                                            for cell in &row.cells {
+                                                <td>
+                                                    if let Some(cell) = cell {
+                                                        let show_key = key.clone();
+                                                        let (season_number, episode_number) = (row.season, cell.episode);
+                                                        <button type="button" class=(format!("heat-cell {}", cell.band))
+                                                            aria-label=(format!("Play S{season_number} E{episode_number}, IMDb {}", cell.rating))
+                                                            @click=$(async |_e| {
+                                                                let answer = play_episode(show_key, season_number, episode_number).await;
+                                                                said.set(answer);
+                                                            })>
+                                                            (cell.rating.as_str())
+                                                        </button>
+                                                    } else {
+                                                        <span class="heat-cell"></span>
+                                                    }
+                                                </td>
+                                            }
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="heat-legend">
+                            for (band, label) in BANDS {
+                                <span><i class=(format!("heat-cell {band}"))></i>(label)</span>
+                            }
+                        </p>
+                    </section>
                 }
             </div>
         </article>

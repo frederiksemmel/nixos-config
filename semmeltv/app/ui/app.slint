@@ -8,10 +8,19 @@ export enum OfflineState {
     downloaded,
 }
 
+export struct RatingsData {
+    imdb: string,
+    rt: string,
+    fresh: bool,
+    popcorn: string,
+    full: bool,
+}
+
 export struct CardData {
     key: string,
     title: string,
     detail: string,
+    ratings: RatingsData,
     art: image,
     has-art: bool,
     tint-a: color,
@@ -21,17 +30,219 @@ export struct CardData {
     progress: float,
 }
 
-export struct RatingsData {
-    imdb: string,
-    rt: string,
-    fresh: bool,
-    popcorn: string,
-    full: bool,
-}
-
 export struct ShelfData {
     title: string,
     cards: [CardData],
+}
+
+export struct HeatCell {
+    text: string,
+    fill: color,
+    ink: color,
+    rated: bool,
+    season: int,
+    episode: int,
+}
+
+export struct HeatRow {
+    title: string,
+    cells: [HeatCell],
+}
+
+export struct HeatmapData {
+    rows: [HeatRow],
+    columns: int,
+    rated: int,
+    legend: [HeatCell],
+    hint: string,
+}
+
+export struct HeatFocus {
+    active: bool,
+    season: int,
+    episode: int,
+    title: string,
+    place: string,
+    rank: string,
+    ratings: RatingsData,
+}
+
+component RatingBadges inherits HorizontalLayout {
+    in property <length> u;
+    in property <RatingsData> ratings;
+    in property <float> scale: 1;
+    in property <color> ink: #c3c7d1;
+    property <length> s: self.u * self.scale;
+
+    spacing: 9 * root.s;
+    alignment: start;
+
+    if root.ratings.rt != "" && root.ratings.fresh: Rectangle {
+        width: 28 * root.s;
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #fa320a;
+            commands: "M12 6C17.6 6 22 9.6 22 14.3C22 19.2 17.6 22.6 12 22.6C6.4 22.6 2 19.2 2 14.3C2 9.6 6.4 6 12 6Z";
+        }
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #0ac855;
+            commands: "M12 4.4L13.4 6.2L16.9 5.5L14.7 7.5L16.3 9.5L12.9 8.6L12 10.3L11.1 8.6L7.7 9.5L9.3 7.5L7.1 5.5L10.6 6.2ZM11.5 5.2L11.9 1.8L12.9 1.8L12.5 5.2Z";
+        }
+    }
+
+    if root.ratings.rt != "" && !root.ratings.fresh: Rectangle {
+        width: 28 * root.s;
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #0ac855;
+            commands: "M12 3.2L13.6 7.4L17.6 3.8L16.6 8.9L22 8.4L18 12.2L22.4 15.6L16.8 16L18.6 21.2L13.9 18L12 22.8L10.1 18L5.2 21.4L7.2 16L1.6 15.4L6.1 12.1L2.2 8.2L7.5 8.9L6.4 3.8L10.4 7.4Z";
+        }
+    }
+
+    if root.ratings.rt != "": Text {
+        text: root.ratings.rt;
+        color: root.ink;
+        font-size: 24 * root.s;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+
+    if root.ratings.rt != "" && root.ratings.popcorn != "": Rectangle {
+        width: 4 * root.s;
+    }
+
+    if root.ratings.popcorn != "" && root.ratings.full: Rectangle {
+        width: 28 * root.s;
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #fa320a;
+            commands: "M4.4 10.6L19.6 10.6L17.7 22.6L6.3 22.6Z";
+        }
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #ffffff;
+            commands: "M8.4 10.6L10.2 10.6L10.6 22.6L9.1 22.6ZM13.8 10.6L15.6 10.6L14.9 22.6L13.4 22.6Z";
+        }
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #fde7a4;
+            commands: "M3.6 10.4A2.8 2.8 0 1 1 9.2 10.4ZM7 8.2A3.1 3.1 0 1 1 13.2 8.2A3.1 3.1 0 1 1 7 8.2ZM10.8 8.2A3.1 3.1 0 1 1 17 8.2A3.1 3.1 0 1 1 10.8 8.2ZM14.8 10.4A2.8 2.8 0 1 1 20.4 10.4Z";
+        }
+    }
+
+    if root.ratings.popcorn != "" && !root.ratings.full: Rectangle {
+        width: 28 * root.s;
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #0ac855;
+            commands: "M2 14.6L14.6 8.2L14.6 21.4L2 21.4Z";
+        }
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #c9f4d8;
+            commands: "M2 16.6L14.6 12.2L14.6 13.9L2 17.6ZM2 19L14.6 16.6L14.6 18.3L2 19.8Z";
+        }
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #067a33;
+            commands: "M14.6 8.2A1.7 6.6 0 1 1 14.6 21.4A1.7 6.6 0 1 1 14.6 8.2Z";
+        }
+
+        Path {
+            y: -2 * root.s;
+            width: 28 * root.s;
+            height: 28 * root.s;
+            viewbox-width: 24;
+            viewbox-height: 24;
+            fill: #fde7a4;
+            stroke: #0b0d12;
+            stroke-width: 0.6 * root.s;
+            commands: "M15.2 19.2A2.2 2.2 0 1 1 19.6 19.2A2.2 2.2 0 1 1 15.2 19.2ZM19.2 20.2A1.8 1.8 0 1 1 22.8 20.2A1.8 1.8 0 1 1 19.2 20.2ZM15.4 15A2 2 0 1 1 19.4 15A2 2 0 1 1 15.4 15ZM18.8 16.6A1.6 1.6 0 1 1 22 16.6A1.6 1.6 0 1 1 18.8 16.6Z";
+        }
+    }
+
+    if root.ratings.popcorn != "": Text {
+        text: root.ratings.popcorn;
+        color: root.ink;
+        font-size: 24 * root.s;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+
+    if (root.ratings.rt != "" || root.ratings.popcorn != "") && root.ratings.imdb != "": Rectangle {
+        width: 4 * root.s;
+    }
+
+    if root.ratings.imdb != "": Rectangle {
+        width: 52 * root.s;
+        height: 24 * root.s;
+        y: 3 * root.s;
+        border-radius: 4 * root.s;
+        background: #f5c518;
+
+        Text {
+            text: "IMDb";
+            color: #000000;
+            font-size: 16 * root.s;
+            font-weight: 900;
+            letter-spacing: -0.3 * root.s;
+        }
+    }
+
+    if root.ratings.imdb != "": Text {
+        text: root.ratings.imdb;
+        color: root.ink;
+        font-size: 24 * root.s;
+        font-weight: 600;
+        vertical-alignment: center;
+    }
+
 }
 
 component OfflineBadge {
@@ -172,6 +383,15 @@ component CardView {
         font-size: 24 * u;
         overflow: elide;
     }
+
+    if root.card.ratings.imdb != "" || root.card.ratings.rt != "": RatingBadges {
+        x: 0;
+        y: (root.card.has-art ? 292 : 250) * root.u;
+        height: 30 * root.u;
+        u: root.u;
+        ratings: root.card.ratings;
+        ink: root.focused ? white : #a8adb8;
+    }
 }
 
 component ShelfRow {
@@ -244,6 +464,213 @@ component ShelfStack {
     }
 }
 
+component Heatmap {
+    in property <length> u;
+    in property <HeatmapData> data;
+    in property <HeatFocus> current;
+    in property <bool> active;
+
+    property <length> head: 84 * self.u;
+    property <length> panel: 500 * self.u;
+    property <length> labels: 64 * self.u;
+    property <length> numbers: 40 * self.u;
+    property <length> grid-width: self.width - self.panel - 56 * self.u;
+    property <length> grid-height: self.height - self.head - self.numbers;
+    property <length> cell: min(96 * self.u,
+        (self.grid-width - self.labels) / max(1, self.data.columns),
+        self.grid-height / max(1, self.data.rows.length));
+    property <length> gap: max(2px, self.cell * 0.08);
+    property <bool> roomy: self.cell >= 50 * self.u;
+
+    Text {
+        x: 0;
+        y: 0;
+        text: "Episode ratings";
+        color: root.active ? white : #c9cdd6;
+        font-size: 42 * root.u;
+        font-weight: 700;
+    }
+
+    for number in root.data.columns: Text {
+        x: root.labels + number * root.cell;
+        y: root.head;
+        width: root.cell - root.gap;
+        height: root.numbers - 6 * root.u;
+        visible: root.cell >= 36 * root.u || mod(number + 1, 5) == 0 || number == 0;
+        text: number + 1;
+        color: #7d8391;
+        font-size: 20 * root.u;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+
+    for row[index] in root.data.rows: Rectangle {
+        x: 0;
+        y: root.head + root.numbers + index * root.cell;
+        width: root.labels + root.data.columns * root.cell;
+        height: root.cell;
+
+        Text {
+            x: 0;
+            width: root.labels - 12 * root.u;
+            height: root.cell - root.gap;
+            text: row.title;
+            color: #a8adb8;
+            font-size: min(26 * root.u, max(14 * root.u, root.cell * 0.4));
+            font-weight: 600;
+            horizontal-alignment: right;
+            vertical-alignment: center;
+        }
+
+        for cell[column] in row.cells: Rectangle {
+            property <bool> focused: root.active && root.current.active
+                && cell.season == root.current.season && cell.episode == root.current.episode;
+
+            x: root.labels + column * root.cell;
+            y: 0;
+            width: root.cell - root.gap;
+            height: root.cell - root.gap;
+            border-radius: min(10 * root.u, root.cell * 0.14);
+            background: cell.rated ? cell.fill : #171a22;
+            border-width: self.focused ? max(3px, 5 * root.u) : (cell.rated ? 0 : 1px);
+            border-color: self.focused ? white : #262a35;
+            drop-shadow-blur: self.focused ? 24 * root.u : 0;
+            drop-shadow-color: #000000cc;
+            z: self.focused ? 1 : 0;
+            transform-scale: self.focused ? 1.18 : 1;
+            animate transform-scale { duration: 160ms; easing: ease-out-quint; }
+
+            if cell.rated && root.roomy: Text {
+                text: cell.text;
+                color: cell.ink;
+                font-size: min(30 * root.u, root.cell * 0.36);
+                font-weight: 700;
+                horizontal-alignment: center;
+                vertical-alignment: center;
+            }
+        }
+    }
+
+    Rectangle {
+        x: root.width - root.panel;
+        y: root.head;
+        width: root.panel;
+        height: root.height - root.head;
+
+        VerticalLayout {
+            alignment: start;
+            spacing: 12 * root.u;
+
+            Text {
+                text: root.current.active ? root.current.rank : root.data.rated + " episodes rated on IMDb";
+                color: #f5c518;
+                font-size: 24 * root.u;
+                font-weight: 700;
+            }
+
+            if root.current.active: Text {
+                text: root.current.title;
+                color: white;
+                font-size: 40 * root.u;
+                font-weight: 700;
+                wrap: word-wrap;
+            }
+
+            if root.current.active: Text {
+                text: root.current.place;
+                color: #a8adb8;
+                font-size: 26 * root.u;
+            }
+
+            if root.current.active: RatingBadges {
+                height: 44 * root.u;
+                u: root.u;
+                scale: 1.4;
+                ratings: root.current.ratings;
+                ink: white;
+            }
+
+            Text {
+                text: root.current.active ? root.data.hint + " · OK plays" : "Press ▼ for the best episode";
+                color: #7d8391;
+                font-size: 22 * root.u;
+            }
+
+            Rectangle {
+                height: 20 * root.u;
+            }
+
+            for band in root.data.legend: HorizontalLayout {
+                spacing: 14 * root.u;
+                height: 30 * root.u;
+
+                Rectangle {
+                    width: 26 * root.u;
+                    height: 26 * root.u;
+                    y: 2 * root.u;
+                    border-radius: 6 * root.u;
+                    background: band.fill;
+                }
+
+                Text {
+                    text: band.text;
+                    color: #a8adb8;
+                    font-size: 22 * root.u;
+                    vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
+component ShowStack {
+    in property <length> u;
+    in property <[ShelfData]> shelves;
+    in property <int> focus-row;
+    in property <[int]> focus-cols;
+    in property <bool> active;
+    in property <HeatmapData> heatmap;
+    in property <HeatFocus> heat;
+
+    property <length> step: 444 * u;
+    property <bool> has-heat: self.heatmap.rated > 0;
+    property <length> heat-height: self.height - 72 * u;
+    property <length> shelves-height: self.shelves.length * self.step;
+    property <length> content-height: self.shelves-height + (self.has-heat ? self.heat-height : 16 * u);
+    property <length> max-offset: max(0px, self.content-height - self.height);
+
+    Rectangle {
+        x: 0;
+        y: root.heat.active ? -root.shelves-height
+            : -min(root.focus-row * root.step, root.max-offset);
+        width: 100%;
+        height: root.content-height;
+        animate y { duration: 280ms; easing: ease-out-quint; }
+
+        for shelf[index] in root.shelves: ShelfRow {
+            x: 0;
+            y: index * root.step;
+            width: parent.width;
+            height: 414 * root.u;
+            u: root.u;
+            shelf: shelf;
+            focus-col: root.focus-cols[index];
+            active: root.active && !root.heat.active && index == root.focus-row;
+        }
+
+        if root.has-heat: Heatmap {
+            x: 0;
+            y: root.shelves-height;
+            width: parent.width;
+            height: root.heat-height;
+            u: root.u;
+            data: root.heatmap;
+            current: root.heat;
+            active: root.active && root.heat.active;
+        }
+    }
+}
+
 component Toast inherits Rectangle {
     in property <length> u;
     in property <string> heading;
@@ -312,6 +739,8 @@ export component AppWindow inherits Window {
     in property <[ShelfData]> show-shelves;
     in property <int> show-row;
     in property <[int]> show-cols;
+    in property <HeatmapData> show-heatmap;
+    in property <HeatFocus> show-heat;
 
     in property <string> message;
     in property <string> voice-transcript;
@@ -404,7 +833,7 @@ export component AppWindow inherits Window {
             opacity: root.show-open ? 1 : 0;
             animate opacity { duration: 200ms; }
 
-            ShelfStack {
+            ShowStack {
                 x: 96 * root.u;
                 y: 236 * root.u;
                 width: parent.width - 192 * root.u;
@@ -414,11 +843,13 @@ export component AppWindow inherits Window {
                 focus-row: root.show-row;
                 focus-cols: root.show-cols;
                 active: root.show-open;
+                heatmap: root.show-heatmap;
+                heat: root.show-heat;
             }
 
             Rectangle {
                 y: 0;
-                height: 214 * root.u;
+                height: 236 * root.u;
                 background: #0b0d12;
             }
 
@@ -459,170 +890,9 @@ export component AppWindow inherits Window {
                 spacing: 9 * root.u;
                 alignment: start;
 
-                if root.ratings.rt != "" && root.ratings.fresh: Rectangle {
-                    width: 28 * root.u;
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #fa320a;
-                        commands: "M12 6C17.6 6 22 9.6 22 14.3C22 19.2 17.6 22.6 12 22.6C6.4 22.6 2 19.2 2 14.3C2 9.6 6.4 6 12 6Z";
-                    }
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #0ac855;
-                        commands: "M12 4.4L13.4 6.2L16.9 5.5L14.7 7.5L16.3 9.5L12.9 8.6L12 10.3L11.1 8.6L7.7 9.5L9.3 7.5L7.1 5.5L10.6 6.2ZM11.5 5.2L11.9 1.8L12.9 1.8L12.5 5.2Z";
-                    }
-                }
-
-                if root.ratings.rt != "" && !root.ratings.fresh: Rectangle {
-                    width: 28 * root.u;
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #0ac855;
-                        commands: "M12 3.2L13.6 7.4L17.6 3.8L16.6 8.9L22 8.4L18 12.2L22.4 15.6L16.8 16L18.6 21.2L13.9 18L12 22.8L10.1 18L5.2 21.4L7.2 16L1.6 15.4L6.1 12.1L2.2 8.2L7.5 8.9L6.4 3.8L10.4 7.4Z";
-                    }
-                }
-
-                if root.ratings.rt != "": Text {
-                    text: root.ratings.rt;
-                    color: #c3c7d1;
-                    font-size: 24 * root.u;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                }
-
-                if root.ratings.rt != "" && root.ratings.popcorn != "": Rectangle {
-                    width: 4 * root.u;
-                }
-
-                if root.ratings.popcorn != "" && root.ratings.full: Rectangle {
-                    width: 28 * root.u;
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #fa320a;
-                        commands: "M4.4 10.6L19.6 10.6L17.7 22.6L6.3 22.6Z";
-                    }
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #ffffff;
-                        commands: "M8.4 10.6L10.2 10.6L10.6 22.6L9.1 22.6ZM13.8 10.6L15.6 10.6L14.9 22.6L13.4 22.6Z";
-                    }
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #fde7a4;
-                        commands: "M3.6 10.4A2.8 2.8 0 1 1 9.2 10.4ZM7 8.2A3.1 3.1 0 1 1 13.2 8.2A3.1 3.1 0 1 1 7 8.2ZM10.8 8.2A3.1 3.1 0 1 1 17 8.2A3.1 3.1 0 1 1 10.8 8.2ZM14.8 10.4A2.8 2.8 0 1 1 20.4 10.4Z";
-                    }
-                }
-
-                if root.ratings.popcorn != "" && !root.ratings.full: Rectangle {
-                    width: 28 * root.u;
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #0ac855;
-                        commands: "M2 14.6L14.6 8.2L14.6 21.4L2 21.4Z";
-                    }
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #c9f4d8;
-                        commands: "M2 16.6L14.6 12.2L14.6 13.9L2 17.6ZM2 19L14.6 16.6L14.6 18.3L2 19.8Z";
-                    }
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #067a33;
-                        commands: "M14.6 8.2A1.7 6.6 0 1 1 14.6 21.4A1.7 6.6 0 1 1 14.6 8.2Z";
-                    }
-
-                    Path {
-                        y: -2 * root.u;
-                        width: 28 * root.u;
-                        height: 28 * root.u;
-                        viewbox-width: 24;
-                        viewbox-height: 24;
-                        fill: #fde7a4;
-                        stroke: #0b0d12;
-                        stroke-width: 0.6 * root.u;
-                        commands: "M15.2 19.2A2.2 2.2 0 1 1 19.6 19.2A2.2 2.2 0 1 1 15.2 19.2ZM19.2 20.2A1.8 1.8 0 1 1 22.8 20.2A1.8 1.8 0 1 1 19.2 20.2ZM15.4 15A2 2 0 1 1 19.4 15A2 2 0 1 1 15.4 15ZM18.8 16.6A1.6 1.6 0 1 1 22 16.6A1.6 1.6 0 1 1 18.8 16.6Z";
-                    }
-                }
-
-                if root.ratings.popcorn != "": Text {
-                    text: root.ratings.popcorn;
-                    color: #c3c7d1;
-                    font-size: 24 * root.u;
-                    font-weight: 600;
-                    vertical-alignment: center;
-                }
-
-                if (root.ratings.rt != "" || root.ratings.popcorn != "") && root.ratings.imdb != "": Rectangle {
-                    width: 4 * root.u;
-                }
-
-                if root.ratings.imdb != "": Rectangle {
-                    width: 52 * root.u;
-                    height: 24 * root.u;
-                    y: 3 * root.u;
-                    border-radius: 4 * root.u;
-                    background: #f5c518;
-
-                    Text {
-                        text: "IMDb";
-                        color: #000000;
-                        font-size: 16 * root.u;
-                        font-weight: 900;
-                        letter-spacing: -0.3 * root.u;
-                    }
-                }
-
-                if root.ratings.imdb != "": Text {
-                    text: root.ratings.imdb;
-                    color: #c3c7d1;
-                    font-size: 24 * root.u;
-                    font-weight: 600;
-                    vertical-alignment: center;
+                if root.ratings.imdb != "" || root.ratings.rt != "" || root.ratings.popcorn != "": RatingBadges {
+                    u: root.u;
+                    ratings: root.ratings;
                 }
 
                 if (root.ratings.imdb != "" || root.ratings.rt != "" || root.ratings.popcorn != "") && root.details != "": Text {

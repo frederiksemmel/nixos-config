@@ -1,4 +1,5 @@
 use crate::command::Command;
+use crate::heatmap::{self, ORDER};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use std::path::PathBuf;
 
@@ -76,6 +77,7 @@ pub struct Nav {
     watching: Vec<Watch>,
     home: Cursor,
     show: Option<(usize, Cursor)>,
+    heat: Option<usize>,
 }
 
 impl Nav {
@@ -90,6 +92,7 @@ impl Nav {
             watching: Vec::new(),
             home,
             show: None,
+            heat: None,
         }
     }
 
@@ -149,9 +152,29 @@ impl Nav {
             .map(|(index, cursor)| (&self.library.shows[*index], cursor))
     }
 
+    pub fn heat(&self) -> Option<usize> {
+        self.heat
+    }
+
+    pub fn focused_episode(&self) -> Option<&Episode> {
+        let (show, cursor) = self.open_show()?;
+        match self.heat {
+            Some(position) => {
+                let (season, number) = *heatmap::order(show, ORDER).get(position)?;
+                show.episode(season, number)
+            }
+            None => show.seasons.get(cursor.row)?.episodes.get(cursor.col()),
+        }
+    }
+
     pub fn replace(&mut self, library: Library) -> Reload {
         let old_rows: Vec<_> = self.rows.iter().map(|row| (*row, self.row_keys(*row))).collect();
         let old_home = self.home.clone();
+        let old_heat = self
+            .focused_episode()
+            .filter(|_| self.heat.is_some())
+            .map(|e| (e.season, e.number));
+        self.heat = None;
         let old_show = self
             .show
             .take()
@@ -185,6 +208,13 @@ impl Nav {
         };
         let show = &self.library.shows[index];
         let changed = *show != old;
+        if let Some(place) = old_heat {
+            let order = heatmap::order(show, ORDER);
+            self.heat = order
+                .iter()
+                .position(|p| *p == place)
+                .or((!order.is_empty()).then_some(0));
+        }
         self.show = Some((index, follow_show(&cursor, &old, show)));
         if changed { Reload::ShowChanged } else { Reload::ShowKept }
     }
@@ -228,6 +258,32 @@ impl Nav {
     pub fn apply(&mut self, command: Command) -> Effect {
         if let Some((index, cursor)) = &mut self.show {
             let show = &self.library.shows[*index];
+            if let Some(position) = self.heat {
+                let order = heatmap::order(show, ORDER);
+                let (next, effect) = match command {
+                    Command::Back => {
+                        self.show = None;
+                        (None, Effect::CloseShow)
+                    }
+                    Command::Select | Command::PlayPause => {
+                        let episode = order
+                            .get(position)
+                            .and_then(|&(season, number)| show.episode(season, number));
+                        (Some(position), episode.map_or(Effect::None, play_episode))
+                    }
+                    Command::Up => (None, Effect::Moved),
+                    Command::Left if position > 0 => (Some(position - 1), Effect::Moved),
+                    Command::Right if position + 1 < order.len() => (Some(position + 1), Effect::Moved),
+                    _ => (Some(position), Effect::None),
+                };
+                self.heat = next;
+                return effect;
+            }
+            let last_season = cursor.row + 1 == show.seasons.len();
+            if command == Command::Down && last_season && !heatmap::order(show, ORDER).is_empty() {
+                self.heat = Some(0);
+                return Effect::Moved;
+            }
             return match command {
                 Command::Back => {
                     self.show = None;
@@ -269,6 +325,7 @@ impl Nav {
                     play_episode(episode)
                 } else if command == Command::Select {
                     self.show = Some((index, Cursor::new(show.seasons.len())));
+                    self.heat = None;
                     Effect::OpenShow
                 } else {
                     Effect::None
@@ -593,6 +650,84 @@ mod tests {
         assert_eq!(nav.replace(library(&movie_text("Up", "2026-01-01"))), Reload::ShowGone);
         assert_eq!(nav.open_show(), None);
         assert_eq!(focused_key(&nav), "up");
+    }
+
+    fn rated_dark() -> Nav {
+        let text = r#"[[show]]
+title = "Dark"
+episodes = [
+  { season = 1, episode = 1, path = "Series/Dark/1x1.mkv", added = 2026-01-01, ratings = { imdb = 8.0 } },
+  { season = 1, episode = 2, path = "Series/Dark/1x2.mkv", added = 2026-01-01, ratings = { imdb = 9.1 } },
+  { season = 2, episode = 1, path = "Series/Dark/2x1.mkv", added = 2026-01-01, ratings = { imdb = 8.5 } },
+  { season = 2, episode = 2, path = "Series/Dark/2x2.mkv", added = 2026-01-01 },
+]
+"#;
+        let mut nav = Nav::new(library(text));
+        nav.apply(Select);
+        nav
+    }
+
+    #[test]
+    fn down_from_the_last_season_lands_on_the_best_episode_in_the_heatmap() {
+        let mut nav = rated_dark();
+        assert_eq!(nav.apply(Down), Effect::Moved);
+        assert_eq!(nav.heat(), None);
+        assert_eq!(nav.apply(Down), Effect::Moved);
+        assert_eq!(nav.heat(), Some(0));
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((1, 2)));
+        assert_eq!(nav.apply(Down), Effect::None);
+        assert_eq!(nav.apply(Left), Effect::None);
+        assert_eq!(nav.apply(Right), Effect::Moved);
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((2, 1)));
+        assert_eq!(nav.apply(Right), Effect::Moved);
+        assert_eq!(nav.apply(Right), Effect::None);
+        assert_eq!(nav.apply(Select), Effect::Play("/lib/Series/Dark/1x1.mkv".into()));
+        assert_eq!(nav.apply(Up), Effect::Moved);
+        assert_eq!(nav.heat(), None);
+        assert_eq!(nav.open_show().unwrap().1.row, 1);
+        nav.apply(Down);
+        assert_eq!(nav.heat(), Some(0));
+    }
+
+    #[test]
+    fn back_from_the_heatmap_closes_the_show_and_reopening_starts_on_the_seasons() {
+        let mut nav = rated_dark();
+        nav.apply(Down);
+        nav.apply(Down);
+        assert_eq!(nav.apply(Back), Effect::CloseShow);
+        assert_eq!(nav.heat(), None);
+        nav.apply(Select);
+        assert_eq!(nav.heat(), None);
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((1, 1)));
+    }
+
+    #[test]
+    fn a_show_without_ratings_has_no_heatmap_to_move_into() {
+        let text = show_text("Dark", &[(1, 1), (1, 2)], "2026-01-01");
+        let mut nav = Nav::new(library(&text));
+        nav.apply(Select);
+        assert_eq!(nav.apply(Down), Effect::None);
+        assert_eq!(nav.heat(), None);
+    }
+
+    #[test]
+    fn a_reload_keeps_the_heatmap_on_the_same_episode() {
+        let mut nav = rated_dark();
+        nav.apply(Down);
+        nav.apply(Down);
+        nav.apply(Right);
+        let text = r#"[[show]]
+title = "Dark"
+episodes = [
+  { season = 1, episode = 1, path = "Series/Dark/1x1.mkv", added = 2026-01-01, ratings = { imdb = 8.0 } },
+  { season = 1, episode = 2, path = "Series/Dark/1x2.mkv", added = 2026-01-01, ratings = { imdb = 9.1 } },
+  { season = 2, episode = 1, path = "Series/Dark/2x1.mkv", added = 2026-01-01, ratings = { imdb = 8.5 } },
+  { season = 2, episode = 2, path = "Series/Dark/2x2.mkv", added = 2026-01-01, ratings = { imdb = 9.5 } },
+]
+"#;
+        assert_eq!(nav.replace(library(text)), Reload::ShowChanged);
+        assert_eq!(nav.heat(), Some(2));
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((2, 1)));
     }
 
     fn watching_dark() -> (Nav, PathBuf) {

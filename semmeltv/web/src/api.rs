@@ -95,8 +95,23 @@ pub struct Episode {
     pub label: String,
     pub short_label: String,
     pub still: Option<String>,
+    pub ratings: Ratings,
+    pub band: Option<String>,
     #[serde(flatten)]
     pub watch: Watch,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct HeatCell {
+    pub episode: u32,
+    pub rating: String,
+    pub band: String,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct HeatRow {
+    pub season: u32,
+    pub cells: Vec<Option<HeatCell>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -104,6 +119,33 @@ pub struct Season {
     pub number: u32,
     pub label: String,
     pub episodes: Vec<Episode>,
+}
+
+impl Show {
+    pub fn heat(&self) -> Vec<HeatRow> {
+        let regular = || self.seasons.iter().filter(|season| season.number > 0);
+        let rated = |episode: &&Episode| episode.ratings.imdb.is_some() && episode.band.is_some();
+        let episodes = || regular().flat_map(|season| &season.episodes);
+        if !episodes().any(|episode| rated(&episode)) {
+            return Vec::new();
+        }
+        let columns = episodes().map(|episode| episode.episode).max().unwrap_or(0);
+        regular()
+            .map(|season| HeatRow {
+                season: season.number,
+                cells: (1..=columns)
+                    .map(|number| {
+                        let episode = season.episodes.iter().find(|episode| episode.episode == number);
+                        episode.filter(rated).map(|episode| HeatCell {
+                            episode: number,
+                            rating: format!("{:.1}", episode.ratings.imdb.unwrap_or_default()),
+                            band: episode.band.clone().unwrap_or_default(),
+                        })
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -403,6 +445,36 @@ mod tests {
         assert!(playing.tracks[0].hearing_impaired);
         let idle: Subtitles = serde_json::from_value(json!({ "settings": settings, "playing": null })).unwrap();
         assert_eq!(idle.playing, None);
+    }
+
+    #[test]
+    fn the_heat_grid_has_a_row_per_season_and_leaves_gaps_empty() {
+        let none = json!({ "imdb": null, "rotten_tomatoes": null, "fresh": null, "popcorn": null, "full": null });
+        let episode = |season: u32, number: u32, imdb: Option<f64>, band: Option<&str>| {
+            json!({ "season": season, "episode": number, "label": "", "short_label": "", "still": null,
+                "ratings": { "imdb": imdb, "rotten_tomatoes": null, "fresh": null, "popcorn": null, "full": null },
+                "band": band, "details": "", "stopped_at": null, "duration": null })
+        };
+        let show = json!({ "kind": "show", "key": "dark", "title": "Dark", "subtitle": "", "poster": null,
+            "backdrop": null, "ratings": none, "next": null, "seasons": [
+                { "number": 1, "label": "Season 1", "episodes": [episode(1, 1, Some(8.1), Some("great")), episode(1, 3, None, None)] },
+                { "number": 2, "label": "Season 2", "episodes": [episode(2, 2, Some(9.0), Some("awesome"))] },
+                { "number": 0, "label": "Specials", "episodes": [episode(0, 1, Some(7.0), Some("good"))] },
+            ] });
+        let show: Show = serde_json::from_value(show).unwrap();
+        let heat = show.heat();
+        assert_eq!(heat.len(), 2);
+        assert_eq!(heat[0].cells.len(), 3);
+        assert_eq!(
+            heat[0].cells[0],
+            Some(HeatCell {
+                episode: 1,
+                rating: "8.1".to_string(),
+                band: "great".to_string()
+            })
+        );
+        assert_eq!((&heat[0].cells[1], &heat[0].cells[2]), (&None, &None));
+        assert_eq!(heat[1].cells[1].as_ref().unwrap().rating, "9.0");
     }
 
     #[test]

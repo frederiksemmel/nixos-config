@@ -318,6 +318,25 @@ run. Ratings need an MDBList key from `MDBLIST_API_KEY_FILE`,
 `--mdblist-key-file` or `MDBLIST_API_KEY`; without one the step skips them. The
 TVs never get the key.
 
+Episodes get their own IMDb rating, written as `ratings = { imdb = 8.1 }` on the
+episode line. MDBList has no episode scores, so the step downloads IMDb's
+non-commercial datasets (`title.episode.tsv.gz` and `title.ratings.tsv.gz` from
+`datasets.imdbws.com`, about 65 MB) and matches episodes by the show's `imdb` id,
+season and number. It only downloads them when a regular episode of a show with an
+`imdb` id has no rating yet, or with `--refresh`, which takes every episode's
+rating anew. Specials rarely match IMDb's numbering and are left alone when
+missing. Rotten Tomatoes scores episodes too rarely for any source the step can
+reach, so an episode's `rt` is only there if written by hand.
+
+The show page on the TV lists each episode's ratings under its card and ends with
+a heatmap: a row per season, a cell per episode, coloured by IMDb rating
+(`heatmap.rs`: Awesome from 9.0, Great 8.0, Good 7.0, Regular 6.0, Bad 5.0,
+Garbage below). Down from the last season lands on the best episode; left and
+right step through the episodes from best to worst (`heatmap::ORDER`, which can be
+`Order::Grid` for season and episode order instead), OK plays it and up goes back
+to the seasons. Cells shrink to fit the screen, and below 50 px they drop the
+number. The web app's show page has the same grid, where a tap plays the episode.
+
 ## Development
 
     cd semmeltv/app

@@ -46,6 +46,7 @@ pub struct Episode {
     pub path: PathBuf,
     pub added: Date,
     pub runtime: Option<u32>,
+    pub ratings: Scores,
     pub tags: Tags,
 }
 
@@ -294,6 +295,7 @@ fn build_episode(root: &Path, entry: &EpisodeEntry) -> Episode {
         path: root.join(&entry.path),
         added: entry.added,
         runtime: entry.runtime,
+        ratings: entry.ratings,
         tags: entry.tags(),
     }
 }
@@ -569,7 +571,7 @@ title = "Dark"
 imdb = "tt5753856"
 ratings = { imdb = 8.7 }
 rated = 2026-11-01
-episodes = [ { season = 1, episode = 1, path = "Series/Dark/e.mkv", added = 2024-01-01 } ]
+episodes = [ { season = 1, episode = 1, path = "Series/Dark/e.mkv", added = 2024-01-01, ratings = { imdb = 8.1 } } ]
 
 [[movie]]
 title = "Up"
@@ -583,6 +585,7 @@ added = 2024-01-01
         let dark = &rated.shows[0];
         assert_eq!(dark.imdb.as_deref(), Some("tt5753856"));
         assert_eq!((dark.ratings.imdb, dark.ratings.rt), (Some(Tenths(87)), None));
+        assert_eq!(dark.seasons[0].episodes[0].ratings.imdb, Some(Tenths(81)));
         let up = &rated.movies[0];
         assert_eq!(
             (up.ratings.imdb, up.ratings.rt, up.ratings.metacritic),

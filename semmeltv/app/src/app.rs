@@ -6,6 +6,7 @@ use crate::cec;
 use crate::command::Command;
 use crate::details::{self, Details, Ratings};
 use crate::fetch;
+use crate::heatmap;
 use crate::intent::{self, Action, Control};
 use crate::led::Led;
 use crate::library::{self, Item, Library};
@@ -1024,28 +1025,25 @@ impl App {
         let home = self.nav.home_cursor();
         self.ui.set_home_row(home.row as i32);
         self.ui.set_home_cols(cols_model(home));
-        if let Some((_, cursor)) = self.nav.open_show() {
+        if let Some((show, cursor)) = self.nav.open_show() {
             self.ui.set_show_row(cursor.row as i32);
             self.ui.set_show_cols(cols_model(cursor));
+            self.ui.set_show_heat(heatmap::focus(show, self.nav.heat()));
         }
         self.present_details();
     }
 
     fn present_details(&self) {
         let line = match self.nav.open_show() {
-            Some((show, cursor)) => show
-                .seasons
-                .get(cursor.row)
-                .and_then(|season| season.episodes.get(cursor.col()))
-                .map(|episode| {
-                    let status = self.file_status(&episode.path).1;
-                    self.file_details(None, &episode.tags, episode.runtime, &episode.path, &status)
-                }),
+            Some(_) => self.nav.focused_episode().map(|episode| {
+                let status = self.file_status(&episode.path).1;
+                self.file_details(None, &episode.tags, episode.runtime, &episode.path, &status)
+            }),
             None => self.nav.focused_item().map(|item| self.item_details(item)),
         };
         self.ui.set_details(line.unwrap_or_default().into());
         let scores = match self.nav.open_show() {
-            Some((show, _)) => Some(&show.ratings),
+            Some(_) => self.nav.focused_episode().map(|episode| &episode.ratings),
             None => self.nav.focused_item().map(|item| match item {
                 Item::Movie(index) => &self.nav.movie(index).ratings,
                 Item::Show(index) => &self.nav.show(index).ratings,
@@ -1198,6 +1196,7 @@ impl App {
             for (position, episode) in season.episodes.iter().enumerate() {
                 let key = show.episode_key(episode);
                 let mut card = card(&key, episode.label(), String::new());
+                card.ratings = Ratings::from(&episode.ratings).into();
                 set_status(&mut card, self.file_status(&episode.path));
                 match carried.get(&card.key) {
                     Some(image) => {
@@ -1221,6 +1220,8 @@ impl App {
         self.ui.set_show_title(show.title.as_str().into());
         self.ui.set_show_subtitle(show.subtitle().into());
         self.ui.set_show_shelves(ModelRc::new(VecModel::from(shelves)));
+        self.ui.set_show_heatmap(heatmap::data(show));
+        self.ui.set_show_heat(heatmap::focus(show, self.nav.heat()));
         self.ui.set_show_row(cursor.row as i32);
         self.ui.set_show_cols(cols_model(cursor));
         self.ui.set_show_open(true);

@@ -565,6 +565,39 @@ main {
   .episode { grid-template-columns: 200px minmax(0, 1fr); }
 }
 
+.heat { margin-top: 28px; }
+.heat h2 { font-size: 20px; margin: 0 0 10px; }
+.heat-scroll { overflow-x: auto; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
+.heat-grid { border-collapse: separate; border-spacing: 3px 3px; margin: 0 -3px; }
+.heat-grid th { color: var(--muted); font-size: 11px; font-weight: 600; text-align: center; padding: 0 2px; }
+.heat-grid tbody th { text-align: right; padding: 0 2px 0 0; }
+.heat-grid td { padding: 0; }
+
+.heat-cell {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border-radius: 6px;
+  background: var(--raised);
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #fff;
+}
+
+.heat-cell.awesome { background: #1e8449; }
+.heat-cell.great { background: #58c46e; color: #12141a; }
+.heat-cell.good { background: #f2d04a; color: #12141a; }
+.heat-cell.regular { background: #ef8f3a; color: #12141a; }
+.heat-cell.bad { background: #d9443c; }
+.heat-cell.garbage { background: #7d3c98; }
+button.heat-cell:active { outline: 2px solid var(--text); }
+
+.heat-legend { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 12px 0 0; color: var(--muted); font-size: 12px; }
+.heat-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.heat-legend i { width: 14px; height: 14px; border-radius: 4px; }
+
 /* Now playing */
 
 .playing {

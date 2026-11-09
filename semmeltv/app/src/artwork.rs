@@ -1,3 +1,4 @@
+use crate::imdb::{self, ShowRatings};
 use crate::manifest::{Date, Manifest, MovieEntry, ReadError, Scores, ShowEntry};
 use crate::mdblist;
 use crate::tmdb::{Client, Found, Kind, Season};
@@ -55,11 +56,16 @@ pub trait Source {
 
 pub trait Ratings {
     fn ratings(&self, kind: Kind, tmdb: u64) -> Result<Option<mdblist::Found>, mdblist::Error>;
+    fn episodes(&self, shows: &BTreeSet<String>) -> Result<ShowRatings, String>;
 }
 
 impl Ratings for mdblist::Client {
     fn ratings(&self, kind: Kind, tmdb: u64) -> Result<Option<mdblist::Found>, mdblist::Error> {
         mdblist::Client::ratings(self, kind, tmdb)
+    }
+
+    fn episodes(&self, shows: &BTreeSet<String>) -> Result<ShowRatings, String> {
+        imdb::fetch(shows)
     }
 }
 
@@ -85,6 +91,8 @@ pub struct Summary {
     pub unrated: Vec<String>,
     pub ratings_waiting: usize,
     pub requests: usize,
+    pub episodes_rated: usize,
+    pub episodes_unrated: Vec<String>,
     pub problems: Vec<String>,
 }
 
@@ -171,6 +179,9 @@ pub fn run(
         if manifest.movie[index] != before {
             save(&manifest)?;
         }
+    }
+    if run.rate_episodes(&mut manifest) {
+        save(&manifest)?;
     }
     Ok(run.summary)
 }
@@ -313,6 +324,57 @@ impl<S: Source> Run<'_, S> {
         }
     }
 
+    fn rate_episodes(&mut self, manifest: &mut Manifest) -> bool {
+        let Some(ratings) = self.ratings else {
+            return false;
+        };
+        let wanted: BTreeSet<String> = manifest
+            .show
+            .iter()
+            .filter(|show| {
+                self.refresh
+                    || show
+                        .episodes
+                        .iter()
+                        .any(|episode| episode.season > 0 && episode.ratings.imdb.is_none())
+            })
+            .filter_map(|show| show.imdb.clone())
+            .collect();
+        if wanted.is_empty() {
+            return false;
+        }
+        println!("IMDb episode ratings for {} shows", wanted.len());
+        let found = match ratings.episodes(&wanted) {
+            Ok(found) => found,
+            Err(error) => {
+                self.summary.problems.push(format!("IMDb datasets: {error}"));
+                return false;
+            }
+        };
+        let mut changed = false;
+        for show in &mut manifest.show {
+            let Some(id) = show.imdb.as_ref().filter(|id| wanted.contains(*id)) else {
+                continue;
+            };
+            let known = found.get(id);
+            for episode in &mut show.episodes {
+                match known.and_then(|known| known.get(&(episode.season, episode.episode))) {
+                    Some(rating) => {
+                        changed |= episode.ratings.imdb != Some(*rating);
+                        episode.ratings.imdb = Some(*rating);
+                        self.summary.episodes_rated += 1;
+                    }
+                    None if episode.ratings.imdb.is_none() => self
+                        .summary
+                        .episodes_unrated
+                        .push(format!("{} S{:02}E{:02}", show.title, episode.season, episode.episode)),
+                    None => {}
+                }
+            }
+        }
+        changed
+    }
+
     fn movie(&mut self, movie: &mut MovieEntry) {
         let label = movie_label(movie);
         println!("{label}");
@@ -374,6 +436,7 @@ mod tests {
     use crate::manifest::Tenths;
     use image::{ImageFormat, RgbImage};
     use std::cell::RefCell;
+    use std::collections::HashMap;
     use std::env;
     use std::fs::File;
 
@@ -480,6 +543,12 @@ added = 2024-05-01
     }
 
     impl Ratings for FakeMdblist {
+        fn episodes(&self, shows: &BTreeSet<String>) -> Result<ShowRatings, String> {
+            self.asked.borrow_mut().push(format!("episodes {shows:?}"));
+            let dark = HashMap::from([((1, 1), Tenths(81)), ((1, 2), Tenths(79))]);
+            Ok(HashMap::from([("tt5753856".to_string(), dark)]))
+        }
+
         fn ratings(&self, kind: Kind, tmdb: u64) -> Result<Option<mdblist::Found>, mdblist::Error> {
             let mut asked = self.asked.borrow_mut();
             if asked.len() >= self.limit {
@@ -610,6 +679,38 @@ added = 2024-05-01
         assert_eq!(run(&manifest, &Fake::new(), Some(&mdblist), false).unwrap().requests, 0);
         assert_eq!(run(&manifest, &Fake::new(), Some(&mdblist), true).unwrap().requests, 1);
         assert_eq!(mdblist.asked.take(), ["Movie 14160"]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn episodes_take_their_imdb_rating_from_the_datasets_once() {
+        let dir = workdir("episode-ratings");
+        let manifest = dir.join("library.toml");
+        fs::write(
+            &manifest,
+            MANIFEST.replacen(
+                "tmdb = 70523",
+                "tmdb = 70523\nimdb = \"tt5753856\"\nrated = 2026-11-01",
+                1,
+            ),
+        )
+        .unwrap();
+        let mdblist = FakeMdblist::new(10);
+        let summary = run(&manifest, &Fake::new(), Some(&mdblist), false).unwrap();
+        assert_eq!(summary.episodes_rated, 2);
+        assert_eq!(summary.episodes_unrated, ["Dark S00E01"]);
+        assert!(mdblist.asked.take().contains(&"episodes {\"tt5753856\"}".to_string()));
+        let written = Manifest::read(&manifest).unwrap();
+        let ratings: Vec<_> = written.show[0]
+            .episodes
+            .iter()
+            .map(|episode| episode.ratings.imdb)
+            .collect();
+        assert_eq!(ratings, [None, Some(Tenths(81)), Some(Tenths(79))]);
+
+        let again = run(&manifest, &Fake::new(), Some(&mdblist), false).unwrap();
+        assert_eq!(again.episodes_rated, 0);
+        assert!(mdblist.asked.take().iter().all(|asked| !asked.starts_with("episodes")));
         fs::remove_dir_all(dir).unwrap();
     }
 

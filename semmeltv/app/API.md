@@ -34,7 +34,10 @@ when it is 60% or more.
 the library. `backdrop` is an artwork path, or null for a title without a TMDB
 id. An
 episode has `season`, `episode`, `title`, `label`, `short_label`, `still`,
-`details`, `stopped_at` and `duration`. Keys are the TV's own: `dune-2021`,
+`ratings` (the same shape as a card's, mostly IMDb only), `band`, `details`,
+`stopped_at` and `duration`. `band` names the episode's place on the heatmap
+scale from its IMDb rating: `awesome` (9.0 and up), `great` (8.0), `good`
+(7.0), `regular` (6.0), `bad` (5.0) or `garbage`, and is null without one. Keys are the TV's own: `dune-2021`,
 `outlander`.
 
 ## Artwork

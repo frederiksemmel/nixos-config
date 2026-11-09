@@ -8,6 +8,8 @@ mod command;
 mod details;
 mod display;
 mod fetch;
+mod heatmap;
+mod imdb;
 mod import;
 mod intent;
 mod led;
@@ -252,6 +254,14 @@ fn run_artwork(args: &Args) -> Result<(), String> {
             summary.unrated.len(),
             summary.ratings_waiting,
             summary.requests
+        );
+        for episode in &summary.episodes_unrated {
+            println!("no IMDb episode rating: {episode}");
+        }
+        println!(
+            "{} episodes rated from the IMDb datasets, {} without a rating",
+            summary.episodes_rated,
+            summary.episodes_unrated.len()
         );
     }
     Ok(())

@@ -3949,6 +3949,7 @@ dependencies = [
  "axum",
  "cec_linux",
  "deunicode",
+ "flate2",
  "image",
  "regex",
  "serde",
