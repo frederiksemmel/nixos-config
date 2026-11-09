@@ -1236,15 +1236,26 @@ in
       };
       Service = {
         Type = "oneshot";
+        # veila reloads its background when the wallpaper link changes, so a
+        # rotation while locked would play out on the lock screen.
+        ExecCondition = toString (
+          pkgs.writeShellScript "wallpaper-unlocked" ''
+            [ "$(${pkgs.systemd}/bin/loginctl show-session auto -p LockedHint --value)" != yes ]
+          ''
+        );
         ExecStart = lib.getExe wallpaperNext;
       };
     };
+    # Monotonic, so suspended time does not count and nothing is due on resume.
     systemd.user.timers.wallpaper-next = {
       Unit = {
-        Description = "Rotate the surf wallpaper every 30 minutes";
+        Description = "Rotate the surf wallpaper after 30 awake minutes";
         PartOf = [ "graphical-session.target" ];
       };
-      Timer.OnCalendar = "*:0/30";
+      Timer = {
+        OnActiveSec = "30min";
+        OnUnitInactiveSec = "30min";
+      };
       Install.WantedBy = [ "graphical-session.target" ];
     };
     services.wlsunset = {
