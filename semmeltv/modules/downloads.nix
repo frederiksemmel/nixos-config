@@ -13,10 +13,8 @@ let
   cfg = config.services.semmeltv.downloads;
   semmeltv = config.services.semmeltv;
   newer = nixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system};
-  confined = cfg.wireguardConfigFile != null;
   namespace = "mullvad";
   namespaceAddress = "192.168.15.1";
-  serviceHost = if confined then namespaceAddress else "127.0.0.1";
   jackettPort = 9117;
   rqbitPort = 3030;
   jackettData = config.services.jackett.dataDir;
@@ -96,7 +94,7 @@ let
         key=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
         printf '{"APIKey": "%s"}\n' "$key" > "$config"
       fi
-      jq '.Port = ${toString jackettPort} | .AllowExternal = ${lib.boolToString confined} | .UpdateDisabled = true | .FlareSolverrUrl = null' \
+      jq '.Port = ${toString jackettPort} | .AllowExternal = true | .UpdateDisabled = true | .FlareSolverrUrl = null' \
         "$config" > "$config.new"
       mv "$config.new" "$config"
       ${lib.concatStrings (
@@ -144,12 +142,9 @@ in
     enable = lib.mkEnableOption "downloading films and series on request, through Jackett and rqbit";
 
     wireguardConfigFile = lib.mkOption {
-      type = lib.types.nullOr lib.types.path;
-      default = null;
-      description = "Mullvad wg-quick file. Jackett and rqbit then run in a network namespace whose only way out is this tunnel.";
+      type = lib.types.path;
+      description = "Mullvad wg-quick file, with a DNS line. Jackett and rqbit run in a network namespace whose only way out is this tunnel.";
     };
-
-    testWithoutVpn = lib.mkEnableOption "Jackett and rqbit on the host network, without the tunnel and its kill switch. Temporary, until the Mullvad WireGuard file exists";
 
     port = lib.mkOption {
       type = lib.types.port;
@@ -181,10 +176,6 @@ in
       {
         assertions = [
           {
-            assertion = confined != cfg.testWithoutVpn;
-            message = "services.semmeltv.downloads needs either wireguardConfigFile or testWithoutVpn, not both";
-          }
-          {
             assertion = semmeltv.api.enable;
             message = "services.semmeltv.downloads needs services.semmeltv.api.enable";
           }
@@ -212,7 +203,7 @@ in
         services.rqbit = {
           enable = true;
           package = rqbit;
-          httpHost = serviceHost;
+          httpHost = namespaceAddress;
           httpPort = rqbitPort;
           inherit downloadDir;
         };
@@ -271,9 +262,9 @@ in
             SEMMELTV_DOWNLOADS_DIR = downloadDir;
             SEMMELTV_DOWNLOADS_QUOTA_GIB = toString cfg.quotaGiB;
             SEMMELTV_DOWNLOADS_RESERVE_GIB = toString cfg.reserveGiB;
-            SEMMELTV_TORZNAB = "http://${serviceHost}:${toString jackettPort}/api/v2.0/indexers/all/results/torznab/api";
+            SEMMELTV_TORZNAB = "http://${namespaceAddress}:${toString jackettPort}/api/v2.0/indexers/all/results/torznab/api";
             SEMMELTV_TORZNAB_KEY_FILE = "${runtimeDir}/jackett-key";
-            SEMMELTV_RQBIT = "http://${serviceHost}:${toString rqbitPort}";
+            SEMMELTV_RQBIT = "http://${namespaceAddress}:${toString rqbitPort}";
             SEMMELTV_META = "${semmeltv.stateDir}/meta";
             SEMMELTV_LIBRARY_REMOTE = "pcloud:SemmelTV";
             RCLONE_CONFIG = "${runtimeDir}/rclone.conf";
@@ -298,7 +289,7 @@ in
         };
       }
 
-      (lib.mkIf confined {
+      {
         vpnNamespaces.${namespace} = {
           enable = true;
           wireguardConfigFile = cfg.wireguardConfigFile;
@@ -315,10 +306,21 @@ in
           ];
         };
 
-        systemd.services.${namespace}.serviceConfig = {
-          Restart = "on-failure";
-          RestartSec = 30;
+        systemd.services.${namespace} = {
+          upholds = [
+            "jackett.service"
+            "rqbit.service"
+          ];
+          serviceConfig = {
+            Restart = "on-failure";
+            RestartSec = 30;
+          };
         };
+
+        networking.dhcpcd.denyInterfaces = [
+          "${namespace}-br"
+          "veth-${namespace}*"
+        ];
 
         systemd.services.jackett.vpnConfinement = {
           enable = true;
@@ -329,7 +331,7 @@ in
           enable = true;
           vpnNamespace = namespace;
         };
-      })
+      }
     ]
   );
 }

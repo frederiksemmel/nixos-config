@@ -176,6 +176,12 @@ fn lookup(client: &Client, kind: Kind, title: &str, year: Option<u16>) -> Result
             return Ok(second);
         }
     }
+    if !matches!(first, Lookup::Match(_) | Lookup::Likely(_)) && !comparable(title).starts_with("the ") {
+        let with_article = search(&format!("the {title}"), year).map_err(|error| format!("TMDB: {error}"))?;
+        if matches!(with_article, Lookup::Match(_) | Lookup::Likely(_)) {
+            return Ok(with_article);
+        }
+    }
     Ok(first)
 }
 

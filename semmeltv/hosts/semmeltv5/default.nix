@@ -4,10 +4,6 @@
   nixos-raspberrypi,
   ...
 }:
-let
-  wireguard = ../../../secrets/mullvad_wireguard.age;
-  vpn = builtins.pathExists wireguard;
-in
 {
   imports = with nixos-raspberrypi.nixosModules; [
     ../common.nix
@@ -36,12 +32,11 @@ in
     };
     downloads = {
       enable = true;
-      wireguardConfigFile = if vpn then config.age.secrets.mullvad_wireguard.path else null;
-      testWithoutVpn = !vpn;
+      wireguardConfigFile = config.age.secrets.mullvad_wireguard.path;
     };
   };
 
-  age.secrets = if vpn then { mullvad_wireguard.file = wireguard; } else { };
+  age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard.age;
 
   hardware.hailo = {
     enable = true;
