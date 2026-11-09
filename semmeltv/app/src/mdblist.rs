@@ -56,6 +56,10 @@ impl Rating {
             .map(|percent| percent.round() as u8)
     }
 
+    fn stars(&self, most: f64) -> Option<Tenths> {
+        self.value().filter(|value| *value <= most).and_then(Tenths::from_float)
+    }
+
     fn tenths(&self) -> Option<Tenths> {
         match self.value() {
             Some(value) => Tenths::from_float(value),
@@ -99,6 +103,8 @@ pub fn parse(status: u16, body: &str) -> Result<Option<Found>, Error> {
         rt: find("tomatoes").and_then(Rating::percent),
         popcorn: find("popcorn").and_then(Rating::percent),
         metacritic: find("metacritic").and_then(Rating::percent),
+        letterboxd: find("letterboxd").and_then(|rating| rating.stars(5.0)),
+        ebert: find("rogerebert").and_then(|rating| rating.stars(4.0)),
     };
     let imdb = answer
         .imdb_id
@@ -185,6 +191,8 @@ mod tests {
                 rt: Some(98),
                 popcorn: Some(90),
                 metacritic: Some(88),
+                letterboxd: Some(Tenths(41)),
+                ebert: None,
             }
         );
     }

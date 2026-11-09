@@ -1,6 +1,6 @@
 use crate::artwork;
 pub use crate::manifest::Scores;
-use crate::manifest::{self, Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
+use crate::manifest::{self, About, Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
 use std::cmp::Reverse;
@@ -32,6 +32,7 @@ pub struct Show {
     pub imdb: Option<String>,
     pub ratings: Scores,
     pub seasons: Vec<Season>,
+    pub about: About,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -64,6 +65,7 @@ pub struct Movie {
     pub added: Date,
     pub runtime: Option<u32>,
     pub tags: Tags,
+    pub about: About,
 }
 
 impl Library {
@@ -297,6 +299,7 @@ fn build_show(root: &Path, entry: &ShowEntry, present: &impl Fn(&Path) -> bool) 
         imdb: entry.imdb.clone(),
         ratings: entry.ratings,
         seasons,
+        about: entry.about.clone(),
     })
 }
 
@@ -325,6 +328,7 @@ fn build_movie(root: &Path, entry: &MovieEntry) -> Movie {
         added: entry.added,
         runtime: entry.runtime,
         tags: entry.tags(),
+        about: entry.about.clone(),
     }
 }
 

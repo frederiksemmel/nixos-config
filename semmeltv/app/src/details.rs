@@ -1,5 +1,5 @@
 use crate::RatingsData;
-use crate::manifest::Scores;
+use crate::manifest::{Date, Scores};
 use crate::tags::Tags;
 
 const SEPARATOR: &str = " · ";
@@ -80,6 +80,47 @@ fn minutes(seconds: f64) -> u64 {
     seconds.max(0.0) as u64 / SECONDS_PER_MINUTE
 }
 
+const SECONDS_PER_DAY: i64 = 24 * 60 * 60;
+const WEEKDAYS: [&str; 7] = [
+    "Sunday",
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+];
+const MONTHS: [&str; 12] = [
+    "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+pub fn local_offset(at: u64) -> i64 {
+    let time = at as libc::time_t;
+    let mut local: libc::tm = unsafe { std::mem::zeroed() };
+    let converted = unsafe { libc::localtime_r(&raw const time, &raw mut local) };
+    if converted.is_null() { 0 } else { local.tm_gmtoff }
+}
+
+pub fn when(now: u64, then: u64) -> String {
+    when_local(now as i64 + local_offset(now), then as i64 + local_offset(then))
+}
+
+fn when_local(now: i64, then: i64) -> String {
+    let day = then.div_euclid(SECONDS_PER_DAY);
+    let seconds = then.rem_euclid(SECONDS_PER_DAY);
+    let time = format!("{:02}:{:02}", seconds / 3600, seconds % 3600 / 60);
+    let date = Date::from_unix((day * SECONDS_PER_DAY).max(0) as u64);
+    let month = MONTHS[usize::from(date.month().clamp(1, 12)) - 1];
+    let this_year = Date::from_unix(now.max(0) as u64).year();
+    match now.div_euclid(SECONDS_PER_DAY) - day {
+        0 => format!("today {time}"),
+        1 => format!("yesterday {time}"),
+        2..=6 => format!("{} {time}", WEEKDAYS[(day + 4).rem_euclid(7) as usize]),
+        _ if date.year() == this_year => format!("{} {month} {time}", date.day()),
+        _ => format!("{} {month} {}", date.day(), date.year()),
+    }
+}
+
 fn clock(minutes: u64) -> String {
     match (minutes / 60, minutes % 60) {
         (0, minutes) => format!("{minutes}m"),
@@ -133,6 +174,17 @@ mod tests {
     }
 
     #[test]
+    fn a_play_reads_as_a_day_and_a_time_close_by_and_a_date_further_back() {
+        let now = 1_794_255_000;
+        let at = |days: i64, hour: i64, minute: i64| (now / 86_400 - days) * 86_400 + hour * 3600 + minute * 60;
+        assert_eq!(when_local(now, at(0, 9, 5)), "today 09:05");
+        assert_eq!(when_local(now, at(1, 21, 14)), "yesterday 21:14");
+        assert_eq!(when_local(now, at(2, 20, 0)), "Saturday 20:00");
+        assert_eq!(when_local(now, at(20, 20, 0)), "20 Oct 20:00");
+        assert_eq!(when_local(now, at(400, 20, 0)), "5 Oct 2025");
+    }
+
+    #[test]
     fn time_left_rounds_to_the_minute_and_never_reads_zero() {
         assert_eq!(time_left(2700.0), "45m left");
         assert_eq!(time_left(4350.0), "1h 13m left");
@@ -172,6 +224,7 @@ mod tests {
             rt: Some(87),
             popcorn: Some(91),
             metacritic: Some(74),
+            ..Scores::default()
         };
         let ratings = Ratings::from(&scores);
         assert_eq!(ratings.imdb, "8.0");

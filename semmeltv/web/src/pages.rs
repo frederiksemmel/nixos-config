@@ -1,4 +1,4 @@
-use crate::api::{Api, Card, Found, Kind, Ratings, Watch, WatchingCard};
+use crate::api::{About, Api, Card, CastMember, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard};
 use crate::playing::{play_episode, play_movie, play_show, tell};
 use crate::public::Public;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -276,6 +276,215 @@ async fn play_icon() -> Result<impl View> {
     })
 }
 
+const MONTHS: [&str; 12] = [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+];
+
+fn clock(seconds: f64) -> String {
+    let total = seconds.max(0.0).round() as u64;
+    let (hours, minutes, seconds) = (total / 3600, total % 3600 / 60, total % 60);
+    if hours > 0 {
+        format!("{hours}:{minutes:02}:{seconds:02}")
+    } else {
+        format!("{minutes}:{seconds:02}")
+    }
+}
+
+fn runtime(minutes: u32) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, minutes) => format!("{minutes}m"),
+        (hours, 0) => format!("{hours}h"),
+        (hours, minutes) => format!("{hours}h {minutes}m"),
+    }
+}
+
+fn long_date(date: &str) -> String {
+    let mut parts = date.split('-');
+    let parsed = (|| {
+        let year: u16 = parts.next()?.parse().ok()?;
+        let month: usize = parts.next()?.parse().ok()?;
+        let day: u8 = parts.next()?.parse().ok()?;
+        Some(format!("{day}\u{a0}{}\u{a0}{year}", MONTHS.get(month.checked_sub(1)?)?))
+    })();
+    parsed.unwrap_or_else(|| date.to_string())
+}
+
+fn listed(names: &[String]) -> Option<String> {
+    (!names.is_empty()).then(|| names.join(", "))
+}
+
+fn stopped_at(at: Option<f64>, of: Option<f64>) -> Option<String> {
+    let at = at.filter(|at| *at > 0.0)?;
+    Some(match of.filter(|of| *of > 0.0) {
+        Some(of) => format!("Stopped at {} of {}", clock(at), clock(of)),
+        None => format!("Stopped at {}", clock(at)),
+    })
+}
+
+fn initials(name: &str) -> String {
+    name.split_whitespace()
+        .filter_map(|word| word.chars().next())
+        .filter(|letter| letter.is_alphabetic())
+        .take(2)
+        .collect()
+}
+
+fn facts(parts: &[Option<String>]) -> String {
+    parts
+        .iter()
+        .flatten()
+        .map(String::as_str)
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
+#[component]
+async fn more_scores(of: &MoreScores) -> Result<impl View> {
+    let metacritic = of.metacritic.map(|score| score.to_string());
+    let letterboxd = of.letterboxd.map(|score| format!("{score:.1}"));
+    let ebert = of
+        .ebert
+        .map(|score| format!("{score:.1}").trim_end_matches(".0").to_string());
+    Ok(view! {
+        if let Some(metacritic) = metacritic {
+            <span class="detail-score" title="Metascore"><b class="detail-metacritic">(metacritic)</b>"Metacritic"</span>
+        }
+        if let Some(letterboxd) = letterboxd {
+            <span class="detail-score" title="Letterboxd average, out of 5"><b>(letterboxd)</b>"Letterboxd"</span>
+        }
+        if let Some(ebert) = ebert {
+            <span class="detail-score" title="Roger Ebert, out of 4 stars"><b>(ebert) "/4"</b>"Ebert"</span>
+        }
+    })
+}
+
+#[component]
+async fn heading(public: &Public, card: &Card, about: &About, line: &str) -> Result<impl View> {
+    let poster = card.poster.as_deref().map(|path| public.url(path));
+    let original = about.original_title.clone();
+    Ok(view! {
+        <div class="detail-head">
+            <span class="art poster detail-poster" style=(tint(&card.title))>
+                <span class="art-title">(card.title.as_str())</span>
+                if let Some(poster) = poster {
+                    <img src=(poster) alt="" onerror="this.remove()">
+                }
+            </span>
+            <div class="detail-heading">
+                <h1>(card.title.as_str())</h1>
+                if let Some(original) = original {
+                    <p class="detail-original">(original)</p>
+                }
+                if !line.is_empty() {
+                    <p class="detail-line">(line)</p>
+                }
+                <p class="title-sub detail-ratings">
+                    scores(of: &card.ratings)
+                    more_scores(of: &about.scores)
+                </p>
+            </div>
+        </div>
+        if let Some(tagline) = &about.tagline {
+            <p class="detail-tagline">(tagline.as_str())</p>
+        }
+    })
+}
+
+#[component]
+async fn trailer_button(about: &About) -> Result<impl View> {
+    Ok(view! {
+        if let Some(trailer) = &about.trailer {
+            <a class="detail-trailer" href=(trailer.as_str()) target="_blank" rel="noopener">
+                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5.5" width="18" height="13" rx="3.5"></rect><path class="solid" d="m10.2 9.3 4.6 2.7-4.6 2.7z"></path></svg>
+                "Trailer"
+            </a>
+        }
+    })
+}
+
+#[component]
+async fn facts_list(rows: &[(&'static str, String)]) -> Result<impl View> {
+    Ok(view! {
+        if !rows.is_empty() {
+            <dl class="detail-facts">
+                for (label, value) in rows {
+                    <div>
+                        <dt>(*label)</dt>
+                        <dd>(value.as_str())</dd>
+                    </div>
+                }
+            </dl>
+        }
+    })
+}
+
+#[component]
+async fn cast(public: &Public, members: &[CastMember]) -> Result<impl View> {
+    Ok(view! {
+        if !members.is_empty() {
+            <section class="detail-section detail-cast-section">
+                <h2>"Cast"</h2>
+                <ul class="detail-cast">
+                    for member in members {
+                        let photo = member.photo.as_deref().map(|path| public.url(path));
+                        <li>
+                            <span class="detail-face" style=(tint(&member.name))>
+                                <span>(initials(&member.name))</span>
+                                if let Some(photo) = photo {
+                                    <img src=(photo) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                                }
+                            </span>
+                            <b>(member.name.as_str())</b>
+                            if let Some(character) = &member.character {
+                                <span class="detail-role">(character.as_str())</span>
+                            }
+                        </li>
+                    }
+                </ul>
+            </section>
+        }
+    })
+}
+
+#[component]
+async fn links(about: &About) -> Result<impl View> {
+    Ok(view! {
+        if about.imdb.is_some() || about.tmdb.is_some() {
+            <p class="detail-links">
+                if let Some(imdb) = &about.imdb {
+                    <a href=(imdb.as_str()) target="_blank" rel="noopener">"IMDb"</a>
+                }
+                if let Some(tmdb) = &about.tmdb {
+                    <a href=(tmdb.as_str()) target="_blank" rel="noopener">"TMDB"</a>
+                }
+                if let Some(trailer) = &about.trailer {
+                    <a href=(trailer.as_str()) target="_blank" rel="noopener">"Trailer on YouTube"</a>
+                }
+            </p>
+        }
+    })
+}
+
+#[component]
+async fn last_played(played: &Played) -> Result<impl View> {
+    Ok(view! {
+        if let Some(label) = &played.last_played_label {
+            <p class="detail-last">"Last played " <b>(label.as_str())</b></p>
+        }
+    })
+}
+
 #[page("/movies/{key}")]
 async fn movie(cx: &Cx) -> Result<impl View> {
     let key = path_param::<Key>(cx).to_string();
@@ -284,31 +493,80 @@ async fn movie(cx: &Cx) -> Result<impl View> {
         Found::Here(movie) => movie,
         Found::Missing => return Err(not_found().into()),
     };
+    let about = &movie.about;
     let said = signal(cx, String::new);
     let label = if movie.watch.fraction().is_some() {
         "Resume"
     } else {
         "Play"
     };
+    let length = movie
+        .watch
+        .duration
+        .map(|seconds| runtime((seconds / 60.0).round() as u32));
+    let line = facts(&[
+        movie.card.years.clone(),
+        movie.watch.runtime_minutes.map(runtime).or(length),
+        about.certificate.as_ref().map(|certificate| certificate.label()),
+        listed(&about.genres),
+    ]);
+    let stopped = stopped_at(movie.watch.stopped_at, movie.watch.duration);
+    let mut rows = Vec::new();
+    if let Some(directors) = listed(&about.directors) {
+        rows.push((
+            if about.directors.len() > 1 {
+                "Directors"
+            } else {
+                "Director"
+            },
+            directors,
+        ));
+    }
+    if let Some(released) = &about.released {
+        rows.push(("Released", long_date(released)));
+    }
+    if let Some(language) = about.language.clone().filter(|language| language != "English") {
+        rows.push(("Language", language));
+    }
+    let file = movie.watch.tags.line();
+    if !file.is_empty() {
+        rows.push(("File", file));
+    }
     Ok(view! {
-        <article class="title">
+        <article class="title detail">
             hero(public: &public, card: &movie.card)
-            <div class="title-body">
-                <h1>(movie.card.title.as_str())</h1>
-                <p class="title-sub">
-                    (movie.card.years.clone().unwrap_or_default())
-                    scores(of: &movie.card.ratings)
-                </p>
-                <p class="details">(movie.watch.details.as_str())</p>
-                progress(watch: &movie.watch)
-                <button type="button" class="play" @click=$(async |_e| {
-                    let answer = play_movie(key).await;
-                    said.set(answer);
-                })>
-                    play_icon()
-                    (label)
-                </button>
-                <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
+            <div class="title-body detail-body">
+                <div class="detail-columns">
+                    <div class="detail-side">
+                        <div class="detail-playback">
+                            last_played(played: &movie.played)
+                            if let Some(stopped) = stopped {
+                                progress(watch: &movie.watch)
+                                <p class="detail-stopped">(stopped)</p>
+                            }
+                            <div class="detail-actions">
+                                <button type="button" class="play" @click=$(async |_e| {
+                                    let answer = play_movie(key).await;
+                                    said.set(answer);
+                                })>
+                                    play_icon()
+                                    (label)
+                                </button>
+                                trailer_button(about: &movie.about)
+                            </div>
+                            <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
+                        </div>
+                        facts_list(rows: &rows)
+                        links(about: &movie.about)
+                    </div>
+                    <div class="detail-main">
+                        heading(public: &public, card: &movie.card, about: &movie.about, line: &line)
+                        if let Some(plot) = &movie.about.plot {
+                            <p class="detail-plot">(plot.as_str())</p>
+                        }
+                        cast(public: &public, members: &movie.about.cast)
+                    </div>
+                </div>
             </div>
         </article>
     })
@@ -322,6 +580,7 @@ async fn show(cx: &Cx) -> Result<impl View> {
         Found::Here(show) => show,
         Found::Missing => return Err(not_found().into()),
     };
+    let about = &show.about;
     let first = show
         .next
         .as_ref()
@@ -330,120 +589,219 @@ async fn show(cx: &Cx) -> Result<impl View> {
         .unwrap_or(1);
     let season = signal(cx, move || first);
     let said = signal(cx, String::new);
-    let next_label = show
-        .next
-        .as_ref()
-        .map_or_else(|| "Play".to_string(), |next| format!("Play {}", next.label));
+    let resuming = show.next.as_ref().and_then(Next::fraction);
+    let next_label = match &show.next {
+        Some(next) if resuming.is_some() => format!("Resume {}", next.label),
+        Some(next) => format!("Play {}", next.label),
+        None => "Play".to_string(),
+    };
     let next_key = key.clone();
     let heat = show.heat();
     let columns = heat.first().map_or(0, |row| row.cells.len() as u32);
+    let line = facts(&[
+        show.card.years.clone(),
+        about.certificate.as_ref().map(|certificate| certificate.label()),
+        listed(&about.genres),
+    ]);
+    let total = show.seasons.iter().map(|season| season.episodes.len()).sum::<usize>();
+    let watched = show
+        .seasons
+        .iter()
+        .flat_map(|season| &season.episodes)
+        .filter(|episode| episode.watched)
+        .count();
+    let next_text = show
+        .next
+        .as_ref()
+        .filter(|_| show.played.last_played.is_some())
+        .map(|next| {
+            let title = next
+                .title
+                .as_deref()
+                .map(|title| format!(" · {title}"))
+                .unwrap_or_default();
+            format!("{}{title}", next.label)
+        });
+    let stopped = show
+        .next
+        .as_ref()
+        .and_then(|next| stopped_at(next.stopped_at, next.duration));
+    let next_watch = show.next.as_ref().map(|next| Watch {
+        details: String::new(),
+        stopped_at: next.stopped_at,
+        duration: next.duration,
+        runtime_minutes: None,
+        tags: Default::default(),
+    });
+    let mut rows = Vec::new();
+    if let Some(creators) = listed(&about.creators) {
+        rows.push(("Created by", creators));
+    }
+    if let Some(networks) = listed(&about.networks) {
+        rows.push(("Network", networks));
+    }
+    let aired = match (&about.first_aired, &about.last_aired) {
+        (Some(first), Some(last)) if first != last => Some(format!("{} – {}", long_date(first), long_date(last))),
+        (Some(first), _) => Some(long_date(first)),
+        _ => None,
+    };
+    if let Some(aired) = aired {
+        rows.push(("Aired", aired));
+    }
+    if let (Some(seasons), Some(count)) = (about.seasons, about.episodes) {
+        let plural = |count: u32, noun: &str| format!("{count} {noun}{}", if count == 1 { "" } else { "s" });
+        rows.push((
+            "Made",
+            format!("{} · {}", plural(seasons, "season"), plural(count, "episode")),
+        ));
+    }
+    rows.push(("In the library", show.card.subtitle.clone()));
+    if let Some(language) = about.language.clone().filter(|language| language != "English") {
+        rows.push(("Language", language));
+    }
     Ok(view! {
-        <article class="title">
+        <article class="title detail">
             hero(public: &public, card: &show.card)
-            <div class="title-body">
-                <h1>(show.card.title.as_str())</h1>
-                <p class="title-sub">
-                    (show.card.years.iter().chain([&show.card.subtitle]).map(String::as_str).collect::<Vec<_>>().join(" · "))
-                    scores(of: &show.card.ratings)
-                </p>
-                <button type="button" class="play" @click=$(async |_e| {
-                    let answer = play_show(next_key).await;
-                    said.set(answer);
-                })>
-                    play_icon()
-                    (next_label)
-                </button>
-                <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
-                if show.seasons.len() > 1 {
-                    <nav class="chips seasons">
-                        #[key(group.number)]
-                        for group in &show.seasons {
-                            let number = group.number;
-                            <button type="button"
-                                :class=$(if season.get() == number { "chip on" } else { "chip" })
-                                @click=$(|_e| season.set(number))>
-                                (group.label.as_str())
-                            </button>
-                        }
-                    </nav>
-                }
-                #[key(group.number)]
-                for group in &show.seasons {
-                    let number = group.number;
-                    <ol class="episodes" :hidden=$(season.get() != number)>
-                        #[key(episode.episode)]
-                        for episode in &group.episodes {
-                            let show_key = key.clone();
-                            let (season_number, episode_number) = (episode.season, episode.episode);
-                            let still = episode.still.as_deref().map(|path| public.url(path));
-                            <li>
-                                <button type="button" class="episode" @click=$(async |_e| {
-                                    let answer = play_episode(show_key, season_number, episode_number).await;
+            <div class="title-body detail-body">
+                <div class="detail-columns">
+                    <div class="detail-side">
+                        <div class="detail-playback">
+                            last_played(played: &show.played)
+                            if let Some(next_text) = next_text {
+                                <p class="detail-next">"Up next " <b>(next_text)</b></p>
+                            }
+                            if let (Some(stopped), Some(next_watch)) = (stopped, next_watch.as_ref()) {
+                                progress(watch: next_watch)
+                                <p class="detail-stopped">(stopped)</p>
+                            }
+                            if watched > 0 {
+                                <p class="detail-seen-count">"Watched " (watched.to_string()) " of " (total.to_string()) " episodes"</p>
+                            }
+                            <div class="detail-actions">
+                                <button type="button" class="play" @click=$(async |_e| {
+                                    let answer = play_show(next_key).await;
                                     said.set(answer);
                                 })>
-                                    <span class="still" style=(tint(&episode.label))>
-                                        if let Some(still) = still {
-                                            <img src=(still) alt="" loading="lazy" decoding="async" onerror="this.remove()">
-                                        }
-                                        progress(watch: &episode.watch)
-                                    </span>
-                                    <span class="episode-text">
-                                        <b>(episode.label.as_str())</b>
-                                        scores(of: &episode.ratings)
-                                        <span>(episode.short_label.as_str()) " · " (episode.watch.details.as_str())</span>
-                                    </span>
+                                    play_icon()
+                                    (next_label)
                                 </button>
-                            </li>
-                        }
-                    </ol>
-                }
-                if !heat.is_empty() {
-                    <section class="heat">
-                        <h2>"Episode ratings"</h2>
-                        <div class="heat-scroll">
-                            <table class="heat-grid">
-                                <thead>
-                                    <tr>
-                                        <th></th>
-                                        for number in 1..=columns {
-                                            <th>(number.to_string())</th>
-                                        }
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    for row in &heat {
-                                        <tr>
-                                            <th>(format!("S{}", row.season))</th>
-                                            for cell in &row.cells {
-                                                <td>
-                                                    if let Some(cell) = cell {
-                                                        let show_key = key.clone();
-                                                        let (season_number, episode_number) = (row.season, cell.episode);
-                                                        <button type="button" class=(format!("heat-cell {}", cell.band))
-                                                            aria-label=(format!("Play S{season_number} E{episode_number}, IMDb {}", cell.rating))
-                                                            @click=$(async |_e| {
-                                                                let answer = play_episode(show_key, season_number, episode_number).await;
-                                                                said.set(answer);
-                                                            })>
-                                                            (cell.rating.as_str())
-                                                        </button>
-                                                    } else {
-                                                        <span class="heat-cell"></span>
-                                                    }
-                                                </td>
-                                            }
-                                        </tr>
-                                    }
-                                </tbody>
-                            </table>
+                                trailer_button(about: &show.about)
+                            </div>
+                            <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
                         </div>
-                        <p class="heat-legend">
-                            for (band, label) in BANDS {
-                                <span><i class=(format!("heat-cell {band}"))></i>(label)</span>
+                        facts_list(rows: &rows)
+                        links(about: &show.about)
+                    </div>
+                    <div class="detail-main">
+                        heading(public: &public, card: &show.card, about: &show.about, line: &line)
+                        if let Some(plot) = &show.about.plot {
+                            <p class="detail-plot">(plot.as_str())</p>
+                        }
+                        cast(public: &public, members: &show.about.cast)
+                        <section class="detail-section detail-episodes">
+                            <h2>"Episodes"</h2>
+                            if show.seasons.len() > 1 {
+                                <nav class="chips seasons">
+                                    #[key(group.number)]
+                                    for group in &show.seasons {
+                                        let number = group.number;
+                                        <button type="button"
+                                            :class=$(if season.get() == number { "chip on" } else { "chip" })
+                                            @click=$(|_e| season.set(number))>
+                                            (group.label.as_str())
+                                        </button>
+                                    }
+                                </nav>
                             }
-                        </p>
-                    </section>
-                }
+                            #[key(group.number)]
+                            for group in &show.seasons {
+                                let number = group.number;
+                                <ol class="episodes" :hidden=$(season.get() != number)>
+                                    #[key(episode.episode)]
+                                    for episode in &group.episodes {
+                                        let show_key = key.clone();
+                                        let (season_number, episode_number) = (episode.season, episode.episode);
+                                        let still = episode.still.as_deref().map(|path| public.url(path));
+                                        let seen = episode.watched;
+                                        <li>
+                                            <button type="button" class="episode" @click=$(async |_e| {
+                                                let answer = play_episode(show_key, season_number, episode_number).await;
+                                                said.set(answer);
+                                            })>
+                                                <span class="still" style=(tint(&episode.label))>
+                                                    if let Some(still) = still {
+                                                        <img src=(still) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                                                    }
+                                                    if seen {
+                                                        <span class="detail-seen" title="Watched">
+                                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12.5 4 4 8-9"></path></svg>
+                                                        </span>
+                                                    }
+                                                    progress(watch: &episode.watch)
+                                                </span>
+                                                <span class="episode-text">
+                                                    <b>(episode.label.as_str())</b>
+                                                    scores(of: &episode.ratings)
+                                                    <span>
+                                                        (episode.short_label.as_str()) " · " (episode.watch.details.as_str())
+                                                        if seen { " · Watched" }
+                                                    </span>
+                                                </span>
+                                            </button>
+                                        </li>
+                                    }
+                                </ol>
+                            }
+                        </section>
+                        if !heat.is_empty() {
+                            <section class="heat">
+                                <h2>"Episode ratings"</h2>
+                                <div class="heat-scroll">
+                                    <table class="heat-grid">
+                                        <thead>
+                                            <tr>
+                                                <th></th>
+                                                for number in 1..=columns {
+                                                    <th>(number.to_string())</th>
+                                                }
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            for row in &heat {
+                                                <tr>
+                                                    <th>(format!("S{}", row.season))</th>
+                                                    for cell in &row.cells {
+                                                        <td>
+                                                            if let Some(cell) = cell {
+                                                                let show_key = key.clone();
+                                                                let (season_number, episode_number) = (row.season, cell.episode);
+                                                                <button type="button" class=(format!("heat-cell {}", cell.band))
+                                                                    aria-label=(format!("Play S{season_number} E{episode_number}, IMDb {}", cell.rating))
+                                                                    @click=$(async |_e| {
+                                                                        let answer = play_episode(show_key, season_number, episode_number).await;
+                                                                        said.set(answer);
+                                                                    })>
+                                                                    (cell.rating.as_str())
+                                                                </button>
+                                                            } else {
+                                                                <span class="heat-cell"></span>
+                                                            }
+                                                        </td>
+                                                    }
+                                                </tr>
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <p class="heat-legend">
+                                    for (band, label) in BANDS {
+                                        <span><i class=(format!("heat-cell {band}"))></i>(label)</span>
+                                    }
+                                </p>
+                            </section>
+                        }
+                    </div>
+                </div>
             </div>
         </article>
     })

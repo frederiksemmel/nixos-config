@@ -4,6 +4,7 @@ use crate::details::{self, Details};
 use crate::heatmap;
 use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
+use crate::manifest::{About, Date};
 use crate::progress::Progress;
 use crate::seek::Direction;
 use crate::storage;
@@ -176,6 +177,7 @@ fn router(api: Api) -> Router {
         .route("/api/shows/{key}/backdrop", get(show_backdrop))
         .route("/api/shows/{key}/poster", get(show_poster))
         .route("/api/shows/{key}/episodes/{season}/{episode}/still", get(still))
+        .route("/api/people/{person}/photo", get(photo))
         .route("/api/play", post(play))
         .route("/api/command", post(command))
         .route("/api/listen", post(listen))
@@ -390,11 +392,134 @@ fn watch(progress: &Progress, file: &std::path::Path, tags: &Tags, runtime: Opti
 }
 
 #[derive(Serialize)]
+struct CertificateView {
+    country: String,
+    rating: String,
+}
+
+#[derive(Serialize)]
+struct CastView {
+    name: String,
+    character: Option<String>,
+    photo: Option<String>,
+}
+
+#[derive(Serialize)]
+struct MoreScores {
+    metacritic: Option<u8>,
+    letterboxd: Option<f64>,
+    ebert: Option<f64>,
+}
+
+#[derive(Serialize)]
+struct AboutView {
+    tagline: Option<String>,
+    plot: Option<String>,
+    genres: Vec<String>,
+    original_title: Option<String>,
+    language: Option<String>,
+    released: Option<String>,
+    first_aired: Option<String>,
+    last_aired: Option<String>,
+    seasons: Option<u32>,
+    episodes: Option<u32>,
+    networks: Vec<String>,
+    directors: Vec<String>,
+    creators: Vec<String>,
+    certificate: Option<CertificateView>,
+    trailer: Option<String>,
+    imdb: Option<String>,
+    tmdb: Option<String>,
+    cast: Vec<CastView>,
+    scores: MoreScores,
+}
+
+fn tenths(score: Option<crate::manifest::Tenths>) -> Option<f64> {
+    score.map(|tenths| f64::from(tenths.0) / 10.0)
+}
+
+fn about_view(
+    art: &FsPath,
+    about: &About,
+    kind: Kind,
+    tmdb: Option<u64>,
+    imdb: Option<&str>,
+    scores: &crate::library::Scores,
+) -> AboutView {
+    let date = |date: Option<Date>| date.map(|date| date.to_string());
+    let kind_path = match kind {
+        Kind::Movie => "movie",
+        Kind::Tv => "tv",
+    };
+    AboutView {
+        tagline: about.tagline.clone(),
+        plot: about.plot.clone(),
+        genres: about.genres.clone(),
+        original_title: about.original_title.clone(),
+        language: about
+            .language
+            .as_deref()
+            .map(|code| subtitles::language_name(code).map_or_else(|| code.to_string(), str::to_string)),
+        released: date(about.released),
+        first_aired: date(about.first_aired),
+        last_aired: date(about.last_aired),
+        seasons: about.seasons,
+        episodes: about.episodes,
+        networks: about.networks.clone(),
+        directors: about.directors.clone(),
+        creators: about.creators.clone(),
+        certificate: about.certificate.as_ref().map(|certificate| CertificateView {
+            country: certificate.country.clone(),
+            rating: certificate.rating.clone(),
+        }),
+        trailer: about
+            .trailer
+            .as_ref()
+            .map(|key| format!("https://www.youtube.com/watch?v={key}")),
+        imdb: imdb.map(|id| format!("https://www.imdb.com/title/{id}/")),
+        tmdb: tmdb.map(|id| format!("https://www.themoviedb.org/{kind_path}/{id}")),
+        cast: about
+            .cast
+            .iter()
+            .map(|member| CastView {
+                name: member.name.clone(),
+                character: member.character.clone(),
+                photo: member
+                    .person
+                    .filter(|person| artwork::face(art, *person).is_file())
+                    .map(|person| format!("/api/people/{person}/photo")),
+            })
+            .collect(),
+        scores: MoreScores {
+            metacritic: scores.metacritic,
+            letterboxd: tenths(scores.letterboxd),
+            ebert: tenths(scores.ebert),
+        },
+    }
+}
+
+#[derive(Serialize)]
+struct Played {
+    last_played: Option<u64>,
+    last_played_label: Option<String>,
+}
+
+fn played(last_played: Option<u64>) -> Played {
+    Played {
+        last_played,
+        last_played_label: last_played.map(|then| details::when(watching::now(), then)),
+    }
+}
+
+#[derive(Serialize)]
 struct MovieView {
     #[serde(flatten)]
     card: Card,
     #[serde(flatten)]
     watch: Watch,
+    about: AboutView,
+    #[serde(flatten)]
+    played: Played,
 }
 
 async fn movie(State(api): State<Api>, Path(key): Path<String>) -> Response {
@@ -403,9 +528,21 @@ async fn movie(State(api): State<Api>, Path(key): Path<String>) -> Response {
         return not_found(format!("no movie {key}"));
     };
     let progress = api.shared.progress();
+    let last_played = progress
+        .last_played([&movie.path])
+        .max(progress.watching.last_played(watching::Kind::Movie, &movie.key));
     Json(MovieView {
         card: movie_card(&api.root, movie),
         watch: watch(&progress, &movie.path, &movie.tags, movie.runtime),
+        about: about_view(
+            &api.art(),
+            &movie.about,
+            Kind::Movie,
+            movie.tmdb,
+            movie.imdb.as_deref(),
+            &movie.ratings,
+        ),
+        played: played(last_played),
     })
     .into_response()
 }
@@ -420,6 +557,8 @@ struct EpisodeView {
     still: Option<String>,
     ratings: Ratings,
     band: Option<String>,
+    watched: bool,
+    last_played: Option<u64>,
     #[serde(flatten)]
     watch: Watch,
 }
@@ -436,6 +575,9 @@ struct Next {
     season: u32,
     episode: u32,
     label: String,
+    title: Option<String>,
+    stopped_at: Option<f64>,
+    duration: Option<f64>,
 }
 
 #[derive(Serialize)]
@@ -444,6 +586,9 @@ struct ShowView {
     card: Card,
     next: Option<Next>,
     seasons: Vec<SeasonView>,
+    about: AboutView,
+    #[serde(flatten)]
+    played: Played,
 }
 
 fn episode_view(show: &Show, episode: &Episode, progress: &Progress) -> EpisodeView {
@@ -464,6 +609,8 @@ fn episode_view(show: &Show, episode: &Episode, progress: &Progress) -> EpisodeV
             .ratings
             .imdb
             .map(|rating| heatmap::band(rating).label.to_lowercase()),
+        watched: progress.watched(show, episode),
+        last_played: progress.last_played([&episode.path]),
         watch: watch(progress, &episode.path, &episode.tags, episode.runtime),
     }
 }
@@ -474,11 +621,20 @@ async fn show(State(api): State<Api>, Path(key): Path<String>) -> Response {
         return not_found(format!("no show {key}"));
     };
     let progress = api.shared.progress();
-    let next = progress.resume_episode(show).map(|episode| Next {
-        season: episode.season,
-        episode: episode.number,
-        label: episode.short_label(),
+    let next = progress.resume_episode(show).map(|episode| {
+        let place = watch(&progress, &episode.path, &episode.tags, episode.runtime);
+        Next {
+            season: episode.season,
+            episode: episode.number,
+            label: episode.short_label(),
+            title: episode.title.clone(),
+            stopped_at: place.stopped_at,
+            duration: place.duration,
+        }
     });
+    let last_played = progress
+        .last_played(show.episodes().map(|episode| &episode.path))
+        .max(progress.watching.last_played(watching::Kind::Series, &show.key));
     let seasons = show
         .seasons
         .iter()
@@ -496,6 +652,15 @@ async fn show(State(api): State<Api>, Path(key): Path<String>) -> Response {
         card: show_card(&api.root, show),
         next,
         seasons,
+        about: about_view(
+            &api.art(),
+            &show.about,
+            Kind::Tv,
+            show.tmdb,
+            show.imdb.as_deref(),
+            &show.ratings,
+        ),
+        played: played(last_played),
     })
     .into_response()
 }
@@ -550,6 +715,10 @@ async fn show_poster(State(api): State<Api>, Path(key): Path<String>, headers: H
         Some(poster) => image(api.root.join(poster), &headers).await,
         None => not_found(format!("no poster for show {key}")),
     }
+}
+
+async fn photo(State(api): State<Api>, Path(person): Path<u64>, headers: HeaderMap) -> Response {
+    image(artwork::face(&api.art(), person), &headers).await
 }
 
 async fn still(
@@ -834,6 +1003,21 @@ mod tests {
             "Movies/Up (2009)/Up.2009.mkv",
         ]);
         library.movies[0].tmdb = Some(438_631);
+        library.movies[0].imdb = Some("tt1160419".to_string());
+        library.movies[0].ratings.letterboxd = Some(crate::manifest::Tenths(41));
+        library.movies[0].about = About {
+            genres: vec!["Science Fiction".to_string()],
+            language: Some("en".to_string()),
+            released: Date::parse("2021-09-15"),
+            directors: vec!["Denis Villeneuve".to_string()],
+            trailer: Some("n9xhJrPXop4".to_string()),
+            cast: vec![crate::manifest::Member {
+                name: "Timothée Chalamet".to_string(),
+                character: Some("Paul Atreides".to_string()),
+                person: Some(1_190_668),
+            }],
+            ..About::default()
+        };
         let outlander = library.shows.iter_mut().find(|show| show.key == "outlander").unwrap();
         outlander.seasons[0].episodes[0].ratings.imdb = Some(crate::manifest::Tenths(84));
         library
@@ -975,7 +1159,19 @@ mod tests {
         let server = serve(no_root(), None);
         let (status, body) = get(&server, "/api/shows/outlander");
         assert_eq!(status, 200);
-        assert_eq!(body["next"], json!({ "season": 2, "episode": 1, "label": "S2 E1" }));
+        assert_eq!(
+            body["next"],
+            json!({ "season": 2, "episode": 1, "label": "S2 E1", "title": null, "stopped_at": null, "duration": null })
+        );
+        let watched: Vec<bool> = body["seasons"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|season| season["episodes"].as_array().unwrap())
+            .map(|episode| episode["watched"].as_bool().unwrap())
+            .collect();
+        assert_eq!(watched, [true, true, false]);
+        assert_eq!(body["last_played"], 1);
         assert_eq!(body["seasons"].as_array().unwrap().len(), 2);
         assert_eq!(body["seasons"][0]["episodes"][1]["label"], "Episode 2");
         let first = &body["seasons"][0]["episodes"][0];
@@ -989,7 +1185,22 @@ mod tests {
             (&Value::Null, &Value::Null)
         );
         assert_eq!(get(&server, "/api/shows/nothing").0, 404);
-        assert_eq!(get(&server, "/api/movies/dune-2021").1["title"], "Dune");
+        let dune = get(&server, "/api/movies/dune-2021").1;
+        assert_eq!(dune["title"], "Dune");
+        assert_eq!(dune["last_played"], 2);
+        assert!(dune["last_played_label"].as_str().unwrap().ends_with("1970"));
+        let about = &dune["about"];
+        assert_eq!(about["language"], "English");
+        assert_eq!(about["released"], "2021-09-15");
+        assert_eq!(about["directors"], json!(["Denis Villeneuve"]));
+        assert_eq!(about["trailer"], "https://www.youtube.com/watch?v=n9xhJrPXop4");
+        assert_eq!(about["imdb"], "https://www.imdb.com/title/tt1160419/");
+        assert_eq!(about["tmdb"], "https://www.themoviedb.org/movie/438631");
+        assert_eq!(about["scores"]["letterboxd"], 4.1);
+        assert_eq!(
+            about["cast"],
+            json!([{ "name": "Timothée Chalamet", "character": "Paul Atreides", "photo": null }])
+        );
     }
 
     #[test]
@@ -1018,7 +1229,10 @@ mod tests {
         assert_eq!(server.asked.recv().unwrap(), "Control(Pause)");
         assert_eq!(post(&server, "/api/playback/seek", json!({ "by": -30.0 })).0, 200);
         assert_eq!(server.asked.recv().unwrap(), "Seek(By(-30.0))");
-        assert_eq!(post(&server, "/api/playback/skip", json!({ "direction": "back" })).0, 200);
+        assert_eq!(
+            post(&server, "/api/playback/skip", json!({ "direction": "back" })).0,
+            200
+        );
         assert_eq!(server.asked.recv().unwrap(), "Seek(Step(Back))");
         assert_eq!(post(&server, "/api/playback/skip", json!({ "direction": "up" })).0, 422);
         assert_eq!(post(&server, "/api/playback/dance", json!({})).0, 404);

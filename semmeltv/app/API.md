@@ -22,8 +22,8 @@ look like `{ "error": "..." }`, with 400 or 404.
 | --- | --- | --- |
 | GET | `/api/library` | `{ newest, shows, movies }`, lists of cards |
 | GET | `/api/search?q=TEXT` | `{ results }`: cards ranked by how well the title matches, prefixes first, typos forgiven |
-| GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration` and `tags` |
-| GET | `/api/shows/{key}` | a card plus `next` (where playing carries on) and `seasons`, each with `episodes` |
+| GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration`, `tags`, `about`, `last_played` and `last_played_label` |
+| GET | `/api/shows/{key}` | a card plus `next` (where playing carries on), `seasons` (each with `episodes`), `about`, `last_played` and `last_played_label` |
 
 A card is
 `{ kind: "movie" | "show", key, title, years, subtitle, poster, backdrop, ratings }`.
@@ -42,6 +42,38 @@ scale from its IMDb rating: `awesome` (9.0 and up), `great` (8.0), `good`
 (7.0), `regular` (6.0), `bad` (5.0) or `garbage`, and is null without one. Keys are the TV's own: `dune-2021`,
 `outlander`.
 
+An episode also has `watched` and `last_played`. `watched` is true once the
+episode played to its end, or when it comes before the episode where the show
+was last left. `next` is
+`{ season, episode, label, title, stopped_at, duration }`: the episode a play
+of the show carries on with, and where in it.
+
+`last_played` is when the title last played, in Unix seconds, or null:
+the latest of its files' plays and its Currently Watching entry.
+`last_played_label` says the same in the TV's local time: "today 21:14",
+"yesterday 21:14", "Saturday 20:00" within a week, "20 Oct 20:00" this year,
+and "5 Oct 2025" before that.
+
+`about` is what TMDB and MDBList say about the title, fetched when it is
+imported:
+
+    { tagline, plot, genres, original_title, language, released,
+      first_aired, last_aired, seasons, episodes, networks, directors,
+      creators, certificate: { country, rating }, trailer, imdb, tmdb,
+      cast: [ { name, character, photo } ],
+      scores: { metacritic, letterboxd, ebert } }
+
+Any field can be null, and lists can be empty. A film has `released` and
+`directors`; a show has `first_aired`, `last_aired`, `seasons` and `episodes`
+(as TMDB counts them, not as the library holds them), `networks` and
+`creators`. `original_title` is set only when it differs from the title.
+`language` is the original language's English name. `certificate` is the age
+rating in Switzerland, else Germany, else the US; `rating` is the country's
+own label, such as `12` or `PG-13`. `trailer`, `imdb` and `tmdb` are links.
+`cast` is the main cast, up to ten, in billing order for a film and by
+episode count for a show; `photo` is an artwork path or null.
+`scores.letterboxd` is out of 5 and `scores.ebert` (Roger Ebert) out of 4.
+
 ## Artwork
 
 | Method | Path |
@@ -51,6 +83,7 @@ scale from its IMDb rating: `awesome` (9.0 and up), `great` (8.0), `good`
 | GET | `/api/shows/{key}/poster` |
 | GET | `/api/shows/{key}/backdrop` |
 | GET | `/api/shows/{key}/episodes/{season}/{episode}/still` |
+| GET | `/api/people/{person}/photo` |
 
 These return JPEGs with `Cache-Control: public, max-age=86400` and an `ETag`,
 and answer `If-None-Match` with 304. The status is 404 when the library has no

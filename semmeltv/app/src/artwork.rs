@@ -1,7 +1,7 @@
 use crate::imdb::{self, ShowRatings};
-use crate::manifest::{Date, Manifest, MovieEntry, ReadError, Scores, ShowEntry};
+use crate::manifest::{About, Date, Manifest, MovieEntry, ReadError, Scores, ShowEntry};
 use crate::mdblist;
-use crate::tmdb::{Client, Found, Kind, Season};
+use crate::tmdb::{Client, Face, Found, Kind, Season};
 use image::ImageReader;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
@@ -16,6 +16,8 @@ pub const CARD_WIDTH: u32 = 640;
 pub const CARD_HEIGHT: u32 = 360;
 pub const POSTER_WIDTH: u32 = 342;
 pub const POSTER_HEIGHT: u32 = 513;
+pub const FACE_WIDTH: u32 = 120;
+pub const FACE_HEIGHT: u32 = 180;
 const REFRESH_AFTER: Duration = Duration::from_secs(150 * 24 * 60 * 60);
 const RATINGS_REFRESH_DAYS: i64 = 30;
 const REQUESTS_PER_RUN: usize = 900;
@@ -23,8 +25,11 @@ const JPEG_QUALITY: u8 = 85;
 const BACKDROP_SIZE: &str = "w780";
 const STILL_SIZE: &str = "original";
 const POSTER_SIZE: &str = "w342";
+const FACE_SIZE: &str = "w185";
+const DESCRIBE_AGAIN_DAYS: i64 = 150;
 const CARD: (u32, u32) = (CARD_WIDTH, CARD_HEIGHT);
 const POSTER: (u32, u32) = (POSTER_WIDTH, POSTER_HEIGHT);
+const FACE: (u32, u32) = (FACE_WIDTH, FACE_HEIGHT);
 
 fn title_dir(art: &Path, kind: Kind, id: u64) -> PathBuf {
     let kind = match kind {
@@ -40,6 +45,10 @@ pub fn backdrop(art: &Path, kind: Kind, id: u64) -> PathBuf {
 
 pub fn poster(art: &Path, kind: Kind, id: u64) -> PathBuf {
     title_dir(art, kind, id).join("poster.jpg")
+}
+
+pub fn face(art: &Path, person: u64) -> PathBuf {
+    art.join("person").join(format!("{person}.jpg"))
 }
 
 pub fn still(art: &Path, show: u64, season: u32, episode: u32) -> PathBuf {
@@ -212,6 +221,29 @@ impl<S: Source> Run<'_, S> {
         }
     }
 
+    fn undescribed(&self, about: &About) -> bool {
+        match about.described {
+            None => true,
+            Some(described) => self.refresh && self.today.days() - described.days() >= DESCRIBE_AGAIN_DAYS,
+        }
+    }
+
+    fn describe(&mut self, about: &mut About, imdb: &mut Option<String>, found: &Found, label: &str) {
+        *about = About {
+            described: Some(self.today),
+            ..found.about.clone()
+        };
+        if imdb.is_none() {
+            imdb.clone_from(&found.imdb);
+        }
+        for Face { person, path } in &found.faces {
+            let target = face(&self.art, *person);
+            if self.wanted(&target) {
+                self.fetch(&target, Some(path), FACE_SIZE, FACE, label);
+            }
+        }
+    }
+
     fn show(&mut self, show: &mut ShowEntry) {
         println!("{}", show.title);
         let Some(id) = show.tmdb else {
@@ -233,9 +265,11 @@ impl<S: Source> Run<'_, S> {
         let poster = poster(&self.art, Kind::Tv, id);
         let (wants_backdrop, wants_poster) = (self.wanted(&backdrop), self.wanted(&poster));
         let wants_run = show.last_aired.is_none() || (show.running && self.refresh);
-        if wants_backdrop || wants_poster || wants_run {
+        if wants_backdrop || wants_poster || wants_run || self.undescribed(&show.about) {
             match self.source.details(Kind::Tv, id) {
                 Ok(found) => {
+                    let label = show.title.clone();
+                    self.describe(&mut show.about, &mut show.imdb, &found, &label);
                     if found.last_aired.is_some() {
                         show.last_aired = found.last_aired;
                         show.running = found.running;
@@ -390,11 +424,12 @@ impl<S: Source> Run<'_, S> {
         let backdrop = backdrop(&self.art, Kind::Movie, id);
         let poster = poster(&self.art, Kind::Movie, id);
         let (wants_backdrop, wants_poster) = (self.wanted(&backdrop), self.wanted(&poster));
-        if !wants_backdrop && !wants_poster && movie.runtime.is_some() {
+        if !wants_backdrop && !wants_poster && movie.runtime.is_some() && !self.undescribed(&movie.about) {
             return;
         }
         match self.source.details(Kind::Movie, id) {
             Ok(found) => {
+                self.describe(&mut movie.about, &mut movie.imdb, &found, &label);
                 if movie.runtime.is_none() {
                     movie.runtime = found.runtime;
                 }
@@ -507,6 +542,18 @@ added = 2024-05-01
                 runtime: (kind == Kind::Movie).then_some(96),
                 last_aired: (kind == Kind::Tv).then_some(2020),
                 running: kind == Kind::Tv && id == 87108,
+                imdb: (id == 949).then(|| "tt0113277".to_string()),
+                about: About {
+                    tagline: Some(format!("Tagline {id}")),
+                    ..About::default()
+                },
+                faces: (id == 949)
+                    .then(|| Face {
+                        person: 1158,
+                        path: "/face.jpg".to_string(),
+                    })
+                    .into_iter()
+                    .collect(),
                 ..Found::default()
             })
         }
@@ -571,7 +618,7 @@ added = 2024-05-01
                     imdb: Some(Tenths(83)),
                     rt: self.rt,
                     popcorn: Some(90),
-                    metacritic: None,
+                    ..Scores::default()
                 },
             }))
         }
@@ -666,7 +713,7 @@ added = 2024-05-01
         assert_eq!(summary.problems, ["MDBList: Daily API limit exceeded!"]);
         let written = Manifest::read(&manifest).unwrap();
         assert!(written.movie[0].rated.is_some());
-        assert_eq!((written.movie[1].imdb.as_deref(), written.movie[1].rated), (None, None));
+        assert_eq!(written.movie[1].rated, None);
 
         let next = run(&manifest, &Fake::new(), Some(&FakeMdblist::new(5)), false).unwrap();
         assert_eq!((next.rated, next.requests), (1, 1));
@@ -830,15 +877,59 @@ episodes = []
         let fake = Fake::new();
         run(&manifest, &fake, None, false).unwrap();
         let written = Manifest::read(&manifest).unwrap();
-        let runs: Vec<_> = written.show.iter().map(|show| (show.last_aired, show.running)).collect();
+        let runs: Vec<_> = written
+            .show
+            .iter()
+            .map(|show| (show.last_aired, show.running))
+            .collect();
         assert_eq!(runs, [(Some(2020), false), (Some(2020), true)]);
-        assert!(Manifest::read(&manifest).unwrap().render().contains("last_aired = 2020\nrunning = true\n"));
+        assert!(
+            Manifest::read(&manifest)
+                .unwrap()
+                .render()
+                .contains("last_aired = 2020\nrunning = true\n")
+        );
         fake.calls();
 
         run(&manifest, &fake, None, false).unwrap();
         assert!(fake.calls().is_empty());
         run(&manifest, &fake, None, true).unwrap();
         assert_eq!(fake.calls(), ["details Tv 87108"]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn titles_are_described_once_with_photos_of_their_cast_and_again_after_five_months_on_refresh() {
+        let dir = films("describe");
+        let manifest = dir.join("library.toml");
+        let art = dir.join(DIR);
+        let fake = Fake::new();
+        run(&manifest, &fake, None, false).unwrap();
+        let written = Manifest::read(&manifest).unwrap();
+        let heat = &written.movie[1];
+        assert_eq!(heat.about.tagline.as_deref(), Some("Tagline 949"));
+        assert!(heat.about.described.is_some());
+        assert_eq!(heat.imdb.as_deref(), Some("tt0113277"));
+        let photo = image::open(face(&art, 1158)).unwrap();
+        assert_eq!((photo.width(), photo.height()), (FACE_WIDTH, FACE_HEIGHT));
+        let calls = fake.calls();
+        assert_eq!(
+            calls
+                .iter()
+                .filter(|call| call.as_str() == "image w185 /face.jpg")
+                .count(),
+            1
+        );
+
+        run(&manifest, &fake, None, true).unwrap();
+        assert!(fake.calls().is_empty());
+        let mut written = Manifest::read(&manifest).unwrap();
+        written.movie[0].about.described = Date::parse("2020-01-01");
+        written.write(&manifest).unwrap();
+        run(&manifest, &fake, None, false).unwrap();
+        assert!(fake.calls().is_empty());
+        run(&manifest, &fake, None, true).unwrap();
+        assert_eq!(fake.calls(), ["details Movie 14160"]);
         fs::remove_dir_all(dir).unwrap();
     }
 

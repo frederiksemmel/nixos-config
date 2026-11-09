@@ -83,6 +83,13 @@ impl Watching {
         self.order() != before
     }
 
+    pub fn last_played(&self, kind: Kind, key: &str) -> Option<u64> {
+        self.entries
+            .iter()
+            .find(|entry| entry.kind == kind && entry.key == key)
+            .map(|entry| entry.last_played)
+    }
+
     pub fn leave(&mut self, kind: Kind, key: &str) -> bool {
         let count = self.entries.len();
         self.entries.retain(|entry| !(entry.kind == kind && entry.key == key));

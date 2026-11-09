@@ -67,10 +67,92 @@ struct Results {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct Certificate {
+    pub country: String,
+    pub rating: String,
+}
+
+impl Certificate {
+    pub fn label(&self) -> String {
+        let age = !self.rating.is_empty() && self.rating.chars().all(|character| character.is_ascii_digit());
+        if age {
+            format!("{} {}+", self.country, self.rating)
+        } else {
+            format!("{} {}", self.country, self.rating)
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CastMember {
+    pub name: String,
+    pub character: Option<String>,
+    pub photo: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct MoreScores {
+    pub metacritic: Option<u8>,
+    pub letterboxd: Option<f64>,
+    pub ebert: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct About {
+    pub tagline: Option<String>,
+    pub plot: Option<String>,
+    pub genres: Vec<String>,
+    pub original_title: Option<String>,
+    pub language: Option<String>,
+    pub released: Option<String>,
+    pub first_aired: Option<String>,
+    pub last_aired: Option<String>,
+    pub seasons: Option<u32>,
+    pub episodes: Option<u32>,
+    pub networks: Vec<String>,
+    pub directors: Vec<String>,
+    pub creators: Vec<String>,
+    pub certificate: Option<Certificate>,
+    pub trailer: Option<String>,
+    pub imdb: Option<String>,
+    pub tmdb: Option<String>,
+    pub cast: Vec<CastMember>,
+    pub scores: MoreScores,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Played {
+    pub last_played: Option<u64>,
+    pub last_played_label: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Watch {
     pub details: String,
     pub stopped_at: Option<f64>,
     pub duration: Option<f64>,
+    pub runtime_minutes: Option<u32>,
+    #[serde(default)]
+    pub tags: Tags,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub struct Tags {
+    pub video: Option<String>,
+    pub resolution: Option<String>,
+    pub audio: Option<String>,
+}
+
+impl Tags {
+    pub fn line(&self) -> String {
+        [&self.video, &self.resolution, &self.audio]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
 }
 
 impl Watch {
@@ -86,6 +168,10 @@ pub struct Movie {
     pub card: Card,
     #[serde(flatten)]
     pub watch: Watch,
+    #[serde(default)]
+    pub about: About,
+    #[serde(flatten)]
+    pub played: Played,
 }
 
 #[derive(Debug, Deserialize)]
@@ -97,6 +183,8 @@ pub struct Episode {
     pub still: Option<String>,
     pub ratings: Ratings,
     pub band: Option<String>,
+    #[serde(default)]
+    pub watched: bool,
     #[serde(flatten)]
     pub watch: Watch,
 }
@@ -152,6 +240,16 @@ impl Show {
 pub struct Next {
     pub season: u32,
     pub label: String,
+    pub title: Option<String>,
+    pub stopped_at: Option<f64>,
+    pub duration: Option<f64>,
+}
+
+impl Next {
+    pub fn fraction(&self) -> Option<f64> {
+        let (at, of) = (self.stopped_at?, self.duration?);
+        (of > 0.0 && at > 0.0).then(|| (at / of).clamp(0.0, 1.0))
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -160,6 +258,10 @@ pub struct Show {
     pub card: Card,
     pub next: Option<Next>,
     pub seasons: Vec<Season>,
+    #[serde(default)]
+    pub about: About,
+    #[serde(flatten)]
+    pub played: Played,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]

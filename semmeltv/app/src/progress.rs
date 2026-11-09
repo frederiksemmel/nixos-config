@@ -16,6 +16,8 @@ pub struct Watched {
     pub stopped_at: Option<f64>,
     pub duration: Option<f64>,
     pub last_played: Option<u64>,
+    #[serde(default)]
+    pub finished: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -48,7 +50,26 @@ impl Progress {
     }
 
     pub fn finish(&mut self, file: &Path) {
-        self.files.entry(file.to_path_buf()).or_default().stopped_at = None;
+        let watched = self.files.entry(file.to_path_buf()).or_default();
+        watched.stopped_at = None;
+        watched.finished = true;
+    }
+
+    pub fn watched(&self, show: &Show, episode: &Episode) -> bool {
+        let finished = self.files.get(&episode.path).is_some_and(|watched| watched.finished);
+        let passed = self.shows.get(&show.key).is_some_and(|position| {
+            let place = (position.season, position.episode);
+            let this = (episode.season, episode.number);
+            episode.season > 0 && (this < place || (this == place && position.finished))
+        });
+        finished || passed
+    }
+
+    pub fn last_played(&self, files: impl IntoIterator<Item = impl AsRef<Path>>) -> Option<u64> {
+        files
+            .into_iter()
+            .filter_map(|file| self.files.get(file.as_ref())?.last_played)
+            .max()
     }
 
     pub fn resume_episode<'a>(&self, show: &'a Show) -> Option<&'a Episode> {
@@ -82,6 +103,7 @@ mod tests {
                 stopped_at: Some(3840.0),
                 duration: Some(7860.0),
                 last_played: None,
+                finished: false,
             }
         );
     }
@@ -104,6 +126,7 @@ mod tests {
         progress.finish(file);
         assert_eq!(progress.files[file].stopped_at, None);
         assert_eq!(progress.files[file].duration, Some(7860.0));
+        assert!(progress.files[file].finished);
     }
 
     #[test]
@@ -115,6 +138,54 @@ mod tests {
         progress.finish(file);
         assert_eq!(progress.files[file].last_played, Some(1_800_000_000));
         assert_eq!(progress.files[file].duration, Some(7860.0));
+    }
+
+    #[test]
+    fn episodes_before_the_place_reached_or_finished_ones_count_as_watched() {
+        use crate::library::Season;
+        let episode = |season, number| Episode {
+            season,
+            number,
+            path: PathBuf::from(format!("/lib/Dark.S{season:02}E{number:02}.mkv")),
+            ..Episode::default()
+        };
+        let show = Show {
+            key: "dark".to_string(),
+            seasons: vec![
+                Season {
+                    number: 1,
+                    episodes: vec![episode(1, 1), episode(1, 2), episode(1, 3)],
+                },
+                Season {
+                    number: 2,
+                    episodes: vec![episode(2, 1)],
+                },
+                Season {
+                    number: 0,
+                    episodes: vec![episode(0, 1)],
+                },
+            ],
+            ..Show::default()
+        };
+        let watched = |progress: &Progress| -> Vec<bool> {
+            show.episodes()
+                .map(|episode| progress.watched(&show, episode))
+                .collect()
+        };
+        let mut progress = Progress::default();
+        assert_eq!(watched(&progress), [false; 5]);
+        let at = |finished| Position {
+            season: 1,
+            episode: 2,
+            finished,
+        };
+        progress.shows.insert("dark".to_string(), at(false));
+        assert_eq!(watched(&progress), [true, false, false, false, false]);
+        progress.shows.insert("dark".to_string(), at(true));
+        assert_eq!(watched(&progress), [true, true, false, false, false]);
+        progress.finish(Path::new("/lib/Dark.S02E01.mkv"));
+        progress.finish(Path::new("/lib/Dark.S00E01.mkv"));
+        assert_eq!(watched(&progress), [true, true, false, true, true]);
     }
 
     #[test]

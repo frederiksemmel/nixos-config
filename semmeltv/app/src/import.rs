@@ -1,5 +1,5 @@
 use crate::library::{normalize, sort_title};
-use crate::manifest::{Date, EpisodeEntry, Manifest, MovieEntry, ReadError, Scores, ShowEntry};
+use crate::manifest::{About, Date, EpisodeEntry, Manifest, MovieEntry, ReadError, Scores, ShowEntry};
 use crate::parse::{self, FileEntry, Parsed, ParsedEpisode, ParsedMovie, ParsedShow};
 use crate::tags;
 use crate::tmdb::{Client, Found, Kind, Lookup};
@@ -325,6 +325,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             rated: None,
             review,
             episodes: Vec::new(),
+            about: About::default(),
         });
         self.manifest.show.len() - 1
     }
@@ -415,6 +416,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             resolution: None,
             audio: None,
             review: unsure || duplicate,
+            about: About::default(),
         });
     }
 }

@@ -15,6 +15,8 @@ in
     flake.self.nixosModules.semmeltv
   ];
 
+  time.timeZone = "Europe/Zurich";
+
   services.semmeltv = {
     enable = true;
     adminUser = "frederik";

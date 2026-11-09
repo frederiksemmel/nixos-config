@@ -49,6 +49,18 @@ impl Date {
         era * 146_097 + day_of_era - 719_468
     }
 
+    pub fn year(&self) -> u16 {
+        self.year
+    }
+
+    pub fn month(&self) -> u8 {
+        self.month
+    }
+
+    pub fn day(&self) -> u8 {
+        self.day
+    }
+
     pub fn parse(text: &str) -> Option<Self> {
         let mut parts = text.split('-');
         let year = parts.next()?.parse().ok()?;
@@ -120,6 +132,8 @@ pub struct Scores {
     pub rt: Option<u8>,
     pub popcorn: Option<u8>,
     pub metacritic: Option<u8>,
+    pub letterboxd: Option<Tenths>,
+    pub ebert: Option<Tenths>,
 }
 
 impl Scores {
@@ -133,6 +147,8 @@ impl Scores {
             rt: self.rt.or(older.rt),
             popcorn: self.popcorn.or(older.popcorn),
             metacritic: self.metacritic.or(older.metacritic),
+            letterboxd: self.letterboxd.or(older.letterboxd),
+            ebert: self.ebert.or(older.ebert),
         }
     }
 
@@ -142,11 +158,109 @@ impl Scores {
             self.rt.map(|score| format!("rt = {score}")),
             self.popcorn.map(|score| format!("popcorn = {score}")),
             self.metacritic.map(|score| format!("metacritic = {score}")),
+            self.letterboxd.map(|score| format!("letterboxd = {score}")),
+            self.ebert.map(|score| format!("ebert = {score}")),
         ]
         .into_iter()
         .flatten()
         .collect();
         format!("{{ {} }}", parts.join(", "))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Certificate {
+    pub country: String,
+    pub rating: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Member {
+    pub name: String,
+    pub character: Option<String>,
+    pub person: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct About {
+    pub tagline: Option<String>,
+    pub plot: Option<String>,
+    #[serde(default)]
+    pub genres: Vec<String>,
+    pub original_title: Option<String>,
+    pub language: Option<String>,
+    pub released: Option<Date>,
+    pub first_aired: Option<Date>,
+    pub last_aired: Option<Date>,
+    pub seasons: Option<u32>,
+    pub episodes: Option<u32>,
+    #[serde(default)]
+    pub networks: Vec<String>,
+    #[serde(default)]
+    pub directors: Vec<String>,
+    #[serde(default)]
+    pub creators: Vec<String>,
+    pub certificate: Option<Certificate>,
+    pub trailer: Option<String>,
+    #[serde(default)]
+    pub cast: Vec<Member>,
+    pub described: Option<Date>,
+}
+
+impl About {
+    fn render(&self, text: &mut String, table: &str) {
+        if *self == Self::default() {
+            return;
+        }
+        let _ = writeln!(text, "\n[{table}.about]");
+        let line = |text: &mut String, key: &str, value: Option<String>| {
+            if let Some(value) = value {
+                let _ = writeln!(text, "{key} = {value}");
+            }
+        };
+        let list = |values: &[String]| (!values.is_empty()).then(|| quoted_list(values));
+        line(text, "tagline", self.tagline.as_deref().map(quoted));
+        line(text, "plot", self.plot.as_deref().map(quoted));
+        line(text, "genres", list(&self.genres));
+        line(text, "original_title", self.original_title.as_deref().map(quoted));
+        line(text, "language", self.language.as_deref().map(quoted));
+        line(text, "released", self.released.map(|date| date.to_string()));
+        line(text, "first_aired", self.first_aired.map(|date| date.to_string()));
+        line(text, "last_aired", self.last_aired.map(|date| date.to_string()));
+        line(text, "seasons", self.seasons.map(|count| count.to_string()));
+        line(text, "episodes", self.episodes.map(|count| count.to_string()));
+        line(text, "networks", list(&self.networks));
+        line(text, "directors", list(&self.directors));
+        line(text, "creators", list(&self.creators));
+        line(
+            text,
+            "certificate",
+            self.certificate.as_ref().map(|certificate| {
+                format!(
+                    "{{ country = {}, rating = {} }}",
+                    quoted(&certificate.country),
+                    quoted(&certificate.rating)
+                )
+            }),
+        );
+        line(text, "trailer", self.trailer.as_deref().map(quoted));
+        if !self.cast.is_empty() {
+            let _ = writeln!(text, "cast = [");
+            for member in &self.cast {
+                let character = member.character.as_ref().map_or(String::new(), |character| {
+                    format!(", character = {}", quoted(character))
+                });
+                let person = member
+                    .person
+                    .map_or(String::new(), |person| format!(", person = {person}"));
+                let _ = writeln!(text, "  {{ name = {}{character}{person} }},", quoted(&member.name));
+            }
+            let _ = writeln!(text, "]");
+        }
+        line(text, "described", self.described.map(|date| date.to_string()));
     }
 }
 
@@ -176,6 +290,8 @@ pub struct ShowEntry {
     pub review: bool,
     #[serde(default)]
     pub episodes: Vec<EpisodeEntry>,
+    #[serde(default)]
+    pub about: About,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -214,6 +330,8 @@ pub struct MovieEntry {
     pub audio: Option<String>,
     #[serde(default)]
     pub review: bool,
+    #[serde(default)]
+    pub about: About,
 }
 
 impl EpisodeEntry {
@@ -290,7 +408,9 @@ impl Manifest {
                     episode.added,
                 );
             }
-            let _ = writeln!(text, "]\n");
+            let _ = writeln!(text, "]");
+            show.about.render(&mut text, "show");
+            let _ = writeln!(text);
         }
         for movie in &self.movie {
             let _ = writeln!(text, "[[movie]]");
@@ -305,6 +425,7 @@ impl Manifest {
                 let _ = writeln!(text, "{key} = {}", quoted(value));
             }
             render_review(&mut text, movie.review);
+            movie.about.render(&mut text, "movie");
             let _ = writeln!(text);
         }
         text.pop();
@@ -345,6 +466,11 @@ fn quoted(text: &str) -> String {
     }
     quoted.push('"');
     quoted
+}
+
+fn quoted_list(values: &[String]) -> String {
+    let items: Vec<String> = values.iter().map(|value| quoted(value)).collect();
+    format!("[{}]", items.join(", "))
 }
 
 fn tag_lines(tags: &Tags) -> impl Iterator<Item = (&'static str, &String)> {
@@ -402,12 +528,29 @@ episodes = [
   { season = 1, episode = 2, path = "Series/Dark/S01/Dark.S01E02.mkv", added = 2024-05-02, review = true },
 ]
 
+[show.about]
+plot = "A missing child sets four families on a hunt."
+genres = ["Drama", "Mystery"]
+language = "de"
+first_aired = 2017-12-01
+last_aired = 2020-06-27
+seasons = 3
+episodes = 26
+networks = ["Netflix"]
+creators = ["Baran bo Odar", "Jantje Friese"]
+certificate = { country = "CH", rating = "16" }
+cast = [
+  { name = "Louis Hofmann", character = "Jonas Kahnwald", person = 1048011 },
+  { name = "Unknown" },
+]
+described = 2026-11-09
+
 [[movie]]
 title = "Airplane!"
 year = 1980
 tmdb = 813
 imdb = "tt0080339"
-ratings = { imdb = 7.7, rt = 97, popcorn = 89, metacritic = 78 }
+ratings = { imdb = 7.7, rt = 97, popcorn = 89, metacritic = 78, letterboxd = 3.9, ebert = 3.5 }
 rated = 2026-11-01
 path = "Movies/Airplane 1980/Airplane.1980.mkv"
 added = 2023-01-09
@@ -415,6 +558,17 @@ runtime = 88
 video = "H.264"
 resolution = "720p"
 audio = "AAC"
+
+[movie.about]
+tagline = "What's slower than a speeding bullet?"
+genres = ["Comedy"]
+original_title = "Flying High"
+language = "en"
+released = 1980-06-27
+directors = ["Jim Abrahams", "David Zucker", "Jerry Zucker"]
+certificate = { country = "US", rating = "PG" }
+trailer = "qaXvFT_UyI8"
+described = 2026-11-09
 
 [[movie]]
 title = "Wind"
@@ -437,6 +591,10 @@ review = true
         assert_eq!(manifest.show[0].ratings.rt, Some(94));
         assert_eq!(manifest.movie[0].ratings.popcorn, Some(89));
         assert_eq!(manifest.movie[1].ratings, Scores::default());
+        assert_eq!(manifest.show[0].about.cast[0].person, Some(1048011));
+        assert_eq!(manifest.movie[0].about.directors.len(), 3);
+        assert_eq!(manifest.movie[0].ratings.letterboxd, Some(Tenths(39)));
+        assert_eq!(manifest.movie[1].about, About::default());
         assert_eq!(manifest.render(), SAMPLE);
     }
 

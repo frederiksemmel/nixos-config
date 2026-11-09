@@ -193,7 +193,7 @@ fn primary(code: &str) -> String {
     code.split(['-', '_']).next().unwrap_or_default().to_ascii_lowercase()
 }
 
-fn language_name(code: &str) -> Option<&'static str> {
+pub fn language_name(code: &str) -> Option<&'static str> {
     let code = primary(code);
     LANGUAGES
         .iter()
