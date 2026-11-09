@@ -46,7 +46,7 @@ const USAGE: &str =
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
                 [--api HOST:PORT]";
-const DEFAULT_WAKE_WORD: &str = "hey_jarvis";
+const DEFAULT_WAKE_WORD: &str = "stevie_the_tv";
 
 struct Args {
     mode: String,

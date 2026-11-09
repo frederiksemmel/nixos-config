@@ -61,7 +61,7 @@ in
     };
     wake = {
       ports.wyoming.allocate = 10400;
-      exec = "${pkgs.lib.getExe pkgs.wyoming-openwakeword} --uri tcp://127.0.0.1:${wakePort}";
+      exec = "${pkgs.lib.getExe pkgs.wyoming-openwakeword} --uri tcp://127.0.0.1:${wakePort} --custom-model-dir ${./wake/models}";
       ready = listening wakePort;
     };
   };

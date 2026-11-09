@@ -303,7 +303,7 @@ go, about two seconds, after which a load takes about as long. The mount keeps
 listings for 30 days and learns of changes from pCloud within a minute.
 
 For voice commands, `devenv up` runs the two servers semmeltv5 runs as system
-services: `speech` (Parakeet) and `wake` (openWakeWord, "hey jarvis"), on ports
+services: `speech` (Parakeet) and `wake` (openWakeWord, "Stevie the TV"), on ports
 from 10300 and 10400 or the next free ones. The shell points `SEMMELTV_SPEECH`
 and `SEMMELTV_WAKE` at them and records from ALSA's `default` device through
 PipeWire, because the sound card itself is held by PipeWire. Run the app in a

@@ -224,21 +224,21 @@ mod tests {
             writer
                 .write_all(&encode(
                     "detection",
-                    json!({ "name": "hey_jarvis", "timestamp": 1230 }),
+                    json!({ "name": "stevie_the_tv", "timestamp": 1230 }),
                     &[],
                 ))
                 .unwrap();
             (detect, start.kind, chunk.payload.len())
         });
         let (detections, received) = mpsc::channel();
-        let mut detector = detect(&address, "hey_jarvis", move || {
+        let mut detector = detect(&address, "stevie_the_tv", move || {
             let _ = detections.send(());
         })
         .unwrap();
         detector.send(&[0; 480]).unwrap();
         let (detect, start, chunk) = server.join().unwrap();
         assert_eq!(detect.kind, "detect");
-        assert_eq!(detect.data["names"], json!(["hey_jarvis"]));
+        assert_eq!(detect.data["names"], json!(["stevie_the_tv"]));
         assert_eq!(start, "audio-start");
         assert_eq!(chunk, 960);
         assert_eq!(received.recv_timeout(TIMEOUT), Ok(()));
