@@ -209,19 +209,18 @@ async fn info(cx: &Cx) -> Result<impl View> {
 pub async fn voice_feedback(cx: &Cx) -> Result<impl View> {
     Ok(live! {
         let mut changes = app_context::<Live>(cx).voice.clone();
-        let mut settled = false;
+        let mut settled = !lasting(&changes.borrow().state);
         loop {
             let log = changes.borrow_and_update().clone();
             let token = emit! { panel(log: &log, settled: settled) }?;
             if !connected(cx) {
                 break Ok(token);
             }
-            let lasting = matches!(log.state, Some(Voice::Listening | Voice::Transcribing));
-            settled = false;
-            if lasting || settled_already(&log) {
+            if settled || lasting(&log.state) || log.state.is_none() {
                 if changes.changed().await.is_err() {
                     break Ok(token);
                 }
+                settled = false;
             } else {
                 match tokio::time::timeout(SETTLE, changes.changed()).await {
                     Ok(Ok(())) => {}
@@ -233,8 +232,8 @@ pub async fn voice_feedback(cx: &Cx) -> Result<impl View> {
     })
 }
 
-fn settled_already(log: &VoiceLog) -> bool {
-    log.state.is_none()
+fn lasting(state: &Option<Voice>) -> bool {
+    matches!(state, Some(Voice::Listening | Voice::Transcribing))
 }
 
 fn state_text(voice: &Voice) -> Option<String> {
