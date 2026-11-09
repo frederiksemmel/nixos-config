@@ -223,7 +223,8 @@ export def new [
     }
     $found | first
   }
-  let created = on-beast $"new-session ($target.path | to json) ($target.name | to json) ($name | to json)"
+  let args = [$target.path $target.name $name] | compact | each { to json } | str join " "
+  let created = on-beast $"new-session ($args)"
   connect $created.id $created.title
 }
 
