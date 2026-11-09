@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
-pub const OBSERVED: [&str; 3] = ["track-list", "sid", "sub-visibility"];
+pub const OBSERVED: [&str; 4] = ["track-list", "sid", "sub-visibility", "aid"];
 const LANGUAGES: &[(&[&str], &str)] = &[
     (&["de", "ger", "deu"], "German"),
     (&["en", "eng"], "English"),
@@ -206,8 +206,8 @@ fn same_language(code: &str, wanted: &str) -> bool {
 }
 
 impl Track {
-    fn parse(track: &Value) -> Option<Self> {
-        if track["type"] != "sub" {
+    fn parse(track: &Value, kind: &str) -> Option<Self> {
+        if track["type"] != kind {
             return None;
         }
         let id = track["id"].as_i64()?;
@@ -243,6 +243,8 @@ pub struct Playing {
     pub visible: bool,
     pub track: Option<i64>,
     pub tracks: Vec<Track>,
+    pub audio: Option<i64>,
+    pub audio_tracks: Vec<Track>,
 }
 
 impl Playing {
@@ -297,6 +299,18 @@ impl Playing {
         }
     }
 
+    fn choose_audio(&self, id: i64) -> Result<(Vec<Value>, String), String> {
+        let track = self
+            .audio_tracks
+            .iter()
+            .find(|track| track.id == id)
+            .ok_or_else(|| format!("There is no audio track {id}"))?;
+        Ok((
+            vec![json!(["set_property", "aid", id])],
+            format!("Audio: {}", track.label),
+        ))
+    }
+
     fn choose(&self, track: Option<i64>) -> Result<(Vec<Value>, String), String> {
         match track {
             None => Ok(Self::hide()),
@@ -308,8 +322,9 @@ impl Playing {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum Observed {
-    Tracks(Vec<Track>),
+    Tracks { subtitles: Vec<Track>, audio: Vec<Track> },
     Track(Option<i64>),
+    Audio(Option<i64>),
     Visible(bool),
 }
 
@@ -317,8 +332,16 @@ impl Observed {
     pub fn parse(message: &Value) -> Option<Self> {
         let data = &message["data"];
         match message["name"].as_str()? {
-            "track-list" => Some(Self::Tracks(data.as_array()?.iter().filter_map(Track::parse).collect())),
+            "track-list" => {
+                let list = data.as_array()?;
+                let of = |kind: &str| list.iter().filter_map(|track| Track::parse(track, kind)).collect();
+                Some(Self::Tracks {
+                    subtitles: of("sub"),
+                    audio: of("audio"),
+                })
+            }
             "sid" => Some(Self::Track(data.as_i64())),
+            "aid" => Some(Self::Audio(data.as_i64())),
             "sub-visibility" => data.as_bool().map(Self::Visible),
             _ => None,
         }
@@ -355,6 +378,7 @@ pub enum Change {
     Restyle,
     Toggle,
     Track(Option<i64>),
+    Audio(i64),
 }
 
 #[derive(Default)]
@@ -418,8 +442,12 @@ impl Subtitles {
         let mut state = self.state.lock().unwrap();
         let playing = state.playing.get_or_insert_with(Playing::default);
         match observed {
-            Observed::Tracks(tracks) => playing.tracks = tracks,
+            Observed::Tracks { subtitles, audio } => {
+                playing.tracks = subtitles;
+                playing.audio_tracks = audio;
+            }
             Observed::Track(track) => playing.track = track,
+            Observed::Audio(track) => playing.audio = track,
             Observed::Visible(visible) => playing.visible = visible,
         }
     }
@@ -439,6 +467,7 @@ impl Subtitles {
             }
             Change::Toggle => playing.toggle(&state.settings.languages),
             Change::Track(track) => playing.choose(track).map_or_else(Answer::refused, Answer::done),
+            Change::Audio(track) => playing.choose_audio(track).map_or_else(Answer::refused, Answer::done),
         }
     }
 }
@@ -460,6 +489,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(subtitles: Subtitles, app: Ask) 
         .route("/api/subtitles", get(show).put(update))
         .route("/api/subtitles/track", post(track))
         .route("/api/subtitles/toggle", post(toggle))
+        .route("/api/audio/track", post(audio))
         .with_state(Endpoint { subtitles, app })
 }
 
@@ -504,6 +534,16 @@ async fn track(State(endpoint): State<Endpoint>, Json(body): Json<TrackBody>) ->
     api::ask_app(&endpoint.app, Request::Subtitles(Change::Track(body.track))).await
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AudioBody {
+    track: i64,
+}
+
+async fn audio(State(endpoint): State<Endpoint>, Json(body): Json<AudioBody>) -> Response {
+    api::ask_app(&endpoint.app, Request::Subtitles(Change::Audio(body.track))).await
+}
+
 async fn toggle(State(endpoint): State<Endpoint>) -> Response {
     api::ask_app(&endpoint.app, Request::Subtitles(Change::Toggle)).await
 }
@@ -530,10 +570,18 @@ mod tests {
     }
 
     fn playing(tracks: Value, track: Option<i64>, visible: bool) -> Playing {
-        let Some(Observed::Tracks(tracks)) = Observed::parse(&json!({ "name": "track-list", "data": tracks })) else {
+        let Some(Observed::Tracks { subtitles, audio }) =
+            Observed::parse(&json!({ "name": "track-list", "data": tracks }))
+        else {
             panic!("a track list");
         };
-        Playing { visible, track, tracks }
+        Playing {
+            visible,
+            track,
+            tracks: subtitles,
+            audio_tracks: audio,
+            ..Playing::default()
+        }
     }
 
     #[test]
@@ -543,12 +591,12 @@ mod tests {
         assert_eq!(labels, ["English", "English", "French"]);
         assert!(playing.tracks[1].hearing_impaired);
         assert_eq!(playing.tracks[2].title.as_deref(), Some("French SRT"));
-        let unnamed = Track::parse(&json!({ "id": 4, "type": "sub" })).unwrap();
+        let unnamed = Track::parse(&json!({ "id": 4, "type": "sub" }), "sub").unwrap();
         assert_eq!(unnamed.label, "Track 4");
-        let titled = Track::parse(&json!({ "id": 5, "type": "sub", "lang": "xx", "title": "Commentary" })).unwrap();
+        let titled = Track::parse(&json!({ "id": 5, "type": "sub", "lang": "xx", "title": "Commentary" }), "sub").unwrap();
         assert_eq!(titled.label, "Commentary");
         assert_eq!(
-            Track::parse(&json!({ "id": 6, "type": "sub", "lang": "ger" }))
+            Track::parse(&json!({ "id": 6, "type": "sub", "lang": "ger" }), "sub")
                 .unwrap()
                 .label,
             "German"
@@ -718,12 +766,8 @@ mod tests {
     fn the_state_follows_what_mpv_reports_until_playback_stops() {
         let subtitles = Subtitles::default();
         subtitles.started();
-        let Some(Observed::Tracks(tracks)) =
-            Observed::parse(&json!({ "name": "track-list", "data": endless_summer() }))
-        else {
-            panic!("a track list");
-        };
-        subtitles.observe(Observed::Tracks(tracks));
+        let tracks = Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap();
+        subtitles.observe(tracks);
         subtitles.observe(Observed::Track(Some(1)));
         subtitles.observe(Observed::Visible(true));
         assert_eq!(subtitles.change(Change::Toggle).message, "Subtitles off");
@@ -748,13 +792,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("semmeltv-subtitles-api-{name}-{}", std::process::id()));
         let subtitles = Subtitles::load(dir.join("subtitles.json"));
         subtitles.started();
-        let tracks = endless_summer()
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(Track::parse)
-            .collect();
-        subtitles.observe(Observed::Tracks(tracks));
+        subtitles.observe(Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap());
         let (asked, received) = mpsc::channel();
         let app: Ask = Arc::new(move |pending: Pending| {
             let _ = asked.send(format!("{:?}", pending.request));
@@ -803,6 +841,8 @@ mod tests {
         assert_eq!(body["playing"]["track"], Value::Null);
         assert_eq!(body["playing"]["tracks"][2]["label"], "French");
         assert_eq!(body["playing"]["tracks"][1]["hearing_impaired"], true);
+        assert_eq!(body["playing"]["audio_tracks"][0]["label"], "English");
+        assert_eq!(body["playing"]["audio"], Value::Null);
     }
 
     #[test]
@@ -834,5 +874,28 @@ mod tests {
         assert_eq!(server.asked.recv().unwrap(), "Subtitles(Toggle)");
         let (status, _) = send(&server, "POST", "/api/subtitles/track", json!({ "id": 2 }));
         assert_eq!(status, 422);
+        let (status, _) = send(&server, "POST", "/api/audio/track", json!({ "track": 2 }));
+        assert_eq!(status, 200);
+        assert_eq!(server.asked.recv().unwrap(), "Subtitles(Audio(2))");
+    }
+
+    #[test]
+    fn audio_tracks_are_named_after_their_language_and_chosen_by_id() {
+        let tracks = json!([
+            { "id": 1, "type": "audio", "lang": "eng", "title": "Surround 5.1" },
+            { "id": 2, "type": "audio", "lang": "ger" },
+            sub(1, "en", "English SRT"),
+        ]);
+        let mut playing = playing(tracks, None, false);
+        let labels: Vec<_> = playing.audio_tracks.iter().map(|track| track.label.as_str()).collect();
+        assert_eq!(labels, ["English", "German"]);
+        assert_eq!(playing.tracks.len(), 1);
+        let aid = json!({ "event": "property-change", "name": "aid", "data": 2 });
+        assert_eq!(Observed::parse(&aid), Some(Observed::Audio(Some(2))));
+        playing.audio = Some(1);
+        let (commands, message) = playing.choose_audio(2).unwrap();
+        assert_eq!(commands, [json!(["set_property", "aid", 2])]);
+        assert_eq!(message, "Audio: German");
+        assert_eq!(playing.choose_audio(7), Err("There is no audio track 7".to_string()));
     }
 }

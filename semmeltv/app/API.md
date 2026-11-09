@@ -67,9 +67,10 @@ such image.
 | POST | `/api/playback/{control}` | none. `control` is `pause`, `resume`, `toggle`, `stop`, `mute` or `unmute` |
 | POST | `/api/playback/seek` | `{ "to": seconds }` or `{ "by": seconds }`, negative to go back |
 | POST | `/api/playback/skip` | `{ "direction": "back" }` or `"forward"`: a press of the remote's left or right key, so presses in a row skip further |
+| POST | `/api/playback/speed` | `{ "speed": 1.25 }`: 0.5 to 2, in steps of 0.05. Every video starts at 1 |
 
 `now_playing` is null or
-`{ title, caption, movie, show, season, episode, position, duration, paused, muted, loading, jump }`.
+`{ title, caption, movie, show, season, episode, position, duration, paused, muted, speed, loading, jump }`.
 For a movie, `movie` is its key. For an episode, `show`, `season` and `episode`
 are set. `jump` is the last skip in seconds, negative going back, while a run of
 skips can still continue, and null otherwise.
@@ -96,8 +97,9 @@ unset, the kind comes from the `<manufacturer>` in the renderer's description,
 read when the TV is first needed. A new vendor is one file in `src/tv` and one
 arm in `backends`.
 
-GET `/api/tv` answers `{ "kind": "samsung", "volume": true, "pairing": true }`:
-which TV it is and what it can do. `kind` is null while the TV can't be reached
+GET `/api/tv` answers `{ "kind": "samsung", "volume": true, "pairing": true, "paired": false }`:
+which TV it is and what it can do. `paired` says whether a TV that pairs has
+given SemmelTV a token, and is null for a TV that doesn't pair. `kind` is null while the TV can't be reached
 to tell.
 
 `on`, `off` and `semmeltv` do what the same voice commands do. `on` turns the
@@ -139,6 +141,7 @@ The TV's own error code goes to the app's log.
 | PUT | `/api/subtitles` | any of the settings below; fields left out keep their value |
 | POST | `/api/subtitles/track` | `{ "track": id }` to show that track, `{ "track": null }` to hide subtitles |
 | POST | `/api/subtitles/toggle` | none: show or hide, as the remote's yellow key does |
+| POST | `/api/audio/track` | `{ "track": id }`: play that audio track |
 
 GET and PUT answer `{ settings, playing }`. The TV keeps the settings in
 `subtitles.json` in its cache directory (`/var/lib/semmeltv/cache` on a Pi),
@@ -159,9 +162,11 @@ numbers into their range.
 | `background` | opacity of a black box behind the text, 0 (no box) to 1 | `0` |
 | `restyle` | also restyle subtitles that bring their own styling | `false` |
 
-`playing` is null when nothing plays, or `{ visible, track, tracks }`.
-`track` is the selected track's id or null, and `visible` says whether it
-shows. Each track is
+`playing` is null when nothing plays, or
+`{ visible, track, tracks, audio, audio_tracks }`. `track` is the selected
+subtitle track's id or null, and `visible` says whether it shows. `audio` is
+the playing audio track's id, and `audio_tracks` lists the audio tracks in the
+same shape as `tracks`. Each track is
 `{ id, language, title, label, forced, hearing_impaired, external }`, where
 `label` is the language's English name, or the title when the language is
 unknown.

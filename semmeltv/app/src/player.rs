@@ -145,6 +145,7 @@ struct Playback {
     started: bool,
     paused: bool,
     muted: bool,
+    speed: f64,
     ended: bool,
     closed: bool,
     segments: Vec<Segment>,
@@ -331,6 +332,19 @@ impl Playback {
     }
 }
 
+pub fn speed_within(speed: f64) -> f64 {
+    if speed.is_finite() {
+        ((speed * 20.0).round() / 20.0).clamp(0.5, 2.0)
+    } else {
+        1.0
+    }
+}
+
+pub fn speed_label(speed: f64) -> String {
+    let text = format!("{speed:.2}");
+    format!("{}×", text.trim_end_matches('0').trim_end_matches('.'))
+}
+
 fn save_due(saved: f64, position: f64) -> bool {
     (position - saved).abs() >= SAVE_EVERY
 }
@@ -422,6 +436,7 @@ pub struct State {
     pub duration: f64,
     pub paused: bool,
     pub muted: bool,
+    pub speed: f64,
     pub started: bool,
     pub jump: Option<i32>,
 }
@@ -465,6 +480,7 @@ impl Player {
         let playback = Shared::new(Mutex::new(Playback {
             name,
             subtitles,
+            speed: 1.0,
             on_save: Some(Box::new(on_save)),
             on_key: Some(Box::new(on_key)),
             ..Playback::default()
@@ -502,6 +518,7 @@ impl Player {
             duration: playback.duration,
             paused: playback.paused,
             muted: playback.muted,
+            speed: playback.speed,
             started: playback.started,
             jump: playback.scrub.jump_shown(Instant::now()),
         }
@@ -543,6 +560,14 @@ impl Player {
         let mut playback = self.playback.lock().unwrap();
         playback.muted = muted;
         playback.send(json!(["set_property", "mute", muted]));
+    }
+
+    pub fn set_speed(&self, speed: f64) -> f64 {
+        let speed = speed_within(speed);
+        let mut playback = self.playback.lock().unwrap();
+        playback.speed = speed;
+        playback.send(json!(["set_property", "speed", speed]));
+        speed
     }
 
     pub fn say(&self, text: &str) {
@@ -685,6 +710,18 @@ fn send(stream: &mut UnixStream, command: Value) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn speeds_stay_between_half_and_double_in_twentieths() {
+        assert_eq!(speed_within(1.25), 1.25);
+        assert_eq!(speed_within(1.23), 1.25);
+        assert_eq!(speed_within(9.0), 2.0);
+        assert_eq!(speed_within(0.1), 0.5);
+        assert_eq!(speed_within(f64::NAN), 1.0);
+        assert_eq!(speed_label(1.0), "1×");
+        assert_eq!(speed_label(1.25), "1.25×");
+        assert_eq!(speed_label(1.5), "1.5×");
+    }
     use std::io::Read;
 
     #[test]

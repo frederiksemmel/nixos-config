@@ -133,6 +133,7 @@ pub struct Abilities {
     kind: Option<Kind>,
     volume: bool,
     pairing: bool,
+    paired: Option<bool>,
 }
 
 impl Television {
@@ -169,13 +170,19 @@ impl Television {
                 kind: Some(backends.kind),
                 volume: backends.volume.is_some(),
                 pairing: backends.pairing.is_some(),
+                paired: backends.pairing.is_some().then(|| self.paired()),
             },
             Err(_) => Abilities {
                 kind: None,
                 volume: self.inner.renderer.is_some(),
                 pairing: false,
+                paired: None,
             },
         }
+    }
+
+    fn paired(&self) -> bool {
+        std::fs::read_to_string(&self.inner.token).is_ok_and(|token| !token.trim().is_empty())
     }
 
     pub fn show_semmeltv(&self) -> Result<(), Failure> {
@@ -314,7 +321,7 @@ mod tests {
                 power: Box::new(NoPower),
                 kind,
                 renderer,
-                token: std::env::temp_dir().join("semmeltv-tv-token"),
+                token: std::env::temp_dir().join("semmeltv-tv-token-never-written"),
                 chosen: Mutex::new(None),
             }),
         }
@@ -340,7 +347,8 @@ mod tests {
             Abilities {
                 kind: Some(Kind::Samsung),
                 volume: true,
-                pairing: true
+                pairing: true,
+                paired: Some(false)
             }
         );
         let configured = television(Some(Kind::Generic), Some(fake.renderer())).abilities();
@@ -438,7 +446,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             abilities,
-            serde_json::json!({ "kind": "samsung", "volume": true, "pairing": true })
+            serde_json::json!({ "kind": "samsung", "volume": true, "pairing": true, "paired": false })
         );
         let (base, _bare) = serve(television(Some(Kind::Generic), None));
         let (status, body) = post_json(format!("{base}/api/tv/pair"));

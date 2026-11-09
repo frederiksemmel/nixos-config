@@ -16,7 +16,7 @@ use crate::library::{self, Item, Library};
 use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence, Source, Store};
-use crate::player::{Finish, Player};
+use crate::player::{self, Finish, Player};
 use crate::progress::{Position, Progress};
 use crate::seek::Direction;
 use crate::segments::Title;
@@ -845,6 +845,7 @@ impl App {
                 Action::Control(if paused { Control::Resume } else { Control::Pause })
             }
             Request::Seek(seek) => return self.seek(seek),
+            Request::Speed(speed) => return self.speed(speed),
             Request::Subtitles(change) => return self.change_subtitles(change),
             Request::Storage(change) => return self.change_storage(change),
             Request::Listen => {
@@ -1011,6 +1012,22 @@ impl App {
         }
     }
 
+    fn speed(&self, speed: f64) -> Outcome {
+        let Some(player) = &self.player else {
+            return Outcome {
+                message: NOTHING_PLAYING.to_string(),
+                ok: false,
+            };
+        };
+        let speed = player.set_speed(speed);
+        player.say(&format!("Speed {}", player::speed_label(speed)));
+        self.publish_playback();
+        Outcome {
+            message: format!("Speed {}", player::speed_label(speed)),
+            ok: true,
+        }
+    }
+
     fn seek(&self, seek: Seek) -> Outcome {
         let Some(player) = &self.player else {
             return Outcome {
@@ -1069,6 +1086,7 @@ impl App {
                     duration: state.duration,
                     paused: state.paused,
                     muted: state.muted,
+                    speed: state.speed,
                     loading: !state.started,
                     jump: state.jump,
                     ..base.clone()

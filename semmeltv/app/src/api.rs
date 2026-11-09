@@ -45,6 +45,7 @@ pub enum Request {
     Control(Control),
     PlayPause,
     Seek(Seek),
+    Speed(f64),
     Listen,
     Subtitles(subtitles::Change),
     Storage(storage::Change),
@@ -181,6 +182,7 @@ fn router(api: Api) -> Router {
         .route("/api/playback", get(playback))
         .route("/api/playback/seek", post(seek))
         .route("/api/playback/skip", post(skip))
+        .route("/api/playback/speed", post(speed))
         .route("/api/playback/{control}", post(control))
         .route("/api/tv/{control}", post(tv))
         .route("/api/events", get(events))
@@ -684,6 +686,16 @@ struct SkipBody {
 
 async fn skip(State(api): State<Api>, Json(body): Json<SkipBody>) -> Response {
     ask(&api, Request::Seek(Seek::Step(body.direction))).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpeedBody {
+    speed: f64,
+}
+
+async fn speed(State(api): State<Api>, Json(body): Json<SpeedBody>) -> Response {
+    ask(&api, Request::Speed(body.speed)).await
 }
 
 async fn ask(api: &Api, request: Request) -> Response {

@@ -41,6 +41,7 @@ pub struct NowPlaying {
     pub duration: f64,
     pub paused: bool,
     pub muted: bool,
+    pub speed: f64,
     pub loading: bool,
     pub jump: Option<i32>,
 }
