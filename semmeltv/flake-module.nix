@@ -24,16 +24,14 @@ in
       }
     );
 
-    deploy = {
+    deploy.nodes = lib.genAttrs hosts (name: {
+      hostname = name;
       sshUser = "frederik";
       user = "root";
-      nodes = lib.genAttrs hosts (name: {
-        hostname = name;
-        profiles.system.path =
-          inputs.deploy-rs.lib.aarch64-linux.activate.nixos
-            self.nixosConfigurations.${name};
-      });
-    };
+      profiles.system.path =
+        inputs.deploy-rs.lib.aarch64-linux.activate.nixos
+          self.nixosConfigurations.${name};
+    });
 
     nixosModules = {
       semmeltv = flake-parts-lib.importApply ./modules/kiosk.nix { inherit (inputs) crane nixpkgs; };

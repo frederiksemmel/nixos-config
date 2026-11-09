@@ -54,7 +54,12 @@
   outputs =
     inputs@{ self, ... }:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } (
-      { withSystem, ... }:
+      {
+        withSystem,
+        lib,
+        flake-parts-lib,
+        ...
+      }:
       let
         specialArgs = {
           flake = { inherit self inputs; };
@@ -69,6 +74,15 @@
           inputs.home-manager.flakeModules.home-manager
           inputs.treefmt-nix.flakeModule # `nix fmt`
           ./semmeltv/flake-module.nix
+          {
+            options.flake = flake-parts-lib.mkSubmoduleOptions {
+              deploy.nodes = lib.mkOption {
+                type = lib.types.lazyAttrsOf lib.types.raw;
+                default = { };
+                description = "deploy-rs nodes, so every module can add its hosts";
+              };
+            };
+          }
         ];
 
         flake = {
@@ -159,6 +173,17 @@
               frederik = mkHome [ ];
               "frederik@beast" = mkHome [ ./home/hosts/beast.nix ];
             };
+
+          deploy.nodes.beast = {
+            hostname = "beast";
+            sshUser = "frederik";
+            profiles.home = {
+              user = "frederik";
+              path =
+                inputs.deploy-rs.lib.x86_64-linux.activate.home-manager
+                  self.homeConfigurations."frederik@beast";
+            };
+          };
         };
 
         perSystem =
