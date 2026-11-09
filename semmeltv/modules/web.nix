@@ -11,6 +11,7 @@ let
   tailscale = lib.getExe config.services.tailscale.package;
   api = "http://127.0.0.1:${toString cfg.api.port}";
   web = "http://127.0.0.1:${toString cfg.web.port}";
+  serve = if cfg.web.funnel then "funnel" else "serve";
 in
 {
   options.services.semmeltv = {
@@ -48,6 +49,8 @@ in
       };
 
       tailscale = lib.mkEnableOption "the web app and the API over HTTPS on the tailnet, with `tailscale serve`";
+
+      funnel = lib.mkEnableOption "the web app and the API on the public internet, with `tailscale funnel` in place of `tailscale serve`";
     };
   };
 
@@ -100,13 +103,16 @@ in
           wantedBy = [ "multi-user.target" ];
           wants = [ "tailscaled.service" ];
           after = [ "tailscaled.service" ];
+          unitConfig.StartLimitIntervalSec = 0;
           serviceConfig = {
             Type = "oneshot";
             RemainAfterExit = true;
+            Restart = "on-failure";
+            RestartSec = 5;
             ExecStart = [
               "${tailscale} serve reset"
-              "${tailscale} serve --bg --https=443 ${web}"
-              "${tailscale} serve --bg --https=443 --set-path=/api ${api}/api"
+              "${tailscale} ${serve} --bg --https=443 ${web}"
+              "${tailscale} ${serve} --bg --https=443 --set-path=/api ${api}/api"
             ];
             ExecStop = "${tailscale} serve reset";
           };

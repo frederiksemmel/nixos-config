@@ -19,6 +19,7 @@
     web = {
       enable = true;
       tailscale = true;
+      funnel = true;
     };
   };
 
