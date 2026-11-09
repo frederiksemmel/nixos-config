@@ -64,6 +64,8 @@ pub struct PartState {
     pub uploaded: u64,
     pub speed: f64,
     pub peers: Option<u64>,
+    #[serde(default)]
+    pub checking: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -185,6 +187,9 @@ fn progress_line(job: &Job) -> String {
     let speed: f64 = job.parts.iter().map(|part| part.speed).sum();
     let peers: u64 = job.parts.iter().filter_map(|part| part.peers).sum();
     match job.stage.as_str() {
+        "downloading" if job.parts.iter().any(|part| part.checking) => {
+            format!("{} downloaded before the restart · {uploaded} bytes uploaded", gb(done))
+        }
         "downloading" if total > 0 => format!(
             "{} of {} · {speed:.1} MiB/s · {peers} peers · {uploaded} bytes uploaded",
             gb(done),

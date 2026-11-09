@@ -114,6 +114,8 @@ pub struct PartState {
     pub speed: f64,
     pub peers: Option<u64>,
     pub seen: Option<u64>,
+    #[serde(default)]
+    pub checking: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -226,6 +228,22 @@ fn free_bytes(dir: &Path) -> Option<u64> {
     Some(blocks * size)
 }
 
+fn downloading(progress: u64, total: u64, speed: f64) -> String {
+    let percent = progress as f64 * 100.0 / total as f64;
+    let left = total.saturating_sub(progress) as f64 / (speed * 1024.0 * 1024.0);
+    if speed > 0.0 && left.is_finite() {
+        let minutes = (left / 60.0).ceil() as u64;
+        let time = if minutes >= 60 {
+            format!("{}h {:02}m", minutes / 60, minutes % 60)
+        } else {
+            format!("{minutes} min")
+        };
+        format!("Downloading, {percent:.0}%, about {time} left")
+    } else {
+        format!("Downloading, {percent:.0}%")
+    }
+}
+
 fn is_video(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
@@ -314,7 +332,7 @@ impl Service {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
-        self.book.lock().unwrap().jobs = saved.jobs;
+        self.book.lock().unwrap().jobs = saved.jobs.into_iter().filter(|job| job.stage != Stage::Stopped).collect();
     }
 
     fn update(&self, id: &str, change: impl FnOnce(&mut Job)) {
@@ -509,6 +527,7 @@ impl Service {
                     speed: 0.0,
                     peers: None,
                     seen: None,
+                    checking: false,
                 })
                 .collect(),
             placed: Vec::new(),
@@ -547,13 +566,17 @@ impl Service {
                 eprintln!("stop {id}: {error}");
             }
         }
-        self.update(id, |job| {
-            job.stage = Stage::Stopped;
-            job.message = "Stopped, and its files deleted".to_string();
-            job.note("stopped by request".to_string());
-        });
+        let folder = self.downloads.join(id);
+        if folder.exists()
+            && let Err(error) = fs::remove_dir_all(&folder)
+        {
+            eprintln!("stop {id}: {}: {error}", folder.display());
+        }
+        let mut book = self.book.lock().unwrap();
+        book.jobs.retain(|job| job.id != id);
+        self.save(&book);
         Outcome {
-            message: "Stopped".to_string(),
+            message: "Stopped, and its files deleted".to_string(),
             ok: true,
             job: Some(id.to_string()),
         }
@@ -611,7 +634,10 @@ impl Service {
                     continue;
                 }
             };
-            part.progress = stats.progress_bytes;
+            part.checking = stats.state == "initializing";
+            if !part.checking {
+                part.progress = stats.progress_bytes;
+            }
             part.total = stats.total_bytes;
             part.uploaded = stats.uploaded_bytes;
             part.speed = stats.live.as_ref().map_or(0.0, |live| live.download_speed.mbps);
@@ -636,8 +662,10 @@ impl Service {
             }
         }
         let done = parts.iter().all(|part| part.finished && part.paused);
+        let checking = parts.iter().any(|part| part.checking);
         let progress: u64 = parts.iter().map(|part| part.progress).sum();
         let total: u64 = parts.iter().map(|part| part.total).sum();
+        let speed: f64 = parts.iter().map(|part| part.speed).sum();
         self.update(&job.id, |job| {
             for note in notes {
                 job.note(note);
@@ -646,8 +674,10 @@ impl Service {
             if done {
                 job.stage = Stage::Uploading;
                 job.message = "Uploading to pCloud".to_string();
+            } else if checking {
+                job.message = "Checking the pieces already downloaded".to_string();
             } else if total > 0 {
-                job.message = format!("Downloading, {:.0}%", progress as f64 * 100.0 / total as f64);
+                job.message = downloading(progress, total, speed);
             }
         });
         if done {
@@ -944,4 +974,23 @@ pub fn run(config: Config) -> Result<(), String> {
             .await
             .map_err(|error| error.to_string())
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_progress_line_says_how_long_is_left() {
+        let mib = 1024 * 1024;
+        assert_eq!(
+            downloading(10 * 1024 * mib, 20 * 1024 * mib, 8.0),
+            "Downloading, 50%, about 22 min left"
+        );
+        assert_eq!(
+            downloading(0, 40 * 1024 * mib, 8.0),
+            "Downloading, 0%, about 1h 26m left"
+        );
+        assert_eq!(downloading(5, 10, 0.0), "Downloading, 50%");
+    }
 }
