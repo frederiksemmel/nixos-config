@@ -38,6 +38,26 @@ in
       example = "frederik";
       description = "User allowed to restart the kiosk without a password.";
     };
+
+    tv = {
+      kind = lib.mkOption {
+        type = lib.types.nullOr (
+          lib.types.enum [
+            "generic"
+            "samsung"
+          ]
+        );
+        default = null;
+        description = "Which TV SemmelTV is plugged into, choosing how it is paired, or null to tell from the manufacturer its renderer reports.";
+      };
+
+      renderer = lib.mkOption {
+        type = lib.types.nullOr lib.types.str;
+        default = null;
+        example = "http://192.168.1.148:9197/dmr";
+        description = "The TV's UPnP MediaRenderer description, whose RenderingControl sets the TV's volume, or null for no volume control. Power and input go over HDMI-CEC either way.";
+      };
+    };
   };
 
   config = lib.mkIf cfg.enable {
@@ -92,7 +112,9 @@ in
         }}";
         XCURSOR_THEME = "blank";
         XCURSOR_PATH = "${blankCursor}/share/icons";
-      };
+      }
+      // lib.optionalAttrs (cfg.tv.kind != null) { SEMMELTV_TV_KIND = cfg.tv.kind; }
+      // lib.optionalAttrs (cfg.tv.renderer != null) { SEMMELTV_TV_RENDERER = cfg.tv.renderer; };
     };
 
     systemd.services.cage-tty1 = {

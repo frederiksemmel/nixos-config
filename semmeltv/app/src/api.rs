@@ -9,7 +9,7 @@ use crate::seek::Direction;
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
-use crate::tv_volume;
+use crate::tv::{self, Television};
 use crate::watching::{self, Current};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -35,7 +35,6 @@ const TRY_AGAIN_LATER: u16 = 1013;
 pub struct Config {
     pub address: String,
     pub phone_microphone: Option<String>,
-    pub tv_renderer: Option<String>,
 }
 
 #[derive(Debug)]
@@ -67,7 +66,7 @@ pub struct Pending {
     pub reply: oneshot::Sender<Outcome>,
 }
 
-pub type Tv = Arc<dyn Fn(Pending) + Send + Sync>;
+pub type Ask = Arc<dyn Fn(Pending) + Send + Sync>;
 
 #[derive(Default)]
 pub struct Shared {
@@ -106,9 +105,9 @@ struct Api {
     shared: Arc<Shared>,
     root: PathBuf,
     bus: Bus,
-    tv: Tv,
+    app: Ask,
     microphone: Option<Arc<Microphone>>,
-    renderer: Option<tv_volume::Renderer>,
+    television: Television,
 }
 
 impl Api {
@@ -122,19 +121,19 @@ struct Microphone {
     busy: tokio::sync::Mutex<()>,
 }
 
-pub fn spawn(config: Config, shared: Arc<Shared>, root: PathBuf, bus: Bus, tv: Tv) {
+pub fn spawn(config: Config, shared: Arc<Shared>, root: PathBuf, bus: Bus, app: Ask, television: Television) {
     let api = Api {
         shared,
         root,
         bus,
-        tv,
+        app,
         microphone: config.phone_microphone.map(|device| {
             Arc::new(Microphone {
                 device,
                 busy: tokio::sync::Mutex::new(()),
             })
         }),
-        renderer: config.tv_renderer.map(tv_volume::Renderer::new),
+        television,
     };
     let address = config.address;
     let spawned = thread::Builder::new().name("api".to_string()).spawn(move || {
@@ -183,8 +182,8 @@ fn router(api: Api) -> Router {
         .route("/api/tv/{control}", post(tv))
         .route("/api/events", get(events))
         .route("/api/microphone", get(microphone))
-        .merge(subtitles::routes(api.shared.subtitles.clone(), api.tv.clone()))
-        .merge(tv_volume::routes(api.renderer.clone()))
+        .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
+        .merge(tv::routes(api.television.clone()))
         .with_state(api)
 }
 
@@ -684,12 +683,12 @@ async fn skip(State(api): State<Api>, Json(body): Json<SkipBody>) -> Response {
 }
 
 async fn ask(api: &Api, request: Request) -> Response {
-    ask_tv(&api.tv, request).await
+    ask_app(&api.app, request).await
 }
 
-pub async fn ask_tv(tv: &Tv, request: Request) -> Response {
+pub async fn ask_app(app: &Ask, request: Request) -> Response {
     let (reply, answer) = oneshot::channel();
-    tv(Pending { request, reply });
+    app(Pending { request, reply });
     match tokio::time::timeout(ANSWER_TIME, answer).await {
         Ok(Ok(outcome)) => {
             let status = if outcome.ok {
@@ -845,7 +844,7 @@ mod tests {
         shared.set_progress(&progress);
         let bus = Bus::default();
         let (asked, received) = mpsc::channel();
-        let tv: Tv = Arc::new(move |pending: Pending| {
+        let app: Ask = Arc::new(move |pending: Pending| {
             let _ = asked.send(format!("{:?}", pending.request));
             let ok = !matches!(pending.request, Request::Understand(_));
             let _ = pending.reply.send(Outcome {
@@ -857,14 +856,18 @@ mod tests {
             shared,
             root,
             bus: bus.clone(),
-            tv,
+            app,
             microphone: microphone.map(|device| {
                 Arc::new(Microphone {
                     device,
                     busy: tokio::sync::Mutex::new(()),
                 })
             }),
-            renderer: None,
+            television: Television::new(tv::Settings {
+                kind: None,
+                renderer: None,
+                token: std::env::temp_dir().join("semmeltv-api-tv-token"),
+            }),
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();

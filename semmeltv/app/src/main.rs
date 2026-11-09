@@ -28,7 +28,7 @@ mod segments;
 mod subtitles;
 mod tags;
 mod tmdb;
-mod tv_volume;
+mod tv;
 mod voice;
 mod watch;
 mod watching;
@@ -183,12 +183,19 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         .and_then(|bytes| bytes.parse().ok());
     let wake_word = wake_word(&args);
     let meta = args.meta().to_path_buf();
+    let kind = env::var("SEMMELTV_TV_KIND").ok().filter(|kind| !kind.is_empty());
+    let tv = tv::Settings {
+        kind: kind.as_deref().map(tv::Kind::parse).transpose()?,
+        renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
+        token: cache.tv_token_path(),
+    };
     let setup = app::Setup {
         store: offline::Store::new(args.library.clone(), args.vfs_cache, capacity),
         meta,
         root: args.library,
         remote: env::var("SEMMELTV_REMOTE").ok().filter(|remote| !remote.is_empty()),
         cache,
+        tv,
         wake_word,
         speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
@@ -198,7 +205,6 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
             phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
                 .ok()
                 .filter(|device| !device.is_empty()),
-            tv_renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
         }),
     };
     app::run(setup).map_err(|error| error.to_string())

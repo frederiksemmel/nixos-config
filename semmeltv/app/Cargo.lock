@@ -3947,11 +3947,13 @@ name = "semmeltv"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "cec_linux",
  "deunicode",
  "flate2",
  "image",
  "regex",
+ "rustls",
  "serde",
  "serde_json",
  "slint",

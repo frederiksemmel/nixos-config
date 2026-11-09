@@ -1,4 +1,4 @@
-use crate::api::{self, Pending, Request, Tv};
+use crate::api::{self, Ask, Pending, Request};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -452,15 +452,15 @@ struct View {
 #[derive(Clone)]
 struct Endpoint {
     subtitles: Subtitles,
-    tv: Tv,
+    app: Ask,
 }
 
-pub fn routes<S: Clone + Send + Sync + 'static>(subtitles: Subtitles, tv: Tv) -> Router<S> {
+pub fn routes<S: Clone + Send + Sync + 'static>(subtitles: Subtitles, app: Ask) -> Router<S> {
     Router::new()
         .route("/api/subtitles", get(show).put(update))
         .route("/api/subtitles/track", post(track))
         .route("/api/subtitles/toggle", post(toggle))
-        .with_state(Endpoint { subtitles, tv })
+        .with_state(Endpoint { subtitles, app })
 }
 
 fn view(subtitles: &Subtitles) -> Json<View> {
@@ -487,7 +487,7 @@ async fn update(State(endpoint): State<Endpoint>, Json(changes): Json<Map<String
         Err(error) => return api::problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     }
     let (reply, _) = oneshot::channel();
-    (endpoint.tv)(Pending {
+    (endpoint.app)(Pending {
         request: Request::Subtitles(Change::Restyle),
         reply,
     });
@@ -501,11 +501,11 @@ struct TrackBody {
 }
 
 async fn track(State(endpoint): State<Endpoint>, Json(body): Json<TrackBody>) -> Response {
-    api::ask_tv(&endpoint.tv, Request::Subtitles(Change::Track(body.track))).await
+    api::ask_app(&endpoint.app, Request::Subtitles(Change::Track(body.track))).await
 }
 
 async fn toggle(State(endpoint): State<Endpoint>) -> Response {
-    api::ask_tv(&endpoint.tv, Request::Subtitles(Change::Toggle)).await
+    api::ask_app(&endpoint.app, Request::Subtitles(Change::Toggle)).await
 }
 
 #[cfg(test)]
@@ -756,7 +756,7 @@ mod tests {
             .collect();
         subtitles.observe(Observed::Tracks(tracks));
         let (asked, received) = mpsc::channel();
-        let tv: Tv = Arc::new(move |pending: Pending| {
+        let app: Ask = Arc::new(move |pending: Pending| {
             let _ = asked.send(format!("{:?}", pending.request));
             let _ = pending.reply.send(Outcome {
                 message: "Subtitles: English".to_string(),
@@ -766,7 +766,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let router: Router = routes(subtitles, tv);
+        let router: Router = routes(subtitles, app);
         runtime.spawn(async move { axum::serve(listener, router).await });
         Server {
             base,

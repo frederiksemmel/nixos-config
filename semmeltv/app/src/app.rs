@@ -21,6 +21,7 @@ use crate::segments::Title;
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
+use crate::tv::{self, Television};
 use crate::voice::{self, Heard, Voice};
 use crate::watch::{self, Change};
 use crate::watching::{self, Current};
@@ -101,6 +102,7 @@ pub struct Setup {
     pub microphone: Option<String>,
     pub led: Option<Led>,
     pub api: Option<api::Config>,
+    pub tv: tv::Settings,
 }
 
 struct Playing {
@@ -139,6 +141,7 @@ struct App {
     shared: Arc<Shared>,
     now_playing: Option<NowPlaying>,
     subtitles: Subtitles,
+    television: Television,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -153,6 +156,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         microphone,
         led,
         api,
+        tv,
     } = setup;
     let ui = AppWindow::new()?;
     splash_after_first_frame(&ui);
@@ -198,6 +202,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let progress = cache.load_progress();
     let bus = Bus::default();
     let subtitles = Subtitles::load(cache.subtitles_path());
+    let television = Television::new(tv);
     let shared = Arc::new(Shared::new(subtitles.clone()));
     shared.set_library(&library);
     shared.set_progress(&progress);
@@ -233,6 +238,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         shared: shared.clone(),
         now_playing: None,
         subtitles,
+        television: television.clone(),
     }));
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
@@ -272,8 +278,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     });
     if let Some(config) = api {
         let keys = keys.clone();
-        let tv: api::Tv = Arc::new(move |pending| keys.request(pending));
-        api::spawn(config, shared, meta.clone(), bus, tv);
+        let ask: api::Ask = Arc::new(move |pending| keys.request(pending));
+        api::spawn(config, shared, meta.clone(), bus, ask, television);
     }
     cec::spawn(keys);
 
@@ -973,12 +979,12 @@ impl App {
         match (control, player) {
             (Control::TvOn | Control::TvOff | Control::ShowSemmelTv, _) => {
                 let sent = if control == Control::TvOff {
-                    cec::turn_tv_off()
+                    self.television.turn_off()
                 } else {
-                    cec::show_semmeltv()
+                    self.television.show_semmeltv()
                 };
-                if let Err(error) = sent {
-                    eprintln!("HDMI-CEC: {error}");
+                if let Err(failure) = sent {
+                    eprintln!("TV: {failure:?}");
                     self.tell("The TV did not answer");
                 }
             }

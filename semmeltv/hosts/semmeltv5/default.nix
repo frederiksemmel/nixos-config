@@ -15,10 +15,11 @@
 
   services.semmeltv = {
     offlineCacheGiB = 80;
-    api = {
-      enable = true;
-      tvRenderer = "http://192.168.1.148:9197/dmr";
+    tv = {
+      kind = "samsung";
+      renderer = "http://192.168.1.148:9197/dmr";
     };
+    api.enable = true;
     web = {
       enable = true;
       tailscale = true;

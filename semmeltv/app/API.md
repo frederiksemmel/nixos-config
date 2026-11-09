@@ -76,23 +76,58 @@ skips can still continue, and null otherwise.
 
 | Method | Path | Body |
 | --- | --- | --- |
-| POST | `/api/tv/{control}` | none. `control` is `on`, `off`, `semmeltv`, `volume-up`, `volume-down` or `mute` |
+| GET | `/api/tv` | none |
+| POST | `/api/tv/{control}` | none. `control` is `on`, `off`, `semmeltv`, `volume-up`, `volume-down`, `mute` or `pair` |
 
-`on`, `off` and `semmeltv` go to the TV over HDMI-CEC and do what the same
-voice commands do. `on` turns the TV on and switches it to SemmelTV,
-`semmeltv` switches an already-on TV to SemmelTV, and `off` puts it in standby.
-They answer like the playing requests, with `ok` true once the command is sent.
+TV control sits behind one interface in `src/tv`, with a backend per ability,
+so the API and the app never know which vendor is behind it:
 
-The volume controls set the TV's own volume over the network, through the UPnP
-RenderingControl of the renderer that `SEMMELTV_TV_RENDERER` names (its device
-description, such as `http://192.168.1.148:9197/dmr`). A Samsung ignores volume
-keys sent over CEC by a playback device. `volume-up` and `volume-down` move the
-volume by 2 and answer with the new value, `{ "message": "TV volume 13", "ok":
-true }`; `mute` toggles and answers "TV muted" or "TV sound on". They answer 422
-with `ok` false when the TV is unreachable, when no renderer is configured, or
-when the TV refuses, which a SOAP fault or any status other than 2xx means.
-The message for a refusal is "The TV refused the volume change"; the TV's
-error code goes to the app's log.
+- Power and input go over HDMI-CEC on every TV.
+- Volume goes over the UPnP RenderingControl of the renderer that
+  `SEMMELTV_TV_RENDERER` names (its device description, such as
+  `http://192.168.1.148:9197/dmr`). This is plain DLNA and works on any TV
+  that has a renderer.
+- Pairing is per vendor. Only `samsung` has one: `src/tv/samsung.rs`.
+
+`SEMMELTV_TV_KIND` (`generic` or `samsung`) says which TV it is. When it is
+unset, the kind comes from the `<manufacturer>` in the renderer's description,
+read when the TV is first needed. A new vendor is one file in `src/tv` and one
+arm in `backends`.
+
+GET `/api/tv` answers `{ "kind": "samsung", "volume": true, "pairing": true }`:
+which TV it is and what it can do. `kind` is null while the TV can't be reached
+to tell.
+
+`on`, `off` and `semmeltv` do what the same voice commands do. `on` turns the
+TV on and switches it to SemmelTV, `semmeltv` switches an already-on TV to
+SemmelTV, and `off` puts it in standby. They answer like the playing requests,
+with `ok` true once the command is sent.
+
+`volume-up` and `volume-down` move the TV's own volume by 2 and answer with the
+new value, `{ "message": "TV volume 13", "ok": true }`. `mute` toggles and
+answers "TV muted" or "TV sound on". A Samsung ignores volume keys sent over
+CEC by a playback device, which is why volume goes over the network.
+
+`pair` asks the TV to allow SemmelTV, and only works on a TV that pairs. A
+Samsung shows a prompt and accepts volume changes only from clients someone
+allowed there. The request stays open until someone presses Allow on the TV,
+up to 40 seconds, and answers "Paired with the TV". The TV's token is kept in
+`tv-token` in the cache directory and sent along when pairing again. Pairing is
+needed once per TV.
+
+Failures answer 422 with `ok` false and a message that states the fact:
+
+| Message | When |
+| --- | --- |
+| The TV is off or not on the network | the TV doesn't answer; the reason goes to the app's log |
+| The TV is not paired with SemmelTV yet | a TV that pairs refuses a change (a Samsung answers 501) |
+| The TV refused the change | a TV that doesn't pair refuses, with a SOAP fault or a status other than 2xx |
+| Volume control is not supported by this TV | no renderer is configured |
+| Pairing is not supported by this TV | the TV's kind has no pairing |
+| The TV denied the pairing | someone pressed Deny |
+| Nobody pressed Allow on the TV in time | the prompt timed out |
+
+The TV's own error code goes to the app's log.
 
 ## Subtitles
 

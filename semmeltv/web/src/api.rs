@@ -335,6 +335,13 @@ impl Api {
         self.post(&format!("/api/tv/{}", encode(control)), json!({})).await
     }
 
+    pub async fn tv_abilities(&self) -> Result<TvAbilities, String> {
+        match self.get("/api/tv").await? {
+            Found::Here(abilities) => Ok(abilities),
+            Found::Missing => Err("the TV has no TV controls".to_string()),
+        }
+    }
+
     pub async fn choose_subtitles(&self, track: Option<i64>) -> String {
         self.post("/api/subtitles/track", json!({ "track": track })).await
     }
@@ -368,6 +375,12 @@ pub struct SubtitlesPlaying {
     pub visible: bool,
     pub track: Option<i64>,
     pub tracks: Vec<SubtitleTrack>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct TvAbilities {
+    pub volume: bool,
+    pub pairing: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

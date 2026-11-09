@@ -7,7 +7,7 @@ use topcoat::router::page;
 use topcoat::runtime::{connected, link, procedure, signal};
 use topcoat::view::{View, attributes, component, emit, live, view};
 
-const TV_CONTROLS: [&str; 6] = ["on", "off", "semmeltv", "volume-up", "volume-down", "mute"];
+const TV_CONTROLS: [&str; 7] = ["on", "off", "semmeltv", "volume-up", "volume-down", "mute", "pair"];
 
 #[procedure]
 pub async fn tv(cx: &Cx, name: String) -> Result<String> {
@@ -48,6 +48,8 @@ async fn controls_page(cx: &Cx) -> Result<impl View> {
     let tv_said = signal(cx, String::new);
     let volume_said = signal(cx, String::new);
     let playback_said = signal(cx, String::new);
+    let pairing_said = signal(cx, String::new);
+    let abilities = app_context::<Api>(cx).tv_abilities().await.unwrap_or_default();
     Ok(view! {
         <article class="controls">
             <h1>"Controls"</h1>
@@ -88,6 +90,22 @@ async fn controls_page(cx: &Cx) -> Result<impl View> {
                 <p class="controls-said" aria-live="polite">$(volume_said.get())</p>
                 <p class="setting-note">"The TV's own volume, set over the network."</p>
             </section>
+            if abilities.pairing {
+                <section class="settings">
+                    <h2>"Pairing"</h2>
+                    <div class="pad">
+                        <button type="button" @click=$(async |_e| {
+                            pairing_said.set("Press Allow on the TV".to_owned());
+                            pairing_said.set(tv("pair".to_owned()).await);
+                        })>
+                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9.5 14.5 14.5 9.5"></path><path d="M11 6.5 13 4.5a4 4 0 0 1 6.5 6.5l-2 2"></path><path d="M13 17.5 11 19.5a4 4 0 0 1-6.5-6.5l2-2"></path></svg>
+                            <span>"Pair with TV"</span>
+                        </button>
+                    </div>
+                    <p class="controls-said" aria-live="polite">$(pairing_said.get())</p>
+                    <p class="setting-note">"Once per TV: the TV asks whether to allow SemmelTV, and its volume works after you press Allow."</p>
+                </section>
+            }
             <section class="settings">
                 <h2>"Playback"</h2>
                 status()
