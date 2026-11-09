@@ -1,6 +1,7 @@
 const api = document.documentElement.dataset.api || "";
 const root = document.documentElement;
 const CLOSE_DRAG = 90;
+const SETTLE = 800;
 
 let returnFocus = null;
 let shownKey = null;
@@ -88,7 +89,7 @@ async function post(button) {
   } finally {
     button.removeAttribute("aria-busy");
   }
-  if (button.dataset.after === "tracks") refreshTracks();
+  if (button.dataset.after === "tracks") setTimeout(refreshTracks, SETTLE);
 }
 
 function choose(button) {
@@ -136,6 +137,20 @@ function trackName(track) {
   return name;
 }
 
+function trackNames(tracks) {
+  const names = tracks.map(trackName);
+  return tracks.map((track, index) => {
+    const name = names[index];
+    const same = names.filter((other) => other === name).length;
+    if (same === 1) return name;
+    const title = track.title && track.title !== track.label ? track.title : null;
+    if (title && tracks.filter((other) => trackName(other) === name && other.title === track.title).length === 1) {
+      return `${name} · ${title}`;
+    }
+    return `${name} ${names.slice(0, index + 1).filter((other) => other === name).length}`;
+  });
+}
+
 function choice(label, pressed, path, body) {
   const button = document.createElement("button");
   button.type = "button";
@@ -163,17 +178,20 @@ async function refreshTracks() {
   } catch {
     return;
   }
+  const subtitleNames = playing ? trackNames(playing.tracks) : [];
   const subtitles = playing && playing.tracks.length > 0
     ? [
         choice("Off", !(playing.visible && playing.track !== null), "/api/subtitles/track", { track: null }),
-        ...playing.tracks.map((track) =>
-          choice(trackName(track), playing.visible && playing.track === track.id, "/api/subtitles/track", { track: track.id }),
+        ...playing.tracks.map((track, index) =>
+          choice(subtitleNames[index], playing.visible && playing.track === track.id, "/api/subtitles/track", { track: track.id }),
         ),
       ]
     : [];
-  const audio = playing && (playing.audio_tracks || []).length > 1
-    ? playing.audio_tracks.map((track) =>
-        choice(trackName(track), playing.audio === track.id, "/api/audio/track", { track: track.id }),
+  const audioTracks = (playing && playing.audio_tracks) || [];
+  const audioNames = trackNames(audioTracks);
+  const audio = audioTracks.length > 1
+    ? audioTracks.map((track, index) =>
+        choice(audioNames[index], playing.audio === track.id, "/api/audio/track", { track: track.id }),
       )
     : [];
   fill("subtitles", subtitles);
