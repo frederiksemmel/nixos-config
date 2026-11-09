@@ -164,6 +164,9 @@ pub struct Manifest {
 pub struct ShowEntry {
     pub title: String,
     pub year: Option<u16>,
+    pub last_aired: Option<u16>,
+    #[serde(default)]
+    pub running: bool,
     pub tmdb: Option<u64>,
     pub imdb: Option<String>,
     #[serde(default)]
@@ -252,6 +255,12 @@ impl Manifest {
         for show in &self.show {
             let _ = writeln!(text, "[[show]]");
             render_title(&mut text, &show.title, show.year, show.tmdb);
+            if let Some(year) = show.last_aired {
+                let _ = writeln!(text, "last_aired = {year}");
+            }
+            if show.running {
+                let _ = writeln!(text, "running = true");
+            }
             render_ratings(&mut text, show.imdb.as_deref(), &show.ratings, show.rated);
             render_review(&mut text, show.review);
             let _ = writeln!(text, "episodes = [");

@@ -232,9 +232,14 @@ impl<S: Source> Run<'_, S> {
         let backdrop = backdrop(&self.art, Kind::Tv, id);
         let poster = poster(&self.art, Kind::Tv, id);
         let (wants_backdrop, wants_poster) = (self.wanted(&backdrop), self.wanted(&poster));
-        if wants_backdrop || wants_poster {
+        let wants_run = show.last_aired.is_none() || (show.running && self.refresh);
+        if wants_backdrop || wants_poster || wants_run {
             match self.source.details(Kind::Tv, id) {
                 Ok(found) => {
+                    if found.last_aired.is_some() {
+                        show.last_aired = found.last_aired;
+                        show.running = found.running;
+                    }
                     if wants_backdrop {
                         self.fetch(&backdrop, found.backdrop.as_deref(), BACKDROP_SIZE, CARD, &show.title);
                     }
@@ -500,6 +505,8 @@ added = 2024-05-01
                 backdrop: Some(format!("/{id}.jpg")),
                 poster: Some(format!("/poster-{id}.jpg")),
                 runtime: (kind == Kind::Movie).then_some(96),
+                last_aired: (kind == Kind::Tv).then_some(2020),
+                running: kind == Kind::Tv && id == 87108,
                 ..Found::default()
             })
         }
@@ -800,6 +807,38 @@ added = 2024-05-01
         let summary = run(&manifest, &fake, None, false).unwrap();
         assert_eq!(summary.images, 0);
         assert_eq!(fake.calls(), ["season 70523 1"]);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn shows_learn_when_they_last_aired_and_running_ones_are_asked_again_on_refresh() {
+        let dir = workdir("show-run");
+        let manifest = dir.join("library.toml");
+        let shows = r#"[[show]]
+title = "Dark"
+year = 2017
+tmdb = 70523
+episodes = []
+
+[[show]]
+title = "Severance"
+year = 2022
+tmdb = 87108
+episodes = []
+"#;
+        fs::write(&manifest, shows).unwrap();
+        let fake = Fake::new();
+        run(&manifest, &fake, None, false).unwrap();
+        let written = Manifest::read(&manifest).unwrap();
+        let runs: Vec<_> = written.show.iter().map(|show| (show.last_aired, show.running)).collect();
+        assert_eq!(runs, [(Some(2020), false), (Some(2020), true)]);
+        assert!(Manifest::read(&manifest).unwrap().render().contains("last_aired = 2020\nrunning = true\n"));
+        fake.calls();
+
+        run(&manifest, &fake, None, false).unwrap();
+        assert!(fake.calls().is_empty());
+        run(&manifest, &fake, None, true).unwrap();
+        assert_eq!(fake.calls(), ["details Tv 87108"]);
         fs::remove_dir_all(dir).unwrap();
     }
 

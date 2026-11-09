@@ -27,6 +27,7 @@ date.
     [[show]]
     title = "Dark"
     year = 2017
+    last_aired = 2020
     tmdb = 70523
     imdb = "tt5753856"
     ratings = { imdb = 8.7, rt = 94, popcorn = 92, metacritic = 74 }
@@ -44,7 +45,9 @@ date.
 `year`, `tmdb` and an episode's `title` are optional. So are `video`, `resolution`
 and `audio`, which import reads from the release tags in the file name, then from
 the folders above it, and `runtime` in minutes, which the artwork step takes from
-TMDB along with a missing episode `title`. `imdb`, `ratings` (`imdb` out of 10;
+TMDB along with a missing episode `title`. A show's `last_aired` year and
+`running = true`, while TMDB lists it as neither ended nor canceled, come from
+the artwork step as well. `imdb`, `ratings` (`imdb` out of 10;
 `rt`, `popcorn` and `metacritic` out of 100) and `rated` come from the artwork
 step too; see Ratings. `review = true`, on a show, an episode or a film, marks
 something a person should check; it changes nothing in the app. Unknown keys are
@@ -300,7 +303,8 @@ JPEGs from TMDB's `w342` size, for the web app's grid; the TV cards use the
 backdrops. Neither is named in the manifest: the path follows from the `tmdb`
 id, and `Show::poster` / `Movie::poster` give it relative to the library root
 when the file is there.
-It also writes a missing `runtime` and episode `title` into the manifest. It only
+It also writes a missing `runtime` and episode `title` into the manifest, and a
+show's `last_aired` and `running`, which `--refresh` asks again for running shows. It only
 asks TMDB for what is missing, so a run over a copy of `pcloud:SemmelTV/Artwork`
 is quick. It refuses a manifest inside `--library`, so it never writes through
 the mount. Titles without a `tmdb` id are listed and keep the gradient.

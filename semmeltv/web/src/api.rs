@@ -29,6 +29,7 @@ pub struct Card {
     pub kind: Kind,
     pub key: String,
     pub title: String,
+    pub years: Option<String>,
     pub subtitle: String,
     pub poster: Option<String>,
     pub backdrop: Option<String>,
@@ -83,7 +84,6 @@ impl Watch {
 pub struct Movie {
     #[serde(flatten)]
     pub card: Card,
-    pub year: Option<u16>,
     #[serde(flatten)]
     pub watch: Watch,
 }

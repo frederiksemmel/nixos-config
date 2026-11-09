@@ -26,7 +26,9 @@ look like `{ "error": "..." }`, with 400 or 404.
 | GET | `/api/shows/{key}` | a card plus `next` (where playing carries on) and `seasons`, each with `episodes` |
 
 A card is
-`{ kind: "movie" | "show", key, title, year, subtitle, poster, backdrop, ratings }`.
+`{ kind: "movie" | "show", key, title, years, subtitle, poster, backdrop, ratings }`.
+`years` is a film's year, or the years a show ran ("2014–2025", or "2014–"
+while it still runs), or null.
 `ratings` is `{ imdb, rotten_tomatoes, fresh, popcorn, full }`, and any of these
 can be null. `popcorn` is the Rotten Tomatoes audience score, and `full` is true
 when it is 60% or more.

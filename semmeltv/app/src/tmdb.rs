@@ -36,6 +36,8 @@ pub struct Found {
     pub backdrop: Option<String>,
     pub poster: Option<String>,
     pub runtime: Option<u32>,
+    pub last_aired: Option<u16>,
+    pub running: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -58,6 +60,8 @@ struct Record {
     backdrop_path: Option<String>,
     poster_path: Option<String>,
     runtime: Option<u32>,
+    last_air_date: Option<String>,
+    status: Option<String>,
     #[serde(default)]
     vote_count: f64,
 }
@@ -95,8 +99,18 @@ impl From<&Record> for Found {
             backdrop: record.backdrop_path.clone(),
             poster: record.poster_path.clone(),
             runtime: record.runtime.filter(|minutes| *minutes > 0),
+            last_aired: record.last_air_date.as_deref().and_then(date_year),
+            running: record.status.as_deref().is_some_and(still_running),
         }
     }
+}
+
+fn date_year(date: &str) -> Option<u16> {
+    date.get(..4)?.parse().ok()
+}
+
+fn still_running(status: &str) -> bool {
+    !matches!(status, "Ended" | "Canceled")
 }
 
 fn record_year(record: &Record) -> Option<u16> {
@@ -256,6 +270,8 @@ mod tests {
             backdrop_path: None,
             poster_path: None,
             runtime: None,
+            last_air_date: None,
+            status: None,
             vote_count: 0.0,
         }
     }
@@ -377,6 +393,19 @@ mod tests {
         let season: Season = serde_json::from_str(json).unwrap();
         assert_eq!(season.episode(1).unwrap().runtime, Some(52));
         assert_eq!(season.episode(2).unwrap().runtime, None);
+    }
+
+    #[test]
+    fn a_show_knows_when_it_last_aired_and_whether_it_still_runs() {
+        let found = |json| Found::from(&serde_json::from_str::<Record>(json).unwrap());
+        let ended = found(r#"{"id":2,"name":"Dark","last_air_date":"2020-06-27","status":"Ended"}"#);
+        assert_eq!((ended.last_aired, ended.running), (Some(2020), false));
+        let canceled = found(r#"{"id":3,"name":"Firefly","last_air_date":"2002-12-20","status":"Canceled"}"#);
+        assert_eq!((canceled.last_aired, canceled.running), (Some(2002), false));
+        let running = found(r#"{"id":4,"name":"Severance","last_air_date":"2025-03-21","status":"Returning Series"}"#);
+        assert_eq!((running.last_aired, running.running), (Some(2025), true));
+        let film = found(r#"{"id":1,"title":"Up","release_date":"2009-05-28"}"#);
+        assert_eq!((film.last_aired, film.running), (None, false));
     }
 
     #[test]

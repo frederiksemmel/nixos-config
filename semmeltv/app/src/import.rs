@@ -317,6 +317,8 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
         self.manifest.show.push(ShowEntry {
             title: better_title(&parsed.title, identity.as_ref()),
             year: parsed.year.or(identity.as_ref().and_then(Identity::year)),
+            last_aired: None,
+            running: false,
             tmdb: identity.map(|identity| identity.id),
             imdb: None,
             ratings: Scores::default(),

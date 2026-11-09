@@ -296,7 +296,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
             <div class="title-body">
                 <h1>(movie.card.title.as_str())</h1>
                 <p class="title-sub">
-                    (movie.year.map(|year| year.to_string()).unwrap_or_default())
+                    (movie.card.years.clone().unwrap_or_default())
                     scores(of: &movie.card.ratings)
                 </p>
                 <p class="details">(movie.watch.details.as_str())</p>
@@ -343,7 +343,7 @@ async fn show(cx: &Cx) -> Result<impl View> {
             <div class="title-body">
                 <h1>(show.card.title.as_str())</h1>
                 <p class="title-sub">
-                    (show.card.subtitle.as_str())
+                    (show.card.years.iter().chain([&show.card.subtitle]).map(String::as_str).collect::<Vec<_>>().join(" · "))
                     scores(of: &show.card.ratings)
                 </p>
                 <button type="button" class="play" @click=$(async |_e| {

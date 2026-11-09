@@ -1191,6 +1191,12 @@ impl App {
             None => self.nav.focused_item().map(|item| self.item_details(item)),
         };
         self.ui.set_details(line.unwrap_or_default().into());
+        let years = match (self.nav.open_show(), self.nav.focused_item()) {
+            (None, Some(Item::Movie(index))) => self.nav.movie(index).year.map(|year| year.to_string()),
+            (None, Some(Item::Show(index))) => self.nav.show(index).years(),
+            _ => None,
+        };
+        self.ui.set_years(years.unwrap_or_default().into());
         let scores = match self.nav.open_show() {
             Some(_) => self.nav.focused_episode().map(|episode| &episode.ratings),
             None => self.nav.focused_item().map(|item| match item {
@@ -1367,7 +1373,8 @@ impl App {
             });
         }
         self.ui.set_show_title(show.title.as_str().into());
-        self.ui.set_show_subtitle(show.subtitle().into());
+        let subtitle = show.years().into_iter().chain([show.subtitle()]).collect::<Vec<_>>();
+        self.ui.set_show_subtitle(subtitle.join(" · ").into());
         self.ui.set_show_shelves(ModelRc::new(VecModel::from(shelves)));
         self.ui.set_show_heatmap(heatmap::data(show));
         self.ui.set_show_heat(heatmap::focus(show, self.nav.heat()));

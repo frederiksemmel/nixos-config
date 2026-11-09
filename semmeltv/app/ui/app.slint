@@ -748,8 +748,10 @@ export component AppWindow inherits Window {
     in property <bool> voice-busy;
     in property <string> empty-note;
     in property <bool> tmdb-notice;
+    in property <string> years;
     in property <string> details;
     in property <RatingsData> ratings;
+    property <bool> rated: root.ratings.imdb != "" || root.ratings.rt != "" || root.ratings.popcorn != "";
 
     callback key(string) -> bool;
     callback remote-input();
@@ -895,12 +897,26 @@ export component AppWindow inherits Window {
                 spacing: 9 * root.u;
                 alignment: start;
 
-                if root.ratings.imdb != "" || root.ratings.rt != "" || root.ratings.popcorn != "": RatingBadges {
+                if root.years != "": Text {
+                    text: root.years;
+                    color: #c3c7d1;
+                    font-size: 24 * root.u;
+                    vertical-alignment: center;
+                }
+
+                if root.years != "" && (root.rated || root.details != ""): Text {
+                    text: "·";
+                    color: #8f95a3;
+                    font-size: 24 * root.u;
+                    vertical-alignment: center;
+                }
+
+                if root.rated: RatingBadges {
                     u: root.u;
                     ratings: root.ratings;
                 }
 
-                if (root.ratings.imdb != "" || root.ratings.rt != "" || root.ratings.popcorn != "") && root.details != "": Text {
+                if root.rated && root.details != "": Text {
                     text: "·";
                     color: #8f95a3;
                     font-size: 24 * root.u;

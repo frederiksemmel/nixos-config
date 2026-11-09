@@ -26,6 +26,8 @@ pub struct Show {
     pub key: String,
     pub title: String,
     pub year: Option<u16>,
+    pub last_aired: Option<u16>,
+    pub running: bool,
     pub tmdb: Option<u64>,
     pub imdb: Option<String>,
     pub ratings: Scores,
@@ -212,6 +214,15 @@ impl Show {
         format!("{}-s{:02}e{:02}", self.key, episode.season, episode.number)
     }
 
+    pub fn years(&self) -> Option<String> {
+        let first = self.year?;
+        Some(match self.last_aired {
+            _ if self.running => format!("{first}–"),
+            Some(last) if last > first => format!("{first}–{last}"),
+            _ => first.to_string(),
+        })
+    }
+
     pub fn subtitle(&self) -> String {
         let seasons = self.seasons.iter().filter(|season| season.number > 0).count();
         match seasons {
@@ -280,6 +291,8 @@ fn build_show(root: &Path, entry: &ShowEntry, present: &impl Fn(&Path) -> bool) 
         key: show_key(&entry.title),
         title: entry.title.clone(),
         year: entry.year,
+        last_aired: entry.last_aired,
+        running: entry.running,
         tmdb: entry.tmdb,
         imdb: entry.imdb.clone(),
         ratings: entry.ratings,
@@ -419,6 +432,24 @@ mod tests {
             })
             .collect();
         format!("[[show]]\ntitle = \"{title}\"\nepisodes = [\n{}\n]\n", lines.join("\n"))
+    }
+
+    #[test]
+    fn a_show_reads_the_years_it_ran() {
+        let years = |year, last_aired, running| {
+            Show {
+                year,
+                last_aired,
+                running,
+                ..Show::default()
+            }
+            .years()
+        };
+        assert_eq!(years(Some(2014), Some(2025), false).as_deref(), Some("2014–2025"));
+        assert_eq!(years(Some(2014), Some(2025), true).as_deref(), Some("2014–"));
+        assert_eq!(years(Some(2019), Some(2019), false).as_deref(), Some("2019"));
+        assert_eq!(years(Some(2019), None, false).as_deref(), Some("2019"));
+        assert_eq!(years(None, Some(2025), false), None);
     }
 
     #[test]
