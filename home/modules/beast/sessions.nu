@@ -101,7 +101,7 @@ def bg-id [output: string] {
 # in the background, same session id, with Remote Control under a new app
 # conversation. A session that is working is refused, a second process would
 # write into the same transcript. So is one without messages, there is nothing to
-# resume.
+# resume. A session whose worktree is gone resumes in its repo.
 def open-session [query: string] {
   let s = find-session $query
   if $s.host == "bg" { return { id: $s.id, title: $s.title } }
@@ -111,6 +111,10 @@ def open-session [query: string] {
   if (transcript-of $s.session) == null {
     error make --unspanned { msg: $"($s.title) has no messages yet, end it and start a new session" }
   }
+  let dir = [$s.dir ($s.dir | str replace --regex '/\.claude/worktrees/.*$' "")] | where { path exists } | get -o 0
+  if $dir == null {
+    error make --unspanned { msg: $"($s.title) ran in ($s.dir), which is gone" }
+  }
   kill $s.pid
   for _ in 1..100 {
     if not ($"/proc/($s.pid)" | path exists) { break }
@@ -119,7 +123,7 @@ def open-session [query: string] {
   if ($"/proc/($s.pid)" | path exists) {
     error make --unspanned { msg: $"($s.title) did not stop within 5 seconds" }
   }
-  cd $s.dir
+  cd $dir
   let out = ^claude --bg --resume $s.session --remote-control $s.title | complete
   let id = bg-id $"($out.stdout)($out.stderr)"
   if $id == null {
