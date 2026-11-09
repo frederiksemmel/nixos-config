@@ -93,7 +93,7 @@ let
       mkdir -p "$data/Indexers"
       config="$data/ServerConfig.json"
       if [ ! -s "$config" ]; then
-        key=$(tr -dc 'a-z0-9' < /dev/urandom | head -c 32)
+        key=$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
         printf '{"APIKey": "%s"}\n' "$key" > "$config"
       fi
       jq '.Port = ${toString jackettPort} | .AllowExternal = ${lib.boolToString confined} | .UpdateDisabled = true | .FlareSolverrUrl = null' \
