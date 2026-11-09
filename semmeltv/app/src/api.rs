@@ -14,7 +14,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
 use std::sync::{Arc, RwLock};
 use std::thread;
@@ -89,10 +89,16 @@ impl Shared {
 #[derive(Clone)]
 struct Api {
     shared: Arc<Shared>,
-    art: PathBuf,
+    root: PathBuf,
     bus: Bus,
     tv: Tv,
     microphone: Option<Arc<Microphone>>,
+}
+
+impl Api {
+    fn art(&self) -> PathBuf {
+        self.root.join(artwork::DIR)
+    }
 }
 
 struct Microphone {
@@ -100,10 +106,10 @@ struct Microphone {
     busy: tokio::sync::Mutex<()>,
 }
 
-pub fn spawn(config: Config, shared: Arc<Shared>, art: PathBuf, bus: Bus, tv: Tv) {
+pub fn spawn(config: Config, shared: Arc<Shared>, root: PathBuf, bus: Bus, tv: Tv) {
     let api = Api {
         shared,
-        art,
+        root,
         bus,
         tv,
         microphone: config.phone_microphone.map(|device| {
@@ -145,8 +151,10 @@ fn router(api: Api) -> Router {
         .route("/api/search", get(search))
         .route("/api/movies/{key}", get(movie))
         .route("/api/movies/{key}/backdrop", get(movie_backdrop))
+        .route("/api/movies/{key}/poster", get(movie_poster))
         .route("/api/shows/{key}", get(show))
         .route("/api/shows/{key}/backdrop", get(show_backdrop))
+        .route("/api/shows/{key}/poster", get(show_poster))
         .route("/api/shows/{key}/episodes/{season}/{episode}/still", get(still))
         .route("/api/play", post(play))
         .route("/api/command", post(command))
@@ -194,38 +202,41 @@ struct Card {
     title: String,
     year: Option<u16>,
     subtitle: String,
+    poster: Option<String>,
     backdrop: Option<String>,
     ratings: Ratings,
 }
 
-fn movie_card(movie: &Movie) -> Card {
+fn movie_card(root: &FsPath, movie: &Movie) -> Card {
     Card {
         kind: CardKind::Movie,
         key: movie.key.clone(),
         title: movie.title.clone(),
         year: movie.year,
         subtitle: movie.year.map(|year| year.to_string()).unwrap_or_default(),
+        poster: movie.poster(root).map(|_| format!("/api/movies/{}/poster", movie.key)),
         backdrop: movie.tmdb.map(|_| format!("/api/movies/{}/backdrop", movie.key)),
         ratings: Ratings::from(&movie.ratings),
     }
 }
 
-fn show_card(show: &Show) -> Card {
+fn show_card(root: &FsPath, show: &Show) -> Card {
     Card {
         kind: CardKind::Show,
         key: show.key.clone(),
         title: show.title.clone(),
         year: show.year,
         subtitle: show.subtitle(),
+        poster: show.poster(root).map(|_| format!("/api/shows/{}/poster", show.key)),
         backdrop: show.tmdb.map(|_| format!("/api/shows/{}/backdrop", show.key)),
         ratings: Ratings::from(&show.ratings),
     }
 }
 
-fn card(library: &Library, item: Item) -> Card {
+fn card(root: &FsPath, library: &Library, item: Item) -> Card {
     match item {
-        Item::Movie(index) => movie_card(&library.movies[index]),
-        Item::Show(index) => show_card(&library.shows[index]),
+        Item::Movie(index) => movie_card(root, &library.movies[index]),
+        Item::Show(index) => show_card(root, &library.shows[index]),
     }
 }
 
@@ -239,7 +250,7 @@ struct WatchingCard {
     progress: f32,
 }
 
-fn watching_card(library: &Library, current: &Current) -> WatchingCard {
+fn watching_card(root: &FsPath, library: &Library, current: &Current) -> WatchingCard {
     let episode = match (current.item, current.episode) {
         (Item::Show(index), Some((season, number))) => library.shows[index].episode(season, number),
         _ => None,
@@ -250,7 +261,7 @@ fn watching_card(library: &Library, current: &Current) -> WatchingCard {
     ];
     let detail: Vec<_> = parts.into_iter().flatten().collect();
     WatchingCard {
-        card: card(library, current.item),
+        card: card(root, library, current.item),
         season: current.episode.map(|(season, _)| season),
         episode: current.episode.map(|(_, number)| number),
         detail: detail.join(" · "),
@@ -272,15 +283,19 @@ async fn library(State(api): State<Api>) -> Json<LibraryView> {
     Json(LibraryView {
         watching: watching::current(&library, &progress)
             .iter()
-            .map(|current| watching_card(&library, current))
+            .map(|current| watching_card(&api.root, &library, current))
             .collect(),
         newest: library
             .newest(NEWEST)
             .into_iter()
-            .map(|item| card(&library, item))
+            .map(|item| card(&api.root, &library, item))
             .collect(),
-        shows: library.shows.iter().map(show_card).collect(),
-        movies: library.movies.iter().map(movie_card).collect(),
+        shows: library.shows.iter().map(|show| show_card(&api.root, show)).collect(),
+        movies: library
+            .movies
+            .iter()
+            .map(|movie| movie_card(&api.root, movie))
+            .collect(),
     })
 }
 
@@ -298,7 +313,7 @@ async fn search(State(api): State<Api>, Query(query): Query<SearchQuery>) -> Jso
     let library = api.shared.library();
     let results = intent::search(&library, &query.q)
         .into_iter()
-        .map(|item| card(&library, item))
+        .map(|item| card(&api.root, &library, item))
         .collect();
     Json(Results { results })
 }
@@ -363,7 +378,7 @@ async fn movie(State(api): State<Api>, Path(key): Path<String>) -> Response {
     };
     let progress = api.shared.progress();
     Json(MovieView {
-        card: movie_card(movie),
+        card: movie_card(&api.root, movie),
         watch: watch(&progress, &movie.path, &movie.tags, movie.runtime),
     })
     .into_response()
@@ -445,7 +460,7 @@ async fn show(State(api): State<Api>, Path(key): Path<String>) -> Response {
         })
         .collect();
     Json(ShowView {
-        card: show_card(show),
+        card: show_card(&api.root, show),
         next,
         seasons,
     })
@@ -460,7 +475,7 @@ async fn movie_backdrop(State(api): State<Api>, Path(key): Path<String>, headers
         .find(|movie| movie.key == key)
         .and_then(|movie| movie.tmdb);
     match id {
-        Some(id) => image(artwork::backdrop(&api.art, Kind::Movie, id), &headers).await,
+        Some(id) => image(artwork::backdrop(&api.art(), Kind::Movie, id), &headers).await,
         None => not_found(format!("no backdrop for movie {key}")),
     }
 }
@@ -473,8 +488,34 @@ async fn show_backdrop(State(api): State<Api>, Path(key): Path<String>, headers:
         .find(|show| show.key == key)
         .and_then(|show| show.tmdb);
     match id {
-        Some(id) => image(artwork::backdrop(&api.art, Kind::Tv, id), &headers).await,
+        Some(id) => image(artwork::backdrop(&api.art(), Kind::Tv, id), &headers).await,
         None => not_found(format!("no backdrop for show {key}")),
+    }
+}
+
+async fn movie_poster(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
+    let library = api.shared.library();
+    let poster = library
+        .movies
+        .iter()
+        .find(|movie| movie.key == key)
+        .and_then(|movie| movie.poster(&api.root));
+    match poster {
+        Some(poster) => image(api.root.join(poster), &headers).await,
+        None => not_found(format!("no poster for movie {key}")),
+    }
+}
+
+async fn show_poster(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
+    let library = api.shared.library();
+    let poster = library
+        .shows
+        .iter()
+        .find(|show| show.key == key)
+        .and_then(|show| show.poster(&api.root));
+    match poster {
+        Some(poster) => image(api.root.join(poster), &headers).await,
+        None => not_found(format!("no poster for show {key}")),
     }
 }
 
@@ -489,7 +530,7 @@ async fn still(
         .filter(|show| show.episode(season, episode).is_some())
         .and_then(|show| show.tmdb);
     match id {
-        Some(id) => image(artwork::still(&api.art, id, season, episode), &headers).await,
+        Some(id) => image(artwork::still(&api.art(), id, season, episode), &headers).await,
         None => not_found(format!("no still for {key} season {season} episode {episode}")),
     }
 }
@@ -730,7 +771,7 @@ mod tests {
         library
     }
 
-    fn serve(art: PathBuf, microphone: Option<String>) -> Server {
+    fn serve(root: PathBuf, microphone: Option<String>) -> Server {
         let shared = Arc::new(Shared::default());
         shared.set_library(&library());
         let mut progress = Progress::default();
@@ -761,7 +802,7 @@ mod tests {
         });
         let api = Api {
             shared,
-            art,
+            root,
             bus: bus.clone(),
             tv,
             microphone: microphone.map(|device| {
@@ -799,13 +840,13 @@ mod tests {
         (status, response.body_mut().read_json().unwrap_or(Value::Null))
     }
 
-    fn no_art() -> PathBuf {
-        PathBuf::from("/nonexistent/Artwork")
+    fn no_root() -> PathBuf {
+        PathBuf::from("/nonexistent")
     }
 
     #[test]
     fn the_library_lists_shows_and_movies_with_their_artwork() {
-        let server = serve(no_art(), None);
+        let server = serve(no_root(), None);
         let (status, body) = get(&server, "/api/library");
         assert_eq!(status, 200);
         let titles = |list: &str| -> Vec<String> {
@@ -827,6 +868,7 @@ mod tests {
             .unwrap();
         assert_eq!(dune["kind"], "movie");
         assert_eq!(dune["backdrop"], "/api/movies/dune-2021/backdrop");
+        assert_eq!(dune["poster"], Value::Null);
         let watching: Vec<(&str, &str)> = body["watching"]
             .as_array()
             .unwrap()
@@ -840,7 +882,7 @@ mod tests {
 
     #[test]
     fn search_finds_titles_while_they_are_typed() {
-        let server = serve(no_art(), None);
+        let server = serve(no_root(), None);
         let titles = |query: &str| -> Vec<String> {
             get(&server, &format!("/api/search?q={query}")).1["results"]
                 .as_array()
@@ -857,7 +899,7 @@ mod tests {
 
     #[test]
     fn a_show_lists_its_seasons_and_where_to_carry_on() {
-        let server = serve(no_art(), None);
+        let server = serve(no_root(), None);
         let (status, body) = get(&server, "/api/shows/outlander");
         assert_eq!(status, 200);
         assert_eq!(body["next"], json!({ "season": 2, "episode": 1, "label": "S2 E1" }));
@@ -869,7 +911,7 @@ mod tests {
 
     #[test]
     fn playing_goes_to_the_tv_and_reports_its_answer() {
-        let server = serve(no_art(), None);
+        let server = serve(no_root(), None);
         let (status, body) = post(
             &server,
             "/api/play",
@@ -899,11 +941,13 @@ mod tests {
 
     #[test]
     fn artwork_is_served_with_caching_headers() {
-        let art = std::env::temp_dir().join(format!("semmeltv-api-art-{}", std::process::id()));
+        let root = std::env::temp_dir().join(format!("semmeltv-api-art-{}", std::process::id()));
+        let art = root.join(artwork::DIR);
         let file = artwork::backdrop(&art, Kind::Movie, 438_631);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, b"jpeg").unwrap();
-        let server = serve(art.clone(), None);
+        std::fs::write(artwork::poster(&art, Kind::Movie, 438_631), b"poster").unwrap();
+        let server = serve(root.clone(), None);
         let url = format!("{}/api/movies/dune-2021/backdrop", server.base);
         let mut response = agent().get(&url).call().unwrap();
         assert_eq!(response.status(), 200);
@@ -914,12 +958,20 @@ mod tests {
         let again = agent().get(&url).header("If-None-Match", &tag).call().unwrap();
         assert_eq!(again.status(), 304);
         assert_eq!(get(&server, "/api/movies/up-2009/backdrop").0, 404);
-        std::fs::remove_dir_all(art).unwrap();
+        let (_, dune) = get(&server, "/api/movies/dune-2021");
+        assert_eq!(dune["poster"], "/api/movies/dune-2021/poster");
+        let mut poster = agent()
+            .get(format!("{}/api/movies/dune-2021/poster", server.base))
+            .call()
+            .unwrap();
+        assert_eq!(poster.body_mut().read_to_vec().unwrap(), b"poster");
+        assert_eq!(get(&server, "/api/movies/up-2009/poster").0, 404);
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn the_event_stream_starts_with_playback_and_carries_voice_events() {
-        let server = serve(no_art(), None);
+        let server = serve(no_root(), None);
         server.bus.playback(Some(NowPlaying {
             title: "Dune".to_string(),
             ..NowPlaying::default()
@@ -938,7 +990,7 @@ mod tests {
 
     #[test]
     fn without_a_phone_microphone_its_socket_is_missing() {
-        let server = serve(no_art(), None);
+        let server = serve(no_root(), None);
         let url = format!("{}/api/microphone", server.base.replace("http", "ws"));
         match tungstenite::connect(url) {
             Err(tungstenite::Error::Http(response)) => assert_eq!(response.status(), 404),

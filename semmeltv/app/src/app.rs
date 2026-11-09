@@ -256,7 +256,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     if let Some(config) = api {
         let keys = keys.clone();
         let tv: api::Tv = Arc::new(move |pending| keys.request(pending));
-        api::spawn(config, shared, art, bus, tv);
+        api::spawn(config, shared, root.clone(), bus, tv);
     }
     cec::spawn(keys);
 

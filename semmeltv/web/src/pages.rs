@@ -59,11 +59,15 @@ async fn scores(of: &Ratings) -> Result<impl View> {
 
 #[component]
 async fn tile(cx: &Cx, public: &Public, card: &Card) -> Result<impl View> {
-    let image = card.backdrop.as_deref().map(|path| public.url(path));
+    let image = card
+        .poster
+        .as_ref()
+        .or(card.backdrop.as_ref())
+        .map(|path| public.url(path));
     let attrs = attributes! { cx => class="tile" };
     Ok(view! {
         link(href: card.href(), attrs: attrs,
-            <span class="art" style=(tint(&card.title))>
+            <span class="art poster" style=(tint(&card.title))>
                 <span class="art-title">(card.title.as_str())</span>
                 if let Some(image) = image {
                     <img src=(image) alt="" loading="lazy" decoding="async" onerror="this.remove()">
@@ -209,7 +213,7 @@ async fn browse(cx: &Cx, query: String, section: String) -> Result<impl View> {
                 if section == "all" && !library.newest.is_empty() {
                     <section class="shelf">
                         <h2>"Newly Added"</h2>
-                        <div class="row">
+                        <div class="row posters">
                             #[key(card.href())]
                             for card in &library.newest {
                                 tile(public: &public, card: card)

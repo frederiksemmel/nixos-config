@@ -30,6 +30,7 @@ pub struct Card {
     pub key: String,
     pub title: String,
     pub subtitle: String,
+    pub poster: Option<String>,
     pub backdrop: Option<String>,
     pub ratings: Ratings,
 }

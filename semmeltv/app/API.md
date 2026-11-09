@@ -26,11 +26,13 @@ look like `{ "error": "..." }`, with 400 or 404.
 | GET | `/api/shows/{key}` | a card plus `next` (where playing carries on) and `seasons`, each with `episodes` |
 
 A card is
-`{ kind: "movie" | "show", key, title, year, subtitle, backdrop, ratings }`.
+`{ kind: "movie" | "show", key, title, year, subtitle, poster, backdrop, ratings }`.
 `ratings` is `{ imdb, rotten_tomatoes, fresh, popcorn, full }`, and any of these
 can be null. `popcorn` is the Rotten Tomatoes audience score, and `full` is true
 when it is 60% or more.
-`backdrop` is an artwork path, or null for a title without a TMDB id. An
+`poster` is an artwork path, or null until the title's 342x513 poster is in
+the library. `backdrop` is an artwork path, or null for a title without a TMDB
+id. An
 episode has `season`, `episode`, `title`, `label`, `short_label`, `still`,
 `details`, `stopped_at` and `duration`. Keys are the TV's own: `dune-2021`,
 `outlander`.
@@ -39,13 +41,15 @@ episode has `season`, `episode`, `title`, `label`, `short_label`, `still`,
 
 | Method | Path |
 | --- | --- |
+| GET | `/api/movies/{key}/poster` |
 | GET | `/api/movies/{key}/backdrop` |
+| GET | `/api/shows/{key}/poster` |
 | GET | `/api/shows/{key}/backdrop` |
 | GET | `/api/shows/{key}/episodes/{season}/{episode}/still` |
 
 These return JPEGs with `Cache-Control: public, max-age=86400` and an `ETag`,
 and answer `If-None-Match` with 304. The status is 404 when the library has no
-such image. The library has backdrops and stills but no posters.
+such image.
 
 ## Playing
 
