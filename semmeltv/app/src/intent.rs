@@ -250,6 +250,18 @@ pub enum Control {
     TvOn,
     TvOff,
     ShowSemmelTv,
+    VolumeUp,
+    VolumeDown,
+    VolumeMute,
+}
+
+impl Control {
+    pub fn is_tv(self) -> bool {
+        matches!(
+            self,
+            Self::TvOn | Self::TvOff | Self::ShowSemmelTv | Self::VolumeUp | Self::VolumeDown | Self::VolumeMute
+        )
+    }
 }
 
 pub fn understand(transcript: &str, library: &Library, progress: &Progress) -> Action {

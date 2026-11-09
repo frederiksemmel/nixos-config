@@ -70,6 +70,19 @@ such image.
 For a movie, `movie` is its key. For an episode, `show`, `season` and `episode`
 are set.
 
+## TV
+
+| Method | Path | Body |
+| --- | --- | --- |
+| POST | `/api/tv/{control}` | none. `control` is `on`, `off`, `semmeltv`, `volume-up`, `volume-down` or `mute` |
+
+These go to the TV over HDMI-CEC and do what the same voice commands do. `on`
+turns the TV on and switches it to SemmelTV, `semmeltv` switches an already-on
+TV to SemmelTV, and `off` puts it in standby. The volume controls press the
+TV's own Volume Up, Volume Down and Mute keys; `mute` toggles. They answer
+like the playing requests, with `ok` true once the command is sent. The TV
+gives no reply to tell whether it obeyed a volume key.
+
 ## Subtitles
 
 | Method | Path | Body |

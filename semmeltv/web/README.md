@@ -2,7 +2,9 @@
 
 A phone-first web app for the TV: browse and search the library, open a title,
 play it or pick an episode, control playback, and talk to the TV through the
-phone's microphone. It is a [Topcoat](https://docs.rs/topcoat) app, pinned to
+phone's microphone. The Controls page turns the TV on or off, switches it to
+SemmelTV and presses its volume keys over HDMI-CEC, and the Subtitles page sets
+up subtitles. It is a [Topcoat](https://docs.rs/topcoat) app, pinned to
 0.11.0, which needs Rust 1.99. It reads and changes everything through the TV's
 [HTTP API](../app/API.md).
 

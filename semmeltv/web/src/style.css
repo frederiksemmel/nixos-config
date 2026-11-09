@@ -671,20 +671,21 @@ button.heat-cell:active { outline: 2px solid var(--text); }
 .playing:has(.playing-state.paused) .when-paused { display: block; }
 .playing:has(.playing-state.paused) .when-playing { display: none; }
 
-/* Subtitles */
-.top-subtitles {
+/* Header links */
+.top-links { display: flex; gap: 2px; margin-left: auto; }
+
+.top-link {
   display: grid;
   place-items: center;
   width: 44px;
   height: 44px;
-  margin-left: auto;
   border-radius: 50%;
   color: var(--muted);
 }
 
-.top-subtitles:active { background: var(--raised); }
+.top-link:active { background: var(--raised); }
 
-.playing-controls .playing-subtitles {
+.playing-controls .playing-more {
   display: grid;
   place-items: center;
   width: 42px;
@@ -692,7 +693,45 @@ button.heat-cell:active { outline: 2px solid var(--text); }
   border-radius: 50%;
 }
 
-.playing-controls .playing-subtitles:active { background: rgba(255, 255, 255, 0.1); }
+.playing-controls .playing-more:active { background: rgba(255, 255, 255, 0.1); }
+
+/* Controls */
+.controls { max-width: 560px; margin: 0 auto; }
+.controls h1 { margin: 6px 0 2px; font-size: 28px; line-height: 1.15; }
+.controls-said { min-height: 20px; margin: 0; color: var(--listening); font-size: 14px; }
+
+.pad { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+
+.pad button {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 14px 6px 12px;
+  border-radius: var(--radius);
+  background: var(--raised);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  color: var(--text);
+}
+
+.pad button svg { width: 26px; height: 26px; }
+.pad button:active { background: rgba(255, 255, 255, 0.12); transform: scale(0.97); }
+.pad + .setting-note { margin-top: 8px; font-size: 13px; }
+
+.controls-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 22px 0;
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--raised);
+}
+
+.controls-row span { flex: 1; }
+.controls-row-arrow { width: 18px; height: 18px; color: var(--muted); }
+
+/* Subtitles */
 
 .subtitles { max-width: 560px; margin: 0 auto; }
 .subtitles h1 { margin: 6px 0 2px; font-size: 28px; line-height: 1.15; }

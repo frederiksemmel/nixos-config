@@ -1,5 +1,6 @@
 mod api;
 mod brand;
+mod controls;
 mod layout;
 mod live;
 mod pages;

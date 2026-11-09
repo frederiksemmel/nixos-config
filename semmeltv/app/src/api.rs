@@ -173,6 +173,7 @@ fn router(api: Api) -> Router {
         .route("/api/playback", get(playback))
         .route("/api/playback/seek", post(seek))
         .route("/api/playback/{control}", post(control))
+        .route("/api/tv/{control}", post(tv))
         .route("/api/events", get(events))
         .route("/api/microphone", get(microphone))
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.tv.clone()))
@@ -640,6 +641,19 @@ async fn control(State(api): State<Api>, Path(name): Path<String>) -> Response {
     ask(&api, request).await
 }
 
+async fn tv(State(api): State<Api>, Path(name): Path<String>) -> Response {
+    let control = match name.as_str() {
+        "on" => Control::TvOn,
+        "off" => Control::TvOff,
+        "semmeltv" => Control::ShowSemmelTv,
+        "volume-up" => Control::VolumeUp,
+        "volume-down" => Control::VolumeDown,
+        "mute" => Control::VolumeMute,
+        _ => return not_found(format!("no TV control {name}")),
+    };
+    ask(&api, Request::Control(control)).await
+}
+
 #[derive(Deserialize)]
 struct SeekBody {
     to: Option<f64>,
@@ -971,6 +985,18 @@ mod tests {
         assert_eq!(post(&server, "/api/playback/seek", json!({ "by": -30.0 })).0, 200);
         assert_eq!(server.asked.recv().unwrap(), "Seek(By(-30.0))");
         assert_eq!(post(&server, "/api/playback/dance", json!({})).0, 404);
+        for (name, control) in [
+            ("on", "TvOn"),
+            ("off", "TvOff"),
+            ("semmeltv", "ShowSemmelTv"),
+            ("volume-up", "VolumeUp"),
+            ("volume-down", "VolumeDown"),
+            ("mute", "VolumeMute"),
+        ] {
+            assert_eq!(post(&server, &format!("/api/tv/{name}"), json!({})).0, 200, "{name}");
+            assert_eq!(server.asked.recv().unwrap(), format!("Control({control})"));
+        }
+        assert_eq!(post(&server, "/api/tv/dance", json!({})).0, 404);
         assert_eq!(post(&server, "/api/command", json!({ "text": "play" })).0, 422);
     }
 

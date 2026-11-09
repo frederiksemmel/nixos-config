@@ -807,7 +807,8 @@ impl App {
         };
         let message = self.describe(&action);
         let ok = match &action {
-            Action::Play(_) | Action::Control(Control::TvOn | Control::TvOff | Control::ShowSemmelTv) => true,
+            Action::Play(_) => true,
+            Action::Control(control) if control.is_tv() => true,
             Action::Control(_) => self.player.is_some(),
             Action::Download { .. } | Action::Refuse(_) => false,
         };
@@ -930,6 +931,9 @@ impl App {
                     Control::TvOn => return "Turn the TV on".to_string(),
                     Control::TvOff => return "Turn the TV off".to_string(),
                     Control::ShowSemmelTv => return "Switch the TV to SemmelTV".to_string(),
+                    Control::VolumeUp => return "TV volume up".to_string(),
+                    Control::VolumeDown => return "TV volume down".to_string(),
+                    Control::VolumeMute => return "TV sound off or back on".to_string(),
                 };
                 match self.player {
                     Some(_) => name.to_string(),
@@ -963,6 +967,17 @@ impl App {
                     cec::show_semmeltv()
                 };
                 if let Err(error) = sent {
+                    eprintln!("HDMI-CEC: {error}");
+                    self.tell("The TV did not answer");
+                }
+            }
+            (Control::VolumeUp | Control::VolumeDown | Control::VolumeMute, _) => {
+                let volume = match control {
+                    Control::VolumeUp => cec::Volume::Up,
+                    Control::VolumeDown => cec::Volume::Down,
+                    _ => cec::Volume::Mute,
+                };
+                if let Err(error) = cec::press_volume(volume) {
                     eprintln!("HDMI-CEC: {error}");
                     self.tell("The TV did not answer");
                 }

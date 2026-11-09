@@ -326,6 +326,10 @@ impl Api {
         }
     }
 
+    pub async fn tv(&self, control: &str) -> String {
+        self.post(&format!("/api/tv/{}", encode(control)), json!({})).await
+    }
+
     pub async fn choose_subtitles(&self, track: Option<i64>) -> String {
         self.post("/api/subtitles/track", json!({ "track": track })).await
     }
