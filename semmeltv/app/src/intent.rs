@@ -226,6 +226,9 @@ pub enum Control {
 
 pub fn understand(transcript: &str, library: &Library, progress: &Progress) -> Action {
     if let Some(command) = after_wake_word(transcript) {
+        if command.is_empty() {
+            return Action::Refuse(format!("Heard only the wake word in \"{}\"", transcript.trim()));
+        }
         let action = interpret(&command, library, progress);
         if !matches!(action, Action::Refuse(_)) {
             return action;
@@ -241,7 +244,7 @@ fn after_wake_word(transcript: &str) -> Option<String> {
         .map(|start| &WAKE_WORDS[start..])
         .chain([&["v"][..]])
         .find(|tail| {
-            words.len() > tail.len() && words.iter().zip(tail.iter()).all(|(word, wake)| key(word) == *wake)
+            words.len() >= tail.len() && words.iter().zip(tail.iter()).all(|(word, wake)| key(word) == *wake)
         })?;
     Some(words[leftover.len()..].join(" "))
 }

@@ -92,6 +92,10 @@ impl Recording {
         self.samples.extend_from_slice(frame);
         self.endpointer.push(frame)
     }
+
+    fn lead_in(&mut self, frame: &[i16]) {
+        self.samples.extend_from_slice(frame);
+    }
 }
 
 fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard: &impl Fn(Heard)) {
@@ -118,7 +122,7 @@ fn run(speech: &str, mut waker: Option<Waker>, received: &Receiver<Input>, heard
                 if recording.is_none() {
                     let mut started = Recording::default();
                     for frame in recent.drain(..) {
-                        started.push(&frame);
+                        started.lead_in(&frame);
                     }
                     recording = Some(started);
                     heard(Heard::Listening);
