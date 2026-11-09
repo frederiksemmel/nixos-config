@@ -204,9 +204,22 @@ def label-sessions [] {
   $labelled
 }
 
+# Repos under ~/repos, the one prompted in most recently first. `last` is the time
+# of the newest prompt from any directory in the repo, its worktrees included, or
+# null for a repo never prompted in.
 def repos [] {
-  glob ($env.HOME | path join repos/*/.git) | each {|git|
+  let root = $env.HOME | path join repos
+  let prompted = try { open --raw ($env.HOME | path join .claude/history.jsonl) | lines } catch { [] }
+  | each {|line| try { $line | from json | select project timestamp } }
+  | where project starts-with $"($root)/"
+  | update project { path relative-to $root | path split | first }
+  | group-by project --to-table
+  | each {|r| { name: $r.project, last: ($r.items.timestamp | math max) } }
+  glob ($root | path join */.git) | each {|git|
     let path = $git | path dirname
-    { name: ($path | path basename), path: $path }
-  } | sort-by name
+    let name = $path | path basename
+    { name: $name, path: $path, last: ($prompted | where name == $name | get -o 0.last) }
+  }
+  | sort-by name
+  | sort-by --reverse {|r| $r.last | default 0 }
 }

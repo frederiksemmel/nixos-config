@@ -68,7 +68,8 @@ def ago [ms: int] {
 # Picker lines for by-group sessions. Every line carries its group name so typing
 # it filters to the group: bold on the group's first line, dimmed on the rest,
 # with a bar in the group's colour joining them. A session outside the daemon is
-# marked with what hosts it, opening it moves it into the daemon.
+# marked with what hosts it, opening it moves it into the daemon. Tabs separate
+# group, title, age and state, repo, so the search can skip age and state.
 def session-rows [sessions: list] {
   if ($sessions | is-empty) { return [] }
   let group_width = $sessions.group | compact | each { str length } | append 0 | math max
@@ -84,24 +85,25 @@ def session-rows [sessions: list] {
     }
     let marker = if $s.host == "bg" { "" } else { $s.host }
     let copies = if $s.processes > 1 { $"($s.processes) processes!" } else { "" }
+    let status = [(ago $s.last | fill -w 14) ($s.state | fill -w 7) ($marker | fill -w 4)] | str join "  "
     let line = [
       ($s.title | str substring ..<$title_width | fill -w $title_width)
-      (ago $s.last | fill -w 14)
-      ($s.state | fill -w 7)
-      ($marker | fill -w 4)
+      $status
       $s.repo
       $copies
-    ] | str join "  " | str substring ..<$columns
-    $"($label) ($line)"
+    ] | str join " \t" | str substring ..<$columns
+    $"($label)\t($line)"
   }
 }
 
-# Picks lines in fzf and returns their indexes, none on esc.
-def fzf-pick [header: string, --multi] {
+# Picks lines in fzf and returns their indexes, none on esc. Lines may hold tabs,
+# shown one column wide; `nth` limits the search to those tab-separated fields.
+# Matches rank by score, ties and the empty query keep the given order.
+def fzf-pick [header: string, --multi, --nth: string = ".."] {
   let lines = $in | enumerate | each {|line| $"($line.index)\t($line.item)" } | str join "\n"
   try {
     $lines
-    | ^fzf ...(if $multi { [--multi] } else { [] }) --ansi --no-sort --layout reverse --height "~100%" --gutter " " --info inline-right --delimiter "\t" --with-nth "2.." --accept-nth 1 --header $header
+    | ^fzf ...(if $multi { [--multi] } else { [] }) --ansi --tiebreak index --layout reverse --height "~100%" --gutter " " --info inline-right --delimiter "\t" --tabstop 1 --with-nth "2.." --nth $nth --accept-nth 1 --header $header
     | lines
     | each { into int }
   } catch { [] }
@@ -164,7 +166,7 @@ export def main [] {
   let sessions = on-beast sessions | by-group
   let rows = session-rows $sessions
   let count = $sessions | length
-  let choice = $rows | append ["new session" "end sessions…"] | fzf-pick "type to filter, esc for a plain shell" | get -o 0
+  let choice = $rows | append ["new session" "end sessions…"] | fzf-pick --nth "1,2,4" "type to filter, esc for a plain shell" | get -o 0
   if $choice == null {
     if not (on-beast-itself) {
       do --ignore-errors { ^ssh -t beast "hide-env SSH_CONNECTION; exec nu --login" }
@@ -176,7 +178,7 @@ export def main [] {
   } else if $choice == $count {
     new
   } else {
-    let picked = $rows | fzf-pick --multi "tab marks, enter ends them, esc cancels"
+    let picked = $rows | fzf-pick --multi --nth "1,2,4" "tab marks, enter ends them, esc cancels"
     if ($picked | is-not-empty) {
       on-beast $"stop-sessions ($picked | each {|i| $sessions | get $i | get session } | to json --raw)" | ignore
     }
@@ -212,7 +214,12 @@ export def new [
 ] {
   let repos = on-beast repos
   let target = if $repo == null {
-    let choice = $repos.name | input list --fuzzy --index "new session in (esc cancels)"
+    let width = $repos.name | each { str length } | math max
+    let rows = $repos | each {|r|
+      let age = if $r.last == null { "" } else { $"(ansi attr_dimmed)(ago $r.last)(ansi reset)" }
+      $"($r.name | fill -w $width) \t($age)"
+    }
+    let choice = $rows | fzf-pick --nth 1 "new session in, esc cancels" | get -o 0
     if $choice == null { return }
     $repos | get $choice
   } else {
