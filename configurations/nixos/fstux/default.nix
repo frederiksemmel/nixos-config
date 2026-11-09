@@ -222,6 +222,12 @@ in
     tailor-gui.enable = true;
   };
   # hardware.tuxedo-control-center.enable = true;
+  # The PixArt touchpad (UNIW0001, 093A:0255) sometimes NAKs the power-on
+  # command on resume from s2idle and stays dead until i2c_hid_acpi is reloaded
+  # ("failed to change power setting", resume error -121). The driver is
+  # unloaded for every sleep, so each wake probes the touchpad from scratch.
+  powerManagement.powerDownCommands = "${pkgs.kmod}/bin/modprobe -r i2c_hid_acpi";
+  powerManagement.resumeCommands = "${pkgs.kmod}/bin/modprobe i2c_hid_acpi";
   hardware.bluetooth = {
     enable = true;
     settings.General.FastConnectable = true;
