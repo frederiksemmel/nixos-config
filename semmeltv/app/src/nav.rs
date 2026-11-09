@@ -1,5 +1,5 @@
 use crate::command::Command;
-use crate::heatmap::{self, ORDER};
+use crate::heatmap;
 use crate::library::{Episode, Item, Library, Movie, Show};
 use std::path::PathBuf;
 
@@ -160,7 +160,7 @@ impl Nav {
         let (show, cursor) = self.open_show()?;
         match self.heat {
             Some(position) => {
-                let (season, number) = *heatmap::order(show, ORDER).get(position)?;
+                let (season, number) = *heatmap::order(show).get(position)?;
                 show.episode(season, number)
             }
             None => show.seasons.get(cursor.row)?.episodes.get(cursor.col()),
@@ -209,7 +209,7 @@ impl Nav {
         let show = &self.library.shows[index];
         let changed = *show != old;
         if let Some(place) = old_heat {
-            let order = heatmap::order(show, ORDER);
+            let order = heatmap::order(show);
             self.heat = order
                 .iter()
                 .position(|p| *p == place)
@@ -259,7 +259,7 @@ impl Nav {
         if let Some((index, cursor)) = &mut self.show {
             let show = &self.library.shows[*index];
             if let Some(position) = self.heat {
-                let order = heatmap::order(show, ORDER);
+                let order = heatmap::order(show);
                 let (next, effect) = match command {
                     Command::Back => {
                         self.show = None;
@@ -271,7 +271,14 @@ impl Nav {
                             .and_then(|&(season, number)| show.episode(season, number));
                         (Some(position), episode.map_or(Effect::None, play_episode))
                     }
-                    Command::Up => (None, Effect::Moved),
+                    Command::Up => match heatmap::vertical(&order, position, true) {
+                        Some(above) => (Some(above), Effect::Moved),
+                        None => (None, Effect::Moved),
+                    },
+                    Command::Down => match heatmap::vertical(&order, position, false) {
+                        Some(below) => (Some(below), Effect::Moved),
+                        None => (Some(position), Effect::None),
+                    },
                     Command::Left if position > 0 => (Some(position - 1), Effect::Moved),
                     Command::Right if position + 1 < order.len() => (Some(position + 1), Effect::Moved),
                     _ => (Some(position), Effect::None),
@@ -280,9 +287,17 @@ impl Nav {
                 return effect;
             }
             let last_season = cursor.row + 1 == show.seasons.len();
-            if command == Command::Down && last_season && !heatmap::order(show, ORDER).is_empty() {
-                self.heat = Some(0);
-                return Effect::Moved;
+            if command == Command::Down && last_season {
+                let order = heatmap::order(show);
+                if !order.is_empty() {
+                    let focused = show
+                        .seasons
+                        .get(cursor.row)
+                        .and_then(|season| season.episodes.get(cursor.col()));
+                    self.heat =
+                        Some(focused.map_or(0, |episode| heatmap::entry(&order, episode.season, episode.number)));
+                    return Effect::Moved;
+                }
             }
             return match command {
                 Command::Back => {
@@ -668,25 +683,26 @@ episodes = [
     }
 
     #[test]
-    fn down_from_the_last_season_lands_on_the_best_episode_in_the_heatmap() {
+    fn the_heatmap_walks_episodes_with_left_right_and_seasons_with_up_down() {
         let mut nav = rated_dark();
         assert_eq!(nav.apply(Down), Effect::Moved);
         assert_eq!(nav.heat(), None);
         assert_eq!(nav.apply(Down), Effect::Moved);
-        assert_eq!(nav.heat(), Some(0));
-        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((1, 2)));
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((2, 1)));
         assert_eq!(nav.apply(Down), Effect::None);
+        assert_eq!(nav.apply(Right), Effect::None);
+        assert_eq!(nav.apply(Up), Effect::Moved);
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((1, 1)));
         assert_eq!(nav.apply(Left), Effect::None);
         assert_eq!(nav.apply(Right), Effect::Moved);
-        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((2, 1)));
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((1, 2)));
+        assert_eq!(nav.apply(Select), Effect::Play("/lib/Series/Dark/1x2.mkv".into()));
         assert_eq!(nav.apply(Right), Effect::Moved);
-        assert_eq!(nav.apply(Right), Effect::None);
-        assert_eq!(nav.apply(Select), Effect::Play("/lib/Series/Dark/1x1.mkv".into()));
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((2, 1)));
+        nav.apply(Up);
         assert_eq!(nav.apply(Up), Effect::Moved);
         assert_eq!(nav.heat(), None);
         assert_eq!(nav.open_show().unwrap().1.row, 1);
-        nav.apply(Down);
-        assert_eq!(nav.heat(), Some(0));
     }
 
     #[test]
@@ -715,7 +731,7 @@ episodes = [
         let mut nav = rated_dark();
         nav.apply(Down);
         nav.apply(Down);
-        nav.apply(Right);
+        nav.apply(Left);
         let text = r#"[[show]]
 title = "Dark"
 episodes = [
@@ -726,8 +742,8 @@ episodes = [
 ]
 "#;
         assert_eq!(nav.replace(library(text)), Reload::ShowChanged);
-        assert_eq!(nav.heat(), Some(2));
-        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((2, 1)));
+        assert_eq!(nav.heat(), Some(1));
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((1, 2)));
     }
 
     fn watching_dark() -> (Nav, PathBuf) {

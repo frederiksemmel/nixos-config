@@ -5,15 +5,6 @@ use crate::{HeatCell, HeatFocus, HeatRow, HeatmapData, RatingsData};
 use slint::{Color, ModelRc, VecModel};
 use std::cmp::Reverse;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Order {
-    Rating,
-    #[allow(dead_code)]
-    Grid,
-}
-
-pub const ORDER: Order = Order::Rating;
-
 pub struct Band {
     pub from: u8,
     pub label: &'static str,
@@ -77,15 +68,45 @@ fn regular(show: &Show) -> impl Iterator<Item = &Episode> {
         .flat_map(|season| &season.episodes)
 }
 
-pub fn order(show: &Show, order: Order) -> Vec<(u32, u32)> {
-    let mut rated: Vec<(Tenths, u32, u32)> = regular(show)
+fn rated(show: &Show) -> Vec<(Tenths, u32, u32)> {
+    regular(show)
         .filter_map(|episode| Some((episode.ratings.imdb?, episode.season, episode.number)))
-        .collect();
-    match order {
-        Order::Rating => rated.sort_by_key(|(rating, season, number)| (Reverse(*rating), *season, *number)),
-        Order::Grid => rated.sort_by_key(|(_, season, number)| (*season, *number)),
-    }
+        .collect()
+}
+
+pub fn order(show: &Show) -> Vec<(u32, u32)> {
+    let mut rated = rated(show);
+    rated.sort_by_key(|(_, season, number)| (*season, *number));
     rated.into_iter().map(|(_, season, number)| (season, number)).collect()
+}
+
+fn ranking(show: &Show) -> Vec<(u32, u32)> {
+    let mut rated = rated(show);
+    rated.sort_by_key(|(rating, season, number)| (Reverse(*rating), *season, *number));
+    rated.into_iter().map(|(_, season, number)| (season, number)).collect()
+}
+
+pub fn entry(order: &[(u32, u32)], season: u32, number: u32) -> usize {
+    order
+        .iter()
+        .position(|place| *place == (season, number))
+        .or_else(|| order.iter().position(|place| place.0 == season))
+        .unwrap_or(0)
+}
+
+pub fn vertical(order: &[(u32, u32)], position: usize, up: bool) -> Option<usize> {
+    let (season, number) = *order.get(position)?;
+    let target = if up {
+        order.iter().map(|place| place.0).filter(|s| *s < season).max()?
+    } else {
+        order.iter().map(|place| place.0).filter(|s| *s > season).min()?
+    };
+    order
+        .iter()
+        .enumerate()
+        .filter(|(_, place)| place.0 == target)
+        .min_by_key(|(_, place)| (place.1.abs_diff(number), place.1))
+        .map(|(index, _)| index)
 }
 
 fn color((red, green, blue): (u8, u8, u8)) -> Color {
@@ -145,25 +166,21 @@ pub fn data(show: &Show) -> HeatmapData {
     HeatmapData {
         rows: ModelRc::new(VecModel::from(rows)),
         columns: columns as i32,
-        rated: order(show, ORDER).len() as i32,
+        rated: order(show).len() as i32,
         legend: ModelRc::new(VecModel::from(legend)),
-        hint: match ORDER {
-            Order::Rating => "◀ ▶ best to worst",
-            Order::Grid => "◀ ▶ episode by episode",
-        }
-        .into(),
+        hint: "◀ ▶ episodes · ▲ ▼ seasons".into(),
     }
 }
 
 pub fn focus(show: &Show, position: Option<usize>) -> HeatFocus {
-    let places = order(show, ORDER);
+    let places = order(show);
     let Some(((season, number), episode)) = position
         .and_then(|position| places.get(position))
         .and_then(|&place| Some((place, show.episode(place.0, place.1)?)))
     else {
         return HeatFocus::default();
     };
-    let rank = order(show, Order::Rating)
+    let rank = ranking(show)
         .iter()
         .position(|place| *place == (season, number))
         .unwrap_or(0);
@@ -208,9 +225,28 @@ episodes = [
     }
 
     #[test]
-    fn the_rating_order_runs_best_first_and_leaves_out_specials_and_unrated() {
-        assert_eq!(order(&show(), Order::Rating), [(1, 2), (1, 1), (2, 1), (2, 2)]);
-        assert_eq!(order(&show(), Order::Grid), [(1, 1), (1, 2), (2, 1), (2, 2)]);
+    fn the_walk_runs_by_season_and_episode_and_the_rank_best_first_both_without_specials_and_unrated() {
+        assert_eq!(ranking(&show()), [(1, 2), (1, 1), (2, 1), (2, 2)]);
+        assert_eq!(order(&show()), [(1, 1), (1, 2), (2, 1), (2, 2)]);
+    }
+
+    #[test]
+    fn up_and_down_move_to_the_nearest_rated_episode_of_the_next_season() {
+        let order = [(1, 1), (1, 2), (1, 5), (2, 1), (2, 3), (4, 2)];
+        assert_eq!(vertical(&order, 2, false), Some(4));
+        assert_eq!(vertical(&order, 1, false), Some(3));
+        assert_eq!(vertical(&order, 4, false), Some(5));
+        assert_eq!(vertical(&order, 5, true), Some(3));
+        assert_eq!(vertical(&order, 0, true), None);
+        assert_eq!(vertical(&order, 5, false), None);
+    }
+
+    #[test]
+    fn entering_lands_on_the_episode_else_its_season_else_the_start() {
+        let order = [(1, 1), (1, 2), (2, 1), (2, 3)];
+        assert_eq!(entry(&order, 2, 3), 3);
+        assert_eq!(entry(&order, 2, 2), 2);
+        assert_eq!(entry(&order, 3, 1), 0);
     }
 
     #[test]
@@ -242,7 +278,7 @@ episodes = [
     #[test]
     fn the_focus_names_the_episode_and_its_rank() {
         let show = show();
-        let best = focus(&show, Some(0));
+        let best = focus(&show, Some(1));
         assert_eq!((best.season, best.episode, best.rank.as_str()), (1, 2, "Best of 4"));
         let third = focus(&show, Some(2));
         assert_eq!(third.title, "Beginnings");
