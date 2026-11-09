@@ -110,6 +110,23 @@ in
     Install.WantedBy = [ "timers.target" ];
   };
 
+  systemd.user.services.zurich-display-study = {
+    Unit.Description = "Daily zurich-23 display study run";
+    Service = {
+      Type = "oneshot";
+      WorkingDirectory = "%h/repos/blackjackeye";
+      ExecStart = "${claude} --bg --name zurich-display-study --permission-mode auto 'Daily zurich-23 display study run: follow evaluation/display_study/SCHEDULED.md from origin/zurich-display-study (origin/main once #1175 is merged). Report briefly.'";
+    };
+  };
+  systemd.user.timers.zurich-display-study = {
+    Unit.Description = "Starts the display study run after the zurich-23 upload";
+    Timer = {
+      OnCalendar = "*-*-* 11:17";
+      Persistent = true;
+    };
+    Install.WantedBy = [ "timers.target" ];
+  };
+
   programs.claude-code.settings.hooks.SessionStart = [
     {
       matcher = "startup|resume|clear";
