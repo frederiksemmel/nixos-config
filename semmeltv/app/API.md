@@ -226,6 +226,35 @@ own `SEMMELTV_MICROPHONE`. Only one stream is taken at a time, and a second one
 is closed with code 1013. The endpoint answers 404 when no phone microphone is
 set up.
 
+## Downloads
+
+Downloads are a separate service, `semmeltv downloads`, normally on
+`127.0.0.1:8092`, so a restart of the TV app never cuts a transfer short. Its
+paths start with `/api/downloads` too.
+
+| Method | Path | Body | Answer |
+| --- | --- | --- | --- |
+| GET | `/api/downloads` | | `{ proposals, jobs, room, quota, free }` |
+| POST | `/api/downloads/search` | `{ text }`, or `{ pick: { kind, tmdb, season, episode } }` | a proposal |
+| POST | `/api/downloads/confirm` | `{ proposal, choice }` | `{ message, ok, job }` |
+| POST | `/api/downloads/dismiss` | `{ proposal }` | `{ message, ok }` |
+| POST | `/api/downloads/jobs/{id}/stop` | | `{ message, ok, job }` |
+
+`text` is what was said or typed, such as "outlander season 8". It resolves to
+one TMDB title, or to a `question` with up to four `options`
+(`{ kind, tmdb, label }`), one of which is sent back as `pick`. A proposal holds
+the `target` (TMDB and IMDb ids, season, aired episodes), up to three `choices`
+ranked by the scorer, each with `facts`, `why` and its torrents in `parts`, and
+`dropped`, the number of releases the checks removed. Nothing downloads until a
+choice is confirmed. Proposals expire after 30 minutes.
+
+A job moves through `checking` (reading the torrent's files), `downloading`,
+`uploading` (to pCloud, then the import), and ends `done`, `failed` or
+`stopped`. Each part reports `progress`, `total`, `speed`, `peers` and
+`uploaded`, the bytes sent to peers. `room` is the space left for a new
+download: the quota minus running downloads, and the free disk minus what they
+still need and a reserve.
+
 ## Trying it
 
     curl -s localhost:8090/api/search?q=lotus | jq '.results[].title'
@@ -233,3 +262,4 @@ set up.
     curl -s -X POST localhost:8090/api/playback/toggle
     curl -s -X PUT localhost:8090/api/subtitles -d '{"size":1.3,"background":0.5}' -H 'content-type: application/json'
     websocat ws://localhost:8090/api/events
+    curl -s -X POST localhost:8092/api/downloads/search -d '{"text":"outlander season 8"}' -H 'content-type: application/json' | jq '.choices[0].facts'

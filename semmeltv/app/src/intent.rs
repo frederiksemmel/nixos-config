@@ -235,7 +235,11 @@ struct Request {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Action {
     Play(PathBuf),
-    Download { title: String, season: Option<u32> },
+    Download {
+        title: String,
+        season: Option<u32>,
+        episode: Option<u32>,
+    },
     Control(Control),
     Refuse(String),
 }
@@ -281,6 +285,29 @@ fn after_wake_word(transcript: &str) -> Option<String> {
             words.len() >= tail.len() && words.iter().zip(tail.iter()).all(|(word, wake)| key(word) == *wake)
         })?;
     Some(words[leftover.len()..].join(" "))
+}
+
+const YES_WORDS: [&str; 12] = [
+    "yes", "yeah", "yep", "yup", "ok", "okay", "sure", "ja", "si", "go", "do", "download",
+];
+const NO_WORDS: [&str; 6] = ["no", "nope", "cancel", "nein", "dont", "stop"];
+const REPLY_FILLERS: [&str; 10] = [
+    "stevie", "tv", "it", "please", "that", "the", "thanks", "thank", "you", "so",
+];
+
+pub fn reply(transcript: &str) -> Option<bool> {
+    let command = after_wake_word(transcript).unwrap_or_else(|| transcript.to_string());
+    let folded = library::normalize(&deunicode(&command));
+    let words: Vec<&str> = folded
+        .split_whitespace()
+        .filter(|word| !REPLY_FILLERS.contains(word))
+        .collect();
+    match words.as_slice() {
+        [word] if NO_WORDS.contains(word) => Some(false),
+        [word] if YES_WORDS.contains(word) => Some(true),
+        [first, second] if YES_WORDS.contains(first) && YES_WORDS.contains(second) => Some(true),
+        _ => None,
+    }
 }
 
 fn interpret(transcript: &str, library: &Library, progress: &Progress) -> Action {
@@ -660,11 +687,11 @@ fn play_show(show: &Show, season: SeasonChoice, episode: Option<u32>, progress: 
 
 fn resolve(request: &Request, library: &Library, progress: &Progress) -> Action {
     let found = find(library, &request.title);
-    if let Found::Several(first, second) = &found {
-        return Action::Refuse(format!("Did you mean {first} or {second}?"));
-    }
     if request.verb == Verb::Download {
         return download(request, &found);
+    }
+    if let Found::Several(first, second) = &found {
+        return Action::Refuse(format!("Did you mean {first} or {second}?"));
     }
     match found {
         Found::One(Titled::Show(show)) => play_show(show, request.season, request.episode, progress),
@@ -745,20 +772,28 @@ fn typed_similarity(query: &str, title: &str) -> f64 {
 }
 
 fn download(request: &Request, found: &Found) -> Action {
-    let show = match found {
-        Found::One(Titled::Show(show)) => Some(*show),
+    let known = match found {
+        Found::One(titled) if comparable(titled.title()) == comparable(&request.title) => Some(*titled),
         _ => None,
     };
-    let title = match found {
-        Found::One(titled) => titled.title().to_string(),
-        _ => request.title.clone(),
+    let show = match known {
+        Some(Titled::Show(show)) => Some(show),
+        _ => None,
     };
+    let title = known.map_or_else(|| request.title.clone(), |titled| titled.title().to_string());
     let season = match request.season {
         SeasonChoice::Number(number) => Some(number),
-        SeasonChoice::Next => show.map(|show| show.last_season() + 1),
+        SeasonChoice::Next => match show {
+            Some(show) => Some(show.last_season() + 1),
+            None => return Action::Refuse(format!("\"{}\" is not in the library, so say which season", request.title)),
+        },
         SeasonChoice::Unspecified => None,
     };
-    Action::Download { title, season }
+    Action::Download {
+        title,
+        season,
+        episode: request.episode,
+    }
 }
 
 #[cfg(test)]
@@ -1212,6 +1247,19 @@ mod tests {
     }
 
     #[test]
+    fn a_short_yes_or_no_answers_an_offer() {
+        assert_eq!(reply("yes"), Some(true));
+        assert_eq!(reply("Yes, please."), Some(true));
+        assert_eq!(reply("Stevie, do it"), Some(true));
+        assert_eq!(reply("download it"), Some(true));
+        assert_eq!(reply("ok go"), Some(true));
+        assert_eq!(reply("no"), Some(false));
+        assert_eq!(reply("Nein."), Some(false));
+        assert_eq!(reply("play outlander"), None);
+        assert_eq!(reply("download outlander season 8"), None);
+    }
+
+    #[test]
     fn downloading_the_next_season_counts_from_the_library() {
         let action = understand(
             "download the next season of Outlander",
@@ -1221,6 +1269,7 @@ mod tests {
         let expected = Action::Download {
             title: "Outlander".to_string(),
             season: Some(3),
+            episode: None,
         };
         assert_eq!(action, expected);
     }
@@ -1231,6 +1280,25 @@ mod tests {
         let expected = Action::Download {
             title: "severance".to_string(),
             season: Some(2),
+            episode: None,
+        };
+        assert_eq!(action, expected);
+    }
+
+    #[test]
+    fn a_download_close_to_a_library_title_keeps_its_own_title() {
+        let action = understand("download Outlandish season 1", &library(), &Progress::default());
+        let expected = Action::Download {
+            title: "outlandish".to_string(),
+            season: Some(1),
+            episode: None,
+        };
+        assert_eq!(action, expected);
+        let action = understand("download outlander season 8 episode 3", &library(), &Progress::default());
+        let expected = Action::Download {
+            title: "Outlander".to_string(),
+            season: Some(8),
+            episode: Some(3),
         };
         assert_eq!(action, expected);
     }

@@ -34,7 +34,11 @@ in
     });
 
     nixosModules = {
-      semmeltv = flake-parts-lib.importApply ./modules/kiosk.nix { inherit (inputs) crane nixpkgs; };
+      semmeltv = flake-parts-lib.importApply ./modules/kiosk.nix {
+        inherit (inputs) crane nixpkgs;
+        vpnConfinement = inputs.vpn-confinement.nixosModules.default;
+        agenix = inputs.agenix.nixosModules.default;
+      };
       hailo = ./hailo/module.nix;
     };
   };

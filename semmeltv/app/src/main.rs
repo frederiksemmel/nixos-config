@@ -7,6 +7,7 @@ mod cec;
 mod command;
 mod details;
 mod display;
+mod downloads;
 mod fetch;
 mod heatmap;
 mod imdb;
@@ -46,7 +47,7 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|understand TEXT|hear WAV] [--library DIR] [--meta DIR] [--cache DIR]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV] [--library DIR] [--meta DIR] [--cache DIR]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -111,7 +112,7 @@ fn parse_args() -> Result<Args, String> {
     while let Some(argument) = raw.next() {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
-            "ui" | "list" | "artwork" | "import" => args.mode = argument,
+            "ui" | "list" | "artwork" | "import" | "downloads" => args.mode = argument,
             "understand" => {
                 args.transcript = value("understand")?;
                 args.mode = argument;
@@ -212,6 +213,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
         led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
+        downloads: env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new),
         api: args.api.map(|address| api::Config {
             address,
             phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
@@ -287,6 +289,39 @@ fn run_artwork(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
+fn env_text(name: &str) -> Option<String> {
+    env::var(name).ok().filter(|value| !value.is_empty())
+}
+
+fn env_number(name: &str, default: u64) -> Result<u64, String> {
+    env_text(name).map_or(Ok(default), |value| {
+        value.parse().map_err(|_| format!("{name} is not a number: {value}"))
+    })
+}
+
+fn run_downloads(args: &Args) -> Result<(), String> {
+    const GIB: u64 = 1024 * 1024 * 1024;
+    let needed = |name: &str| env_text(name).ok_or(format!("downloads needs {name}"));
+    let token_file = args.token_file.as_ref().ok_or("downloads needs TMDB_TOKEN_FILE")?;
+    let token = fs::read_to_string(token_file).map_err(|error| format!("{}: {error}", token_file.display()))?;
+    downloads::run(downloads::Config {
+        listen: env_text("SEMMELTV_DOWNLOADS_LISTEN").unwrap_or_else(|| "127.0.0.1:8092".to_string()),
+        state: needed("SEMMELTV_DOWNLOADS_STATE")?.into(),
+        downloads: needed("SEMMELTV_DOWNLOADS_DIR")?.into(),
+        torznab: needed("SEMMELTV_TORZNAB")?.split_whitespace().map(str::to_string).collect(),
+        torznab_key_file: env_path("SEMMELTV_TORZNAB_KEY_FILE"),
+        rqbit: needed("SEMMELTV_RQBIT")?,
+        quota: env_number("SEMMELTV_DOWNLOADS_QUOTA_GIB", 30)? * GIB,
+        reserve: env_number("SEMMELTV_DOWNLOADS_RESERVE_GIB", 10)? * GIB,
+        meta: args.meta().to_path_buf(),
+        remote: needed("SEMMELTV_LIBRARY_REMOTE")?,
+        mount_unit: env_text("SEMMELTV_MOUNT_UNIT").unwrap_or_else(|| "semmeltv-mount.service".to_string()),
+        sync_unit: env_text("SEMMELTV_SYNC_UNIT").unwrap_or_else(|| "semmeltv-sync.service".to_string()),
+        tmdb_token: token.trim().to_string(),
+        mdblist: mdblist_client(args)?,
+    })
+}
+
 fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
     let path = args.recording.as_ref().ok_or("hear needs a WAV file")?;
     let speech = args
@@ -346,6 +381,7 @@ fn run() -> Result<(), String> {
         ),
         "artwork" => run_artwork(&args)?,
         "import" => run_import(&args)?,
+        "downloads" => run_downloads(&args)?,
         "hear" => hear(&args, &cache)?,
         _ => run_ui(args, cache)?,
     }

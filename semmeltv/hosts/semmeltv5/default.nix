@@ -1,4 +1,13 @@
-{ flake, nixos-raspberrypi, ... }:
+{
+  config,
+  flake,
+  nixos-raspberrypi,
+  ...
+}:
+let
+  wireguard = ../../../secrets/mullvad_wireguard.age;
+  vpn = builtins.pathExists wireguard;
+in
 {
   imports = with nixos-raspberrypi.nixosModules; [
     ../common.nix
@@ -14,7 +23,7 @@
   networking.hostName = "semmeltv5";
 
   services.semmeltv = {
-    offlineCacheGiB = 80;
+    offlineCacheGiB = 60;
     tv = {
       kind = "samsung";
       renderer = "http://192.168.1.148:9197/dmr";
@@ -25,7 +34,14 @@
       tailscale = true;
       funnel = true;
     };
+    downloads = {
+      enable = true;
+      wireguardConfigFile = if vpn then config.age.secrets.mullvad_wireguard.path else null;
+      testWithoutVpn = !vpn;
+    };
   };
+
+  age.secrets = if vpn then { mullvad_wireguard.file = wireguard; } else { };
 
   hardware.hailo = {
     enable = true;

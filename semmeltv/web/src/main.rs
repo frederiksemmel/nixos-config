@@ -1,6 +1,7 @@
 mod api;
 mod brand;
 mod controls;
+mod downloads;
 mod layout;
 mod live;
 mod pages;
@@ -21,9 +22,11 @@ const USAGE: &str = "usage: semmeltv-web [bundle DIR]
 
 Serves the SemmelTV web app on HOST:PORT (default 127.0.0.1:3000).
 SEMMELTV_API_URL is the TV's API (default http://127.0.0.1:8090).
+SEMMELTV_DOWNLOADS_URL is the downloads service (default http://127.0.0.1:8092).
 SEMMELTV_API_PUBLIC_URL is where browsers reach that API (default: this origin).
 SEMMELTV_WEB_ASSETS is the asset bundle; without it the app bundles itself.";
 const DEFAULT_API: &str = "http://127.0.0.1:8090";
+const DEFAULT_DOWNLOADS: &str = "http://127.0.0.1:8092";
 
 fn bundle(dir: &PathBuf) -> Result<(), String> {
     let exe = env::current_exe().map_err(|error| error.to_string())?;
@@ -46,10 +49,17 @@ fn assets() -> Result<AssetBundle, String> {
     AssetBundle::load_dir(&dir).map_err(|error| format!("{}: {error}", dir.display()))
 }
 
-fn router(api: api::Api, live: live::Live, public: public::Public, assets: AssetBundle) -> Router {
+fn router(
+    api: api::Api,
+    downloads: downloads::Downloads,
+    live: live::Live,
+    public: public::Public,
+    assets: AssetBundle,
+) -> Router {
     Router::builder()
         .discover()
         .app_context(api)
+        .app_context(downloads)
         .app_context(live)
         .app_context(public)
         .assets(assets)
@@ -65,7 +75,10 @@ async fn serve() -> Result<(), String> {
     let public = public::Public {
         api: env::var("SEMMELTV_API_PUBLIC_URL").unwrap_or_default(),
     };
-    topcoat::start(router(api, live, public, assets))
+    let downloads = downloads::Downloads::new(
+        env::var("SEMMELTV_DOWNLOADS_URL").unwrap_or_else(|_| DEFAULT_DOWNLOADS.to_string()),
+    );
+    topcoat::start(router(api, downloads, live, public, assets))
         .await
         .map_err(|error| error.to_string())
 }

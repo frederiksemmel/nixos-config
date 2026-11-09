@@ -34,6 +34,10 @@ in
     fstux
   ];
   "semmeltv_ssh_key.age".publicKeys = [ frederik ];
+  "mullvad_wireguard.age".publicKeys = [
+    frederik
+    semmeltv5
+  ];
   "tmdb_token.age".publicKeys = [
     frederik
     semmeltv5

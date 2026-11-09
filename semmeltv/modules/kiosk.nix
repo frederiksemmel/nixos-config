@@ -1,4 +1,9 @@
-{ crane, nixpkgs }:
+{
+  crane,
+  nixpkgs,
+  vpnConfinement,
+  agenix,
+}:
 {
   config,
   lib,
@@ -10,7 +15,10 @@ let
   blankCursor = pkgs.callPackage ../app/blank-cursor.nix { };
 in
 {
-  imports = [ (import ./web.nix { inherit crane nixpkgs; }) ];
+  imports = [
+    (import ./web.nix { inherit crane nixpkgs; })
+    (import ./downloads.nix { inherit nixpkgs vpnConfinement agenix; })
+  ];
 
   options.services.semmeltv = {
     enable = lib.mkEnableOption "the SemmelTV kiosk, the app full screen in cage on tty1";

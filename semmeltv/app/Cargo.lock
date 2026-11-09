@@ -3954,6 +3954,7 @@ dependencies = [
  "image",
  "libc",
  "regex",
+ "roxmltree",
  "rustls",
  "serde",
  "serde_json",

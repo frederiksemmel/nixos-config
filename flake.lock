@@ -683,7 +683,8 @@
         "nixos-raspberrypi": "nixos-raspberrypi",
         "nixpkgs": "nixpkgs_5",
         "treefmt-nix": "treefmt-nix_2",
-        "veila": "veila"
+        "veila": "veila",
+        "vpn-confinement": "vpn-confinement"
       }
     },
     "systems": {
@@ -792,6 +793,21 @@
       "original": {
         "owner": "naurissteins",
         "repo": "Veila",
+        "type": "github"
+      }
+    },
+    "vpn-confinement": {
+      "locked": {
+        "lastModified": 1791310298,
+        "narHash": "sha256-SpqEEuyrkzTqjIHwHrZE+Rs6ez2tzIeYkSY67zp6fcQ=",
+        "owner": "Maroka-chan",
+        "repo": "VPN-Confinement",
+        "rev": "cc37bcf5000e237709e725a9cda010a5cbce3111",
+        "type": "github"
+      },
+      "original": {
+        "owner": "Maroka-chan",
+        "repo": "VPN-Confinement",
         "type": "github"
       }
     },

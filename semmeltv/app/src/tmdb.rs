@@ -32,6 +32,7 @@ impl Kind {
 pub struct Found {
     pub id: u64,
     pub name: String,
+    pub original: Option<String>,
     pub date: String,
     pub backdrop: Option<String>,
     pub poster: Option<String>,
@@ -82,9 +83,20 @@ pub struct SeasonEpisode {
     pub name: Option<String>,
     pub still_path: Option<String>,
     pub runtime: Option<u32>,
+    #[serde(default)]
+    pub air_date: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ExternalIds {
+    imdb_id: Option<String>,
 }
 
 impl Season {
+    pub fn episodes(&self) -> &[SeasonEpisode] {
+        &self.episodes
+    }
+
     pub fn episode(&self, number: u32) -> Option<&SeasonEpisode> {
         self.episodes.iter().find(|episode| episode.episode_number == number)
     }
@@ -95,6 +107,7 @@ impl From<&Record> for Found {
         Self {
             id: record.id,
             name: record.title.clone().unwrap_or_default(),
+            original: record.original_title.clone(),
             date: record.release_date.clone().unwrap_or_default(),
             backdrop: record.backdrop_path.clone(),
             poster: record.poster_path.clone(),
@@ -242,6 +255,11 @@ impl Client {
 
     pub fn season(&self, id: u64, season: u32) -> Result<Season, ureq::Error> {
         self.get(&format!("{API}/tv/{id}/season/{season}"), &[])
+    }
+
+    pub fn imdb(&self, kind: Kind, id: u64) -> Result<Option<String>, ureq::Error> {
+        let ids: ExternalIds = self.get(&format!("{API}/{}/{id}/external_ids", kind.path()), &[])?;
+        Ok(ids.imdb_id.filter(|imdb| !imdb.is_empty()))
     }
 
     pub fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, ureq::Error> {

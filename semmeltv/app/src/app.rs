@@ -6,6 +6,8 @@ use crate::cec;
 use crate::command::Command;
 use crate::details::{self, Details, Ratings};
 use crate::display;
+use crate::downloads::remote::Downloads;
+use crate::downloads::{Outcome as Started, Proposal};
 use crate::fetch;
 use crate::heatmap;
 use crate::intent::{self, Action, Control};
@@ -37,7 +39,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
 const VOICE_RESULT_TIME: Duration = Duration::from_secs(6);
@@ -46,6 +48,7 @@ const EMPTY_LIBRARY: &str = "The library is empty";
 const OUT_OF_REACH: &str = "Not downloaded, and pCloud can't be reached right now";
 const NOTHING_PLAYING: &str = "Nothing is playing";
 const PLAYBACK_EVERY: Duration = Duration::from_millis(500);
+const OFFER_TIME: Duration = Duration::from_secs(60);
 
 #[derive(Clone, Copy)]
 enum Screen {
@@ -57,6 +60,19 @@ enum Input {
     Command(Command),
     Request(Pending),
     Stop,
+    Download(Found),
+}
+
+enum Found {
+    Proposal(Proposal),
+    Started(Started),
+    Failed(String),
+}
+
+struct Offer {
+    proposal: String,
+    label: String,
+    until: Instant,
 }
 
 #[derive(Clone)]
@@ -105,6 +121,7 @@ pub struct Setup {
     pub led: Option<Led>,
     pub api: Option<api::Config>,
     pub tv: tv::Settings,
+    pub downloads: Option<Downloads>,
 }
 
 struct Playing {
@@ -146,6 +163,8 @@ struct App {
     now_playing: Option<NowPlaying>,
     subtitles: Subtitles,
     television: Television,
+    downloads: Option<Downloads>,
+    offer: Option<Offer>,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -162,6 +181,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         led,
         api,
         tv,
+        downloads,
     } = setup;
     let ui = AppWindow::new()?;
     splash_after_first_frame(&ui);
@@ -246,6 +266,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         now_playing: None,
         subtitles,
         television: television.clone(),
+        downloads,
+        offer: None,
     }));
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
@@ -272,6 +294,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
                         let _ = reply.send(outcome);
                     }
                     Input::Stop => app.borrow().control(Control::Stop),
+                    Input::Download(found) => app.borrow_mut().download_found(found),
                 }
             }
         }
@@ -739,6 +762,11 @@ impl App {
             self.show_voice("", "Listening…", None);
             return;
         }
+        if let Heard::Transcript(text) = &heard
+            && self.answer_offer(text)
+        {
+            return;
+        }
         let action = match &heard {
             Heard::Transcript(text) if !text.is_empty() => {
                 eprintln!("heard: {text}");
@@ -840,7 +868,8 @@ impl App {
             Action::Play(_) => true,
             Action::Control(control) if control.is_tv() => true,
             Action::Control(_) => self.player.is_some(),
-            Action::Download { .. } | Action::Refuse(_) => false,
+            Action::Download { .. } => self.downloads.is_some(),
+            Action::Refuse(_) => false,
         };
         self.act(action);
         self.publish_playback();
@@ -1064,10 +1093,17 @@ impl App {
                     .unwrap_or_else(|| path.display().to_string());
                 format!("Playing {title}")
             }
-            Action::Download { title, season } => match season {
-                Some(season) => format!("Download {title} season {season} (not set up yet)"),
-                None => format!("Download {title} (not set up yet)"),
-            },
+            Action::Download { title, season, episode } => {
+                let what = match (season, episode) {
+                    (Some(season), Some(episode)) => format!("{title} season {season} episode {episode}"),
+                    (Some(season), None) => format!("{title} season {season}"),
+                    _ => title.clone(),
+                };
+                match self.downloads {
+                    Some(_) => format!("Looking for {what}…"),
+                    None => format!("Download {what} (downloading is not set up)"),
+                }
+            }
             Action::Refuse(reason) => reason.clone(),
             Action::Control(control) => {
                 let name = match control {
@@ -1097,7 +1133,8 @@ impl App {
                 }
                 None => self.play(&path),
             },
-            Action::Download { .. } | Action::Refuse(_) => {}
+            Action::Download { title, season, episode } => self.look_for(title, season, episode),
+            Action::Refuse(_) => {}
             Action::Control(control) => self.control(control),
         }
     }
@@ -1123,6 +1160,114 @@ impl App {
             (Control::Mute, Some(player)) => player.set_muted(true),
             (Control::Unmute, Some(player)) => player.set_muted(false),
         }
+    }
+
+    fn look_for(&mut self, title: String, season: Option<u32>, episode: Option<u32>) {
+        let Some(downloads) = self.downloads.clone() else {
+            return;
+        };
+        self.offer = None;
+        let keys = self.keys.clone();
+        let said = match season {
+            Some(season) => format!("{title} season {season}"),
+            None => title.clone(),
+        };
+        thread::spawn(move || {
+            let found = match downloads.search(title, season, episode, said) {
+                Ok(proposal) => Found::Proposal(proposal),
+                Err(error) => Found::Failed(error),
+            };
+            keys.deliver(Input::Download(found));
+        });
+    }
+
+    fn download_found(&mut self, found: Found) {
+        match found {
+            Found::Proposal(proposal) => {
+                let heading = proposal.label.clone().unwrap_or_else(|| proposal.asked.clone());
+                match proposal.choices.first().filter(|_| proposal.ok) {
+                    Some(best) => {
+                        self.tell_download(
+                            &heading,
+                            &format!("{}. Say “yes” to download it, or confirm on the phone.", best.facts),
+                            OFFER_TIME,
+                            true,
+                        );
+                        self.offer = Some(Offer {
+                            proposal: proposal.id,
+                            label: heading,
+                            until: Instant::now() + OFFER_TIME,
+                        });
+                    }
+                    None => {
+                        let status = match proposal.question {
+                            Some(_) => format!("{} Choose on the phone's Downloads page.", proposal.message),
+                            None => proposal.message,
+                        };
+                        self.tell_download(&heading, &status, VOICE_RESULT_TIME, false);
+                    }
+                }
+            }
+            Found::Started(outcome) => self.tell_download("", &outcome.message, VOICE_RESULT_TIME, outcome.ok),
+            Found::Failed(error) => {
+                eprintln!("{error}");
+                self.tell_download("", "The download service did not answer", VOICE_RESULT_TIME, false);
+            }
+        }
+    }
+
+    fn tell_download(&self, heading: &str, status: &str, hold: Duration, understood: bool) {
+        self.bus.voice(VoiceEvent::Heard {
+            text: heading.trim_matches(['“', '”']).to_string(),
+            action: status.to_string(),
+            understood,
+        });
+        self.show_voice(heading, status, Some(hold));
+    }
+
+    fn answer_offer(&mut self, text: &str) -> bool {
+        let Some(offer) = self.offer.take().filter(|offer| offer.until > Instant::now()) else {
+            return false;
+        };
+        let Some(yes) = intent::reply(text) else {
+            self.offer = Some(offer);
+            return false;
+        };
+        let Some(downloads) = self.downloads.clone() else {
+            return false;
+        };
+        if std::mem::take(&mut self.unmute_after_listening)
+            && let Some(player) = &self.player
+        {
+            player.set_muted(false);
+        }
+        eprintln!("heard: {text}");
+        if !yes {
+            let _ = downloads.dismiss(&offer.proposal);
+            self.tell_download(
+                &format!("“{text}”"),
+                &format!("Not downloading {}", offer.label),
+                VOICE_RESULT_TIME,
+                true,
+            );
+            return true;
+        }
+        let status = format!("Starting {}…", offer.label);
+        self.bus.voice(VoiceEvent::Heard {
+            text: text.to_string(),
+            action: status.clone(),
+            understood: true,
+        });
+        self.show_voice(&format!("“{text}”"), &status, None);
+        let keys = self.keys.clone();
+        thread::spawn(move || {
+            let found = match downloads.confirm(&offer.proposal) {
+                Ok(outcome) => Found::Started(outcome),
+                Err(error) => Found::Failed(error),
+            };
+            keys.deliver(Input::Download(found));
+        });
+        true
     }
 
     fn tell(&self, text: &str) {

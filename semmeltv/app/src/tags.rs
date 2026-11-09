@@ -75,7 +75,7 @@ pub fn from_path(path: &str) -> Tags {
         .fold(Tags::default(), Tags::or)
 }
 
-fn from_name(name: &str) -> Tags {
+pub fn from_name(name: &str) -> Tags {
     let name = name.to_lowercase().replace('_', " ");
     Tags {
         video: video(&name),

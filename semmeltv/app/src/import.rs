@@ -107,7 +107,7 @@ fn print_report(report: &Report, review_total: usize) {
     );
 }
 
-fn identify(client: Option<&Client>, query: &Query) -> Option<Identity> {
+pub fn identify(client: Option<&Client>, query: &Query) -> Option<Identity> {
     let client = client?;
     let lookup = match query.kind {
         Kind::Tv => client.search_tv(query.title, query.year),
