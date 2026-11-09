@@ -308,7 +308,7 @@ let
         "orange"
         "red"
       ]}
-      out=$(claudebar --format 'Claudio {session_pct}% · {session_reset}' \
+      out=$(claudebar --format 'Claudio {weekly_pct}% · {weekly_reset}' \
         --color-low "$green" --color-mid "$yellow" --color-high "$orange" --color-critical "$red")
       # ironbar sets tooltips as plain text, not pango markup.
       ironbar var set claude_tooltip "$(jq -r '.tooltip | gsub("<[^>]*>"; "") | gsub("&lt;"; "<") | gsub("&gt;"; ">") | gsub("&amp;"; "&")' <<<"$out")" >/dev/null || true
