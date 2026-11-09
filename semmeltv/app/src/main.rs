@@ -9,6 +9,7 @@ mod details;
 mod display;
 mod downloads;
 mod fetch;
+mod hdmi;
 mod heatmap;
 mod imdb;
 mod import;

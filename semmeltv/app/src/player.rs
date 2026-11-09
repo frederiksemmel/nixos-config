@@ -1,5 +1,6 @@
 use crate::command::Command;
 use crate::display::{self, Video};
+use crate::hdmi;
 use crate::overlay::{self, View};
 use crate::progress::Place;
 use crate::seek::{self, Direction, Order, Scrub};
@@ -23,6 +24,7 @@ const SAVE_EVERY: f64 = 30.0;
 const PLAY_STEP: f64 = 2.0;
 const SHOWN_FOR: Duration = Duration::from_secs(4);
 const TICK: Duration = Duration::from_millis(100);
+const HDMI_EVERY: Duration = Duration::from_secs(2);
 const LONG_JUMP: i32 = 60;
 const SAY_FOR: Duration = Duration::from_secs(3);
 const OSD_FONT: &str = "Inter";
@@ -269,6 +271,14 @@ impl Playback {
             self.toast("", &answer.message, now + SAY_FOR);
         }
         answer
+    }
+
+    fn restore_audio(&mut self) {
+        let (playing, wanted) = self.subtitles.audio();
+        if let Some(command) = hdmi::restore_audio(playing, wanted) {
+            eprintln!("HDMI connected again, restoring audio: {command}");
+            self.send(command);
+        }
     }
 
     fn hide_toast(&mut self) {
@@ -624,6 +634,8 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             if let Ok(events) = events {
                 let ticking = shared.clone();
                 thread::spawn(move || tick(&ticking));
+                let watching = shared.clone();
+                thread::spawn(move || watch_hdmi(&watching));
                 let shared = shared.clone();
                 thread::spawn(move || listen(events, &shared, title));
             }
@@ -693,6 +705,23 @@ fn tick(shared: &Shared) {
             playback.tick(Instant::now());
         }
         thread::sleep(TICK);
+    }
+}
+
+fn watch_hdmi(shared: &Shared) {
+    let mut plug = hdmi::Plug::default();
+    loop {
+        let plugged_in = plug.plugged_in(hdmi::connected());
+        {
+            let mut playback = shared.lock().unwrap();
+            if playback.closed {
+                return;
+            }
+            if plugged_in {
+                playback.restore_audio();
+            }
+        }
+        thread::sleep(HDMI_EVERY);
     }
 }
 

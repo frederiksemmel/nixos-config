@@ -245,6 +245,8 @@ pub struct Playing {
     pub tracks: Vec<Track>,
     pub audio: Option<i64>,
     pub audio_tracks: Vec<Track>,
+    #[serde(skip)]
+    pub wanted_audio: Option<i64>,
 }
 
 impl Playing {
@@ -453,13 +455,25 @@ impl Subtitles {
                 playing.audio_tracks = audio;
             }
             Observed::Track(track) => playing.track = track,
-            Observed::Audio(track) => playing.audio = track,
+            Observed::Audio(track) => {
+                playing.audio = track;
+                if track.is_some() {
+                    playing.wanted_audio = track;
+                }
+            }
             Observed::Visible(visible) => playing.visible = visible,
         }
     }
 
+    pub fn audio(&self) -> (Option<i64>, Option<i64>) {
+        self.playing().map_or((None, None), |playing| {
+            let first = playing.audio_tracks.first().map(|track| track.id);
+            (playing.audio, playing.wanted_audio.or(first))
+        })
+    }
+
     pub fn change(&self, change: Change) -> Answer {
-        let state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let playing = state.playing.clone().unwrap_or_default();
         match change {
             Change::Restyle => {
@@ -473,7 +487,15 @@ impl Subtitles {
             }
             Change::Toggle => playing.toggle(&state.settings.languages),
             Change::Track(track) => playing.choose(track).map_or_else(Answer::refused, Answer::done),
-            Change::Audio(track) => playing.choose_audio(track).map_or_else(Answer::refused, Answer::done),
+            Change::Audio(track) => match playing.choose_audio(track) {
+                Ok(done) => {
+                    if let Some(playing) = state.playing.as_mut() {
+                        playing.wanted_audio = Some(track);
+                    }
+                    Answer::done(done)
+                }
+                Err(refused) => Answer::refused(refused),
+            },
         }
     }
 }
@@ -774,6 +796,7 @@ mod tests {
         subtitles.started();
         let tracks = Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap();
         subtitles.observe(tracks);
+        assert_eq!(subtitles.audio(), (None, Some(1)), "without a track that played, the file's first audio track");
         subtitles.observe(Observed::Track(Some(1)));
         subtitles.observe(Observed::Visible(true));
         assert_eq!(subtitles.change(Change::Toggle).message, "Subtitles off");
@@ -781,6 +804,8 @@ mod tests {
         subtitles.observe(Observed::Visible(false));
         subtitles.observe(Observed::Audio(Some(1)));
         assert_eq!(subtitles.chosen(), (None, Some(1)));
+        subtitles.observe(Observed::Audio(None));
+        assert_eq!(subtitles.audio(), (None, Some(1)), "a lost audio output keeps the track to come back to");
         subtitles.stopped();
         assert_eq!(subtitles.playing(), None);
     }
