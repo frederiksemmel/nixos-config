@@ -312,12 +312,31 @@ pub fn titles(
     if let Some(owner) = activity.playing.and_then(|path| owners.get(path)) {
         keep(owner.title.clone(), Keep::Playing, &mut titles);
     }
+    for cached in &mut titles {
+        for file in &cached.files {
+            let reason = if activity.playing == Some(file.path.as_path()) {
+                Keep::Playing
+            } else if activity.queued.contains(&file.path) {
+                Keep::UpNext
+            } else if progress
+                .files
+                .get(&file.path)
+                .is_some_and(|watched| watched.stopped_at.is_some())
+            {
+                Keep::Started
+            } else {
+                continue;
+            };
+            cached.keep = Some(cached.keep.map_or(reason, |kept| kept.min(reason)));
+        }
+    }
     titles
 }
 
 #[derive(Clone, Debug)]
 pub struct Cache {
     pub library: PathBuf,
+    pub manifest: PathBuf,
     pub data: PathBuf,
     pub meta: PathBuf,
     pub marks: Marks,
@@ -686,10 +705,45 @@ mod tests {
     }
 
     #[test]
+    fn files_in_use_are_kept_even_when_the_library_does_not_list_them() {
+        let progress = Progress {
+            files: [(
+                PathBuf::from("/lib/Movies/Gone/Gone.mkv"),
+                Watched {
+                    stopped_at: Some(60.0),
+                    ..Watched::default()
+                },
+            )]
+            .into(),
+            ..Progress::default()
+        };
+        let files = vec![
+            stored("/lib/Movies/Playing/Playing.mkv", 10, 10, 1),
+            stored("/lib/Movies/Queued/Queued.mkv", 10, 10, 1),
+            stored("/lib/Movies/Gone/Gone.mkv", 10, 10, 1),
+            stored("/lib/Movies/Stale/Stale.mkv", 10, 10, 1),
+        ];
+        let playing = PathBuf::from("/lib/Movies/Playing/Playing.mkv");
+        let queued = [PathBuf::from("/lib/Movies/Queued/Queued.mkv")];
+        let activity = Activity {
+            playing: Some(&playing),
+            queued: &queued,
+        };
+        let titles = titles(Path::new("/lib"), &Library::default(), &progress, files, &activity);
+        let keep = |key: &str| find(&titles, &Title::Other(format!("Movies/{key}"))).keep;
+        assert_eq!(keep("Playing"), Some(Keep::Playing));
+        assert_eq!(keep("Queued"), Some(Keep::UpNext));
+        assert_eq!(keep("Gone"), Some(Keep::Started));
+        assert_eq!(keep("Stale"), None);
+        assert_eq!(keys(&titles, &order(&titles)), ["Stale"]);
+    }
+
+    #[test]
     fn removing_a_title_deletes_its_data_and_metadata_files_only() {
         let root = std::env::temp_dir().join(format!("semmeltv-storage-{}", std::process::id()));
         let cache = Cache {
             library: PathBuf::from("/lib"),
+            manifest: root.clone(),
             data: root.join("vfs"),
             meta: root.join("vfsMeta"),
             marks: MARKS,

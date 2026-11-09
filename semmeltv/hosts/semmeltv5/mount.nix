@@ -102,6 +102,11 @@ in
       };
     });
 
+    systemd.services.cage-tty1 = {
+      after = [ "semmeltv-mount.service" ];
+      wants = [ "semmeltv-mount.service" ];
+    };
+
     systemd.services.semmeltv-mount = {
       description = "Read-only pCloud mount for SemmelTV";
       wantedBy = [ "multi-user.target" ];

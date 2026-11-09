@@ -185,6 +185,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     let storage = match (&args.vfs_cache, env_path("SEMMELTV_VFS_CACHE_META"), capacity) {
         (Some(data), Some(meta), Some(capacity)) => Some(storage::Cache {
             library: args.library.clone(),
+            manifest: args.meta().to_path_buf(),
             data: data.clone(),
             meta,
             marks: storage::Marks::new(capacity),

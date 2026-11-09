@@ -1,4 +1,5 @@
 use crate::api::{Api, Download, Storage, TitleKey};
+use crate::layout::back;
 use std::time::{SystemTime, UNIX_EPOCH};
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
@@ -204,6 +205,7 @@ async fn storage_page(cx: &Cx) -> Result<impl View> {
         .map(|title| (title.name.clone(), title.bytes));
     Ok(view! {
         <article class="storage">
+            back(href: "/")
             <h1>"Storage"</h1>
             <section class="settings">
                 <h2>"Disk"</h2>

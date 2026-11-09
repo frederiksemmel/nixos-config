@@ -847,18 +847,20 @@ impl App {
         Outcome { message, ok }
     }
 
-    fn cached_titles(&self, cache: &storage::Cache) -> Vec<storage::Cached> {
+    fn cached_titles(&self, cache: &storage::Cache) -> Result<Vec<storage::Cached>, String> {
+        let manifest = library::read_manifest(&cache.manifest)?;
+        let library = Library::from_manifest(&cache.library, &manifest, |_| true);
         let activity = storage::Activity {
             playing: self.playing.as_ref().map(|playing| playing.file.as_path()),
             queued: &self.requested,
         };
-        storage::titles(
+        Ok(storage::titles(
             &cache.library,
-            self.nav.library(),
+            &library,
             &self.progress,
             cache.scan(),
             &activity,
-        )
+        ))
     }
 
     fn tend_storage(&mut self) {
@@ -869,7 +871,10 @@ impl App {
             Ok(disk) => disk,
             Err(error) => return eprintln!("storage: {}: {error}", cache.data.display()),
         };
-        let titles = self.cached_titles(&cache);
+        let titles = match self.cached_titles(&cache) {
+            Ok(titles) => titles,
+            Err(error) => return eprintln!("storage: not tending the offline cache: {error}"),
+        };
         let used: u64 = titles.iter().map(|title| title.bytes).sum();
         let excess = storage::excess(used, disk.free, cache.marks);
         let chosen = storage::plan(&titles, used, disk.free, cache.marks);
@@ -909,12 +914,10 @@ impl App {
         let Some(cache) = &self.storage else {
             return;
         };
-        match cache.disk() {
-            Ok(disk) => self
-                .shared
-                .storage
-                .set(storage::Report::new(disk, cache.marks, self.cached_titles(cache))),
-            Err(error) => eprintln!("storage: {}: {error}", cache.data.display()),
+        match (cache.disk(), self.cached_titles(cache)) {
+            (Ok(disk), Ok(titles)) => self.shared.storage.set(storage::Report::new(disk, cache.marks, titles)),
+            (Err(error), _) => eprintln!("storage: {}: {error}", cache.data.display()),
+            (_, Err(error)) => eprintln!("storage: {error}"),
         }
     }
 
@@ -924,7 +927,10 @@ impl App {
         let Some(cache) = self.storage.clone() else {
             return refuse("This TV keeps no downloads".to_string());
         };
-        let titles = self.cached_titles(&cache);
+        let titles = match self.cached_titles(&cache) {
+            Ok(titles) => titles,
+            Err(error) => return refuse(error),
+        };
         let Some(cached) = titles.iter().find(|cached| cached.title == title) else {
             return refuse("That title is not downloaded".to_string());
         };
