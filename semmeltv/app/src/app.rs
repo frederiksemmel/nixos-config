@@ -144,6 +144,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         api,
     } = setup;
     let ui = AppWindow::new()?;
+    splash_after_first_frame(&ui);
     let handle = ui.as_weak();
     let images = loader::spawn(move |target, pixels| {
         let handle = handle.clone();
@@ -304,6 +305,21 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         notify_watch,
     );
     ui.run()
+}
+
+fn splash_after_first_frame(ui: &AppWindow) {
+    let handle = ui.as_weak();
+    let notified = ui.window().set_rendering_notifier(move |state, _| {
+        if let slint::RenderingState::AfterRendering = state
+            && let Some(ui) = handle.upgrade()
+            && !ui.get_painted()
+        {
+            ui.set_painted(true);
+        }
+    });
+    if notified.is_err() {
+        ui.set_painted(true);
+    }
 }
 
 fn show_image(ui: &AppWindow, target: Target, pixels: Pixels) {

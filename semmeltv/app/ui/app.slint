@@ -330,6 +330,9 @@ export component AppWindow inherits Window {
     callback position-saved();
 
     property <length> u: self.height / 1080;
+    in property <bool> painted;
+    property <bool> splash-in;
+    property <bool> splash-out;
 
     title: "SemmelTV";
     no-frame: true;
@@ -344,11 +347,21 @@ export component AppWindow inherits Window {
             root.key(event.text) ? accept : reject
         }
 
+        Image {
+            x: 96 * root.u;
+            y: 40 * root.u;
+            height: 52 * root.u;
+            width: self.height * self.source.width / self.source.height;
+            source: @image-url("../../assets/logo/semmeltv-dark.png");
+            opacity: root.show-open || root.home-row > 0 ? 0 : 1;
+            animate opacity { duration: 200ms; }
+        }
+
         home := ShelfStack {
             x: 96 * root.u;
-            y: 96 * root.u;
+            y: 132 * root.u;
             width: parent.width - 192 * root.u;
-            height: parent.height - 152 * root.u;
+            height: parent.height - 188 * root.u;
             u: root.u;
             shelves: root.home-shelves;
             focus-row: root.home-row;
@@ -363,6 +376,12 @@ export component AppWindow inherits Window {
             spacing: 24 * root.u;
             padding-left: 200 * root.u;
             padding-right: 200 * root.u;
+
+            Image {
+                height: 200 * root.u;
+                source: @image-url("../../assets/logo/semmel.png");
+                image-fit: contain;
+            }
 
             Text {
                 text: "Nothing to watch yet";
@@ -654,6 +673,40 @@ export component AppWindow inherits Window {
             x: (parent.width - self.width) / 2;
             y: parent.height - 160 * root.u - self.height
                 - (voice-toast.visible ? voice-toast.height + 24 * root.u : 0);
+        }
+    }
+
+    Timer {
+        interval: 150ms;
+        running: root.painted && !root.splash-in;
+        triggered => {
+            root.splash-in = true;
+        }
+    }
+
+    Timer {
+        interval: 650ms;
+        running: root.splash-in && !root.splash-out;
+        triggered => {
+            root.splash-out = true;
+        }
+    }
+
+    Rectangle {
+        background: root.background;
+        opacity: root.splash-out ? 0 : 1;
+        visible: self.opacity > 0;
+        animate opacity { duration: 350ms; easing: ease-in-quad; }
+
+        Image {
+            source: @image-url("../../assets/logo/semmeltv-dark.png");
+            height: (root.splash-in ? 220 : 88) * root.u;
+            width: self.height * self.source.width / self.source.height;
+            x: (parent.width - self.width) / 2;
+            y: (parent.height - self.height) / 2;
+            opacity: root.splash-in ? 1 : 0;
+            animate opacity { duration: 200ms; }
+            animate height { duration: 450ms; easing: ease-out-back; }
         }
     }
 }

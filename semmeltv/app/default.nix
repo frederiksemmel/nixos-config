@@ -18,8 +18,9 @@ let
     version = "0.1.0";
 
     src = lib.fileset.toSource {
-      root = ./.;
+      root = ../.;
       fileset = lib.fileset.unions [
+        (lib.fileset.fileFilter (file: file.hasExt "svg" || file.hasExt "png" && file.name != "semmel-source.png") ../assets/logo)
         ./Cargo.lock
         ./Cargo.toml
         ./build.rs
@@ -27,6 +28,12 @@ let
         ./ui
       ];
     };
+    cargoToml = ./Cargo.toml;
+    cargoLock = ./Cargo.lock;
+    postUnpack = ''
+      cd $sourceRoot/app
+      sourceRoot=.
+    '';
 
     strictDeps = true;
 
