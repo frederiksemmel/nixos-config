@@ -1,4 +1,5 @@
 use crate::api::{Api, SubtitleSettings, SubtitleTrack, Subtitles};
+use crate::layout::back;
 use serde_json::{Value, json};
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
@@ -318,6 +319,7 @@ async fn subtitles_page(cx: &Cx) -> Result<impl View> {
     let settings = subtitles.settings.clone();
     Ok(view! {
         <article class="subtitles">
+            back(href: "/")
             <h1>"Subtitles"</h1>
             <p class="setting-note">"The yellow key on the remote shows and hides them while a video plays."</p>
             tracks(subtitles: &subtitles)

@@ -1,4 +1,5 @@
 use crate::api::{Api, NowPlaying};
+use crate::layout::back;
 use crate::live::Live;
 use crate::playing::{clock, control, seek, subtitles_icon};
 use topcoat::Result;
@@ -52,6 +53,7 @@ async fn controls_page(cx: &Cx) -> Result<impl View> {
     let abilities = app_context::<Api>(cx).tv_abilities().await.unwrap_or_default();
     Ok(view! {
         <article class="controls">
+            back(href: "/")
             <h1>"Controls"</h1>
             <section class="settings">
                 <h2>"TV"</h2>

@@ -6,10 +6,11 @@ use topcoat::asset::{Asset, asset};
 use topcoat::context::{Cx, app_context};
 use topcoat::router::{Slot, layout};
 use topcoat::runtime::link;
-use topcoat::view::{View, attributes, view};
+use topcoat::view::{View, attributes, component, view};
 
 const STYLE: Asset = asset!("./style.css");
 const MICROPHONE: Asset = asset!("./microphone.js");
+const BACK: Asset = asset!("./back.js");
 
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
@@ -33,6 +34,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <link rel="stylesheet" href=(STYLE)>
                 topcoat::runtime::script()
                 <script type="module" src=(MICROPHONE)></script>
+                <script type="module" src=(BACK)></script>
             </head>
             <body>
                 <header class="top">
@@ -61,5 +63,15 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 playing::now_playing()
             </body>
         </html>
+    })
+}
+
+#[component]
+pub async fn back(cx: &Cx, href: &'static str) -> Result<impl View> {
+    Ok(view! {
+        link(href: href, attrs: attributes! { cx => class="back" },
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5.5-6.5 6.5 6.5 6.5"></path></svg>
+            "Back"
+        )
     })
 }
