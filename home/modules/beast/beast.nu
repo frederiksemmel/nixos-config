@@ -121,6 +121,32 @@ def wait-to-retry [title: string, delay: duration, reason: string] {
   print --no-newline "\r\e[K"
 }
 
+# Makes a session attachable, moving it into the daemon if it runs elsewhere, and
+# returns its id and title. With --wait a working session is asked to pause and
+# is taken once it is idle; ctrl-c gives up.
+def take [session: string, --wait] {
+  if $wait {
+    let s = on-beast $"pause-session ($session | to json)"
+    if $s.reply != null {
+      let asked = if $s.reply == "sent" { "asked it to pause at the next safe point" } else { $"could not ask it to pause: ($s.reply)" }
+      print $"(ansi attr_dimmed)($s.title) is working, ($asked). Waiting until it is idle, ctrl-c gives up.(ansi reset)"
+      let started = date now
+      loop {
+        let status = on-beast $"session-status ($s.pid)"
+        if $status == "idle" { break }
+        if $status == "gone" {
+          print ""
+          error make --unspanned { msg: $"($s.title) ended while waiting" }
+        }
+        print --no-newline $"\r(ansi attr_dimmed)waited (((date now) - $started) // 1sec * 1sec), it is ($status)(ansi reset)\e[K"
+        sleep 3sec
+      }
+      print ""
+    }
+  }
+  on-beast $"open-session ($session | to json)"
+}
+
 # Keeps this terminal on one background session and exits with it. Only ssh
 # failing (exit 255) reconnects; on beast itself there is no connection to lose.
 def connect [id: string, title: string] {
@@ -174,7 +200,7 @@ export def main [] {
     }
   } else if $choice < $count {
     let session = $sessions | get $choice
-    connect (on-beast $"open-session ($session.session | to json)" | get id) $session.title
+    connect (take $session.session --wait=($session.state == "working") | get id) $session.title
   } else if $choice == $count {
     new
   } else {
@@ -196,12 +222,15 @@ export def list [] {
 # A session started from the app or in a terminal moves into the daemon first: its
 # process stops and the conversation resumes in the background with Remote
 # Control. The app shows that as a new conversation; don't write in the old one.
-# A session that is working is refused until it is idle.
+# A session that is working is refused, unless --wait: then a hidden Claude asks
+# it to pause at its next safe point and it is taken once it is idle. The picker
+# waits like that by itself.
 export def attach [
   session: string@complete-sessions # session id, or its start
   --title: string                   # window title, default the session's title
+  --wait (-w)                       # ask a working session to pause, take it once idle
 ] {
-  let target = on-beast $"open-session ($session | to json)"
+  let target = take $session --wait=$wait
   connect $target.id ($title | default $target.title)
 }
 

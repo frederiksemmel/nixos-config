@@ -66,6 +66,7 @@ def sessions [] {
           if $a.status? == "busy" { "working" } else { $a.status? | default "idle" }
         } else if $a.state? in [working blocked] { "starting" } else { "stopped" })
         title: ([$t.custom $t.ai $t.request $a.name?] | compact --empty | get -o 0 | default "new session" | str substring 0..<200)
+        name: $a.name?
         request: $t.request
         dir: $a.cwd
         repo: (repo-name $a.cwd)
@@ -106,7 +107,7 @@ def open-session [query: string] {
   let s = find-session $query
   if $s.host == "bg" { return { id: $s.id, title: $s.title } }
   if $s.state != "idle" {
-    error make --unspanned { msg: $"($s.title) is ($s.state), open it once it is idle" }
+    error make --unspanned { msg: $"($s.title) is ($s.state), `beast attach --wait ($s.id)` takes it once it is idle" }
   }
   if (transcript-of $s.session) == null {
     error make --unspanned { msg: $"($s.title) has no messages yet, end it and start a new session" }
@@ -136,6 +137,31 @@ def open-session [query: string] {
     sleep 200ms
   }
   error make --unspanned { msg: $"($s.title) did not start in the background, see claude logs ($id)" }
+}
+
+# Asks a working session outside the daemon to pause at its next safe point. Only
+# a Claude session can message another, so a hidden `claude -p` with nothing but
+# ListAgents and SendMessage delivers it, addressed by the session's name. The
+# message arrives once the tool call in flight returns. `reply` is null when the
+# session needs no pause, else the hidden Claude's answer: `sent`, or why not.
+def pause-session [query: string] {
+  let s = find-session $query
+  let result = { title: $s.title, pid: $s.pid, reply: null }
+  if $s.host == "bg" or $s.state != "working" { return $result }
+  if $s.name == null { return ($result | update reply "it has no name to address it by") }
+  let instructions = "Deliver one message to another Claude session. The first line of stdin is that session's name, the rest is the message. Call ListAgents and find the peer whose name is exactly that name. If exactly one peer has it, send it the message unchanged with SendMessage. If none or several have it, send nothing. Reply with only `sent`, or with why nothing was sent."
+  let message = "The user is taking this session over in a terminal. Pause at the next safe point: finish the step you are in, start nothing new, and end your turn with a one-line note of where you stopped. The user continues from there."
+  cd $env.HOME
+  let reply = $"($s.name)\n($message)"
+  | ^timeout 120 claude -p --no-session-persistence --strict-mcp-config --tools ListAgents,SendMessage --model haiku --settings '{"disableAllHooks":true}' $instructions
+  | complete | get stdout | str trim
+  $result | update reply (if $reply == "" { "the hidden Claude gave no answer" } else { $reply })
+}
+
+# A session process's status from its registry entry: busy, idle, ... or gone.
+def session-status [pid: int] {
+  if not ($"/proc/($pid)" | path exists) { return "gone" }
+  try { open ($env.HOME | path join $".claude/sessions/($pid).json") | get status } catch { "unknown" }
 }
 
 # Starts a background session with Remote Control in a directory.
