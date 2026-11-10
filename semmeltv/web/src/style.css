@@ -649,10 +649,6 @@ button.heat-cell:active { outline: 2px solid var(--text); }
 .when-paused { display: none; }
 html:has(.now-state.paused) .when-paused { display: block; }
 html:has(.now-state.paused) .when-playing { display: none; }
-html[data-flip]:not(:has(.now-state.paused)) .when-paused { display: block; }
-html[data-flip]:not(:has(.now-state.paused)) .when-playing { display: none; }
-html[data-flip]:has(.now-state.paused) .when-paused { display: none; }
-html[data-flip]:has(.now-state.paused) .when-playing { display: block; }
 
 .bar {
   position: fixed;
@@ -1708,31 +1704,3 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
 .forget:active svg { transform: scale(0.9); }
 
 /* end home rows and filters */
-
-/* Instant navigation */
-
-semmel-shell {
-  position: fixed;
-  inset: 0;
-  z-index: 15;
-  display: block;
-  overflow: hidden;
-  background: var(--bg);
-}
-
-.bone {
-  display: block;
-  height: 14px;
-  border-radius: 7px;
-  background: var(--raised);
-  animation: bone 0.9s ease-in-out infinite alternate;
-}
-
-.detail-line .bone { height: 12px; margin-top: 6px; }
-.nav-skeleton .bones { display: grid; gap: 12px; max-width: 520px; margin-top: 28px; }
-
-@keyframes bone { to { opacity: 0.45; } }
-
-@media (prefers-reduced-motion: reduce) {
-  .bone { animation: none; }
-}
