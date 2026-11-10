@@ -476,13 +476,17 @@ main {
   aspect-ratio: 16 / 9;
   max-height: 62vh;
   width: 100%;
+  background-size: 100% calc(100% - 4px);
+  background-repeat: no-repeat;
 }
+
+.hero img { height: calc(100% - 4px); }
 
 .hero::after {
   content: "";
   position: absolute;
-  inset: 0;
-  background: linear-gradient(to bottom, transparent 45%, var(--bg));
+  inset: 0 0 -2px;
+  background: linear-gradient(to bottom, transparent 45%, var(--bg) calc(100% - 6px));
 }
 
 .title-body {
