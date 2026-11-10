@@ -1,4 +1,5 @@
 use crate::api::{About, Api, Card, CastMember, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard};
+use crate::layout::back;
 use crate::playing::{play_episode, play_movie, play_show, tell};
 use crate::public::Public;
 use std::hash::{DefaultHasher, Hash, Hasher};
@@ -534,6 +535,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
     }
     Ok(view! {
         <article class="title detail">
+            back(href: "/")
             hero(public: &public, card: &movie.card)
             <div class="title-body detail-body">
                 <div class="detail-columns">
@@ -661,6 +663,7 @@ async fn show(cx: &Cx) -> Result<impl View> {
     }
     Ok(view! {
         <article class="title detail">
+            back(href: "/")
             hero(public: &public, card: &show.card)
             <div class="title-body detail-body">
                 <div class="detail-columns">

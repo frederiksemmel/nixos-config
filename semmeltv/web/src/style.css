@@ -22,6 +22,7 @@ html {
   -webkit-text-size-adjust: 100%;
   background: var(--bg);
   touch-action: manipulation;
+  overscroll-behavior-y: none;
 }
 
 input, select, textarea { font-size: 16px; }
@@ -456,7 +457,19 @@ main {
 
 /* Title pages */
 
-.title { margin: -12px calc(-1 * var(--gutter)) 0; }
+.title { position: relative; margin: -12px calc(-1 * var(--gutter)) 0; }
+
+.title > .back {
+  position: absolute;
+  z-index: 2;
+  top: 12px;
+  left: var(--gutter);
+  margin: 0;
+  background: rgba(12, 12, 16, 0.55);
+  border-color: rgba(255, 255, 255, 0.14);
+  -webkit-backdrop-filter: blur(14px) saturate(1.5);
+  backdrop-filter: blur(14px) saturate(1.5);
+}
 
 .hero {
   aspect-ratio: 16 / 9;
@@ -623,15 +636,17 @@ html:has(.now-state.paused) .when-playing { display: none; }
   padding: 0 max(0px, calc((100% - 1280px) / 2)) env(safe-area-inset-bottom);
   background: #15151b;
   border-top: 1px solid #2a2a30;
+  transform: translateZ(0);
+  will-change: transform;
 }
 
 .bar::after {
   content: "";
   position: absolute;
-  top: 100%;
+  top: calc(100% - 2px);
   left: 0;
   right: 0;
-  height: 120px;
+  height: 240px;
   background: inherit;
 }
 
