@@ -20,7 +20,9 @@ let
     src = lib.fileset.toSource {
       root = ../.;
       fileset = lib.fileset.unions [
-        (lib.fileset.fileFilter (file: file.hasExt "svg" || file.hasExt "png" && file.name != "semmel-source.png") ../assets/logo)
+        (lib.fileset.fileFilter (
+          file: file.hasExt "svg" || file.hasExt "png" && file.name != "semmel-source.png"
+        ) ../assets/logo)
         ./Cargo.lock
         ./Cargo.toml
         ./build.rs
