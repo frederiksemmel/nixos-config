@@ -44,8 +44,19 @@ in
   };
 
   perSystem =
-    { pkgs, system, ... }:
     {
+      pkgs,
+      system,
+      self',
+      ...
+    }:
+    {
+      checks = lib.optionalAttrs (system == "x86_64-linux") {
+        semmeltv-web-browser = pkgs.callPackage ./web/browser-test.nix {
+          inherit (self'.packages) semmeltv-web;
+        };
+      };
+
       packages = {
         semmeltv = pkgs.callPackage ./app { inherit (inputs) crane; };
         semmeltv-web = pkgs.callPackage ./web { inherit (inputs) crane; };

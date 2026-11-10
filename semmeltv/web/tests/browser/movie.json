@@ -1,0 +1,95 @@
+{
+ "kind": "movie",
+ "key": "the-endless-summer-1966",
+ "title": "The Endless Summer",
+ "years": "1966",
+ "subtitle": "1966",
+ "poster": "/api/movies/the-endless-summer-1966/poster",
+ "backdrop": "/api/movies/the-endless-summer-1966/backdrop",
+ "ratings": {
+  "imdb": 7.6,
+  "rotten_tomatoes": 100,
+  "fresh": true,
+  "popcorn": 91,
+  "full": true
+ },
+ "details": "HEVC · 1080p · DD+ · 1h 32m · Stopped at 36m",
+ "runtime_minutes": 91,
+ "stopped_at": 2194.484,
+ "duration": 5498.56,
+ "tags": {
+  "video": "HEVC",
+  "resolution": "1080p",
+  "audio": "DD+"
+ },
+ "about": {
+  "tagline": "The search for the perfect wave!",
+  "plot": "Documentary filmmaker Bruce Brown, himself a competition-level surfer, follows surfers Michael Hynson and Robert August on an around-the-world surfing adventure. With Brown's wry, sardonic narration and a twangy, guitar-driven instrumental soundtrack by The Sandals playing over the silent footage, Mike and Rob leave their California home to visit Hawaii, Australia, South Africa and other secluded surfing spots in a search for the surfer's holy grail that Brown dubs \"The Perfect Wave.”",
+  "genres": [
+   "Documentary"
+  ],
+  "original_title": null,
+  "language": "English",
+  "released": "1966-06-15",
+  "first_aired": null,
+  "last_aired": null,
+  "seasons": null,
+  "episodes": null,
+  "networks": [],
+  "directors": [
+   "Bruce Brown"
+  ],
+  "creators": [],
+  "certificate": {
+   "country": "US",
+   "rating": "PG"
+  },
+  "trailer": "https://www.youtube.com/watch?v=yZsuQXKkPdw",
+  "imdb": "https://www.imdb.com/title/tt0060371/",
+  "tmdb": "https://www.themoviedb.org/movie/21",
+  "cast": [
+   {
+    "name": "Michael Hynson",
+    "character": "Himself",
+    "photo": null
+   },
+   {
+    "name": "Robert August",
+    "character": "Himself",
+    "photo": "/api/people/92/photo"
+   },
+   {
+    "name": "Lord James Blears",
+    "character": "Himself",
+    "photo": null
+   },
+   {
+    "name": "Bruce Brown",
+    "character": "Narrator",
+    "photo": "/api/people/86/photo"
+   },
+   {
+    "name": "Chip Fitzwater",
+    "character": "Himself",
+    "photo": null
+   },
+   {
+    "name": "Chuck Gardner",
+    "character": "Himself",
+    "photo": null
+   },
+   {
+    "name": "Wayne Miyata",
+    "character": "Himself",
+    "photo": null
+   }
+  ],
+  "scores": {
+   "metacritic": 82,
+   "letterboxd": 3.8,
+   "ebert": 3.0
+  }
+ },
+ "last_played": 1794301644,
+ "last_played_label": "today 10:07"
+}

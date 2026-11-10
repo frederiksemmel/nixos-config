@@ -1,0 +1,15 @@
+{
+ "settings": {"shown": false, "languages": ["en", "de"], "size": 0.85, "position": 100.0, "color": "#FFFFFF", "outline": 1.65, "outline_color": "#000000", "shadow": 0.0, "background": 0.0, "restyle": false},
+ "playing": {
+  "visible": false,
+  "track": 1,
+  "tracks": [
+   {"id": 1, "language": "en", "title": "English SRT", "label": "English", "forced": false, "hearing_impaired": false, "external": false},
+   {"id": 2, "language": "fr", "title": "French SRT", "label": "French", "forced": false, "hearing_impaired": false, "external": false}
+  ],
+  "audio": 1,
+  "audio_tracks": [
+   {"id": 1, "language": "en", "title": "Dolby Digital Plus 5.1", "label": "English", "forced": false, "hearing_impaired": false, "external": false}
+  ]
+ }
+}

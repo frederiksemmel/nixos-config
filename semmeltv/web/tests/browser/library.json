@@ -1,0 +1,696 @@
+{
+ "watching": [
+  {
+   "kind": "movie",
+   "key": "the-endless-summer-1966",
+   "title": "The Endless Summer",
+   "years": "1966",
+   "subtitle": "1966",
+   "poster": "/api/movies/the-endless-summer-1966/poster",
+   "backdrop": "/api/movies/the-endless-summer-1966/backdrop",
+   "ratings": {
+    "imdb": 7.6,
+    "rotten_tomatoes": 100,
+    "fresh": true,
+    "popcorn": 91,
+    "full": true
+   },
+   "season": null,
+   "episode": null,
+   "detail": "55m left",
+   "progress": 0.3991016
+  },
+  {
+   "kind": "show",
+   "key": "brooklyn-nine-nine",
+   "title": "Brooklyn Nine-Nine",
+   "years": "2013–2021",
+   "subtitle": "10 episodes",
+   "poster": "/api/shows/brooklyn-nine-nine/poster",
+   "backdrop": "/api/shows/brooklyn-nine-nine/backdrop",
+   "ratings": {
+    "imdb": 8.4,
+    "rotten_tomatoes": 95,
+    "fresh": true,
+    "popcorn": 88,
+    "full": true
+   },
+   "season": 8,
+   "episode": 2,
+   "detail": "S8 E2 · 12m left",
+   "progress": 0.43764108
+  },
+  {
+   "kind": "show",
+   "key": "star-wars-maul-shadow-lord",
+   "title": "Star Wars: Maul - Shadow Lord",
+   "years": "2026–",
+   "subtitle": "10 episodes",
+   "poster": "/api/shows/star-wars-maul-shadow-lord/poster",
+   "backdrop": "/api/shows/star-wars-maul-shadow-lord/backdrop",
+   "ratings": {
+    "imdb": 8.5,
+    "rotten_tomatoes": 98,
+    "fresh": true,
+    "popcorn": 92,
+    "full": true
+   },
+   "season": 1,
+   "episode": 6,
+   "detail": "S1 E6 · 15m left",
+   "progress": 0.33535182
+  },
+  {
+   "kind": "movie",
+   "key": "isle-of-dogs-2018",
+   "title": "Isle of Dogs",
+   "years": "2018",
+   "subtitle": "2018",
+   "poster": "/api/movies/isle-of-dogs-2018/poster",
+   "backdrop": "/api/movies/isle-of-dogs-2018/backdrop",
+   "ratings": {
+    "imdb": 7.8,
+    "rotten_tomatoes": 90,
+    "fresh": true,
+    "popcorn": 87,
+    "full": true
+   },
+   "season": null,
+   "episode": null,
+   "detail": "1h 20m left",
+   "progress": 0.17466186
+  }
+ ],
+ "forgotten": [
+  {
+   "kind": "show",
+   "key": "house-of-the-dragon",
+   "title": "House of the Dragon",
+   "years": "2022–",
+   "subtitle": "3 seasons · 26 episodes",
+   "poster": "/api/shows/house-of-the-dragon/poster",
+   "backdrop": "/api/shows/house-of-the-dragon/backdrop",
+   "ratings": {
+    "imdb": 8.2,
+    "rotten_tomatoes": 88,
+    "fresh": true,
+    "popcorn": 73,
+    "full": true
+   },
+   "season": 2,
+   "episode": 4,
+   "detail": "S2 E4 · 53m left",
+   "progress": 0.04596871
+  },
+  {
+   "kind": "movie",
+   "key": "star-wars-1977",
+   "title": "Star Wars",
+   "years": "1977",
+   "subtitle": "1977",
+   "poster": "/api/movies/star-wars-1977/poster",
+   "backdrop": "/api/movies/star-wars-1977/backdrop",
+   "ratings": {
+    "imdb": 8.6,
+    "rotten_tomatoes": 93,
+    "fresh": true,
+    "popcorn": 96,
+    "full": true
+   },
+   "season": null,
+   "episode": null,
+   "detail": "1h 58m left",
+   "progress": 0.05269838
+  },
+  {
+   "kind": "movie",
+   "key": "the-order-2024",
+   "title": "The Order",
+   "years": "2024",
+   "subtitle": "2024",
+   "poster": "/api/movies/the-order-2024/poster",
+   "backdrop": "/api/movies/the-order-2024/backdrop",
+   "ratings": {
+    "imdb": 6.8,
+    "rotten_tomatoes": 93,
+    "fresh": true,
+    "popcorn": 89,
+    "full": true
+   },
+   "season": null,
+   "episode": null,
+   "detail": "1h 54m left",
+   "progress": 0.015140998
+  }
+ ],
+ "newest": [
+  {
+   "kind": "show",
+   "key": "outlander",
+   "title": "Outlander",
+   "years": "2014–2026",
+   "subtitle": "10 episodes",
+   "poster": "/api/shows/outlander/poster",
+   "backdrop": "/api/shows/outlander/backdrop",
+   "ratings": {
+    "imdb": 8.3,
+    "rotten_tomatoes": 91,
+    "fresh": true,
+    "popcorn": 82,
+    "full": true
+   }
+  },
+  {
+   "kind": "show",
+   "key": "bridgerton",
+   "title": "Bridgerton",
+   "years": "2020–",
+   "subtitle": "8 episodes",
+   "poster": "/api/shows/bridgerton/poster",
+   "backdrop": "/api/shows/bridgerton/backdrop",
+   "ratings": {
+    "imdb": 7.5,
+    "rotten_tomatoes": 83,
+    "fresh": true,
+    "popcorn": 73,
+    "full": true
+   }
+  },
+  {
+   "kind": "show",
+   "key": "star-wars-maul-shadow-lord",
+   "title": "Star Wars: Maul - Shadow Lord",
+   "years": "2026–",
+   "subtitle": "10 episodes",
+   "poster": "/api/shows/star-wars-maul-shadow-lord/poster",
+   "backdrop": "/api/shows/star-wars-maul-shadow-lord/backdrop",
+   "ratings": {
+    "imdb": 8.5,
+    "rotten_tomatoes": 98,
+    "fresh": true,
+    "popcorn": 92,
+    "full": true
+   }
+  },
+  {
+   "kind": "show",
+   "key": "the-white-lotus",
+   "title": "The White Lotus",
+   "years": "2021–",
+   "subtitle": "2 seasons · 13 episodes",
+   "poster": "/api/shows/the-white-lotus/poster",
+   "backdrop": "/api/shows/the-white-lotus/backdrop",
+   "ratings": {
+    "imdb": 8.0,
+    "rotten_tomatoes": 90,
+    "fresh": true,
+    "popcorn": 78,
+    "full": true
+   }
+  },
+  {
+   "kind": "show",
+   "key": "house-of-the-dragon",
+   "title": "House of the Dragon",
+   "years": "2022–",
+   "subtitle": "3 seasons · 26 episodes",
+   "poster": "/api/shows/house-of-the-dragon/poster",
+   "backdrop": "/api/shows/house-of-the-dragon/backdrop",
+   "ratings": {
+    "imdb": 8.2,
+    "rotten_tomatoes": 88,
+    "fresh": true,
+    "popcorn": 73,
+    "full": true
+   }
+  },
+  {
+   "kind": "show",
+   "key": "foundation",
+   "title": "Foundation",
+   "years": "2021–",
+   "subtitle": "2 seasons · 20 episodes",
+   "poster": "/api/shows/foundation/poster",
+   "backdrop": "/api/shows/foundation/backdrop",
+   "ratings": {
+    "imdb": 7.6,
+    "rotten_tomatoes": 87,
+    "fresh": true,
+    "popcorn": 73,
+    "full": true
+   }
+  }
+ ],
+ "shows": [
+  {
+   "kind": "show",
+   "key": "outlander",
+   "title": "Outlander",
+   "years": "2014–2026",
+   "subtitle": "10 episodes",
+   "poster": "/api/shows/outlander/poster",
+   "backdrop": "/api/shows/outlander/backdrop",
+   "ratings": {
+    "imdb": 8.3,
+    "rotten_tomatoes": 91,
+    "fresh": true,
+    "popcorn": 82,
+    "full": true
+   }
+  },
+  {
+   "kind": "show",
+   "key": "bridgerton",
+   "title": "Bridgerton",
+   "years": "2020–",
+   "subtitle": "8 episodes",
+   "poster": "/api/shows/bridgerton/poster",
+   "backdrop": "/api/shows/bridgerton/backdrop",
+   "ratings": {
+    "imdb": 7.5,
+    "rotten_tomatoes": 83,
+    "fresh": true,
+    "popcorn": 73,
+    "full": true
+   }
+  },
+  {
+   "kind": "show",
+   "key": "star-wars-maul-shadow-lord",
+   "title": "Star Wars: Maul - Shadow Lord",
+   "years": "2026–",
+   "subtitle": "10 episodes",
+   "poster": "/api/shows/star-wars-maul-shadow-lord/poster",
+   "backdrop": "/api/shows/star-wars-maul-shadow-lord/backdrop",
+   "ratings": {
+    "imdb": 8.5,
+    "rotten_tomatoes": 98,
+    "fresh": true,
+    "popcorn": 92,
+    "full": true
+   }
+  },
+  {
+   "kind": "show",
+   "key": "the-white-lotus",
+   "title": "The White Lotus",
+   "years": "2021–",
+   "subtitle": "2 seasons · 13 episodes",
+   "poster": "/api/shows/the-white-lotus/poster",
+   "backdrop": "/api/shows/the-white-lotus/backdrop",
+   "ratings": {
+    "imdb": 8.0,
+    "rotten_tomatoes": 90,
+    "fresh": true,
+    "popcorn": 78,
+    "full": true
+   }
+  }
+ ],
+ "movies": [
+  {
+   "kind": "movie",
+   "key": "project-hail-mary-2026",
+   "title": "Project Hail Mary",
+   "years": "2026",
+   "subtitle": "2026",
+   "poster": "/api/movies/project-hail-mary-2026/poster",
+   "backdrop": "/api/movies/project-hail-mary-2026/backdrop",
+   "ratings": {
+    "imdb": 8.2,
+    "rotten_tomatoes": 95,
+    "fresh": true,
+    "popcorn": 95,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "the-kings-speech-2010",
+   "title": "The King's Speech",
+   "years": "2010",
+   "subtitle": "2010",
+   "poster": "/api/movies/the-kings-speech-2010/poster",
+   "backdrop": "/api/movies/the-kings-speech-2010/backdrop",
+   "ratings": {
+    "imdb": 8.0,
+    "rotten_tomatoes": 94,
+    "fresh": true,
+    "popcorn": 92,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "the-endless-summer-1966",
+   "title": "The Endless Summer",
+   "years": "1966",
+   "subtitle": "1966",
+   "poster": "/api/movies/the-endless-summer-1966/poster",
+   "backdrop": "/api/movies/the-endless-summer-1966/backdrop",
+   "ratings": {
+    "imdb": 7.6,
+    "rotten_tomatoes": 100,
+    "fresh": true,
+    "popcorn": 91,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "conclave-2024",
+   "title": "Conclave",
+   "years": "2024",
+   "subtitle": "2024",
+   "poster": "/api/movies/conclave-2024/poster",
+   "backdrop": "/api/movies/conclave-2024/backdrop",
+   "ratings": {
+    "imdb": 7.4,
+    "rotten_tomatoes": 93,
+    "fresh": true,
+    "popcorn": 86,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "green-book-2018",
+   "title": "Green Book",
+   "years": "2018",
+   "subtitle": "2018",
+   "poster": "/api/movies/green-book-2018/poster",
+   "backdrop": "/api/movies/green-book-2018/backdrop",
+   "ratings": {
+    "imdb": 8.2,
+    "rotten_tomatoes": 77,
+    "fresh": true,
+    "popcorn": 92,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "the-order-2024",
+   "title": "The Order",
+   "years": "2024",
+   "subtitle": "2024",
+   "poster": "/api/movies/the-order-2024/poster",
+   "backdrop": "/api/movies/the-order-2024/backdrop",
+   "ratings": {
+    "imdb": 6.8,
+    "rotten_tomatoes": 93,
+    "fresh": true,
+    "popcorn": 89,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "paddington-2-2017",
+   "title": "Paddington 2",
+   "years": "2017",
+   "subtitle": "2017",
+   "poster": "/api/movies/paddington-2-2017/poster",
+   "backdrop": "/api/movies/paddington-2-2017/backdrop",
+   "ratings": {
+    "imdb": 7.8,
+    "rotten_tomatoes": 99,
+    "fresh": true,
+    "popcorn": 89,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "wonka-2023",
+   "title": "Wonka",
+   "years": "2023",
+   "subtitle": "2023",
+   "poster": "/api/movies/wonka-2023/poster",
+   "backdrop": "/api/movies/wonka-2023/backdrop",
+   "ratings": {
+    "imdb": 6.9,
+    "rotten_tomatoes": 82,
+    "fresh": true,
+    "popcorn": 90,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "brave-2012",
+   "title": "Brave",
+   "years": "2012",
+   "subtitle": "2012",
+   "poster": "/api/movies/brave-2012/poster",
+   "backdrop": "/api/movies/brave-2012/backdrop",
+   "ratings": {
+    "imdb": 7.1,
+    "rotten_tomatoes": 78,
+    "fresh": true,
+    "popcorn": 75,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "shutter-island-2010",
+   "title": "Shutter Island",
+   "years": "2010",
+   "subtitle": "2010",
+   "poster": "/api/movies/shutter-island-2010/poster",
+   "backdrop": "/api/movies/shutter-island-2010/backdrop",
+   "ratings": {
+    "imdb": 8.2,
+    "rotten_tomatoes": 69,
+    "fresh": true,
+    "popcorn": 77,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "the-terminal-2004",
+   "title": "The Terminal",
+   "years": "2004",
+   "subtitle": "2004",
+   "poster": "/api/movies/the-terminal-2004/poster",
+   "backdrop": "/api/movies/the-terminal-2004/backdrop",
+   "ratings": {
+    "imdb": 7.4,
+    "rotten_tomatoes": 62,
+    "fresh": true,
+    "popcorn": 73,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "anyone-but-you-2023",
+   "title": "Anyone but You",
+   "years": "2023",
+   "subtitle": "2023",
+   "poster": "/api/movies/anyone-but-you-2023/poster",
+   "backdrop": "/api/movies/anyone-but-you-2023/backdrop",
+   "ratings": {
+    "imdb": 6.1,
+    "rotten_tomatoes": 53,
+    "fresh": false,
+    "popcorn": 87,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "the-pink-panther-2006",
+   "title": "The Pink Panther",
+   "years": "2006",
+   "subtitle": "2006",
+   "poster": "/api/movies/the-pink-panther-2006/poster",
+   "backdrop": "/api/movies/the-pink-panther-2006/backdrop",
+   "ratings": {
+    "imdb": 5.7,
+    "rotten_tomatoes": 21,
+    "fresh": false,
+    "popcorn": 51,
+    "full": false
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "barbie-2023",
+   "title": "Barbie",
+   "years": "2023",
+   "subtitle": "2023",
+   "poster": "/api/movies/barbie-2023/poster",
+   "backdrop": "/api/movies/barbie-2023/backdrop",
+   "ratings": {
+    "imdb": 6.8,
+    "rotten_tomatoes": 88,
+    "fresh": true,
+    "popcorn": null,
+    "full": null
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "john-wick-chapter-4-2023",
+   "title": "John Wick: Chapter 4",
+   "years": "2023",
+   "subtitle": "2023",
+   "poster": "/api/movies/john-wick-chapter-4-2023/poster",
+   "backdrop": "/api/movies/john-wick-chapter-4-2023/backdrop",
+   "ratings": {
+    "imdb": 7.6,
+    "rotten_tomatoes": 94,
+    "fresh": true,
+    "popcorn": 93,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "isle-of-dogs-2018",
+   "title": "Isle of Dogs",
+   "years": "2018",
+   "subtitle": "2018",
+   "poster": "/api/movies/isle-of-dogs-2018/poster",
+   "backdrop": "/api/movies/isle-of-dogs-2018/backdrop",
+   "ratings": {
+    "imdb": 7.8,
+    "rotten_tomatoes": 90,
+    "fresh": true,
+    "popcorn": 87,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "blackberry-2023",
+   "title": "BlackBerry",
+   "years": "2023",
+   "subtitle": "2023",
+   "poster": "/api/movies/blackberry-2023/poster",
+   "backdrop": "/api/movies/blackberry-2023/backdrop",
+   "ratings": {
+    "imdb": 7.3,
+    "rotten_tomatoes": 97,
+    "fresh": true,
+    "popcorn": 94,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "guardians-of-the-galaxy-vol-3-2023",
+   "title": "Guardians of the Galaxy Vol. 3",
+   "years": "2023",
+   "subtitle": "2023",
+   "poster": "/api/movies/guardians-of-the-galaxy-vol-3-2023/poster",
+   "backdrop": "/api/movies/guardians-of-the-galaxy-vol-3-2023/backdrop",
+   "ratings": {
+    "imdb": 7.9,
+    "rotten_tomatoes": 82,
+    "fresh": true,
+    "popcorn": 94,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "triangle-of-sadness-2022",
+   "title": "Triangle of Sadness",
+   "years": "2022",
+   "subtitle": "2022",
+   "poster": "/api/movies/triangle-of-sadness-2022/poster",
+   "backdrop": "/api/movies/triangle-of-sadness-2022/backdrop",
+   "ratings": {
+    "imdb": 7.2,
+    "rotten_tomatoes": 72,
+    "fresh": true,
+    "popcorn": 80,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "hacksaw-ridge-2016",
+   "title": "Hacksaw Ridge",
+   "years": "2016",
+   "subtitle": "2016",
+   "poster": "/api/movies/hacksaw-ridge-2016/poster",
+   "backdrop": "/api/movies/hacksaw-ridge-2016/backdrop",
+   "ratings": {
+    "imdb": 8.1,
+    "rotten_tomatoes": 84,
+    "fresh": true,
+    "popcorn": 92,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "everything-everywhere-all-at-once-2022",
+   "title": "Everything Everywhere All at Once",
+   "years": "2022",
+   "subtitle": "2022",
+   "poster": "/api/movies/everything-everywhere-all-at-once-2022/poster",
+   "backdrop": "/api/movies/everything-everywhere-all-at-once-2022/backdrop",
+   "ratings": {
+    "imdb": 7.7,
+    "rotten_tomatoes": 93,
+    "fresh": true,
+    "popcorn": 79,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "jackass-3-2010",
+   "title": "Jackass 3",
+   "years": "2010",
+   "subtitle": "2010",
+   "poster": null,
+   "backdrop": null,
+   "ratings": {
+    "imdb": null,
+    "rotten_tomatoes": null,
+    "fresh": null,
+    "popcorn": null,
+    "full": null
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "jackass-number-two-2006",
+   "title": "Jackass Number Two",
+   "years": "2006",
+   "subtitle": "2006",
+   "poster": "/api/movies/jackass-number-two-2006/poster",
+   "backdrop": "/api/movies/jackass-number-two-2006/backdrop",
+   "ratings": {
+    "imdb": 7.0,
+    "rotten_tomatoes": 66,
+    "fresh": true,
+    "popcorn": 80,
+    "full": true
+   }
+  },
+  {
+   "kind": "movie",
+   "key": "apollo-13-1995",
+   "title": "Apollo 13",
+   "years": "1995",
+   "subtitle": "1995",
+   "poster": "/api/movies/apollo-13-1995/poster",
+   "backdrop": "/api/movies/apollo-13-1995/backdrop",
+   "ratings": {
+    "imdb": 7.7,
+    "rotten_tomatoes": 92,
+    "fresh": true,
+    "popcorn": 87,
+    "full": true
+   }
+  }
+ ]
+}

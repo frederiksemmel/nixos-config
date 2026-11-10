@@ -10,6 +10,13 @@ up subtitles. It is a [Topcoat](https://docs.rs/topcoat) app, pinned to
 
     SEMMELTV_API_URL=http://127.0.0.1:8090 PORT=3000 cargo run
 
+Before deploying a change to the page scripts or styles, run the browser test.
+It serves the app against a fake TV API with a film playing, then taps, scrolls,
+opens titles, goes Back and opens the remote in WebKit (iPhone) and Chromium
+(Android), and fails if the page stops answering:
+
+    nix build .#checks.x86_64-linux.semmeltv-web-browser -L
+
 `SEMMELTV_API_URL` is where the server reaches the API. Browsers load artwork
 and stream the microphone from `/api` on the page's own origin, which is how
 `tailscale serve` maps it on a TV. Without that mapping, as with `cargo run`,
