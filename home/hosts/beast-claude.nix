@@ -47,6 +47,21 @@ let
     '';
   };
 
+  session-end = pkgs.writeShellApplication {
+    name = "session-end";
+    runtimeInputs = [
+      config.programs.claude-code.finalPackage
+      pkgs.coreutils
+      pkgs.git
+      pkgs.gnused
+      pkgs.jq
+      pkgs.procps
+      pkgs.shpool
+      pkgs.util-linux
+    ];
+    text = builtins.readFile ./beast-session-end.sh;
+  };
+
   # A server lets the app start sessions in a repo; worktree gives each its own.
   remoteControl = repo: spawn: {
     Unit = {
@@ -67,8 +82,26 @@ in
 {
   home.packages = [
     session-group
+    session-end
     pkgs.pyright
   ];
+
+  programs.claude-code.skills.end = ''
+    ---
+    name: end
+    description: Ends this session for good. Its process stops, its worktree and branch are removed, attached terminals and its shpool session close, and it leaves beast's list and the app.
+    disable-model-invocation: true
+    ---
+
+    Run `session-end`.
+
+    If it refuses, show the user what it lists as unsaved and ask what to do. Push
+    or commit when they say so, then run `session-end` again. Run
+    `session-end --force` only when they say to discard the work.
+
+    Once it succeeds, reply with one short line and end your turn: the session
+    ends right after.
+  '';
 
   # Hosts every `claude --bg` session. Its sessions get this unit's environment, not
   # the caller's. KillMode=process lets the sessions outlive a restart of the daemon.
