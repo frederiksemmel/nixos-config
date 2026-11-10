@@ -414,6 +414,11 @@ in
   # apps ignore the theme home manager writes to org/gnome/desktop/interface.
   programs.dconf.enable = lib.mkIf hm.gtk.enable true;
 
+  programs.chromium = lib.mkIf hm.programs.chromium.enable {
+    enable = true;
+    extraOpts.NotificationsBlockedForUrls = [ "https://claude.ai" ];
+  };
+
   systemd.user.services.niri-flake-polkit.enable = false;
   systemd.user.services.polkit-gnome-authentication-agent-1 = {
     description = "polkit-gnome-authentication-agent-1";
