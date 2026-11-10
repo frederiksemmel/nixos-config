@@ -15,7 +15,7 @@
   --top: calc(var(--edge) + 63px);
   --glass: rgba(12, 12, 16, 0.72);
   --glass-bar: rgba(21, 21, 27, 0.74);
-  --glass-edge: #131318;
+  --overhang: 48px;
   --glass-blur: blur(20px) saturate(1.8);
   --spring: cubic-bezier(0.32, 0.72, 0, 1);
   --bar: calc(env(safe-area-inset-bottom) + 70px);
@@ -72,19 +72,6 @@ svg .solid { fill: currentColor; stroke: none; }
 
 /* Header */
 
-.status-edge {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  z-index: 45;
-  height: var(--edge);
-  background: var(--bg);
-  transition: background 0.3s;
-}
-
-html[data-sheet] .status-edge { background: #060608; }
-
 .top {
   position: fixed;
   top: 0;
@@ -95,7 +82,7 @@ html[data-sheet] .status-edge { background: #060608; }
   align-items: center;
   gap: 8px;
   padding: calc(var(--edge) + 8px) var(--gutter) 10px;
-  background: var(--glass);
+  background: linear-gradient(var(--glass), var(--glass)) transparent;
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border-bottom: 1px solid rgba(255, 255, 255, 0.07);
@@ -659,38 +646,17 @@ html[data-flip]:has(.now-state.paused) .when-playing { display: block; }
   z-index: 25;
   left: 0;
   right: 0;
-  bottom: 0;
+  bottom: calc(-1 * var(--overhang));
   display: flex;
   align-items: center;
-  height: var(--bar);
-  padding: 0 max(0px, calc((100% - 1280px) / 2)) env(safe-area-inset-bottom);
+  height: calc(var(--bar) + var(--overhang));
+  padding: 0 max(0px, calc((100% - 1280px) / 2)) calc(env(safe-area-inset-bottom) + var(--overhang));
   background: var(--glass-bar);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   transform: translateZ(0);
   will-change: transform;
-}
-
-.bar::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: max(env(safe-area-inset-bottom), 12px);
-  background: var(--glass-edge);
-}
-
-.bar::after {
-  content: "";
-  position: absolute;
-  top: calc(100% - 2px);
-  left: 0;
-  right: 0;
-  height: 240px;
-  background: var(--glass-edge);
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
