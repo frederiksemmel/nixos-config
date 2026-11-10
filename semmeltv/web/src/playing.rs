@@ -479,10 +479,10 @@ fn state_text(voice: &Voice) -> Option<String> {
     match voice {
         Voice::Listening => Some("Listening…".to_string()),
         Voice::Transcribing => Some("Working it out…".to_string()),
-        Voice::Nothing => Some("Didn't hear anything".to_string()),
+        Voice::Nothing => Some("Didn't catch that".to_string()),
         Voice::Cancelled => Some("Cancelled".to_string()),
         Voice::NoMicrophone => Some("The TV has no microphone".to_string()),
-        Voice::Failed { message } => Some(format!("Voice control failed: {message}")),
+        Voice::Failed { .. } => Some("Speech recognition isn't working right now".to_string()),
         Voice::Heard { .. } => None,
     }
 }

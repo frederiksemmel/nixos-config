@@ -38,12 +38,9 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
             <body>
                 <header class="top">
                     link(href: "/", attrs: attributes! { cx => class="brand" }, <img src=(brand::WORDMARK) alt="SemmelTV">)
-                    <div class="microphone" id="microphone" data-state="off">
-                        <span class="microphone-note" id="microphone-note"></span>
-                        <button class="microphone-off" id="microphone-off" type="button" aria-label="Turn the microphone off" hidden=(true)>
-                            "Mic off"
-                        </button>
-                        <button class="microphone-talk" id="microphone-talk" type="button" aria-label="Talk to the TV">
+                    <div class="microphone" id="microphone" data-state="idle">
+                        <span class="microphone-note" id="microphone-note" role="status"></span>
+                        <button class="microphone-talk" id="microphone-talk" type="button" aria-label="Talk to the TV" aria-pressed="false">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15Z"></path>
                                 <path d="M18.5 11.5a6.5 6.5 0 0 1-13 0M12 18v3.5" fill="none"></path>

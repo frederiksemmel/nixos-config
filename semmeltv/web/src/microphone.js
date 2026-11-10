@@ -18,96 +18,214 @@ class Downsample extends AudioWorkletProcessor {
 }
 registerProcessor("downsample", Downsample);`;
 
+const CHUNK_SECONDS = 0.1;
+const QUIET_AFTER_SPEECH = 1.5;
+const NOTHING_SAID = 8;
+const LONGEST = 12;
+const ANSWER_WAIT = 10;
+const NOTE_SECONDS = 4;
+const TRY_AGAIN_LATER = 1013;
+
 const api = document.documentElement.dataset.api || "";
-let running = null;
+let context = null;
+let worklet = null;
+let session = null;
+let state = "idle";
+let noteTimer = 0;
 
 function elements() {
   return {
     root: document.getElementById("microphone"),
     talk: document.getElementById("microphone-talk"),
-    off: document.getElementById("microphone-off"),
     level: document.getElementById("microphone-level"),
     note: document.getElementById("microphone-note"),
   };
 }
 
-function show(state, note = "") {
-  const { root, off, level, note: noteElement } = elements();
+function show(next) {
+  state = next;
+  const { root, talk, level } = elements();
   if (!root) return;
-  root.dataset.state = state;
-  off.hidden = state === "off";
-  noteElement.textContent = note;
-  if (state === "off") level.style.transform = "scale(0)";
+  root.dataset.state = next;
+  talk?.setAttribute("aria-label", next === "listening" ? "Stop listening" : "Talk to the TV");
+  talk?.setAttribute("aria-pressed", String(next === "listening"));
+  if (level && next !== "listening") level.style.transform = "scale(0)";
+}
+
+function say(text) {
+  const { note } = elements();
+  if (!note) return;
+  clearTimeout(noteTimer);
+  note.textContent = text;
+  note.classList.add("shown");
+  noteTimer = setTimeout(() => note.classList.remove("shown"), NOTE_SECONDS * 1000);
+}
+
+function audioContext() {
+  if (!context || context.state === "closed") {
+    context = new AudioContext();
+    worklet = context.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })));
+  }
+  return context;
 }
 
 function socketUrl() {
   const base = api ? new URL(api, location.href) : location;
-  const secure = base.protocol === "https:";
-  return `${secure ? "wss" : "ws"}://${base.host}/api/microphone`;
+  return `${base.protocol === "https:" ? "wss" : "ws"}://${base.host}/api/microphone`;
 }
 
-function listen() {
-  fetch(`${api}/api/listen`, { method: "POST" }).catch(() => {});
+function voiceState() {
+  const panel = document.querySelector(".voice");
+  if (!panel) return null;
+  if (panel.querySelector(".voice-state.listening")) return "listening";
+  if (panel.querySelector(".voice-state.transcribing")) return "transcribing";
+  if (panel.querySelector(".voice-heard, .voice-state")) return "done";
+  return null;
 }
 
-async function start() {
+function problem(error) {
+  switch (error?.name) {
+    case "NotAllowedError":
+    case "SecurityError":
+      return "Microphone blocked: allow it in Settings";
+    case "NotFoundError":
+    case "OverconstrainedError":
+      return "No microphone found";
+    case "NotReadableError":
+      return "The microphone is busy in another app";
+    default:
+      return "That didn't work, try again";
+  }
+}
+
+function start() {
+  const audio = audioContext();
+  const resumed = audio.resume();
+  const current = { audio, stream: null, node: null, socket: null, timers: [], heardServer: false, chunks: 0, speech: 0, quiet: 0, floor: 300 };
+  session = current;
+  show("starting");
+  begin(current, resumed).catch((error) => {
+    if (session !== current) return;
+    end(current);
+    show("idle");
+    say(problem(error));
+  });
+}
+
+async function begin(current, resumed) {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true, autoGainControl: true },
   });
-  const context = new AudioContext();
-  await context.audioWorklet.addModule(URL.createObjectURL(new Blob([WORKLET], { type: "text/javascript" })));
-  const source = context.createMediaStreamSource(stream);
-  const node = new AudioWorkletNode(context, "downsample");
+  current.stream = stream;
+  if (session !== current) return end(current);
+  await resumed;
+  await worklet;
+  if (session !== current) return end(current);
+  const node = new AudioWorkletNode(current.audio, "downsample");
+  current.node = node;
+  current.source = current.audio.createMediaStreamSource(stream);
+  current.source.connect(node);
   const socket = new WebSocket(socketUrl());
   socket.binaryType = "arraybuffer";
+  current.socket = socket;
   node.port.onmessage = (event) => {
+    if (session !== current || state !== "listening") return;
     if (socket.readyState === WebSocket.OPEN) socket.send(event.data);
-    const samples = new Int16Array(event.data);
-    let peak = 0;
-    for (const sample of samples) peak = Math.max(peak, Math.abs(sample));
-    const { level } = elements();
-    if (level) level.style.transform = `scale(${Math.min(1, (peak / 32768) * 3)})`;
+    hear(current, new Int16Array(event.data));
   };
   socket.onopen = () => {
-    show("on");
-    listen();
+    if (session !== current) return;
+    fetch(`${api}/api/listen`, { method: "POST" }).catch(() => {});
+    show("listening");
+    current.timers.push(setTimeout(() => finish(current), LONGEST * 1000));
   };
   socket.onclose = (event) => {
-    if (!running) return;
-    stop();
-    show("off", event.reason || "Connection lost");
+    if (session !== current || state === "processing") return;
+    const opened = state === "listening";
+    end(current);
+    show("idle");
+    if (event.code === TRY_AGAIN_LATER) say("Someone else is talking to the TV");
+    else say(opened ? "Lost the connection to the TV" : "Can't reach the TV");
   };
-  source.connect(node);
-  running = { stream, context, socket };
-  show("starting");
 }
 
-function stop() {
-  if (!running) return;
-  const current = running;
-  running = null;
-  current.stream.getTracks().forEach((track) => track.stop());
-  current.context.close();
-  current.socket.close();
-  show("off");
+function hear(current, samples) {
+  let energy = 0;
+  let peak = 0;
+  for (const sample of samples) {
+    energy += sample * sample;
+    peak = Math.max(peak, Math.abs(sample));
+  }
+  const level = Math.sqrt(energy / samples.length);
+  const { level: ring } = elements();
+  if (ring) ring.style.transform = `scale(${Math.min(1, (peak / 32768) * 3)})`;
+  current.chunks += 1;
+  if (level > Math.max(500, current.floor * 3)) {
+    current.speech += 1;
+    current.quiet = 0;
+  } else {
+    current.quiet += 1;
+    current.floor = Math.min(current.floor * 1.02, Math.max(level, 50));
+  }
+  const seconds = current.chunks * CHUNK_SECONDS;
+  const spoke = current.speech >= 2;
+  if ((spoke && current.quiet * CHUNK_SECONDS >= QUIET_AFTER_SPEECH) || (!spoke && seconds >= NOTHING_SAID)) {
+    finish(current);
+  }
 }
+
+function end(current) {
+  current.timers.forEach(clearTimeout);
+  current.timers = [];
+  current.stream?.getTracks().forEach((track) => track.stop());
+  current.source?.disconnect();
+  current.node?.port.close();
+  current.node?.disconnect();
+  if (current.socket && current.socket.readyState <= WebSocket.OPEN) current.socket.close(1000, "done");
+  if (current.audio.state === "running") current.audio.suspend().catch(() => {});
+}
+
+function finish(current) {
+  if (session !== current || state !== "listening") return;
+  end(current);
+  show("processing");
+  current.timers.push(setTimeout(() => settle(current), ANSWER_WAIT * 1000));
+}
+
+function settle(current) {
+  if (session !== current) return;
+  end(current);
+  session = null;
+  show("idle");
+}
+
+function cancel(current) {
+  end(current);
+  session = null;
+  show("idle");
+}
+
+new MutationObserver(() => {
+  const { root } = elements();
+  if (root && root.dataset.state !== state) root.dataset.state = state;
+  const current = session;
+  if (!current) return;
+  const voice = voiceState();
+  if (state === "listening") {
+    if (voice === "listening") current.heardServer = true;
+    else if (current.heardServer && voice) finish(current);
+  }
+  if (state === "processing" && current.heardServer && voice === "done") settle(current);
+  if (state === "processing" && voice === "transcribing") current.heardServer = true;
+}).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
 
 document.addEventListener("click", (event) => {
-  if (event.target.closest("#microphone-off")) {
-    stop();
-    return;
-  }
-  if (!event.target.closest("#microphone-talk")) return;
-  if (running) {
-    listen();
-    return;
-  }
-  start().catch((error) => {
-    stop();
-    show("off", `Microphone failed: ${error.message}`);
-  });
+  if (!event.target.closest?.("#microphone-talk")) return;
+  if (state === "idle") start();
+  else if (state === "listening") finish(session);
+  else if (state === "starting") cancel(session);
 });
 
 document.addEventListener("visibilitychange", () => {
-  if (running && running.context.state === "suspended") running.context.resume();
+  if (document.hidden && session && (state === "starting" || state === "listening")) cancel(session);
 });

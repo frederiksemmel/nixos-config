@@ -107,17 +107,11 @@ svg .solid { fill: currentColor; stroke: none; }
   text-overflow: ellipsis;
   white-space: nowrap;
   max-width: 46vw;
+  opacity: 0;
+  transition: opacity 0.4s;
 }
 
-.microphone-off {
-  flex: none;
-  white-space: nowrap;
-  font-size: 13px;
-  color: var(--muted);
-  padding: 7px 11px;
-  border-radius: 999px;
-  border: 1px solid var(--line);
-}
+.microphone-note.shown { opacity: 1; }
 
 .microphone-talk {
   position: relative;
@@ -144,7 +138,14 @@ svg .solid { fill: currentColor; stroke: none; }
 }
 
 .microphone[data-state="starting"] .microphone-talk { color: var(--working); }
-.microphone[data-state="on"] .microphone-talk { background: #1d3b27; color: var(--listening); border-color: #2f6b43; }
+.microphone[data-state="listening"] .microphone-talk { background: #1d3b27; color: var(--listening); border-color: #2f6b43; }
+.microphone[data-state="processing"] .microphone-talk { color: var(--working); animation: microphone-working 1s ease-in-out infinite alternate; }
+
+@keyframes microphone-working { to { background: #2a2416; border-color: #5a4a1e; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .microphone[data-state="processing"] .microphone-talk { animation: none; background: #2a2416; }
+}
 
 /* Voice feedback */
 
