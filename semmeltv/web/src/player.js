@@ -1,6 +1,5 @@
 const api = document.documentElement.dataset.api || "";
 const root = document.documentElement;
-const CLOSE_DRAG = 90;
 const UNCONFIRMED = 10000;
 
 let returnFocus = null;
@@ -220,38 +219,142 @@ new MutationObserver(() => {
   markChoices();
 }).observe(document.body, { childList: true, subtree: true });
 
-function dragTo(offset) {
-  sheet().style.setProperty("--drag", `${Math.max(offset, 0)}px`);
+const SETTLE_MS = 650;
+const FLICK = 0.5;
+const START_DRAG = 8;
+let settleTimer = 0;
+
+const dim = () => document.querySelector(".sheet-dim");
+
+function sheetHeight() {
+  return sheet().getBoundingClientRect().height - 60;
 }
 
-document.addEventListener("pointerdown", (event) => {
-  const top = event.target.closest && event.target.closest(".sheet-top");
-  if (!top || !isOpen() || (event.pointerType === "mouse" && event.button !== 0)) return;
-  drag = { pointer: event.pointerId, start: event.clientY, moved: 0 };
-  sheet().classList.add("dragging");
-});
+function place(offset, height) {
+  const y = Math.min(Math.max(offset, 0), height + 40);
+  sheet().style.transform = `translateY(${y}px)`;
+  dim().style.opacity = String(Math.max(0, 1 - y / height));
+}
 
-document.addEventListener("pointermove", (event) => {
-  if (!drag || event.pointerId !== drag.pointer) return;
-  drag.moved = event.clientY - drag.start;
-  dragTo(drag.moved);
-});
+function beginDrag(kind, y, pointer) {
+  clearTimeout(settleTimer);
+  const height = sheetHeight();
+  drag = { kind, pointer, start: y, base: kind === "open" ? height + 40 : 0, height, moved: 0, samples: [{ y, t: performance.now() }], live: false };
+}
 
-function endDrag(event) {
-  if (!drag || event.pointerId !== drag.pointer) return;
-  const far = drag.moved > CLOSE_DRAG;
-  dragged = Math.abs(drag.moved) > 8;
+function moveDrag(y) {
+  drag.moved = y - drag.start;
+  const now = performance.now();
+  drag.samples.push({ y, t: now });
+  while (drag.samples.length > 2 && now - drag.samples[0].t > 100) drag.samples.shift();
+  if (!drag.live) {
+    if (Math.abs(drag.moved) < START_DRAG) return;
+    if (drag.kind === "open" && drag.moved > 0) return;
+    drag.live = true;
+    root.toggleAttribute("data-sheet-drag", true);
+    sheet().classList.add("dragging");
+    dim().classList.add("dragging");
+  }
+  place(drag.base + drag.moved, drag.height);
+}
+
+function velocity() {
+  const first = drag.samples[0];
+  const last = drag.samples[drag.samples.length - 1];
+  const time = last.t - first.t;
+  return time > 0 ? (last.y - first.y) / time : 0;
+}
+
+function settle(open) {
+  const element = sheet();
+  element.classList.remove("dragging");
+  dim().classList.remove("dragging");
+  element.style.transform = open ? "translateY(0px)" : "translateY(calc(100% + 40px))";
+  dim().style.opacity = open ? "1" : "0";
+  if (open) openSheet();
+  else closeSheet();
+  settleTimer = setTimeout(() => {
+    element.style.transform = "";
+    dim().style.opacity = "";
+    root.removeAttribute("data-sheet-drag");
+  }, SETTLE_MS);
+}
+
+function endDrag() {
+  if (!drag) return;
+  const finished = drag;
+  const speed = velocity();
+  drag = null;
+  if (!finished.live) return;
+  dragged = true;
   setTimeout(() => {
     dragged = false;
   }, 0);
-  drag = null;
-  sheet().classList.remove("dragging");
-  dragTo(0);
-  if (far) closeSheet();
+  const travelled = Math.abs(finished.moved) / finished.height;
+  if (finished.kind === "open") settle(speed < -FLICK || (travelled > 0.25 && speed <= FLICK));
+  else settle(!(speed > FLICK || (travelled > 0.25 && speed >= -FLICK)));
 }
 
-document.addEventListener("pointerup", endDrag);
-document.addEventListener("pointercancel", endDrag);
+function startsDrag(target) {
+  if (target.closest(".bar-open")) return isOpen() ? null : "open";
+  if (target.closest(".sheet-top")) return isOpen() ? "close" : null;
+  return null;
+}
+
+document.addEventListener("pointerdown", (event) => {
+  if (drag || (event.pointerType === "mouse" && event.button !== 0) || !event.target.closest) return;
+  const kind = startsDrag(event.target);
+  if (!kind) return;
+  beginDrag(kind, event.clientY, event.pointerId);
+});
+
+document.addEventListener("pointermove", (event) => {
+  if (drag && drag.pointer === event.pointerId) moveDrag(event.clientY);
+});
+
+for (const name of ["pointerup", "pointercancel"]) {
+  document.addEventListener(name, (event) => {
+    if (drag && drag.pointer === event.pointerId) endDrag();
+  });
+}
+
+let pull = null;
+
+document.addEventListener("touchstart", (event) => {
+  const scroller = event.target.closest && event.target.closest(".sheet-scroll");
+  if (!scroller || drag || !isOpen() || event.touches.length !== 1 || event.target.closest(".sheet-top, .scrub, input, [data-no-drag]")) {
+    pull = null;
+    return;
+  }
+  pull = { scroller, start: event.touches[0].clientY, id: event.touches[0].identifier };
+}, { passive: true });
+
+document.addEventListener("touchmove", (event) => {
+  if (!pull) return;
+  const touch = [...event.changedTouches].find((each) => each.identifier === pull.id);
+  if (!touch) return;
+  if (!drag) {
+    const down = touch.clientY - pull.start;
+    if (pull.scroller.scrollTop > 0 || down < 0) {
+      pull = null;
+      return;
+    }
+    event.preventDefault();
+    if (down < START_DRAG) return;
+    beginDrag("close", pull.start, "touch");
+  }
+  if (drag && drag.pointer === "touch") {
+    event.preventDefault();
+    moveDrag(touch.clientY);
+  }
+}, { passive: false });
+
+for (const name of ["touchend", "touchcancel"]) {
+  document.addEventListener(name, () => {
+    pull = null;
+    if (drag && drag.pointer === "touch") endDrag();
+  });
+}
 
 if (history.state && history.state.sheet) setOpen(true);
 markChoices();

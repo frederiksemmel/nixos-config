@@ -206,11 +206,12 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                     play_pause()
                 </button>
             </section>
+            <div class="sheet-dim" data-sheet="close" aria-hidden="true"></div>
             <div class="sheet" id="sheet" role="dialog" aria-modal="true" aria-label="Player and TV remote" inert=(true)>
                 <div class="sheet-scroll">
                     <div class="sheet-top">
                         <button type="button" class="sheet-close" data-sheet="close" aria-label="Close">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9.5 6 6 6-6"></path></svg>
+                            <span class="sheet-grabber" aria-hidden="true"></span>
                         </button>
                     </div>
                     <div class="sheet-body">
