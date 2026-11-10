@@ -109,6 +109,16 @@ def fzf-pick [header: string, --multi, --nth: string = ".."] {
   } catch { [] }
 }
 
+# Ends sessions on beast, prints each one that stayed and why, and returns how
+# many stayed.
+def end-sessions [sessions: list<string>] {
+  let failed = on-beast $"stop-sessions ($sessions | to json --raw)" | where error != null
+  for f in $failed {
+    print --stderr $"(ansi red)($f.title) \(($f.id)\) was not ended:(ansi reset) ($f.error)"
+  }
+  $failed | length
+}
+
 def set-title [title: string] {
   print --no-newline $"(ansi title)($title)(char bel)"
 }
@@ -206,7 +216,9 @@ export def main [] {
   } else {
     let picked = $rows | fzf-pick --multi --nth "1,2,4" "tab marks, enter ends them, esc cancels"
     if ($picked | is-not-empty) {
-      on-beast $"stop-sessions ($picked | each {|i| $sessions | get $i | get session } | to json --raw)" | ignore
+      if (end-sessions ($picked | each {|i| $sessions | get $i | get session })) > 0 {
+        input $"(ansi attr_dimmed)enter goes back to the list(ansi reset)" | ignore
+      }
     }
     main
   }
@@ -316,7 +328,8 @@ export def clean [
   })
   if $dry_run { return }
   if $yes or ((input $"end these ($matches | length) sessions? [y/N] ") in [y Y]) {
-    on-beast $"stop-sessions ($matches.session | to json --raw)" | ignore
+    let stayed = end-sessions $matches.session
+    print $"ended (($matches | length) - $stayed) of ($matches | length) sessions"
   }
 }
 

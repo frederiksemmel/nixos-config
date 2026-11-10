@@ -178,16 +178,27 @@ def new-session [dir: string, prefix: string, name?: string] {
 
 # Ends sessions: a background one is stopped and removed from the daemon, any
 # other has its process stopped. Transcripts stay, `claude --resume` reopens them.
+# `claude rm` refuses a session whose worktree has unpushed commits or changes;
+# such a session stays, and its row carries what `claude rm` said as `error`.
 def stop-sessions [queries: list<string>] {
-  $queries | each {|q|
+  let ended = $queries | each {|q|
     let s = find-session $q
-    if $s.host == "bg" {
+    let output = if $s.host == "bg" {
       ^claude stop $s.id | complete | ignore
-      ^claude rm $s.id | complete | ignore
-    } else if $s.pid != null {
-      kill $s.pid
+      let rm = ^claude rm $s.id | complete
+      $"($rm.stdout)($rm.stderr)" | str trim
+    } else {
+      if $s.pid != null { kill $s.pid }
+      ""
     }
-    $s.title
+    { session: $s.session, id: $s.id, title: $s.title, host: $s.host, output: $output }
+  }
+  let listed = ^claude agents --json --all | from json | get sessionId
+  $ended | each {|e|
+    let error = if $e.host == "bg" and $e.session in $listed {
+      if $e.output == "" { "the daemon still lists it" } else { $e.output }
+    }
+    { id: $e.id, title: $e.title, error: $error }
   }
 }
 
