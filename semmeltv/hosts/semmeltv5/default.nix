@@ -23,6 +23,7 @@
     tv = {
       kind = "samsung";
       renderer = "http://192.168.1.148:9197/dmr";
+      edid = ./samsung-edid.bin;
     };
     api.enable = true;
     web = {

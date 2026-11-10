@@ -65,6 +65,13 @@ in
         example = "http://192.168.1.148:9197/dmr";
         description = "The TV's UPnP MediaRenderer description, whose RenderingControl sets the TV's volume, or null for no volume control. Power and input go over HDMI-CEC either way.";
       };
+
+      edid = lib.mkOption {
+        type = lib.types.nullOr lib.types.path;
+        default = null;
+        example = lib.literalExpression "./samsung-edid.bin";
+        description = "The EDID of the TV on HDMI0, read from /sys/class/drm/card0-HDMI-A-1/edid while it is connected. When set, HDMI0 counts as connected even with the TV in standby or unplugged, so video, audio and HDMI-CEC stay the same whether the TV is on or not. Applies after a reboot. Null leaves hotplug to the TV.";
+      };
     };
   };
 
@@ -136,5 +143,15 @@ in
 
     systemd.services."getty@tty1".enable = false;
     systemd.services."autovt@tty1".enable = false;
+
+    boot.kernelParams = lib.mkIf (cfg.tv.edid != null) [
+      "vc4.force_hotplug=1"
+      "drm.edid_firmware=HDMI-A-1:edid/semmeltv-tv.bin"
+    ];
+    hardware.firmware = lib.mkIf (cfg.tv.edid != null) [
+      (pkgs.runCommand "semmeltv-tv-edid" { } ''
+        install -D -m 444 ${cfg.tv.edid} $out/lib/firmware/edid/semmeltv-tv.bin
+      '')
+    ];
   };
 }

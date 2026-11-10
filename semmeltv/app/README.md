@@ -163,12 +163,37 @@ The app wakes the TV and switches it to its input when the machine cold boots
 with HDMI connected, or when HDMI is plugged in after being out for at least 10
 seconds. Restarting the app never wakes it, and neither does a shorter hot-plug
 pulse. Once the TV sends Standby, plugging in leaves it off until the TV shows it
-is on again. A cold boot wakes it regardless.
+is on again. A cold boot wakes it regardless. With a stored EDID (below) the
+connector never unplugs, so only the cold boot wakes it this way.
 
-Waking the TV, by voice or on plug-in, sends Image View On, asks the TV for its
-power status every half second until it reports on (at most 15 seconds), then
-claims the input with Active Source. Until 5 seconds after that, the app takes
-the input back if the TV routes elsewhere while it starts up.
+Starting or resuming a video wakes the TV too, from the TV, the web app, the API
+or by voice. The app asks the TV for its power status over CEC. If the TV is on
+and SemmelTV is the active source, it does nothing. If the TV is on another
+input, it switches it to SemmelTV and keeps playing. If the TV is in standby or
+does not answer, it turns it on and pauses the video until the TV reports on with
+SemmelTV as the active source, plus 2 seconds for the picture, or at most 20
+seconds. A pause or resume in the meantime wins. SemmelTV is the active source
+from its own Active Source until the TV sends Standby or routes elsewhere.
+
+Waking the TV, by voice, for a video or on plug-in, sends Image View On, asks the
+TV for its power status every half second until it reports on (at most 15
+seconds), then claims the input with Active Source. Until 5 seconds after that,
+the app takes the input back if the TV routes elsewhere while it starts up.
+
+## A TV that is off
+
+Without help, a Raspberry Pi's HDMI port goes "disconnected" when the TV is
+unplugged or, on some TVs, in standby. The kernel then forgets the TV's EDID: the
+compositor turns the output off and modesets it again when the TV returns, ALSA
+refuses the HDMI audio device (error 524, the driver treats an output without an
+EDID as DVI), mpv falls back to software decoding with no audio and stays that
+way, and HDMI-CEC loses its address. `services.semmeltv.tv.edid` stores the TV's
+EDID and sets `vc4.force_hotplug=1` and `drm.edid_firmware`, so HDMI0 stays
+connected with that EDID whatever the TV does. Video mode, decoding, audio and
+CEC are then the same with the TV on, in standby or unplugged. Capture the EDID
+from `/sys/class/drm/card0-HDMI-A-1/edid` with the TV connected, before setting
+the option; a different TV or TV input needs a new capture, since the EDID
+carries the CEC address.
 
 Switching the TV to another input stops playback and closes the player, with the
 position saved, the same as Stop. The app takes a Routing Change or Set Stream

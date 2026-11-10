@@ -2,7 +2,7 @@ mod samsung;
 mod upnp;
 
 use crate::api::Outcome;
-use crate::cec;
+use crate::cec::{self, Screen};
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -12,8 +12,11 @@ use serde::Serialize;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 
 const STEP: i64 = 2;
+const SHOWING_POLL: Duration = Duration::from_millis(500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -74,6 +77,7 @@ impl fmt::Display for Failure {
 }
 
 pub trait Power: Send + Sync {
+    fn screen(&self) -> Screen;
     fn show_semmeltv(&self) -> Result<(), Failure>;
     fn turn_off(&self) -> Result<(), Failure>;
 }
@@ -90,6 +94,10 @@ pub trait Pairing: Send + Sync {
 struct Cec;
 
 impl Power for Cec {
+    fn screen(&self) -> Screen {
+        cec::screen()
+    }
+
     fn show_semmeltv(&self) -> Result<(), Failure> {
         cec::show_semmeltv().map_err(|error| Failure::Unreachable(error.to_string()))
     }
@@ -97,6 +105,13 @@ impl Power for Cec {
     fn turn_off(&self) -> Result<(), Failure> {
         cec::turn_tv_off().map_err(|error| Failure::Unreachable(error.to_string()))
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Woken {
+    AlreadyShowing,
+    Switched,
+    TurnedOn,
 }
 
 struct Backends {
@@ -191,6 +206,28 @@ impl Television {
 
     pub fn turn_off(&self) -> Result<(), Failure> {
         self.inner.power.turn_off()
+    }
+
+    pub fn wake(&self) -> Result<Woken, Failure> {
+        let woken = match self.inner.power.screen() {
+            Screen::Showing => return Ok(Woken::AlreadyShowing),
+            Screen::Elsewhere => Woken::Switched,
+            Screen::Off => Woken::TurnedOn,
+        };
+        self.inner.power.show_semmeltv().map(|()| woken)
+    }
+
+    pub fn wait_until_showing(&self, timeout: Duration) -> bool {
+        let deadline = Instant::now() + timeout;
+        loop {
+            if self.inner.power.screen() == Screen::Showing {
+                return true;
+            }
+            if Instant::now() >= deadline {
+                return false;
+            }
+            thread::sleep(SHOWING_POLL);
+        }
     }
 
     pub fn step_volume(&self, by: i64) -> Result<i64, Failure> {
@@ -298,6 +335,10 @@ mod tests {
     struct NoPower;
 
     impl Power for NoPower {
+        fn screen(&self) -> Screen {
+            Screen::Showing
+        }
+
         fn show_semmeltv(&self) -> Result<(), Failure> {
             Ok(())
         }
@@ -325,6 +366,52 @@ mod tests {
                 chosen: Mutex::new(None),
             }),
         }
+    }
+
+    struct Fake {
+        screen: Screen,
+        shown: Mutex<u32>,
+    }
+
+    impl Power for Arc<Fake> {
+        fn screen(&self) -> Screen {
+            self.screen
+        }
+
+        fn show_semmeltv(&self) -> Result<(), Failure> {
+            *self.shown.lock().unwrap() += 1;
+            Ok(())
+        }
+
+        fn turn_off(&self) -> Result<(), Failure> {
+            Ok(())
+        }
+    }
+
+    fn woken(screen: Screen) -> (Result<Woken, Failure>, u32) {
+        let screen = Arc::new(Fake {
+            screen,
+            shown: Mutex::new(0),
+        });
+        let television = Television {
+            inner: Arc::new(Inner {
+                power: Box::new(screen.clone()),
+                kind: None,
+                renderer: None,
+                token: std::env::temp_dir().join("semmeltv-tv-token-never-written"),
+                chosen: Mutex::new(None),
+            }),
+        };
+        let woken = television.wake();
+        let shown = *screen.shown.lock().unwrap();
+        (woken, shown)
+    }
+
+    #[test]
+    fn waking_turns_the_tv_on_only_when_it_is_not_showing_semmeltv() {
+        assert_eq!(woken(Screen::Showing), (Ok(Woken::AlreadyShowing), 0));
+        assert_eq!(woken(Screen::Elsewhere), (Ok(Woken::Switched), 1));
+        assert_eq!(woken(Screen::Off), (Ok(Woken::TurnedOn), 1));
     }
 
     fn fixed(backends: Backends) -> Television {

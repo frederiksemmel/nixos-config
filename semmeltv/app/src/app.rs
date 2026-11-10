@@ -30,13 +30,14 @@ use crate::watch::{self, Change};
 use crate::watching::{self, Current};
 use crate::{AppWindow, CardData, OfflineState, ShelfData};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::DefaultHasher;
 use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -49,6 +50,8 @@ const OUT_OF_REACH: &str = "Not downloaded, and pCloud can't be reached right no
 const NOTHING_PLAYING: &str = "Nothing is playing";
 const PLAYBACK_EVERY: Duration = Duration::from_millis(500);
 const OFFER_TIME: Duration = Duration::from_secs(60);
+const TV_WAKE_WAIT: Duration = Duration::from_secs(20);
+const TV_PICTURE_SETTLE: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Copy)]
 enum Screen {
@@ -61,6 +64,8 @@ enum Input {
     Request(Pending),
     Stop,
     Download(Found),
+    TvWaking,
+    TvShowing,
 }
 
 enum Found {
@@ -165,6 +170,8 @@ struct App {
     television: Television,
     downloads: Option<Downloads>,
     offer: Option<Offer>,
+    waking_tv: Arc<AtomicBool>,
+    paused_for_tv: Cell<bool>,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -268,6 +275,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         television: television.clone(),
         downloads,
         offer: None,
+        waking_tv: Arc::new(AtomicBool::new(false)),
+        paused_for_tv: Cell::new(false),
     }));
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
@@ -295,6 +304,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
                     }
                     Input::Stop => app.borrow().control(Control::Stop),
                     Input::Download(found) => app.borrow_mut().download_found(found),
+                    Input::TvWaking => app.borrow().pause_for_tv(),
+                    Input::TvShowing => app.borrow().resume_after_tv(),
                 }
             }
         }
@@ -626,6 +637,8 @@ impl App {
                 self.player = Some(player);
                 self.now_playing = Some(self.now_playing_for(path));
                 self.publish_playback();
+                self.paused_for_tv.set(false);
+                self.wake_tv();
                 self.record_start(path);
                 self.lead = Some(path.to_path_buf());
                 self.queue_downloads(true);
@@ -1189,11 +1202,62 @@ impl App {
                 }
             }
             (_, None) => {}
-            (Control::Pause, Some(player)) => player.set_paused(true),
-            (Control::Resume, Some(player)) => player.set_paused(false),
+            (Control::Pause, Some(player)) => {
+                self.paused_for_tv.set(false);
+                player.set_paused(true);
+            }
+            (Control::Resume, Some(player)) => {
+                self.paused_for_tv.set(false);
+                self.wake_tv();
+                player.set_paused(false);
+            }
             (Control::Stop, Some(player)) => player.command(Command::Back),
             (Control::Mute, Some(player)) => player.set_muted(true),
             (Control::Unmute, Some(player)) => player.set_muted(false),
+        }
+    }
+
+    fn wake_tv(&self) {
+        if self.waking_tv.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let television = self.television.clone();
+        let remote = self.keys.clone();
+        let waking = self.waking_tv.clone();
+        thread::spawn(move || {
+            match television.wake() {
+                Ok(tv::Woken::AlreadyShowing) => {}
+                Ok(tv::Woken::Switched) => eprintln!("TV: on another input at playback, switching to SemmelTV"),
+                Ok(tv::Woken::TurnedOn) => {
+                    eprintln!("TV: off at playback, turning it on and pausing until it shows SemmelTV");
+                    remote.deliver(Input::TvWaking);
+                    if television.wait_until_showing(TV_WAKE_WAIT) {
+                        thread::sleep(TV_PICTURE_SETTLE);
+                    } else {
+                        eprintln!("TV: still not showing SemmelTV after {TV_WAKE_WAIT:?}, playing anyway");
+                    }
+                    remote.deliver(Input::TvShowing);
+                }
+                Err(failure) => eprintln!("TV: could not turn it on for playback: {failure:?}"),
+            }
+            waking.store(false, Ordering::SeqCst);
+        });
+    }
+
+    fn pause_for_tv(&self) {
+        if let Some(player) = &self.player
+            && !player.state().paused
+        {
+            player.set_paused(true);
+            self.paused_for_tv.set(true);
+        }
+    }
+
+    fn resume_after_tv(&self) {
+        if self.paused_for_tv.replace(false)
+            && let Some(player) = &self.player
+        {
+            player.set_paused(false);
         }
     }
 

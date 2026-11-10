@@ -8,6 +8,7 @@ use std::fs;
 use std::io;
 use std::mem;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -23,6 +24,7 @@ const POWER_POLL: Duration = Duration::from_millis(500);
 const HOLD_INPUT: Duration = Duration::from_secs(5);
 
 static INPUT_HELD_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
+static ACTIVE_SOURCE: AtomicBool = AtomicBool::new(false);
 
 pub fn spawn(remote: Remote) {
     for path in adapters(Path::new("/dev")) {
@@ -39,7 +41,40 @@ pub fn show_semmeltv() -> io::Result<()> {
     each_adapter(show_on)
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Screen {
+    Showing,
+    Elsewhere,
+    Off,
+}
+
+pub fn screen() -> Screen {
+    screen_of(tv_is_on().ok(), ACTIVE_SOURCE.load(Ordering::Relaxed))
+}
+
+fn screen_of(on: Option<bool>, active_source: bool) -> Screen {
+    match (on, active_source) {
+        (Some(true), true) => Screen::Showing,
+        (Some(true), false) => Screen::Elsewhere,
+        (Some(false) | None, _) => Screen::Off,
+    }
+}
+
+fn tv_is_on() -> io::Result<bool> {
+    let mut result = Err(io::Error::other("no HDMI-CEC adapter is connected"));
+    for path in adapters(Path::new("/dev")) {
+        let power = CecDevice::open(&path).and_then(|device| tv_power(&device));
+        match power {
+            Ok(status) => return Ok(status == POWER_ON),
+            Err(error) if result.is_err() => result = Err(error),
+            Err(_) => {}
+        }
+    }
+    result
+}
+
 pub fn turn_tv_off() -> io::Result<()> {
+    ACTIVE_SOURCE.store(false, Ordering::Relaxed);
     each_adapter(|_, device| device.transmit(own_logical_address(&device)?, CecLogicalAddress::Tv, CecOpcode::Standby))
 }
 
@@ -150,7 +185,11 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
             }
             wake.heard(message.initiator(), opcode);
             let own_address = device.get_phys()?;
-            match react(opcode, message.parameters(), own_address) {
+            let reaction = react(opcode, message.parameters(), own_address);
+            if lost_the_screen(opcode, &reaction) {
+                ACTIVE_SOURCE.store(false, Ordering::Relaxed);
+            }
+            match reaction {
                 Reaction::Ignore => {}
                 Reaction::Press(command) => {
                     if let Some(command) = keys.press(command, Instant::now()) {
@@ -225,7 +264,13 @@ fn announce(device: &CecDevice) -> io::Result<()> {
         CecLogicalAddress::UnregisteredBroadcast,
         CecOpcode::ActiveSource,
         &device.get_phys()?.to_bytes(),
-    )
+    )?;
+    ACTIVE_SOURCE.store(true, Ordering::Relaxed);
+    Ok(())
+}
+
+fn lost_the_screen(opcode: CecOpcode, reaction: &Reaction) -> bool {
+    opcode == CecOpcode::Standby || *reaction == Reaction::Stop
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -406,6 +451,24 @@ mod tests {
         assert_eq!(press(0x40), Reaction::Ignore);
         assert_eq!(press(0xff), Reaction::Ignore);
         assert_eq!(react(CecOpcode::UserControlPressed, &[], OWN), Reaction::Ignore);
+    }
+
+    #[test]
+    fn the_screen_shows_semmeltv_only_when_the_tv_is_on_and_semmeltv_is_the_active_source() {
+        assert_eq!(screen_of(Some(true), true), Screen::Showing);
+        assert_eq!(screen_of(Some(true), false), Screen::Elsewhere);
+        assert_eq!(screen_of(Some(false), true), Screen::Off, "standby");
+        assert_eq!(screen_of(None, true), Screen::Off, "no answer over CEC");
+    }
+
+    #[test]
+    fn semmeltv_stops_being_shown_on_standby_or_another_input() {
+        let elsewhere = react(CecOpcode::ActiveSource, &[0x20, 0x00], OWN);
+        assert!(lost_the_screen(CecOpcode::ActiveSource, &elsewhere));
+        assert!(lost_the_screen(CecOpcode::Standby, &Reaction::Ignore));
+        let ours = react(CecOpcode::SetStreamPath, &[0x10, 0x00], OWN);
+        assert!(!lost_the_screen(CecOpcode::SetStreamPath, &ours));
+        assert!(!lost_the_screen(CecOpcode::UserControlPressed, &press(0x00)));
     }
 
     #[test]
