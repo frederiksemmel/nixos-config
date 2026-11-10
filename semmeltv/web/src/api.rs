@@ -43,6 +43,10 @@ impl Card {
             Kind::Show => format!("/shows/{}", self.key),
         }
     }
+
+    pub fn year(&self) -> Option<u16> {
+        self.years.as_deref()?.get(..4)?.parse().ok()
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -56,6 +60,7 @@ pub struct WatchingCard {
 #[derive(Debug, Deserialize)]
 pub struct Library {
     pub watching: Vec<WatchingCard>,
+    pub forgotten: Vec<WatchingCard>,
     pub newest: Vec<Card>,
     pub shows: Vec<Card>,
     pub movies: Vec<Card>,
@@ -501,10 +506,24 @@ impl Api {
     }
 
     pub async fn remove_download(&self, title: &TitleKey) -> (bool, String) {
+        self.answer("/api/storage/remove", json!({ "kind": title.kind, "key": title.key }))
+            .await
+    }
+
+    pub async fn dismiss_forgotten(&self, kind: Kind, key: &str) -> (bool, String) {
+        let kind = match kind {
+            Kind::Movie => "movie",
+            Kind::Show => "show",
+        };
+        self.answer("/api/forgotten/dismiss", json!({ "kind": kind, "key": key }))
+            .await
+    }
+
+    async fn answer(&self, path: &str, body: Value) -> (bool, String) {
         let sent = self
             .client
-            .post(format!("{}/api/storage/remove", self.base))
-            .json(&json!({ "kind": title.kind, "key": title.key }))
+            .post(format!("{}{path}", self.base))
+            .json(&body)
             .send()
             .await;
         let response = match sent {

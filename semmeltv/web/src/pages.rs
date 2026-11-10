@@ -7,10 +7,28 @@ use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::error::not_found;
 use topcoat::router::{page, path_param};
-use topcoat::runtime::{Event, link, shard, signal};
+use topcoat::runtime::{Event, Signal, link, procedure, shard, signal};
 use topcoat::view::{View, attributes, component, view};
 
 const LONGEST_QUERY: usize = 100;
+const OLDEST_DECADE: u16 = 1990;
+const RATINGS: [(&str, &str); 5] = [
+    ("", "Any"),
+    ("best", "Best first"),
+    ("6", "6+"),
+    ("7", "7+"),
+    ("8", "8+"),
+];
+const YEARS: [(&str, &str); 8] = [
+    ("", "Any"),
+    ("newest", "Newest"),
+    ("oldest", "Oldest"),
+    ("2020", "2020s"),
+    ("2010", "2010s"),
+    ("2000", "2000s"),
+    ("1990", "1990s"),
+    ("older", "Before 1990"),
+];
 const BANDS: [(&str, &str); 6] = [
     ("awesome", "9+"),
     ("great", "8+"),
@@ -91,16 +109,28 @@ async fn tile(cx: &Cx, public: &Public, card: &Card) -> Result<impl View> {
     })
 }
 
+#[procedure]
+async fn forget(cx: &Cx, kind: String, key: String) -> Result<(bool, String)> {
+    let kind = match kind.as_str() {
+        "movie" => Kind::Movie,
+        "show" => Kind::Show,
+        _ => return Ok((false, format!("No such kind: {kind}"))),
+    };
+    Ok(app_context::<Api>(cx).dismiss_forgotten(kind, &key).await)
+}
+
 #[component]
-async fn watching_tile(cx: &Cx, public: &Public, watching: &WatchingCard) -> Result<impl View> {
+async fn watching_tile(cx: &Cx, public: &Public, watching: &WatchingCard, forgettable: bool) -> Result<impl View> {
     let card = &watching.card;
     let image = card.backdrop.as_deref().map(|path| public.url(path));
     let attrs = attributes! { cx => class="tile-link" };
     let key = card.key.clone();
     let is_movie = card.kind == Kind::Movie;
+    let kind = if is_movie { "movie" } else { "show" };
     let said = signal(cx, String::new);
+    let gone = signal(cx, || false);
     Ok(view! {
-        <div class="tile watching">
+        <div :class=$(if gone.get() { "tile watching gone" } else { "tile watching" })>
             link(href: card.href(), attrs: attrs,
                 <span class="art" style=(tint(&card.title))>
                     <span class="art-title">(card.title.as_str())</span>
@@ -119,6 +149,17 @@ async fn watching_tile(cx: &Cx, public: &Public, watching: &WatchingCard) -> Res
                 })>
                 play_icon()
             </button>
+            if forgettable {
+                <button type="button" class="forget" aria-label=(format!("Remove {} from Started and Forgotten", card.title))
+                    @click=$(async |_e| {
+                        gone.set(true);
+                        let answer = forget(kind.to_owned(), key.to_owned()).await;
+                        gone.set(answer.0);
+                        said.set(answer.1);
+                    })>
+                    <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 7l10 10M17 7 7 17"></path></svg>
+                </button>
+            }
             <span class="tile-said" :hidden=$(said.get().is_empty())>$(said.get())</span>
         </div>
     })
@@ -136,10 +177,114 @@ async fn grid(public: &Public, cards: &[Card]) -> Result<impl View> {
     })
 }
 
+fn decade(year: &str) -> Option<std::ops::Range<u16>> {
+    match year {
+        "older" => Some(0..OLDEST_DECADE),
+        _ => {
+            let start: u16 = year.parse().ok()?;
+            Some(start..start + 10)
+        }
+    }
+}
+
+fn arrange(cards: &[Card], rating: &str, year: &str) -> Vec<Card> {
+    let least: Option<f64> = rating.parse().ok();
+    let span = decade(year);
+    let mut kept: Vec<Card> = cards
+        .iter()
+        .filter(|card| least.is_none_or(|least| card.ratings.imdb.is_some_and(|imdb| imdb >= least)))
+        .filter(|card| {
+            span.as_ref()
+                .is_none_or(|span| card.year().is_some_and(|year| span.contains(&year)))
+        })
+        .cloned()
+        .collect();
+    let by_year = |newest: bool| {
+        move |a: &Card, b: &Card| match (a.year(), b.year()) {
+            (Some(a), Some(b)) if newest => b.cmp(&a),
+            (Some(a), Some(b)) => a.cmp(&b),
+            (a, b) => b.is_some().cmp(&a.is_some()),
+        }
+    };
+    let by_rating = |a: &Card, b: &Card| match (a.ratings.imdb, b.ratings.imdb) {
+        (Some(a), Some(b)) => b.total_cmp(&a),
+        (a, b) => b.is_some().cmp(&a.is_some()),
+    };
+    if !rating.is_empty() {
+        kept.sort_by(by_rating);
+    }
+    match year {
+        "newest" => kept.sort_by(by_year(true)),
+        "oldest" => kept.sort_by(by_year(false)),
+        _ if rating.is_empty() && span.is_some() => kept.sort_by(by_year(true)),
+        _ => {}
+    }
+    if !year.is_empty() {
+        for card in &mut kept {
+            if card.kind == Kind::Show
+                && let Some(years) = &card.years
+            {
+                card.subtitle = years.clone();
+            }
+        }
+    }
+    kept
+}
+
+#[component]
+async fn sections(cx: &Cx, section: Signal<String>, rating: Signal<String>, year: Signal<String>) -> Result<impl View> {
+    let open = signal(cx, String::new);
+    Ok(view! {
+        <nav class="chips">
+        <button type="button" :class=$(if section.get() == "home" { "chip on" } else { "chip" })
+            @click=$(|_e| section.set("home".to_owned()))>"Home"</button>
+        <button type="button" :class=$(if section.get() == "shows" { "chip on" } else { "chip" })
+            @click=$(|_e| section.set("shows".to_owned()))>"Series"</button>
+        <button type="button" :class=$(if section.get() == "movies" { "chip on" } else { "chip" })
+            @click=$(|_e| section.set("movies".to_owned()))>"Movies"</button>
+        <span class="chip-gap" :hidden=$(section.get() == "home")></span>
+        <button type="button" aria-label="Rating" :hidden=$(section.get() == "home")
+            :class=$(if rating.get().is_empty() { "chip pick" } else { "chip pick on" })
+            :aria-expanded=$(if open.get() == "rating" { "true" } else { "false" })
+            @click=$(|_e| if open.get() == "rating" { open.set("".to_owned()) } else { open.set("rating".to_owned()) })>
+            <svg class="glyph" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z"></path></svg>
+            $(if rating.get() == "best" { "Best" } else if rating.get() == "6" { "6+" } else if rating.get() == "7" { "7+" } else if rating.get() == "8" { "8+" } else { "" })
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"></path></svg>
+        </button>
+        <button type="button" aria-label="Year" :hidden=$(section.get() == "home")
+            :class=$(if year.get().is_empty() { "chip pick" } else { "chip pick on" })
+            :aria-expanded=$(if open.get() == "year" { "true" } else { "false" })
+            @click=$(|_e| if open.get() == "year" { open.set("".to_owned()) } else { open.set("year".to_owned()) })>
+            <svg class="glyph" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2.5"></rect><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"></path></svg>
+            $(if year.get() == "newest" { "Newest" } else if year.get() == "oldest" { "Oldest" } else if year.get() == "older" { "<1990" } else if year.get() == "2020" { "2020s" } else if year.get() == "2010" { "2010s" } else if year.get() == "2000" { "2000s" } else if year.get() == "1990" { "1990s" } else { "" })
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"></path></svg>
+        </button>
+        </nav>
+        <div class="filter-options" :hidden=$(if section.get() == "home" { true } else { open.get() != "rating" })>
+            for (value, label) in RATINGS {
+                <button type="button" :class=$(if rating.get() == value { "filter-option on" } else { "filter-option" })
+                    @click=$(|_e| { rating.set(value.to_owned()); open.set("".to_owned()); })>
+                    (label)
+                </button>
+            }
+        </div>
+        <div class="filter-options" :hidden=$(if section.get() == "home" { true } else { open.get() != "year" })>
+            for (value, label) in YEARS {
+                <button type="button" :class=$(if year.get() == value { "filter-option on" } else { "filter-option" })
+                    @click=$(|_e| { year.set(value.to_owned()); open.set("".to_owned()); })>
+                    (label)
+                </button>
+            }
+        </div>
+    })
+}
+
 #[page("/")]
 async fn home(cx: &Cx) -> Result<impl View> {
     let query = signal(cx, String::new);
-    let section = signal(cx, || "all".to_owned());
+    let section = signal(cx, || "home".to_owned());
+    let rating = signal(cx, String::new);
+    let year = signal(cx, String::new);
     let said = signal(cx, String::new);
     Ok(view! {
         <div class="search">
@@ -165,20 +310,15 @@ async fn home(cx: &Cx) -> Result<impl View> {
             </button>
         </div>
         <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
-        <nav class="chips" :hidden=$(!query.get().trim().is_empty())>
-            <button type="button" :class=$(if section.get() == "all" { "chip on" } else { "chip" })
-                @click=$(|_e| section.set("all".to_owned()))>"All"</button>
-            <button type="button" :class=$(if section.get() == "shows" { "chip on" } else { "chip" })
-                @click=$(|_e| section.set("shows".to_owned()))>"Series"</button>
-            <button type="button" :class=$(if section.get() == "movies" { "chip on" } else { "chip" })
-                @click=$(|_e| section.set("movies".to_owned()))>"Movies"</button>
-        </nav>
-        browse(query: $(query.get()), section: $(section.get()))
+        <div class="sections" :hidden=$(!query.get().trim().is_empty())>
+            sections(section: section.clone(), rating: rating.clone(), year: year.clone())
+        </div>
+        browse(query: $(query.get()), section: $(section.get()), rating: $(rating.get()), year: $(year.get()))
     })
 }
 
 #[shard]
-async fn browse(cx: &Cx, query: String, section: String) -> Result<impl View> {
+async fn browse(cx: &Cx, query: String, section: String, rating: String, year: String) -> Result<impl View> {
     let api = app_context::<Api>(cx);
     let public = app_context::<Public>(cx).clone();
     let query: String = query.trim().chars().take(LONGEST_QUERY).collect();
@@ -192,8 +332,22 @@ async fn browse(cx: &Cx, query: String, section: String) -> Result<impl View> {
     } else {
         None
     };
-    let show_series = section != "movies";
-    let show_movies = section != "shows";
+    let rating = if RATINGS.iter().any(|(value, _)| *value == rating) {
+        rating
+    } else {
+        String::new()
+    };
+    let year = if YEARS.iter().any(|(value, _)| *value == year) {
+        year
+    } else {
+        String::new()
+    };
+    let filtered = section == "shows" || section == "movies";
+    let arranged = match &library {
+        Some(Ok(library)) if section == "shows" => arrange(&library.shows, &rating, &year),
+        Some(Ok(library)) if section == "movies" => arrange(&library.movies, &rating, &year),
+        _ => Vec::new(),
+    };
     Ok(view! {
         match (results, library) {
             (Some(Ok(results)), _) => {
@@ -208,18 +362,22 @@ async fn browse(cx: &Cx, query: String, section: String) -> Result<impl View> {
             },
             (Some(Err(error)), _) | (None, Some(Err(error))) => <p class="empty">(error)</p>,
             (None, Some(Ok(library))) => {
-                if section == "all" && !library.watching.is_empty() {
+                if filtered {
+                    section_grid(public: &public, title: if section == "shows" { "Series" } else { "Movies" },
+                        cards: &arranged)
+                }
+                if !filtered && !library.watching.is_empty() {
                     <section class="shelf">
                         <h2>"Currently Watching"</h2>
                         <div class="row">
                             #[key(watching.card.href())]
                             for watching in &library.watching {
-                                watching_tile(public: &public, watching: watching)
+                                watching_tile(public: &public, watching: watching, forgettable: false)
                             }
                         </div>
                     </section>
                 }
-                if section == "all" && !library.newest.is_empty() {
+                if !filtered && !library.newest.is_empty() {
                     <section class="shelf">
                         <h2>"Newly Added"</h2>
                         <div class="row posters">
@@ -230,21 +388,34 @@ async fn browse(cx: &Cx, query: String, section: String) -> Result<impl View> {
                         </div>
                     </section>
                 }
-                if show_series {
+                if !filtered && !library.forgotten.is_empty() {
                     <section class="shelf">
-                        <h2>"Series"</h2>
-                        grid(public: &public, cards: &library.shows)
-                    </section>
-                }
-                if show_movies {
-                    <section class="shelf">
-                        <h2>"Movies"</h2>
-                        grid(public: &public, cards: &library.movies)
+                        <h2>"Started and Forgotten"</h2>
+                        <div class="row">
+                            #[key(forgotten.card.href())]
+                            for forgotten in &library.forgotten {
+                                watching_tile(public: &public, watching: forgotten, forgettable: true)
+                            }
+                        </div>
                     </section>
                 }
             },
             (None, None) => "",
         }
+    })
+}
+
+#[component]
+async fn section_grid(public: &Public, title: &str, cards: &[Card]) -> Result<impl View> {
+    Ok(view! {
+        <section class="shelf">
+            <h2>(title)</h2>
+            if cards.is_empty() {
+                <p class="empty">"Nothing here matches these filters."</p>
+            } else {
+                grid(public: public, cards: cards)
+            }
+        </section>
     })
 }
 
@@ -808,4 +979,86 @@ async fn show(cx: &Cx) -> Result<impl View> {
             </div>
         </article>
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn card(key: &str, kind: &str, years: Option<&str>, imdb: Option<f64>) -> Card {
+        serde_json::from_value(json!({
+            "kind": kind, "key": key, "title": key, "years": years, "subtitle": "8 episodes",
+            "poster": null, "backdrop": null,
+            "ratings": { "imdb": imdb, "rotten_tomatoes": null, "fresh": null, "popcorn": null, "full": null },
+        }))
+        .unwrap()
+    }
+
+    fn cards() -> Vec<Card> {
+        vec![
+            card("alien", "movie", Some("1979"), Some(8.5)),
+            card("dune", "movie", Some("2021"), Some(8.0)),
+            card("home", "movie", None, None),
+            card("cats", "movie", Some("2019"), Some(2.8)),
+            card("lotus", "show", Some("2021–"), Some(7.9)),
+        ]
+    }
+
+    fn keys(cards: &[Card]) -> Vec<&str> {
+        cards.iter().map(|card| card.key.as_str()).collect()
+    }
+
+    #[test]
+    fn no_filter_keeps_the_library_order() {
+        assert_eq!(
+            keys(&arrange(&cards(), "", "")),
+            ["alien", "dune", "home", "cats", "lotus"]
+        );
+    }
+
+    #[test]
+    fn best_first_puts_unrated_titles_last() {
+        assert_eq!(
+            keys(&arrange(&cards(), "best", "")),
+            ["alien", "dune", "lotus", "cats", "home"]
+        );
+        assert_eq!(keys(&arrange(&cards(), "8", "")), ["alien", "dune"]);
+    }
+
+    #[test]
+    fn years_sort_or_narrow_to_a_decade() {
+        assert_eq!(
+            keys(&arrange(&cards(), "", "newest")),
+            ["dune", "lotus", "cats", "alien", "home"]
+        );
+        assert_eq!(
+            keys(&arrange(&cards(), "", "oldest")),
+            ["alien", "cats", "dune", "lotus", "home"]
+        );
+        assert_eq!(keys(&arrange(&cards(), "", "2020")), ["dune", "lotus"]);
+        assert_eq!(keys(&arrange(&cards(), "", "older")), ["alien"]);
+        assert_eq!(keys(&arrange(&cards(), "7", "2020")), ["dune", "lotus"]);
+    }
+
+    #[test]
+    fn titles_from_the_same_year_come_best_first() {
+        let mut cards = cards();
+        cards[4].ratings.imdb = Some(8.3);
+        assert_eq!(
+            keys(&arrange(&cards, "", "newest")),
+            ["dune", "lotus", "cats", "alien", "home"]
+        );
+        assert_eq!(
+            keys(&arrange(&cards, "best", "newest")),
+            ["lotus", "dune", "cats", "alien", "home"]
+        );
+        assert_eq!(keys(&arrange(&cards, "best", "2020")), ["lotus", "dune"]);
+    }
+
+    #[test]
+    fn a_year_filter_shows_when_a_series_ran() {
+        let arranged = arrange(&cards(), "", "2020");
+        assert_eq!(arranged[1].subtitle, "2021–");
+    }
 }

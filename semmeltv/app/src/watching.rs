@@ -1,4 +1,4 @@
-use crate::library::{Item, Library};
+use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::progress::{Progress, Watched};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -7,6 +7,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const SERIES: usize = 3;
 pub const MOVIES: usize = 3;
 pub const ENOUGH: f64 = 60.0;
+const CREDITS: f64 = 0.95;
+const A_WHILE_DAYS: f64 = 7.0;
+const UNKNOWN_AGE_DAYS: f64 = 90.0;
+const SECONDS_PER_DAY: f64 = 86_400.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -29,6 +33,12 @@ pub struct Entry {
     pub kind: Kind,
     pub key: String,
     pub last_played: u64,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Dismissal {
+    pub file: PathBuf,
+    pub at: u64,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -172,6 +182,125 @@ pub fn current(library: &Library, progress: &Progress) -> Vec<Current> {
         .collect()
 }
 
+struct Started {
+    current: Current,
+    share: f64,
+    last_played: Option<u64>,
+}
+
+fn started_movie(progress: &Progress, index: usize, movie: &Movie) -> Option<Started> {
+    let watched = *progress.files.get(&movie.path)?;
+    let (at, duration) = (watched.stopped_at?, watched.duration?);
+    if watched.finished || duration <= 0.0 || at <= 0.0 || at / duration >= CREDITS {
+        return None;
+    }
+    let entry = progress.watching.last_played(Kind::Movie, &movie.key);
+    Some(Started {
+        current: Current {
+            item: Item::Movie(index),
+            file: movie.path.clone(),
+            episode: None,
+            watched,
+            last_played: watched.last_played.max(entry).unwrap_or(0),
+        },
+        share: at / duration,
+        last_played: watched.last_played.max(entry),
+    })
+}
+
+fn started_show(progress: &Progress, index: usize, show: &Show) -> Option<Started> {
+    progress.shows.get(&show.key)?;
+    let episode = progress.resume_episode(show)?;
+    let regular: Vec<&Episode> = show.episodes().filter(|episode| episode.season > 0).collect();
+    let all: Vec<&Episode> = if regular.is_empty() {
+        show.episodes().collect()
+    } else {
+        regular
+    };
+    let seen = all.iter().filter(|candidate| progress.watched(show, candidate)).count();
+    let watched = progress.files.get(&episode.path).copied().unwrap_or_default();
+    let current = Current {
+        item: Item::Show(index),
+        file: episode.path.clone(),
+        episode: Some((episode.season, episode.number)),
+        watched,
+        last_played: 0,
+    };
+    let share = (seen as f64 + f64::from(current.fraction())) / all.len().max(1) as f64;
+    let played = progress.last_played(show.episodes().map(|episode| &episode.path));
+    let last_played = played.max(progress.watching.last_played(Kind::Series, &show.key));
+    Some(Started {
+        current: Current {
+            last_played: last_played.unwrap_or(0),
+            ..current
+        },
+        share,
+        last_played,
+    })
+}
+
+fn dismissed(progress: &Progress, started: &Started) -> bool {
+    progress
+        .dismissed
+        .iter()
+        .any(|dismissal| dismissal.file == started.current.file && Some(dismissal.at) >= started.last_played)
+}
+
+pub fn relevance(share: f64, last_played: Option<u64>, now: u64) -> f64 {
+    let days = last_played.map_or(UNKNOWN_AGE_DAYS, |then| {
+        now.saturating_sub(then) as f64 / SECONDS_PER_DAY
+    });
+    share * (days + A_WHILE_DAYS) / (days + 2.0 * A_WHILE_DAYS)
+}
+
+pub fn forgotten(library: &Library, progress: &Progress, now: u64) -> Vec<Current> {
+    let shows = library.shows.iter().enumerate().filter_map(|(index, show)| {
+        let started = started_show(progress, index, show)?;
+        Some((Kind::Series, show.key.as_str(), show.title.as_str(), started))
+    });
+    let movies = library.movies.iter().enumerate().filter_map(|(index, movie)| {
+        let started = started_movie(progress, index, movie)?;
+        Some((Kind::Movie, movie.key.as_str(), movie.title.as_str(), started))
+    });
+    let mut ranked: Vec<(f64, &str, Current)> = shows
+        .chain(movies)
+        .filter(|(kind, key, _, started)| {
+            progress.watching.last_played(*kind, key).is_none() && !dismissed(progress, started)
+        })
+        .map(|(_, _, title, started)| {
+            (
+                relevance(started.share, started.last_played, now),
+                title,
+                started.current,
+            )
+        })
+        .collect();
+    ranked.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(b.1)));
+    ranked.into_iter().map(|(_, _, current)| current).collect()
+}
+
+pub fn dismiss(progress: &mut Progress, library: &Library, kind: Kind, key: &str, now: u64) -> bool {
+    let file = match kind {
+        Kind::Series => library
+            .shows
+            .iter()
+            .find(|show| show.key == key)
+            .and_then(|show| progress.resume_episode(show))
+            .map(|episode| episode.path.clone()),
+        Kind::Movie => library
+            .movies
+            .iter()
+            .find(|movie| movie.key == key)
+            .map(|movie| movie.path.clone()),
+    };
+    let Some(file) = file else {
+        return false;
+    };
+    progress.dismissed.retain(|dismissal| dismissal.file != file);
+    progress.dismissed.push(Dismissal { file, at: now });
+    true
+}
+
 pub fn prefetch(library: &Library, progress: &Progress) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     for current in current(library, progress) {
@@ -208,7 +337,7 @@ pub fn downloads(library: &Library, progress: &Progress, playing: Option<&Path>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::{Episode, Movie, Season, Show};
+    use crate::library::Season;
     use crate::progress::{Place, Position};
 
     fn episode(show: &str, season: u32, number: u32) -> Episode {
@@ -416,11 +545,111 @@ mod tests {
         );
     }
 
+    const DAY: u64 = 86_400;
+    const NOW: u64 = 1_000 * DAY;
+
+    fn stop(progress: &mut Progress, path: &Path, position: f64, duration: f64, when: Option<u64>) {
+        progress.record(path, Place { position, duration });
+        if let Some(when) = when {
+            progress.played(path, when);
+        }
+    }
+
+    fn forgotten_keys(library: &Library, progress: &Progress) -> Vec<String> {
+        forgotten(library, progress, NOW)
+            .iter()
+            .map(|current| match current.item {
+                Item::Show(index) => library.shows[index].key.clone(),
+                Item::Movie(index) => library.movies[index].key.clone(),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_long_watch_left_long_ago_ranks_above_a_film_abandoned_after_minutes() {
+        let library = library();
+        let mut progress = Progress::default();
+        stop(
+            &mut progress,
+            Path::new("/lib/up.mkv"),
+            180.0,
+            6000.0,
+            Some(NOW - 60 * DAY),
+        );
+        at(&mut progress, "lost", 2, 1, false);
+        stop(&mut progress, &file("lost", 2, 1), 1500.0, 3000.0, Some(NOW - 90 * DAY));
+        stop(
+            &mut progress,
+            Path::new("/lib/heat.mkv"),
+            3000.0,
+            6000.0,
+            Some(NOW - DAY),
+        );
+        assert_eq!(forgotten_keys(&library, &progress), ["lost", "heat", "up"]);
+    }
+
+    #[test]
+    fn the_score_grows_with_the_share_watched_and_the_time_since() {
+        assert_eq!(relevance(0.5, Some(NOW), NOW), 0.25);
+        assert_eq!(relevance(0.6, Some(NOW - 7 * DAY), NOW), 0.4);
+        assert!(relevance(0.5, None, NOW) > relevance(0.5, Some(NOW - 30 * DAY), NOW));
+        assert!(relevance(0.05, Some(NOW - 365 * DAY), NOW) < relevance(0.5, Some(NOW - 14 * DAY), NOW));
+    }
+
+    #[test]
+    fn finished_and_currently_watched_titles_are_not_forgotten() {
+        let library = library();
+        let mut progress = Progress::default();
+        let up = Path::new("/lib/up.mkv");
+        stop(&mut progress, up, 3000.0, 6000.0, Some(NOW - DAY));
+        progress.finish(up);
+        stop(
+            &mut progress,
+            Path::new("/lib/heat.mkv"),
+            5800.0,
+            6000.0,
+            Some(NOW - DAY),
+        );
+        at(&mut progress, "dark", 2, 2, true);
+        record(&mut progress, &library, Path::new("/lib/jaws.mkv"), 90.0, NOW);
+        stop(&mut progress, Path::new("/lib/jaws.mkv"), 900.0, 6000.0, Some(NOW));
+        at(&mut progress, "lost", 1, 1, false);
+        assert_eq!(forgotten_keys(&library, &progress), ["lost"]);
+    }
+
+    #[test]
+    fn a_dismissed_title_stays_away_until_it_plays_again() {
+        let library = library();
+        let mut progress = Progress::default();
+        let up = Path::new("/lib/up.mkv");
+        stop(&mut progress, up, 3000.0, 6000.0, Some(NOW - 30 * DAY));
+        assert!(dismiss(&mut progress, &library, Kind::Movie, "up", NOW - DAY));
+        assert!(forgotten_keys(&library, &progress).is_empty());
+        assert_eq!(progress.files[up].stopped_at, Some(3000.0));
+        progress.played(up, NOW);
+        assert_eq!(forgotten_keys(&library, &progress), ["up"]);
+        assert!(!dismiss(&mut progress, &library, Kind::Movie, "gone", NOW));
+    }
+
+    #[test]
+    fn a_dismissal_outlives_a_new_key_for_the_title() {
+        let mut library = library();
+        let mut progress = Progress::default();
+        let up = Path::new("/lib/up.mkv");
+        stop(&mut progress, up, 3000.0, 6000.0, Some(NOW - 30 * DAY));
+        at(&mut progress, "lost", 1, 2, false);
+        assert!(dismiss(&mut progress, &library, Kind::Movie, "up", NOW));
+        assert!(dismiss(&mut progress, &library, Kind::Series, "lost", NOW));
+        library.movies[0].key = "up-2009".to_string();
+        assert!(forgotten_keys(&library, &progress).is_empty());
+    }
+
     #[test]
     fn the_list_survives_a_save_and_a_load() {
         let library = library();
         let mut progress = Progress::default();
         record(&mut progress, &library, &file("dark", 1, 2), 90.0, 7);
+        dismiss(&mut progress, &library, Kind::Series, "lost", 8);
         let text = serde_json::to_string(&progress).unwrap();
         assert_eq!(serde_json::from_str::<Progress>(&text).unwrap(), progress);
     }

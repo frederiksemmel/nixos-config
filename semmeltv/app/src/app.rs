@@ -848,6 +848,7 @@ impl App {
             Request::Speed(speed) => return self.speed(speed),
             Request::Subtitles(change) => return self.change_subtitles(change),
             Request::Storage(change) => return self.change_storage(change),
+            Request::Dismiss(kind, key) => return self.dismiss(kind, &key),
             Request::Listen => {
                 return match &self.voice {
                     Some(voice) => {
@@ -948,6 +949,20 @@ impl App {
             (Ok(disk), Ok(titles)) => self.shared.storage.set(storage::Report::new(disk, cache.marks, titles)),
             (Err(error), _) => eprintln!("storage: {}: {error}", cache.data.display()),
             (_, Err(error)) => eprintln!("storage: {error}"),
+        }
+    }
+
+    fn dismiss(&mut self, kind: watching::Kind, key: &str) -> Outcome {
+        if !watching::dismiss(&mut self.progress, self.nav.library(), kind, key, watching::now()) {
+            return Outcome {
+                message: format!("There is no {key} in the library"),
+                ok: false,
+            };
+        }
+        self.save_progress();
+        Outcome {
+            message: "Removed from Started and Forgotten".to_string(),
+            ok: true,
         }
     }
 

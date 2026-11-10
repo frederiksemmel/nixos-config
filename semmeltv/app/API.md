@@ -20,7 +20,8 @@ look like `{ "error": "..." }`, with 400 or 404.
 
 | Method | Path | Answer |
 | --- | --- | --- |
-| GET | `/api/library` | `{ newest, shows, movies }`, lists of cards |
+| GET | `/api/library` | `{ watching, forgotten, newest, shows, movies }`, lists of cards |
+| POST | `/api/forgotten/dismiss` | `{ kind, key }` → `{ message, ok }` |
 | GET | `/api/search?q=TEXT` | `{ results }`: cards ranked by how well the title matches, prefixes first, typos forgiven |
 | GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration`, `tags`, `about`, `last_played` and `last_played_label` |
 | GET | `/api/shows/{key}` | a card plus `next` (where playing carries on), `seasons` (each with `episodes`), `about`, `last_played` and `last_played_label` |
@@ -41,6 +42,23 @@ episode has `season`, `episode`, `title`, `label`, `short_label`, `still`,
 scale from its IMDb rating: `awesome` (9.0 and up), `great` (8.0), `good`
 (7.0), `regular` (6.0), `bad` (5.0) or `garbage`, and is null without one. Keys are the TV's own: `dune-2021`,
 `outlander`.
+
+`watching` is Currently Watching: up to three series and three films, latest
+first. `forgotten` is Started and Forgotten: every film and series that was
+started and never finished and is not in `watching`, most relevant first. A
+film is finished once it played to its end or stopped in its last 5%; a series
+once its last episode did. Relevance is the share watched (of the film, or of
+the series' regular episodes counting the started one in part) times
+`(days + 7) / (days + 14)`, where `days` is the time since it last played, 90
+when unknown. Both lists hold cards plus `season` and `episode` (where a series
+carries on, else null), `detail` ("S2 E3", "1h 20m left" or both) and
+`progress`, how far into that file it stopped, from 0 to 1.
+
+Dismissing takes a title (`kind` is `movie` or `show`) out of `forgotten` and
+keeps its resume point. It is stored by the file playback would resume, so
+it outlasts a change of the title's key, and the title comes back once it plays
+again. `ok` is
+false, with 422, for a key the library does not hold.
 
 An episode also has `watched` and `last_played`. `watched` is true once the
 episode played to its end, or when it comes before the episode where the show

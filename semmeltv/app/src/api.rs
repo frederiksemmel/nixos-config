@@ -50,6 +50,7 @@ pub enum Request {
     Listen,
     Subtitles(subtitles::Change),
     Storage(storage::Change),
+    Dismiss(watching::Kind, String),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -169,6 +170,7 @@ pub fn spawn(config: Config, shared: Arc<Shared>, root: PathBuf, bus: Bus, app: 
 fn router(api: Api) -> Router {
     Router::new()
         .route("/api/library", get(library))
+        .route("/api/forgotten/dismiss", post(dismiss))
         .route("/api/search", get(search))
         .route("/api/movies/{key}", get(movie))
         .route("/api/movies/{key}/backdrop", get(movie_backdrop))
@@ -216,7 +218,7 @@ impl From<&crate::library::Scores> for Ratings {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 enum CardKind {
     Movie,
@@ -300,6 +302,7 @@ fn watching_card(root: &FsPath, library: &Library, current: &Current) -> Watchin
 #[derive(Serialize)]
 struct LibraryView {
     watching: Vec<WatchingCard>,
+    forgotten: Vec<WatchingCard>,
     newest: Vec<Card>,
     shows: Vec<Card>,
     movies: Vec<Card>,
@@ -310,6 +313,10 @@ async fn library(State(api): State<Api>) -> Json<LibraryView> {
     let progress = api.shared.progress();
     Json(LibraryView {
         watching: watching::current(&library, &progress)
+            .iter()
+            .map(|current| watching_card(&api.root, &library, current))
+            .collect(),
+        forgotten: watching::forgotten(&library, &progress, watching::now())
             .iter()
             .map(|current| watching_card(&api.root, &library, current))
             .collect(),
@@ -325,6 +332,20 @@ async fn library(State(api): State<Api>) -> Json<LibraryView> {
             .map(|movie| movie_card(&api.root, movie))
             .collect(),
     })
+}
+
+#[derive(Deserialize)]
+struct Dismiss {
+    kind: CardKind,
+    key: String,
+}
+
+async fn dismiss(State(api): State<Api>, Json(body): Json<Dismiss>) -> Response {
+    let kind = match body.kind {
+        CardKind::Movie => watching::Kind::Movie,
+        CardKind::Show => watching::Kind::Series,
+    };
+    ask_app(&api.app, Request::Dismiss(kind, body.key)).await
 }
 
 #[derive(Deserialize)]
@@ -1041,6 +1062,11 @@ mod tests {
             duration: 9000.0,
         };
         progress.record(&dune, place);
+        let up = crate::progress::Place {
+            position: 600.0,
+            duration: 5400.0,
+        };
+        progress.record(&library().movies[1].path, up);
         shared.set_progress(&progress);
         let bus = Bus::default();
         let (asked, received) = mpsc::channel();
@@ -1135,6 +1161,22 @@ mod tests {
         assert_eq!(watching, [("dune-2021", "1h 30m left"), ("outlander", "S2 E1")]);
         assert_eq!(body["watching"][0]["progress"], 0.4);
         assert_eq!(body["watching"][1]["season"], 2);
+        assert_eq!(body["forgotten"][0]["key"], "up-2009");
+        assert_eq!(body["forgotten"][0]["detail"], "1h 20m left");
+        assert_eq!(body["forgotten"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn dismissing_a_forgotten_title_asks_the_tv() {
+        let server = serve(no_root(), None);
+        let (status, body) = post(
+            &server,
+            "/api/forgotten/dismiss",
+            json!({ "kind": "show", "key": "the-bear" }),
+        );
+        assert_eq!(status, 200);
+        assert_eq!(body["ok"], true);
+        assert_eq!(server.asked.recv().unwrap(), r#"Dismiss(Series, "the-bear")"#);
     }
 
     #[test]
