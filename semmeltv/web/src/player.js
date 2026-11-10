@@ -203,21 +203,47 @@ function markChoices() {
     const value = state ? state.dataset[list.dataset.state] : null;
     for (const button of list.querySelectorAll(".choice")) {
       const chosen = button.dataset.value === value;
-      button.setAttribute("aria-pressed", String(chosen));
-      if (chosen) button.classList.remove("pending");
+      if (button.getAttribute("aria-pressed") !== String(chosen)) button.setAttribute("aria-pressed", String(chosen));
+      if (chosen && button.classList.contains("pending")) button.classList.remove("pending");
     }
   }
 }
 
-new MutationObserver(() => {
+let flipFrom = null;
+let flipTimer = 0;
+
+function pausedNow() {
+  const state = document.querySelector(".now-state");
+  return state ? state.classList.contains("paused") : null;
+}
+
+function unflip() {
+  flipFrom = null;
+  clearTimeout(flipTimer);
+  root.removeAttribute("data-flip");
+}
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.(".bar-toggle, .transport-toggle")) return;
+  if (root.hasAttribute("data-flip")) return unflip();
+  const paused = pausedNow();
+  if (paused === null) return;
+  flipFrom = paused;
+  root.setAttribute("data-flip", "");
+  flipTimer = setTimeout(unflip, UNCONFIRMED);
+}, true);
+
+new MutationObserver((records) => {
+  if (!records.some((record) => record.type === "childList" || record.target.classList?.contains("now-state"))) return;
   const state = document.querySelector(".now-state");
   const key = state ? state.dataset.key : null;
   if (key !== shownKey) {
     shownKey = key;
     if (isOpen()) refreshTracks();
   }
+  if (flipFrom !== null && pausedNow() !== flipFrom) unflip();
   markChoices();
-}).observe(document.body, { childList: true, subtree: true });
+}).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
 
 const SETTLE_MS = 650;
 const FLICK = 0.5;
