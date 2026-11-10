@@ -1,0 +1,138 @@
+{
+ "disk": {
+  "total": 124797673472,
+  "free": 51461697536
+ },
+ "used": 46690029568,
+ "marks": {
+  "high": 64424509440,
+  "low": 57982058496,
+  "floor": 10737418240
+ },
+ "titles": [
+  {
+   "kind": "series",
+   "key": "bridgerton",
+   "name": "Bridgerton",
+   "bytes": 518336512,
+   "complete": 0,
+   "total": 8,
+   "last_watched": null,
+   "cached_at": 1794256806,
+   "keep": null
+  },
+  {
+   "kind": "series",
+   "key": "house-of-the-dragon",
+   "name": "House of the Dragon",
+   "bytes": 2409578496,
+   "complete": 2,
+   "total": 26,
+   "last_watched": 1794250151,
+   "cached_at": 1794250170,
+   "keep": "started"
+  },
+  {
+   "kind": "series",
+   "key": "star-wars-maul-shadow-lord",
+   "name": "Star Wars: Maul - Shadow Lord",
+   "bytes": 3263086592,
+   "complete": 4,
+   "total": 10,
+   "last_watched": 1794228253,
+   "cached_at": 1794226174,
+   "keep": "watching"
+  },
+  {
+   "kind": "series",
+   "key": "dark",
+   "name": "Dark",
+   "bytes": 287305728,
+   "complete": 0,
+   "total": 26,
+   "last_watched": null,
+   "cached_at": 1794250657,
+   "keep": null
+  },
+  {
+   "kind": "series",
+   "key": "brooklyn-nine-nine",
+   "name": "Brooklyn Nine-Nine",
+   "bytes": 6670032896,
+   "complete": 4,
+   "total": 10,
+   "last_watched": 1794251884,
+   "cached_at": 1794222694,
+   "keep": "watching"
+  },
+  {
+   "kind": "series",
+   "key": "chernobyl",
+   "name": "Chernobyl",
+   "bytes": 1508249600,
+   "complete": 2,
+   "total": 5,
+   "last_watched": null,
+   "cached_at": 1794213493,
+   "keep": null
+  },
+  {
+   "kind": "movie",
+   "key": "barbie-2023",
+   "name": "Barbie",
+   "bytes": 286310400,
+   "complete": 0,
+   "total": 1,
+   "last_watched": null,
+   "cached_at": 1794254213,
+   "keep": null
+  },
+  {
+   "kind": "movie",
+   "key": "guardians-of-the-galaxy-vol-3-2023",
+   "name": "Guardians of the Galaxy Vol. 3",
+   "bytes": 286560256,
+   "complete": 0,
+   "total": 1,
+   "last_watched": null,
+   "cached_at": 1794254217,
+   "keep": null
+  },
+  {
+   "kind": "movie",
+   "key": "brave-2012",
+   "name": "Brave",
+   "bytes": 664866816,
+   "complete": 0,
+   "total": 1,
+   "last_watched": null,
+   "cached_at": 1794231664,
+   "keep": null
+  },
+  {
+   "kind": "movie",
+   "key": "top-gun-maverick-2022",
+   "name": "Top Gun: Maverick",
+   "bytes": 14716928,
+   "complete": 0,
+   "total": 1,
+   "last_watched": null,
+   "cached_at": 1794212819,
+   "keep": null
+  }
+ ],
+ "next": [
+  {
+   "kind": "movie",
+   "key": "john-wick-chapter-3-parabellum-2019"
+  },
+  {
+   "kind": "movie",
+   "key": "john-wick-chapter-4-2023"
+  },
+  {
+   "kind": "movie",
+   "key": "jojo-rabbit-2019"
+  }
+ ]
+}

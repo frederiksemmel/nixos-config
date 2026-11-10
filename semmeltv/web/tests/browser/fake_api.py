@@ -9,6 +9,8 @@ HERE = Path(__file__).parent
 LIBRARY = json.loads((HERE / "library.json").read_text())
 MOVIE = json.loads((HERE / "movie.json").read_text())
 SUBTITLES = json.loads((HERE / "subtitles.json").read_text())
+STORAGE = json.loads((HERE / "storage.json").read_text())
+DOWNLOADS = json.loads((HERE / "downloads.json").read_text())
 CARDS = {card["key"]: card for row in LIBRARY.values() for card in row}
 playing = {"paused": False, "position": 2223.0}
 
@@ -51,6 +53,14 @@ async def subtitles(request):
     return web.json_response(SUBTITLES)
 
 
+async def storage(request):
+    return web.json_response(STORAGE)
+
+
+async def downloads(request):
+    return web.json_response(DOWNLOADS)
+
+
 async def playback(request):
     return web.json_response({"now_playing": now_playing()})
 
@@ -64,6 +74,8 @@ app.router.add_get("/api/events", events)
 app.router.add_get("/api/library", library)
 app.router.add_get("/api/movies/{key}", movie)
 app.router.add_get("/api/subtitles", subtitles)
+app.router.add_get("/api/storage", storage)
+app.router.add_get("/api/downloads", downloads)
 app.router.add_get("/api/playback", playback)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)

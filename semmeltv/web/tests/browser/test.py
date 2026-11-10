@@ -48,6 +48,41 @@ def scrolls(page, engine, step):
     page.wait_for_timeout(200)
 
 
+def scrolls_both_ways(page, engine, step):
+    start = page.evaluate("scrollY")
+    reached = [start]
+    for key, dy in (("PageUp", -600), ("PageDown", 600)):
+        if engine == "webkit":
+            page.keyboard.press(key)
+        else:
+            page.mouse.move(200, 400)
+            page.mouse.wheel(0, dy)
+        page.wait_for_timeout(700)
+        reached.append(page.evaluate("scrollY"))
+    check(engine, f"{step}: page scrolls up and down", reached[1] < start - 100 and reached[2] > reached[1] + 100, f"scrollY {reached}")
+
+
+def settings_subpages(page, engine):
+    page.locator('a[href="/settings"]').first.tap()
+    until(page, engine, "Settings opens", 'location.pathname === "/settings" && document.querySelector("main .settings")')
+    for sub in ("/downloads", "/storage"):
+        link = page.locator(f'main a[href="{sub}"]')
+        link.scroll_into_view_if_needed()
+        link.tap()
+        until(page, engine, f"{sub} opens", f'location.pathname === "{sub}" && !document.querySelector("semmel-shell")')
+        answers(page, engine, sub)
+        page.locator("main a.back").first.tap()
+        until(page, engine, f"Back from {sub} returns to Settings",
+              'location.pathname === "/settings" && !document.querySelector("semmel-shell") && document.querySelector("main .settings")')
+        page.wait_for_timeout(500)
+        answers(page, engine, f"Settings after Back from {sub}")
+        scrolls_both_ways(page, engine, f"Settings after Back from {sub}")
+    page.locator("main a.back").first.tap()
+    until(page, engine, "Back from Settings returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
+    page.wait_for_timeout(500)
+    scrolls(page, engine, "after Back from Settings")
+
+
 def opens_title(page, engine, step):
     tile = page.locator(TILE).first
     href = tile.get_attribute("href")
@@ -76,10 +111,15 @@ def run(p, engine, device):
     opens_title(page, engine, "cold load")
     answers(page, engine, "title page")
     scrolls(page, engine, "title page")
+    page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
+    page.wait_for_timeout(300)
     page.locator("main a.back").first.tap()
     until(page, engine, "Back returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
     page.wait_for_timeout(500)
     answers(page, engine, "after Back")
+    page.evaluate("window.scrollTo(0, 300)")
+    page.wait_for_timeout(200)
+    scrolls_both_ways(page, engine, "after Back")
     scrolls(page, engine, "after Back")
     opens_title(page, engine, "after Back")
     page.evaluate("history.back()")
@@ -94,6 +134,7 @@ def run(p, engine, device):
     page.wait_for_timeout(800)
     answers(page, engine, "after the sheet")
     scrolls(page, engine, "after the sheet")
+    settings_subpages(page, engine)
     page.locator(".bar-toggle").tap()
     answers(page, engine, "after play/pause")
     opens_title(page, engine, "after play/pause")
