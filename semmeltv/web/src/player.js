@@ -209,6 +209,30 @@ function markChoices() {
   }
 }
 
+let flipFrom = null;
+let flipTimer = 0;
+
+function pausedNow() {
+  const state = document.querySelector(".now-state");
+  return state ? state.classList.contains("paused") : null;
+}
+
+function unflip() {
+  flipFrom = null;
+  clearTimeout(flipTimer);
+  root.removeAttribute("data-flip");
+}
+
+document.addEventListener("click", (event) => {
+  if (!event.target.closest?.(".bar-toggle, .transport-toggle")) return;
+  if (root.hasAttribute("data-flip")) return unflip();
+  const paused = pausedNow();
+  if (paused === null) return;
+  flipFrom = paused;
+  root.setAttribute("data-flip", "");
+  flipTimer = setTimeout(unflip, UNCONFIRMED);
+}, true);
+
 new MutationObserver(() => {
   const state = document.querySelector(".now-state");
   const key = state ? state.dataset.key : null;
@@ -216,8 +240,9 @@ new MutationObserver(() => {
     shownKey = key;
     if (isOpen()) refreshTracks();
   }
+  if (flipFrom !== null && pausedNow() !== flipFrom) unflip();
   markChoices();
-}).observe(document.body, { childList: true, subtree: true });
+}).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
 
 const SETTLE_MS = 650;
 const FLICK = 0.5;
