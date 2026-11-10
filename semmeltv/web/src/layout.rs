@@ -25,7 +25,6 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <meta name="color-scheme" content="dark">
                 <meta name="apple-mobile-web-app-capable" content="yes">
                 <meta name="apple-mobile-web-app-title" content="SemmelTV">
-                <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
                 <title>"SemmelTV"</title>
                 <link rel="icon" href=(brand::FAVICON) type="image/svg+xml">
                 <link rel="icon" href=(brand::FAVICON_PNG) type="image/png" sizes="32x32">
