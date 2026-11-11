@@ -278,9 +278,8 @@ let
       echo
     '';
   };
-  # Bar cell for the battery, read straight from the kernel: the charge,
-  # coloured below 30% and 15% while discharging, and the state whenever the
-  # laptop is plugged in.
+  # Bar cell for the battery, read straight from the kernel: CHG while
+  # charging, LOW at 30% and below on battery (red at 15%), BAT otherwise.
   barBattery = pkgs.writeShellApplication {
     name = "bar-battery";
     text = ''
@@ -292,22 +291,16 @@ let
       bat=/sys/class/power_supply/BAT0
       read -r pct <"$bat/capacity" || pct="?"
       read -r status <"$bat/status" || status=Unknown
-      color=
-      state=
-      case $status in
-        Discharging)
-          if ((pct <= 15)); then
-            color=$red
-          elif ((pct <= 30)); then
-            color=$yellow
-          fi
-          ;;
-        *) state=''${status,,} ;;
-      esac
-      out="$pct%"
-      [ -n "$color" ] && out="<span color=\"$color\">$out</span>"
-      [ -n "$state" ] && out+=" $state"
-      echo "<span color=\"$muted\">BAT</span> $out"
+      label=BAT
+      color=$muted
+      if [ "$status" = Charging ]; then
+        label=CHG
+      elif [ "$status" = Discharging ] && ((pct <= 30)); then
+        label=LOW
+        color=$yellow
+        ((pct <= 15)) && color=$red
+      fi
+      echo "<span color=\"$color\">$label</span> $pct%"
     '';
   };
   barNet = pkgs.writeShellApplication {
