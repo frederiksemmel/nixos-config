@@ -278,6 +278,38 @@ let
       echo
     '';
   };
+  # Bar cell for the battery, read straight from the kernel: the charge,
+  # coloured below 30% and 15% while discharging, and the state whenever the
+  # laptop is plugged in.
+  barBattery = pkgs.writeShellApplication {
+    name = "bar-battery";
+    text = ''
+      ${shellPalette [
+        "muted"
+        "yellow"
+        "red"
+      ]}
+      bat=/sys/class/power_supply/BAT0
+      read -r pct <"$bat/capacity" || pct="?"
+      read -r status <"$bat/status" || status=Unknown
+      color=
+      state=
+      case $status in
+        Discharging)
+          if ((pct <= 15)); then
+            color=$red
+          elif ((pct <= 30)); then
+            color=$yellow
+          fi
+          ;;
+        *) state=''${status,,} ;;
+      esac
+      out="$pct%"
+      [ -n "$color" ] && out="<span color=\"$color\">$out</span>"
+      [ -n "$state" ] && out+=" $state"
+      echo "<span color=\"$muted\">BAT</span> $out"
+    '';
+  };
   barNet = pkgs.writeShellApplication {
     name = "bar-net";
     runtimeInputs = with pkgs; [
@@ -410,14 +442,6 @@ let
 
     .clock {
       font-weight: bold;
-    }
-
-    .battery.warning {
-      color: ${p.yellow};
-    }
-
-    .battery.critical {
-      color: ${p.red};
     }
 
     .popup {
@@ -2025,20 +2049,9 @@ in
             show_sources = false;
           }
           {
-            type = "battery";
-            format = "${label "BAT"} {percentage}%";
-            show_icon = false;
-            use_default_profiles = false;
-            profiles = {
-              warning.when = {
-                percent = 30;
-                charging = false;
-              };
-              critical.when = {
-                percent = 15;
-                charging = false;
-              };
-            };
+            type = "script";
+            cmd = lib.getExe barBattery;
+            interval = 5000;
           }
           {
             type = "clock";
