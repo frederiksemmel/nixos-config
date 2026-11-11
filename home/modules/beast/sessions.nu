@@ -180,18 +180,30 @@ def new-session [dir: string, prefix: string, name?: string] {
 }
 
 # Ends sessions: a background one is stopped and removed from the daemon, any
-# other has its process stopped. Transcripts stay, `claude --resume` reopens them.
-# `claude rm` refuses a session whose worktree has unpushed commits or changes;
-# such a session stays, and its row carries what `claude rm` said as `error`.
+# other has its process stopped, a terminal one its shpool session killed too.
+# An ended session loses its group. Transcripts stay, `claude --resume` reopens
+# them. `claude rm` refuses a session whose worktree has unpushed commits or
+# changes; such a session stays, and its row carries what `claude rm` said as
+# `error`.
 def stop-sessions [queries: list<string>] {
   let ended = $queries | each {|q|
     let s = find-session $q
     let output = if $s.host == "bg" {
       ^claude stop $s.id | complete | ignore
+      ^chmod -R u+w ($env.HOME | path join .claude/jobs $s.id) | complete | ignore
       let rm = ^claude rm $s.id | complete
       $"($rm.stdout)($rm.stderr)" | str trim
     } else {
-      if $s.pid != null { kill $s.pid }
+      if $s.pid != null {
+        let shpool = if $s.host == "term" {
+          try {
+            open --raw $"/proc/($s.pid)/environ" | decode utf-8 | split row (char nul)
+            | parse "SHPOOL_SESSION_NAME={name}" | get -o 0.name
+          } catch { null }
+        }
+        kill $s.pid
+        if $shpool != null { ^shpool kill $shpool | complete | ignore }
+      }
       ""
     }
     { session: $s.session, id: $s.id, title: $s.title, host: $s.host, output: $output }
@@ -201,6 +213,7 @@ def stop-sessions [queries: list<string>] {
     let error = if $e.host == "bg" and $e.session in $listed {
       if $e.output == "" { "the daemon still lists it" } else { $e.output }
     }
+    if $error == null { rm --permanent --force (groups-dir | path join $e.session) }
     { id: $e.id, title: $e.title, error: $error }
   }
 }
@@ -211,7 +224,7 @@ def set-group [query: string, group: string] {
   }
   let s = find-session $query
   mkdir (groups-dir)
-  $group | save --force (groups-dir | path join $s.session)
+  $"($group)\n" | save --force (groups-dir | path join $s.session)
   { title: $s.title, group: $group }
 }
 
@@ -220,9 +233,16 @@ def session-groups [] {
 }
 
 # Gives every session that has a request and no group one, one at a time, so a
-# session sees the groups the ones before it got.
+# session sees the groups the ones before it got. First deletes the groups of
+# sessions that are gone, globbing before listing the sessions so that a group
+# set in between stays.
 def label-sessions [] {
+  let files = glob (groups-dir | path join *)
   mut all = sessions
+  let current = $all | get session
+  for f in $files {
+    if ($f | path basename) not-in $current { rm --permanent --force $f }
+  }
   let unlabelled = $all | where group == null and request != null
   mut labelled = []
   for s in $unlabelled {
@@ -236,7 +256,7 @@ def label-sessions [] {
     | complete | get stdout | str trim
     if $group =~ '^[a-z0-9]+(-[a-z0-9]+)*$' and ($group | str length) <= 24 {
       mkdir (groups-dir)
-      $group | save --force (groups-dir | path join $s.session)
+      $"($group)\n" | save --force (groups-dir | path join $s.session)
       $all = $all | each {|a| if $a.session == $s.session { $a | update group $group } else { $a } }
       $labelled = $labelled | append { title: $s.title, group: $group }
     }

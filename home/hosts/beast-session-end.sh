@@ -29,6 +29,7 @@ if [[ ${1:-} == --teardown ]]; then
   fi
   if [[ -n $job ]]; then
     pkill -f "^claude attach $job\$" || true
+    chmod -R u+w "$HOME/.claude/jobs/$job" 2>/dev/null || true
     claude rm "$job" || true
   fi
   if [[ -n $worktree ]]; then

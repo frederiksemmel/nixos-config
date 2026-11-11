@@ -27,7 +27,10 @@ let
 
   session-group = pkgs.writeShellApplication {
     name = "session-group";
-    runtimeInputs = [ pkgs.coreutils ];
+    runtimeInputs = [
+      pkgs.coreutils
+      pkgs.gawk
+    ];
     text = ''
       dir="$HOME/.local/state/beast-session-groups"
       session=''${2:-''${CLAUDE_CODE_SESSION_ID:-}}
@@ -38,7 +41,7 @@ let
       if (($# == 0)); then
         echo "this session: $(cat "$dir/$session" 2>/dev/null || echo none)"
         echo "groups in use:"
-        cat "$dir"/* 2>/dev/null | sort -u
+        awk 1 "$dir"/* 2>/dev/null | sort -u
         exit
       fi
       if ! [[ $1 =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]] || ((''${#1} > 24)); then
