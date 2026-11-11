@@ -13,6 +13,7 @@ pub const FAVICON_PNG: Asset = asset!("../../assets/logo/favicon-32.png");
 pub const TOUCH_ICON: Asset = asset!("../../assets/logo/apple-touch-icon.png");
 const ICON_192: Asset = asset!("../../assets/logo/icon-192.png");
 const ICON_512: Asset = asset!("../../assets/logo/icon-512.png");
+const ICON_MASKABLE: Asset = asset!("../../assets/logo/icon-maskable-512.png");
 
 pub struct Manifest;
 
@@ -23,6 +24,7 @@ impl IntoResponse for Manifest {
             json!({ "src": assets.resolve(asset), "sizes": sizes, "type": kind, "purpose": purpose })
         };
         let body = json!({
+            "id": "/",
             "name": "SemmelTV",
             "short_name": "SemmelTV",
             "start_url": "/",
@@ -34,7 +36,7 @@ impl IntoResponse for Manifest {
                 icon(FAVICON, "any", "image/svg+xml", "any"),
                 icon(ICON_192, "192x192", "image/png", "any"),
                 icon(ICON_512, "512x512", "image/png", "any"),
-                icon(ICON_512, "512x512", "image/png", "maskable"),
+                icon(ICON_MASKABLE, "512x512", "image/png", "maskable"),
             ],
         });
         Ok(Response::builder()

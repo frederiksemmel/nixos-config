@@ -36,3 +36,4 @@ for size in 180 192 512; do
   magick -size ${size}x${size} xc:'#FFF1D6' \( semmel.png -resize $((size * 3 / 4))x \) -gravity center -composite -strip "icon-$size.png"
 done
 mv icon-180.png apple-touch-icon.png
+magick -size 512x512 xc:'#FFF1D6' \( semmel.png -resize 300x \) -gravity center -composite -strip icon-maskable-512.png
