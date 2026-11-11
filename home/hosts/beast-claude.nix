@@ -16,9 +16,11 @@ let
       [ -z "''${DEVENV_ROOT:-}" ] || exit 0
       cd "$CLAUDE_PROJECT_DIR"
       [ -f devenv.nix ] || exit 0
+      env="$(dirname "$CLAUDE_ENV_FILE")/devenv.env"
       devenv shell -- bash -c 'export -p' \
         | grep '^declare -x ' \
-        | grep -Ev '^declare -x (PWD|OLDPWD|SHLVL|_)=' >> "$CLAUDE_ENV_FILE"
+        | grep -Ev '^declare -x (PWD|OLDPWD|SHLVL|_)=' > "$env"
+      printf '. %q\n' "$env" > "$CLAUDE_ENV_FILE"
     '';
   };
 
