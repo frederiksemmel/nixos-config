@@ -19,7 +19,8 @@ let
       env="$(dirname "$CLAUDE_ENV_FILE")/devenv.env"
       devenv shell -- bash -c 'export -p' \
         | grep '^declare -x ' \
-        | grep -Ev '^declare -x (PWD|OLDPWD|SHLVL|_)=' > "$env"
+        | grep -Ev '^declare -x (PWD|OLDPWD|SHLVL|_)=' > "$env.new"
+      mv "$env.new" "$env"
       printf '. %q\n' "$env" > "$CLAUDE_ENV_FILE"
     '';
   };
