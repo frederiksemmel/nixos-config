@@ -12,14 +12,19 @@ def on-beast-itself [] {
   (sys host).hostname == "beast"
 }
 
-# Evaluates a nushell expression on beast with sessions.nu loaded.
+# Evaluates a nushell expression on beast with sessions.nu loaded. An error there
+# comes back as data and is raised here, so this terminal renders it.
 def on-beast [expression: string] {
-  let script = $"(open --raw $sessions_nu | decode utf-8)\n($expression) | to json"
-  if (on-beast-itself) {
+  let script = $"(open --raw $sessions_nu | decode utf-8)\ntry { { value: \(($expression)\) } } catch {|e| { error: $e.msg, help: $e.details.help? } } | to json"
+  let result = if (on-beast-itself) {
     ^nu --no-config-file --commands $script | from json
   } else {
     ^ssh ...$connect_options beast $script | from json
   }
+  if "error" in $result {
+    error make --unspanned { msg: $result.error, help: $result.help }
+  }
+  $result.value
 }
 
 def complete-sessions [] {
@@ -133,7 +138,7 @@ def wait-to-retry [title: string, delay: duration, reason: string] {
 
 # Makes a session attachable, moving it into the daemon if it runs elsewhere, and
 # returns its id and title. With --wait a working session is asked to pause and
-# is taken once it is idle; ctrl-c gives up.
+# is taken once it is idle or waits on a prompt; ctrl-c gives up.
 def take [session: string, --wait] {
   if $wait {
     let s = on-beast $"pause-session ($session | to json)"
@@ -143,7 +148,7 @@ def take [session: string, --wait] {
       let started = date now
       loop {
         let status = on-beast $"session-status ($s.pid)"
-        if $status == "idle" { break }
+        if $status in [idle waiting] { break }
         if $status == "gone" {
           print ""
           error make --unspanned { msg: $"($s.title) ended while waiting" }
@@ -236,7 +241,8 @@ export def list [] {
 # Control. The app shows that as a new conversation; don't write in the old one.
 # A session that is working is refused, unless --wait: then a hidden Claude asks
 # it to pause at its next safe point and it is taken once it is idle. The picker
-# waits like that by itself.
+# waits like that by itself. A session waiting on a prompt is taken right away,
+# the prompt is dropped and the terminal answers it instead.
 export def attach [
   session: string@complete-sessions # session id, or its start
   --title: string                   # window title, default the session's title

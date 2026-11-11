@@ -101,13 +101,16 @@ def bg-id [output: string] {
 # outside the daemon moves into it: its process stops and the conversation resumes
 # in the background, same session id, with Remote Control under a new app
 # conversation. A session that is working is refused, a second process would
-# write into the same transcript. So is one without messages, there is nothing to
-# resume. A session whose worktree is gone resumes in its repo.
+# write into the same transcript. One waiting on a prompt is taken: nothing runs
+# while it waits, and the prompt is dropped, so the terminal answers it. A session
+# without messages is refused, there is nothing to resume. A session whose
+# worktree is gone resumes in its repo.
 def open-session [query: string] {
   let s = find-session $query
   if $s.host == "bg" { return { id: $s.id, title: $s.title } }
-  if $s.state != "idle" {
-    error make --unspanned { msg: $"($s.title) is ($s.state), `beast attach --wait ($s.id)` takes it once it is idle" }
+  if $s.state not-in [idle waiting] {
+    let help = if $s.state == "working" { $"to take it once it is idle: beast attach --wait ($s.id)" }
+    error make --unspanned { msg: $"($s.title) is ($s.state)", help: $help }
   }
   if (transcript-of $s.session) == null {
     error make --unspanned { msg: $"($s.title) has no messages yet, end it and start a new session" }
