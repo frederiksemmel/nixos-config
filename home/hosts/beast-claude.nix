@@ -185,6 +185,16 @@ in
     shows this session's group and the groups in use. When the work here has
     moved to another topic, run `session-group <name>`, reusing a name in use if
     one fits.
+
+    # Reaching this session from a terminal
+
+    The user reaches sessions on beast from the Claude app, or from a terminal
+    with the `beast` command: `beast` opens a picker, and `beast attach <id>`
+    attaches to one session. This session's id is the first 8 characters of
+    `$CLAUDE_CODE_SESSION_ID`. When the user asks how to get to this session,
+    give that `beast attach` command, not ssh, shpool or `claude attach`
+    commands: `beast attach` first moves a session started elsewhere into the
+    daemon, where a terminal can attach to it.
   '';
 
   programs.nushell.extraConfig = ''

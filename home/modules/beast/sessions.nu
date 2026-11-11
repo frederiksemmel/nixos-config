@@ -86,7 +86,7 @@ def sessions [] {
 }
 
 def find-session [query: string] {
-  let found = sessions | where {|s| $s.session starts-with $query or $s.id == $query }
+  let found = sessions | where {|s| $s.session starts-with $query or $s.id == $query or $s.name == $query }
   if ($found | length) != 1 {
     error make --unspanned { msg: $"($query) matches ($found | length) sessions on beast" }
   }

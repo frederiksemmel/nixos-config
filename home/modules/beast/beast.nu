@@ -74,7 +74,8 @@ def ago [ms: int] {
 # it filters to the group: bold on the group's first line, dimmed on the rest,
 # with a bar in the group's colour joining them. A session outside the daemon is
 # marked with what hosts it, opening it moves it into the daemon. Tabs separate
-# group, title, age and state, repo, so the search can skip age and state.
+# group, title, age and state, then repo, name and id, so the search can skip
+# age and state. The name is left out where it repeats the title.
 def session-rows [sessions: list] {
   if ($sessions | is-empty) { return [] }
   let group_width = $sessions.group | compact | each { str length } | append 0 | math max
@@ -91,10 +92,11 @@ def session-rows [sessions: list] {
     let marker = if $s.host == "bg" { "" } else { $s.host }
     let copies = if $s.processes > 1 { $"($s.processes) processes!" } else { "" }
     let status = [(ago $s.last | fill -w 14) ($s.state | fill -w 7) ($marker | fill -w 4)] | str join "  "
+    let name = if $s.name in [null $s.title] { "" } else { $" ($s.name)" }
     let line = [
       ($s.title | str substring ..<$title_width | fill -w $title_width)
       $status
-      $s.repo
+      $"($s.repo)(ansi attr_dimmed)($name) ($s.id)(ansi reset)"
       $copies
     ] | str join " \t" | str substring ..<$columns
     $"($label)\t($line)"
@@ -244,7 +246,7 @@ export def list [] {
 # waits like that by itself. A session waiting on a prompt is taken right away,
 # the prompt is dropped and the terminal answers it instead.
 export def attach [
-  session: string@complete-sessions # session id, or its start
+  session: string@complete-sessions # session id, its start, or its name
   --title: string                   # window title, default the session's title
   --wait (-w)                       # ask a working session to pause, take it once idle
 ] {
