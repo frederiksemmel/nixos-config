@@ -13,10 +13,11 @@ Landing a change, without waiting to be asked:
    `git rebase origin/main` first, then push again.
 3. ExitWorktree with `keep` (git in the main checkout is blocked while inside a
    worktree), then `git pull --ff-only` in the main checkout.
-4. Run one `nh os build .` in the main checkout: `nh os switch` builds from
-   there, so that is the build the user needs. If it fails, fix forward in a new
-   worktree.
+4. On fstux, run one `nh os switch .` in the main checkout; it needs no
+   password. If it fails, fix forward in a new worktree. On another host, skip
+   this step.
 5. Remove the worktree with `git worktree remove` and delete its branch, then
-   tell the user it is pulled and built, ready for `nh os switch`.
+   tell the user it is pulled and switched (on another host: pushed, ready to
+   switch on fstux).
 
 No PRs or long-lived branches: this is a single-author config with no review step.

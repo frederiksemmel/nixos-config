@@ -186,7 +186,7 @@ let
   # unplugging by way of smart switching instead: TLP_AUTO_SWITCH=2 keeps the
   # current profile whenever it is not the power source's default. `tlp start`
   # and boot both hand the machine back to the assigned profile. The host grants
-  # passwordless sudo for exactly these four invocations.
+  # frederik passwordless sudo.
   tlpProfile = pkgs.writeShellApplication {
     name = "tlp-profile";
     runtimeInputs = [ pkgs.libnotify ];

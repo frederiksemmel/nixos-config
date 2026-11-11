@@ -941,7 +941,6 @@ in
               # Outward-facing or hard to walk back.
               "Bash(sudo:*)"
               "Bash(nixos-rebuild:*)"
-              "Bash(nh os switch:*)"
               # Change who a company file is shared with.
               "mcp__claude_ai_Google_Drive__share_file"
             ];

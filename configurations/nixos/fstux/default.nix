@@ -491,39 +491,27 @@ in
       CPU_HWP_DYN_BOOST_ON_SAV = 0;
     };
   };
-  # The power menu (Super+P, c) picks a TLP profile as the user; tlp itself
-  # needs root. Restricted to these four argument forms so the rule cannot be
-  # turned into a general root shell via `tlp discharge` and friends.
+  # frederik runs sudo without a password, so Claude sessions apply this config
+  # with `nh os switch` themselves. nh wraps every privileged step in
+  # `sudo env VAR=… <command>`, so no rule narrower than ALL matches it.
   security.sudo-rs.extraRules = [
     {
       users = [ "frederik" ];
-      commands =
-        map
-          (arg: {
-            command = "/run/current-system/sw/bin/tlp ${arg}";
-            options = [ "NOPASSWD" ];
-          })
-          [
-            "performance"
-            "balanced"
-            "power-saver"
-            "start"
-          ];
-    }
-    {
-      users = [ "frederik" ];
-      commands =
-        map
-          (verb: {
-            command = "/run/current-system/sw/bin/systemctl ${verb} usbc-share.service";
-            options = [ "NOPASSWD" ];
-          })
-          [
-            "start"
-            "stop"
-          ];
+      commands = [
+        {
+          command = "ALL";
+          options = [ "NOPASSWD" ];
+        }
+      ];
     }
   ];
+  home-manager.users.frederik.programs.claude-code.context = lib.mkAfter ''
+
+    # Applying the config on fstux
+
+    On fstux, run `nh os switch` yourself once a config change is pushed and
+    pulled; sudo needs no password here. Any other `sudo` still goes through me.
+  '';
   services.devmon.enable = true;
   services.tailscale.enable = true;
   services.openssh = {
