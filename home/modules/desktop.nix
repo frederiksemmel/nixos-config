@@ -179,6 +179,58 @@ let
       done
     '';
   };
+  # Places the external display left or right of the laptop, top edges aligned.
+  # `port` picks the side from the USB-C port: DP-1 is the right-hand port,
+  # DP-3 the left-hand one. `swap` moves it to the other side.
+  displaySide = pkgs.writeShellApplication {
+    name = "display-side";
+    runtimeInputs = [
+      config.programs.niri.package
+      pkgs.jq
+      pkgs.libnotify
+    ];
+    text = ''
+      outputs=$(niri msg --json outputs)
+      ext=$(jq -r '[.[] | select(.name != "eDP-1" and .logical != null)][0].name // empty' <<<"$outputs")
+      if [ -z "$ext" ]; then
+        notify-send -a display-side -i video-display "No external display"
+        exit 1
+      fi
+      if [ "$(jq '.["eDP-1"].logical == null' <<<"$outputs")" = true ]; then
+        exit 0
+      fi
+      width() {
+        jq -r --arg n "$1" '.[$n] | .modes[.current_mode] as $m
+          | (if (.logical.transform | test("90|270")) then $m.height else $m.width end)
+            / .logical.scale | ceil' <<<"$outputs"
+      }
+      x() { jq -r --arg n "$1" '.[$n].logical.x' <<<"$outputs"; }
+
+      case "''${1:-}" in
+        port)
+          case "$ext" in
+            DP-1) side=right ;;
+            *) side=left ;;
+          esac
+          ;;
+        swap)
+          if [ "$(x "$ext")" -lt "$(x eDP-1)" ]; then side=right; else side=left; fi
+          ;;
+        *)
+          echo "usage: display-side port|swap" >&2
+          exit 2
+          ;;
+      esac
+
+      if [ "$side" = left ]; then
+        niri msg output "$ext" position set 0 0
+        niri msg output eDP-1 position set "$(width "$ext")" 0
+      else
+        niri msg output eDP-1 position set 0 0
+        niri msg output "$ext" position set "$(width eDP-1)" 0
+      fi
+    '';
+  };
   # TLP 1.8+ carries three named profiles (performance/balanced/power-saver,
   # configured through the _ON_AC/_ON_BAT/_ON_SAV suffixes of the host's
   # services.tlp.settings). The named verbs deliberately *clear* TLP's manual
@@ -872,6 +924,9 @@ in
         "n":
           desc: Toggle Night Light
           cmd: ${lib.getExe wlsunsetToggle}
+        "m":
+          desc: Swap Display Side
+          cmd: ${lib.getExe displaySide} swap
         "v":
           desc: TV
           submenu:
@@ -1070,7 +1125,10 @@ in
               position = "0,0";
             }
           ];
-          profile.exec = [ "${lib.getExe audioOutput} analog" ];
+          profile.exec = [
+            "${lib.getExe audioOutput} analog"
+            "${lib.getExe displaySide} port"
+          ];
         }
         {
           # TV above the laptop, horizontally centered on it:
