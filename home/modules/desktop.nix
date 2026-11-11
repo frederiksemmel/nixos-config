@@ -392,9 +392,10 @@ let
       jq -r .text <<<"$out"
     '';
   };
-  # Bar cell for mako's parked mode: a count of the hidden notifications,
-  # updated by mako's PropertiesChanged signals. The notif_parked ironvar shows
-  # the cell only while parked.
+  # Bar cell for mako's parked mode: sets the notif ironvar to a count of the
+  # hidden notifications, updated by mako's PropertiesChanged signals. The
+  # notif_parked ironvar shows the cell only while parked. One service feeds
+  # the cell on every bar.
   barNotif = pkgs.writeShellApplication {
     name = "bar-notif";
     runtimeInputs = [
@@ -415,7 +416,7 @@ let
           "muted"
           "yellow"
         ]}
-        echo "<span color='$muted'>NOTIF</span> <span color='$yellow'>$(makoctl list -j | jq length)</span>"
+        ironbar var set notif "<span color='$muted'>NOTIF</span> <span color='$yellow'>$(makoctl list -j | jq length)</span>" >/dev/null || true
         ironbar var set notif_parked true >/dev/null || true
       }
 
@@ -2032,6 +2033,21 @@ in
       Install.WantedBy = [ "graphical-session.target" ];
     };
 
+    # Ironvars live in ironbar, so this restarts with it and starts once its
+    # IPC socket is up (ironbar's ExecStartPost).
+    systemd.user.services.bar-notif = {
+      Unit = {
+        Description = "Ironbar notification count";
+        PartOf = [ "ironbar.service" ];
+        After = [ "ironbar.service" ];
+      };
+      Service = {
+        ExecStart = lib.getExe barNotif;
+        Restart = "on-failure";
+      };
+      Install.WantedBy = [ "ironbar.service" ];
+    };
+
     xdg.configFile."ironbar/config.json".text =
       let
         # Dimmed by alpha rather than a colour, so it holds in both modes.
@@ -2069,10 +2085,9 @@ in
         ];
         end = [
           {
-            type = "script";
+            type = "label";
             class = "cell";
-            mode = "watch";
-            cmd = lib.getExe barNotif;
+            label = "#notif";
             show_if = "#notif_parked";
             on_click_left = "${config.services.mako.package}/bin/makoctl mode -r parked";
           }
