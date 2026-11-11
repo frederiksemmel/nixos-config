@@ -195,6 +195,21 @@ from `/sys/class/drm/card0-HDMI-A-1/edid` with the TV connected, before setting
 the option; a different TV or TV input needs a new capture, since the EDID
 carries the CEC address.
 
+The stock kernel only consults that stored EDID when the TV answers on the
+HDMI DDC lines. A TV in deep standby does not, so every connector probe,
+including the one the compositor makes when it starts, used to blank the EDID
+for an instant and leave HDMI-CEC without an address until the next reboot. With
+`services.semmeltv.tv.edid` set, the host's kernel is patched to fall back to the
+stored EDID when DDC is silent.
+
+Whatever the cause, the app watches each CEC adapter's physical address. When it
+goes missing while the adapter's DRM connector still reads "connected", the app
+writes `detect` to that connector's `status` in sysfs, after 2 seconds and then
+at doubling intervals of up to 5 minutes, until the address is back. The kiosk
+module's udev rule lets the `video` group write that file. An address restored
+this way announces SemmelTV as the active source, as an app restart does, and
+never turns the TV on.
+
 Switching the TV to another input stops playback and closes the player, with the
 position saved, the same as Stop. The app takes a Routing Change or Set Stream
 Path to another address, or an Active Source from another device, as that

@@ -7,6 +7,7 @@ use cec_linux::{
 use std::fs;
 use std::io;
 use std::mem;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
@@ -22,6 +23,12 @@ const COLD_BOOT_UPTIME: Duration = Duration::from_secs(180);
 const POWER_ON_WAIT: Duration = Duration::from_secs(15);
 const POWER_POLL: Duration = Duration::from_millis(500);
 const HOLD_INPUT: Duration = Duration::from_secs(5);
+const REPROBE_FIRST: Duration = Duration::from_secs(2);
+const REPROBE_LONGEST: Duration = Duration::from_secs(300);
+const REPROBE_EFFECT: Duration = Duration::from_secs(2);
+const DRM_CONNECTORS: &str = "/sys/class/drm";
+const CEC_ADAP_G_CONNECTOR_INFO: u32 = 0x8044_610a;
+const CEC_CONNECTOR_TYPE_DRM: u32 = 1;
 
 static INPUT_HELD_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 static ACTIVE_SOURCE: AtomicBool = AtomicBool::new(false);
@@ -158,12 +165,33 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
     claim_address(&device)?;
     let plugged = device.get_phys()? != CecPhysicalAddress::INVALID;
     let mut wake = TvWake::start(plugged, uptime(), Instant::now());
+    let mut reprobe = Reprobe::default();
+    reprobe.link_changed(plugged, Instant::now());
     let mut keys = KeyFilter::default();
     loop {
-        let ready = device.poll(PollFlags::POLLIN | PollFlags::POLLPRI, PollTimeout::NONE)?;
+        let ready = device.poll(PollFlags::POLLIN | PollFlags::POLLPRI, reprobe.timeout(Instant::now()))?;
+        if reprobe.due(Instant::now()) {
+            match probe_connector(&device) {
+                Ok(true) => eprintln!(
+                    "{}: no physical address while HDMI is connected, probing the connector",
+                    path.display()
+                ),
+                Ok(false) => {}
+                Err(error) => eprintln!("{}: probing the connector failed: {error}", path.display()),
+            }
+            reprobe.probed(Instant::now());
+        }
         if ready.contains(PollFlags::POLLPRI) {
             if let CecEvent::StateChange(state) = device.get_event()? {
                 let plugged = state.phys_addr != CecPhysicalAddress::INVALID;
+                if reprobe.link_changed(plugged, Instant::now()) {
+                    eprintln!(
+                        "{}: physical address {:?} is back after probing",
+                        path.display(),
+                        state.phys_addr
+                    );
+                    wake.recovered();
+                }
                 match wake.link_changed(plugged, !state.log_addr_mask.is_empty(), Instant::now()) {
                     Greeting::Silent => {}
                     Greeting::Announce => log_failure(path, "Active Source", announce(&device)),
@@ -386,6 +414,11 @@ impl TvWake {
         }
     }
 
+    fn recovered(&mut self) {
+        self.unplugged_since = None;
+        self.wake_owed = false;
+    }
+
     fn heard(&mut self, initiator: CecLogicalAddress, opcode: CecOpcode) {
         match opcode {
             CecOpcode::Standby => self.tv_off = true,
@@ -407,6 +440,90 @@ fn uptime() -> Duration {
 fn parse_uptime(contents: &str) -> Option<Duration> {
     let seconds = contents.split_whitespace().next()?.parse().ok()?;
     Duration::try_from_secs_f64(seconds).ok()
+}
+
+#[derive(Default)]
+struct Reprobe {
+    next: Option<Instant>,
+    wait: Duration,
+    probed_at: Option<Instant>,
+}
+
+impl Reprobe {
+    fn link_changed(&mut self, plugged: bool, now: Instant) -> bool {
+        if !plugged {
+            if self.next.is_none() {
+                self.wait = REPROBE_FIRST;
+                self.next = Some(now + REPROBE_FIRST);
+            }
+            return false;
+        }
+        self.next = None;
+        self.probed_at
+            .take()
+            .is_some_and(|at| now.saturating_duration_since(at) <= REPROBE_EFFECT)
+    }
+
+    fn due(&self, now: Instant) -> bool {
+        self.next.is_some_and(|next| now >= next)
+    }
+
+    fn probed(&mut self, now: Instant) {
+        self.probed_at = Some(now);
+        self.wait = (self.wait * 2).min(REPROBE_LONGEST);
+        self.next = Some(now + self.wait);
+    }
+
+    fn timeout(&self, now: Instant) -> PollTimeout {
+        match self.next {
+            None => PollTimeout::NONE,
+            Some(next) => PollTimeout::try_from(next.saturating_duration_since(now)).unwrap_or(PollTimeout::MAX),
+        }
+    }
+}
+
+#[repr(C)]
+struct ConnectorInfo {
+    kind: u32,
+    raw: [u32; 16],
+}
+
+fn probe_connector(device: &CecDevice) -> io::Result<bool> {
+    let (card, connector) = drm_connector(device)?;
+    let status = connector_status(Path::new(DRM_CONNECTORS), card, connector)
+        .ok_or_else(|| io::Error::other(format!("no DRM connector {connector} on card {card}")))?;
+    if fs::read_to_string(&status)?.trim() != "connected" {
+        return Ok(false);
+    }
+    fs::write(&status, "detect")?;
+    Ok(true)
+}
+
+fn drm_connector(device: &CecDevice) -> io::Result<(u32, u32)> {
+    let mut info = ConnectorInfo { kind: 0, raw: [0; 16] };
+    let result = unsafe { libc::ioctl(device.as_raw_fd(), CEC_ADAP_G_CONNECTOR_INFO as _, &raw mut info) };
+    if result < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    if info.kind != CEC_CONNECTOR_TYPE_DRM {
+        return Err(io::Error::other("the adapter is not tied to a DRM connector"));
+    }
+    Ok((info.raw[0], info.raw[1]))
+}
+
+fn connector_status(drm: &Path, card: u32, connector: u32) -> Option<PathBuf> {
+    let prefix = format!("card{card}-");
+    let id = connector.to_string();
+    fs::read_dir(drm)
+        .ok()?
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .find(|path| fs::read_to_string(path.join("connector_id")).is_ok_and(|read| read.trim() == id))
+        .map(|path| path.join("status"))
 }
 
 #[cfg(test)]
@@ -726,5 +843,77 @@ mod tests {
     fn structures_match_the_kernel_abi() {
         assert_eq!(size_of::<cec_linux::CecMsg>(), 56);
         assert_eq!(size_of::<CecLogAddrs>(), 92);
+        assert_eq!(size_of::<ConnectorInfo>(), 68);
+        let read = 2 << 30;
+        assert_eq!(
+            CEC_ADAP_G_CONNECTOR_INFO,
+            read | ((size_of::<ConnectorInfo>() as u32) << 16) | (u32::from(b'a') << 8) | 10
+        );
+    }
+
+    #[test]
+    fn a_lost_address_is_probed_with_growing_waits() {
+        let start = Instant::now();
+        let mut reprobe = Reprobe::default();
+        assert!(!reprobe.due(start + secs(3600.0)));
+        assert!(!reprobe.link_changed(false, start));
+        assert!(!reprobe.due(start + secs(1.9)));
+        assert!(reprobe.due(start + secs(2.0)));
+        let mut now = start + secs(2.0);
+        let mut waits = Vec::new();
+        for _ in 0..10 {
+            reprobe.probed(now);
+            let next = reprobe.next.unwrap();
+            waits.push((next - now).as_secs());
+            now = next;
+        }
+        assert_eq!(waits, [4, 8, 16, 32, 64, 128, 256, 300, 300, 300]);
+    }
+
+    #[test]
+    fn an_address_back_right_after_a_probe_counts_as_recovered() {
+        let start = Instant::now();
+        let mut reprobe = Reprobe::default();
+        reprobe.link_changed(false, start);
+        reprobe.probed(start + secs(2.0));
+        assert!(reprobe.link_changed(true, start + secs(2.1)));
+        assert!(!reprobe.due(start + secs(3600.0)));
+
+        reprobe.link_changed(false, start + secs(10.0));
+        reprobe.probed(start + secs(12.0));
+        assert!(!reprobe.link_changed(true, start + secs(20.0)));
+
+        let mut unprobed = Reprobe::default();
+        unprobed.link_changed(false, start);
+        assert!(!unprobed.link_changed(true, start + secs(1.0)));
+    }
+
+    #[test]
+    fn a_recovered_address_announces_without_waking_the_tv() {
+        let start = Instant::now();
+        let mut wake = TvWake::start(true, WARM, start);
+        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
+        assert_eq!(wake.link_changed(false, false, start + secs(1.0)), Greeting::Silent);
+        wake.recovered();
+        assert_eq!(wake.link_changed(true, true, start + secs(3600.0)), Greeting::Announce);
+    }
+
+    #[test]
+    fn the_connector_status_is_found_by_card_and_connector_id() {
+        let drm = std::env::temp_dir().join(format!("semmeltv-cec-drm-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&drm);
+        for (name, id) in [
+            ("card0-HDMI-A-1", "35"),
+            ("card1-HDMI-A-1", "36"),
+            ("card1-HDMI-A-2", "35"),
+        ] {
+            fs::create_dir_all(drm.join(name)).unwrap();
+            fs::write(drm.join(name).join("connector_id"), format!("{id}\n")).unwrap();
+        }
+        fs::create_dir_all(drm.join("card1")).unwrap();
+        assert_eq!(connector_status(&drm, 1, 35), Some(drm.join("card1-HDMI-A-2/status")));
+        assert_eq!(connector_status(&drm, 0, 35), Some(drm.join("card0-HDMI-A-1/status")));
+        assert_eq!(connector_status(&drm, 1, 99), None);
+        fs::remove_dir_all(&drm).unwrap();
     }
 }

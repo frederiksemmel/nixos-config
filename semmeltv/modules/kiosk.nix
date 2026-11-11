@@ -70,7 +70,7 @@ in
         type = lib.types.nullOr lib.types.path;
         default = null;
         example = lib.literalExpression "./samsung-edid.bin";
-        description = "The EDID of the TV on HDMI0, read from /sys/class/drm/card0-HDMI-A-1/edid while it is connected. When set, HDMI0 counts as connected even with the TV in standby or unplugged, so video, audio and HDMI-CEC stay the same whether the TV is on or not. Applies after a reboot. Null leaves hotplug to the TV.";
+        description = "The EDID of the TV on HDMI0, read from /sys/class/drm/card0-HDMI-A-1/edid while it is connected. When set, HDMI0 counts as connected even with the TV in standby or unplugged, so video, audio and HDMI-CEC stay the same whether the TV is on or not. The kernel is patched to use this EDID even when the TV does not answer on the DDC lines. Applies after a reboot. Null leaves hotplug to the TV.";
       };
     };
   };
@@ -153,5 +153,15 @@ in
         install -D -m 444 ${cfg.tv.edid} $out/lib/firmware/edid/semmeltv-tv.bin
       '')
     ];
+    boot.kernelPatches = lib.mkIf (cfg.tv.edid != null) [
+      {
+        name = "drm-edid-override-without-ddc";
+        patch = ./drm-edid-override-without-ddc.patch;
+      }
+    ];
+
+    services.udev.extraRules = ''
+      ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card[0-9]*-HDMI-A-[0-9]*", RUN+="${pkgs.coreutils}/bin/chgrp video /sys%p/status", RUN+="${pkgs.coreutils}/bin/chmod g+w /sys%p/status"
+    '';
   };
 }
