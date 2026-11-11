@@ -22,7 +22,9 @@
   color-scheme: dark;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: none; }
+
+*::-webkit-scrollbar { display: none; }
 
 html {
   -webkit-text-size-adjust: 100%;
@@ -269,12 +271,10 @@ main {
   display: flex;
   gap: 8px;
   overflow-x: auto;
-  scrollbar-width: none;
   margin: 0 calc(-1 * var(--gutter)) 6px;
   padding: 2px var(--gutter);
 }
 
-.chips::-webkit-scrollbar { display: none; }
 
 .chip {
   flex: none;
@@ -319,15 +319,15 @@ main {
   overflow-x: auto;
   scroll-snap-type: x mandatory;
   scroll-padding: var(--gutter);
-  scrollbar-width: none;
   margin: 0 calc(-1 * var(--gutter));
   padding: 0 var(--gutter);
 }
 
 .row.posters { grid-auto-columns: min(30%, 150px); gap: 10px; }
 
-.row::-webkit-scrollbar { display: none; }
 .row .tile { scroll-snap-align: start; }
+
+.dragging-row { scroll-snap-type: none !important; cursor: grabbing; user-select: none; }
 
 .tile { display: grid; align-content: start; gap: 2px; min-width: 0; }
 
@@ -1491,10 +1491,8 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
   overflow-x: auto;
   scroll-snap-type: x proximity;
   scroll-padding: 0 var(--gutter);
-  scrollbar-width: none;
 }
 
-.detail-cast::-webkit-scrollbar { display: none; }
 
 .detail-cast li {
   display: grid;
@@ -1620,13 +1618,11 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
   display: flex;
   gap: 6px;
   overflow-x: auto;
-  scrollbar-width: none;
   margin: 2px calc(-1 * var(--gutter)) 4px;
   padding: 6px var(--gutter);
   animation: arrive 0.18s ease-out;
 }
 
-.filter-options::-webkit-scrollbar { display: none; }
 
 .filter-option {
   flex: none;

@@ -113,6 +113,61 @@ window.addEventListener("popstate", () => {
   if (cached) shell(cached.main.cloneNode(true), state?.topcoat?.scroll?.y ?? cached.scroll);
 });
 
+const SLOP = 6;
+let rowDrag = null;
+let swallowClick = false;
+
+function sidewaysScroller(target) {
+  for (let node = target; node && node !== document.body; node = node.parentElement) {
+    if (node.scrollWidth > node.clientWidth && getComputedStyle(node).overflowX === "auto") return node;
+  }
+  return null;
+}
+
+window.addEventListener("click", (event) => {
+  if (!swallowClick) return;
+  swallowClick = false;
+  event.preventDefault();
+  event.stopImmediatePropagation();
+}, true);
+
+document.addEventListener("dragstart", (event) => {
+  if (event.target.closest?.("a, img")) event.preventDefault();
+});
+
+document.addEventListener("pointerdown", (event) => {
+  if (event.pointerType !== "mouse" || event.button !== 0 || !event.target.closest) return;
+  if (event.target.closest("input, textarea, select, .scrub, .sheet")) return;
+  const row = sidewaysScroller(event.target);
+  if (row) rowDrag = { row, pointer: event.pointerId, x: event.clientX, left: row.scrollLeft, moved: false };
+});
+
+document.addEventListener("pointermove", (event) => {
+  if (!rowDrag || event.pointerId !== rowDrag.pointer) return;
+  const dx = event.clientX - rowDrag.x;
+  if (!rowDrag.moved) {
+    if (Math.abs(dx) < SLOP) return;
+    rowDrag.moved = true;
+    rowDrag.row.setPointerCapture(event.pointerId);
+    rowDrag.row.classList.add("dragging-row");
+  }
+  rowDrag.row.scrollLeft = rowDrag.left - dx;
+});
+
+for (const name of ["pointerup", "pointercancel"]) {
+  document.addEventListener(name, (event) => {
+    if (!rowDrag || event.pointerId !== rowDrag.pointer) return;
+    const { row, moved } = rowDrag;
+    rowDrag = null;
+    if (!moved) return;
+    row.classList.remove("dragging-row");
+    swallowClick = true;
+    setTimeout(() => {
+      swallowClick = false;
+    }, 0);
+  });
+}
+
 for (const name of ["gesturestart", "gesturechange", "gestureend"]) {
   document.addEventListener(name, (event) => event.preventDefault(), { passive: false });
 }

@@ -142,9 +142,41 @@ def run(p, engine, device):
     browser.close()
 
 
+def desktop(p):
+    engine = "desktop"
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 760, "height": 800})
+    page.set_default_timeout(8000)
+    page.goto(BASE + "/", wait_until="commit")
+    page.wait_for_selector(".row.posters a[data-topcoat-link]")
+    page.wait_for_timeout(1500)
+    hidden = page.evaluate("""() => [document.documentElement, ...document.querySelectorAll('.row, .sheet-scroll')]
+      .every((node) => getComputedStyle(node).scrollbarWidth === 'none')""")
+    check(engine, "no scroll bars on the page, the rows and the sheet", hidden)
+    row = page.locator(".row.posters").first
+    box = row.bounding_box()
+    y = box["y"] + box["height"] / 2
+    x = box["x"] + min(box["width"] - 20, 600)
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for step in range(1, 11):
+        page.mouse.move(x - 30 * step, y)
+    page.mouse.up()
+    page.wait_for_timeout(800)
+    moved = row.evaluate("(row) => row.scrollLeft")
+    check(engine, "dragging a row with the mouse scrolls it", moved > 50, f"scrollLeft {moved}")
+    check(engine, "dragging a row opens nothing", page.evaluate("location.pathname") == "/")
+    tile = page.locator(".row.posters a[data-topcoat-link]").first
+    href = tile.get_attribute("href")
+    tile.click()
+    until(page, engine, "clicking a title still opens it", f"location.pathname === {href!r}")
+    browser.close()
+
+
 with sync_playwright() as p:
     run(p, "webkit", "iPhone 15")
     run(p, "chromium", "Pixel 7")
+    desktop(p)
 
 print("PASS" if not failures else "FAIL: " + ", ".join(failures))
 sys.exit(1 if failures else 0)
