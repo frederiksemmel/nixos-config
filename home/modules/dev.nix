@@ -913,6 +913,8 @@ in
               "Bash(npm run:*)"
               "Bash(nix eval:*)"
               "Bash(nh:*)"
+              # deploy-rs: applies frederik's home on beast.
+              "Bash(deploy:*)"
               # Reading GitHub, including whatever gh grew no subcommand for.
               "Bash(gh pr view:*)"
               "Bash(gh pr list:*)"
