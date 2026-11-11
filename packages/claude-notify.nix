@@ -76,7 +76,6 @@ writeShellApplication {
     }
 
     detail=
-    expire=0 # stays up until clicked, dismissed or replaced
     case "$event" in
       UserPromptSubmit)
         # You are back at the prompt, so whatever was waiting has been seen.
@@ -86,7 +85,6 @@ writeShellApplication {
       Stop)
         summary="Claudio is done"
         urgency=0
-        expire=6000
         detail=$reply
         ;;
       StopFailure)
@@ -154,8 +152,9 @@ writeShellApplication {
     }
 
     # Payloads are base64 (e=1) so no message text can terminate the escape.
-    # f= becomes the app name foot hands to the notification daemon.
-    title=$(osc99 "i=$id:d=0:e=1:u=$urgency:w=$expire:f=$(b64 Claudio):p=title" "$(b64 "$summary")")
+    # f= becomes the app name foot hands to the notification daemon. w=0 keeps
+    # it up until clicked, dismissed, replaced or closed by the next prompt.
+    title=$(osc99 "i=$id:d=0:e=1:u=$urgency:w=0:f=$(b64 Claudio):p=title" "$(b64 "$summary")")
     text=$(osc99 "i=$id:d=1:e=1:p=body" "$(b64 "$body")")
 
     # Closing first matters when the window is focused: foot then suppresses
