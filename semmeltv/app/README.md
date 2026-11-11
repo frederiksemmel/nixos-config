@@ -199,8 +199,10 @@ The stock kernel only consults that stored EDID when the TV answers on the
 HDMI DDC lines. A TV in deep standby does not, so every connector probe,
 including the one the compositor makes when it starts, used to blank the EDID
 for an instant and leave HDMI-CEC without an address until the next reboot. With
-`services.semmeltv.tv.edid` set, the host's kernel is patched to fall back to the
-stored EDID when DDC is silent.
+`services.semmeltv.tv.edid` set, the host loads a rebuilt vc4 module that, when
+the probe found no CEC address, applies the stored EDID itself and takes the CEC
+address and the audio ELD from it. Only that module is built, against the
+cached kernel, in seconds.
 
 Whatever the cause, the app watches each CEC adapter's physical address. When it
 goes missing while the adapter's DRM connector still reads "connected", the app
