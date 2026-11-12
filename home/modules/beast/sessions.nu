@@ -93,6 +93,17 @@ def find-session [query: string] {
   $found | first
 }
 
+# Waits up to five seconds for a process to exit, true once it has. A Claude
+# process archives its app session on the way out, killing it before it is done
+# leaves the session showing as connected in the app.
+def exited [pid: int] {
+  for _ in 1..100 {
+    if not ($"/proc/($pid)" | path exists) { return true }
+    sleep 50ms
+  }
+  false
+}
+
 def bg-id [output: string] {
   $output | parse --regex 'backgrounded · (?<id>[0-9a-f]+)' | get -o 0.id
 }
@@ -120,11 +131,7 @@ def open-session [query: string] {
     error make --unspanned { msg: $"($s.title) ran in ($s.dir), which is gone" }
   }
   kill $s.pid
-  for _ in 1..100 {
-    if not ($"/proc/($s.pid)" | path exists) { break }
-    sleep 50ms
-  }
-  if ($"/proc/($s.pid)" | path exists) {
+  if not (exited $s.pid) {
     error make --unspanned { msg: $"($s.title) did not stop within 5 seconds" }
   }
   cd $dir
@@ -202,6 +209,7 @@ def stop-sessions [queries: list<string>] {
           } catch { null }
         }
         kill $s.pid
+        exited $s.pid | ignore
         if $shpool != null { ^shpool kill $shpool | complete | ignore }
       }
       ""
@@ -282,4 +290,87 @@ def repos [] {
   }
   | sort-by name
   | sort-by --reverse {|r| $r.last | default 0 }
+}
+
+# App sessions (claude.ai/code) held by Claude processes running on beast.
+def live-app-sessions [] {
+  glob ($env.HOME | path join .claude/sessions/*.json)
+  | each {|f| try { open $f | select pid bridgeSessionId } }
+  | compact
+  | where {|e| $e.bridgeSessionId != null and ($"/proc/($e.pid)" | path exists) }
+  | get bridgeSessionId
+}
+
+# Every app session a Claude process on beast has held: the ones a transcript
+# shows Remote Control connecting to, and the ones a Remote Control server
+# started from the app into a worktree named after the session.
+def known-app-sessions [] {
+  let projects = $env.HOME | path join .claude/projects
+  let transcripts = glob ($projects | path join */*.jsonl)
+  let connected = if ($transcripts | is-empty) { [] } else {
+    ^grep -h -s -F '"subtype":"bridge_status"' ...$transcripts | complete | get stdout | lines
+    | parse --regex 'claude\.ai/code/(?<id>session_[A-Za-z0-9]+)' | get id
+  }
+  let spawned = glob ($projects | path join "*-claude-worktrees-bridge-cse-*") | path basename
+  | parse --regex 'bridge-cse-(?<id>[A-Za-z0-9]+)$' | each {|m| $"session_($m.id)" }
+  $connected | append $spawned | uniq
+}
+
+def app-api-headers [] {
+  let oauth = try { open ($env.HOME | path join .claude/.credentials.json) | get claudeAiOauth } catch { null }
+  let org = try { open ($env.HOME | path join .claude.json) | get oauthAccount.organizationUuid } catch { null }
+  if $oauth == null or $org == null or $oauth.expiresAt < ((date now | into int) // 1_000_000) {
+    return null
+  }
+  {
+    "Authorization": $"Bearer ($oauth.accessToken)"
+    "anthropic-version": "2023-06-01"
+    "anthropic-beta": "ccr-byoc-2025-07-29"
+    "x-organization-uuid": $org
+  }
+}
+
+# Archives the app sessions of Claude processes that ended without archiving them
+# themselves: a process archives its session on the way out, unless it is killed,
+# crashes or a reboot cuts it off, and the app then shows the session as connected
+# for good. A session no running process holds is archived, once beast has known
+# it for a minute, as a process starting up writes its transcript before it lists
+# the session in its registry entry. The ledger keeps the sessions it archived and
+# when it first saw the others. Prints each session it archived.
+def reap-app-sessions [] {
+  let file = $env.HOME | path join .local/state/beast-app-sessions.json
+  let ledger = try { open $file } catch { { first_seen: {}, archived: [] } }
+  let live = live-app-sessions
+  let known = known-app-sessions | append $live | uniq
+  let archived = $ledger.archived | where {|id| $id in $known and $id not-in $live }
+  let now = date now | into int
+  let first_seen = $known | where {|id| $id not-in $archived }
+  | reduce --fold {} {|id, acc| $acc | insert $id ($ledger.first_seen | get -o $id | default $now) }
+  let due = $first_seen | transpose id since | where {|s| $s.id not-in $live and $now - $s.since >= 60_000_000_000 } | get id
+  let headers = if ($due | is-empty) { null } else { app-api-headers }
+  if ($due | is-not-empty) and $headers == null {
+    print --stderr $"($due | length) app sessions wait to be archived: no current claude.ai sign-in in ~/.claude"
+  }
+  let results = if $headers == null { [] } else {
+    $due | par-each --threads 8 {|id|
+      try {
+        let r = http post --full --allow-errors --content-type application/json --headers $headers $"https://api.anthropic.com/v1/sessions/($id)/archive" {}
+        { id: $id, status: $r.status, title: (try { $r.body.title } catch { null }) }
+      } catch {|e| { id: $id, status: null, title: $e.msg } }
+    }
+  }
+  for r in $results {
+    match $r.status {
+      200 => { print $"archived ($r.id) ($r.title)" }
+      404 | 409 => {}
+      _ => { print --stderr $"could not archive ($r.id): ($r.status | default $r.title)" }
+    }
+  }
+  let done = $results | where status in [200 404 409] | get id
+  mkdir ($file | path dirname)
+  {
+    first_seen: ($first_seen | transpose id since | where id not-in $done | reduce --fold {} {|s, acc| $acc | insert $s.id $s.since })
+    archived: ($archived | append $done)
+  } | to json | save --force $"($file).new"
+  mv --force $"($file).new" $file
 }

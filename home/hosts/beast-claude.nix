@@ -151,6 +151,23 @@ in
     Install.WantedBy = [ "timers.target" ];
   };
 
+  systemd.user.services.beast-app-sessions = {
+    Unit.Description = "Archives the app sessions of Claude processes on beast that ended without archiving them";
+    Service = {
+      Type = "oneshot";
+      ExecStart = "${lib.getExe pkgs.nushell} --no-config-file --commands 'source ${../modules/beast/sessions.nu}; reap-app-sessions'";
+    };
+  };
+  systemd.user.timers.beast-app-sessions = {
+    Unit.Description = "Archives ended Claude sessions in the app every minute";
+    Timer = {
+      OnBootSec = "1min";
+      OnUnitInactiveSec = "1min";
+      AccuracySec = "5s";
+    };
+    Install.WantedBy = [ "timers.target" ];
+  };
+
   systemd.user.services.zurich-display-study = {
     Unit.Description = "Daily zurich-23 display study run";
     Service = {
