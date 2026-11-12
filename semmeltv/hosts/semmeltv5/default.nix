@@ -30,7 +30,6 @@
     web = {
       enable = true;
       tailscale = true;
-      funnel = true;
     };
     downloads = {
       enable = true;
