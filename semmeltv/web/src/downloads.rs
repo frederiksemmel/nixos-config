@@ -221,9 +221,11 @@ async fn job_row(cx: &Cx, job: &Job) -> Result<impl View> {
                 <b>(job.label.as_str())</b>
                 <span>(job.message.as_str())</span>
             </div>
-            <div class="download-bar"><i style=(format!("width:{:.1}%", percent(job)))></i></div>
-            <p class="download-facts">(progress_line(job))</p>
-            <p class="download-log">(last)</p>
+            if job.stage != "done" {
+                <div class="download-bar"><i style=(format!("width:{:.1}%", percent(job)))></i></div>
+                <p class="download-facts">(progress_line(job))</p>
+                <p class="download-log">(last)</p>
+            }
             if stoppable {
                 <button type="button" class="storage-button danger" @click=$(async |_e| {
                     let answer = stop(id.to_owned()).await;
@@ -243,7 +245,7 @@ async fn job_list(cx: &Cx) -> Result<impl View> {
             let overview = downloads.overview().await;
             let token = emit! {
                 <section class="settings">
-                    <h2>"Downloads"</h2>
+                    <h2>"Recent"</h2>
                     match &overview {
                         Err(error) => <p class="setting-note">(error.as_str())</p>,
                         Ok(overview) => {
@@ -400,7 +402,7 @@ async fn downloads_page(cx: &Cx) -> Result<impl View> {
     Ok(view! {
         <article class="downloads">
             back(href: "/settings")
-            <h1>"Download"</h1>
+            <h1>"Downloads"</h1>
             <form class="search download-search" @submit=$(async |e: Event| {
                 e.prevent_default();
                 busy.set(true);
@@ -411,7 +413,7 @@ async fn downloads_page(cx: &Cx) -> Result<impl View> {
                 <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
                 <input
                     type="search"
-                    placeholder="A film, or a series and season"
+                    placeholder="A film or a season"
                     autocomplete="off"
                     autocapitalize="off"
                     spellcheck="false"

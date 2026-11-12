@@ -1273,6 +1273,7 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
   background: var(--bg);
   border: 1px solid var(--line);
   border-radius: 10px;
+  min-width: 9em;
   padding: 7px 10px;
 }
 
@@ -1492,10 +1493,10 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 
 .download-search { display: flex; gap: 8px; align-items: center; }
 .download-search input { flex: 1; min-width: 0; }
-.download-search .storage-button { flex: none; }
+.download-search .storage-button { flex: none; min-height: 46px; padding: 0 18px; border-radius: 12px; font-size: 16px; font-weight: 600; }
 
 .download-choices,
-.download-jobs { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.download-jobs { list-style: none; margin: 0 0 12px; padding: 0; display: grid; gap: 10px; }
 
 .download-choice,
 .download-job {
@@ -1795,7 +1796,7 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .filter-option {
   flex: none;
   padding: 6px 12px;
-  border-radius: 8px;
+  border-radius: 999px;
   background: transparent;
   border: 1px solid var(--line);
   color: var(--text);

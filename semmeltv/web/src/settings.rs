@@ -161,7 +161,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     if abilities.pairing {
                         <div class="setting setting-row">
                             <span class="setting-name">"Pairing" <small>(paired)</small></span>
-                            <button type="button" class="pill" data-post="/api/tv/pair" data-pending="Press Allow on the TV">(pair)</button>
+                            <button type="button" class=(if abilities.paired == Some(true) { "pill quiet" } else { "pill" }) data-post="/api/tv/pair" data-pending="Press Allow on the TV">(pair)</button>
                         </div>
                     }
                 </div>
