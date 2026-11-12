@@ -1,6 +1,6 @@
 use crate::api::{About, Api, Card, CastMember, Episode, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard};
 use crate::layout::back;
-use crate::playing::{play_episode, play_movie, play_show, tell};
+use crate::playing::{play_episode, play_movie, play_show, tell, tv_icon};
 use crate::public::Public;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use topcoat::Result;
@@ -163,6 +163,7 @@ async fn watching_tile(cx: &Cx, public: &Public, watching: &WatchingCard, forget
                 <span class="tile-sub">(watching.detail.as_str())</span>
             )
             <button type="button" class="resume" aria-label=(format!("Play {}", card.title))
+                data-play-movie=(is_movie.then_some(card.key.as_str())) data-play-show=((!is_movie).then_some(card.key.as_str()))
                 @click=$(async |_e| {
                     let answer = if is_movie { play_movie(key).await } else { play_show(key).await };
                     said.set(answer);
@@ -697,7 +698,8 @@ async fn episode_row(cx: &Cx, public: &Public, series: &str, episode: &Episode, 
     let label = episode.short_label.clone();
     Ok(view! {
         <li class="episode-row">
-            <button type="button" class="episode" @click=$(async |_e| {
+            <button type="button" class="episode" data-play-show=(series) data-season=(season_number.to_string())
+                data-episode=(episode_number.to_string()) @click=$(async |_e| {
                 let answer = play_episode(show_key.to_owned(), season_number, episode_number).await;
                 said.set(answer);
             })>
@@ -811,8 +813,8 @@ async fn movie(cx: &Cx) -> Result<impl View> {
                                 <p class="detail-stopped">(stopped)</p>
                             }
                             <div class="detail-actions">
-                                <button type="button" class="play" @click=$(async |_e| {
-                                    let answer = play_movie(key).await;
+                                <button type="button" class="play" data-play-movie=(key.as_str()) @click=$(async |_e| {
+                                    let answer = play_movie(key.to_owned()).await;
                                     said.set(answer);
                                 })>
                                     play_icon()
@@ -820,6 +822,13 @@ async fn movie(cx: &Cx) -> Result<impl View> {
                                 </button>
                                 trailer_button(about: &movie.about)
                             </div>
+                            <button type="button" class="pill quiet play-tv" @click=$(async |_e| {
+                                let answer = play_movie(key.to_owned()).await;
+                                said.set(answer);
+                            })>
+                                tv_icon()
+                                "Play on TV"
+                            </button>
                             <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
                             movie_mark(key: key.as_str(), finished: movie.card.finished, said: said.clone())
                             if let Some(fetch) = &fetch {
@@ -960,8 +969,8 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                 <p class="detail-seen-count">"Watched " (watched.to_string()) " of " (total.to_string()) " episodes"</p>
                             }
                             <div class="detail-actions">
-                                <button type="button" class="play" @click=$(async |_e| {
-                                    let answer = play_show(next_key).await;
+                                <button type="button" class="play" data-play-show=(key.as_str()) @click=$(async |_e| {
+                                    let answer = play_show(next_key.to_owned()).await;
                                     said.set(answer);
                                 })>
                                     play_icon()
@@ -969,6 +978,13 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                 </button>
                                 trailer_button(about: &show.about)
                             </div>
+                            <button type="button" class="pill quiet play-tv" @click=$(async |_e| {
+                                let answer = play_show(next_key.to_owned()).await;
+                                said.set(answer);
+                            })>
+                                tv_icon()
+                                "Play on TV"
+                            </button>
                             <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
                             if let Some((label, fetch)) = &next_fetch {
                                 find_subtitles(label: label.as_str(), body: fetch.as_str())

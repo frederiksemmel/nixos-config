@@ -130,12 +130,64 @@ svg .solid { fill: currentColor; stroke: none; }
   width: auto;
 }
 
+.mode {
+  flex: none;
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  width: 84px;
+  height: 44px;
+  margin-left: auto;
+  padding: 3px;
+  border-radius: 22px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.mode::before {
+  content: "";
+  position: absolute;
+  top: 3px;
+  bottom: 3px;
+  left: 3px;
+  width: 38px;
+  border-radius: 50%;
+  background: #34343f;
+  transition: transform 0.2s ease-out;
+}
+
+.mode span { position: relative; display: grid; place-items: center; height: 100%; transition: color 0.2s; }
+.mode svg { width: 20px; height: 20px; }
+.mode[data-mode="tv"] .mode-tv, .mode[data-mode="phone"] .mode-phone { color: var(--text); }
+.mode[data-mode="phone"]::before { transform: translateX(38px); }
+
+@media (prefers-reduced-motion: reduce) {
+  .mode::before { transition: none; }
+}
+
+.mode-note {
+  position: fixed;
+  top: calc(var(--edge) + 66px);
+  left: var(--gutter);
+  right: var(--gutter);
+  z-index: 21;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: #2a1d1d;
+  color: var(--refused);
+  font-size: 14px;
+  text-align: center;
+}
+
+.mode-note:empty { display: none; }
+
 .microphone {
   display: flex;
   align-items: center;
   gap: 10px;
   min-width: 0;
-  margin-left: auto;
 }
 
 .microphone-note {
@@ -1134,6 +1186,8 @@ html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
 }
 
 .pill:active { opacity: 0.8; }
+.pill.play-tv { display: none; }
+html[data-mode="phone"] .pill.play-tv { display: inline-flex; justify-self: start; margin-top: 2px; }
 .pill.quiet { background: transparent; border: 1px solid var(--line); color: var(--text); }
 .pill:has(svg) { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; }
 .pill svg { width: 18px; height: 18px; }

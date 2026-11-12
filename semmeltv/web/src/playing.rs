@@ -192,7 +192,7 @@ pub async fn settings_icon() -> Result<impl View> {
 }
 
 #[component]
-async fn tv_icon() -> Result<impl View> {
+pub async fn tv_icon() -> Result<impl View> {
     Ok(view! {
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"></rect><path d="M8 20.5h8"></path></svg>
     })
