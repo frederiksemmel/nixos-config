@@ -28,11 +28,18 @@ let
       "W503"
     ];
   } (builtins.readFile ./disk_cleanup.py);
+
+  tmp-sweep = pkgs.writers.writePython3Bin "tmp-sweep" {
+    flakeIgnore = [ "E501" ];
+  } (builtins.readFile ./tmp_sweep.py);
 in
 {
   age.secrets.beast_linear_api_key.file = ../../../secrets/beast_linear_api_key.age;
 
-  home.packages = [ disk-fill ];
+  home.packages = [
+    disk-fill
+    tmp-sweep
+  ];
 
   systemd.user.services.disk-cleanup = {
     Unit = {
@@ -57,6 +64,25 @@ in
   systemd.user.timers.disk-cleanup = {
     Unit.Description = "Checks every 15 minutes whether / needs a cleanup or a Linear answer came in";
     Timer.OnCalendar = "*:0/15";
+    Install.WantedBy = [ "timers.target" ];
+  };
+
+  systemd.user.services.tmp-sweep = {
+    Unit.Description = "Removes my /tmp entries untouched and unused for two days";
+    Service = {
+      Type = "oneshot";
+      ExecStart = lib.getExe tmp-sweep;
+      Nice = 19;
+      IOSchedulingClass = "idle";
+    };
+  };
+
+  systemd.user.timers.tmp-sweep = {
+    Unit.Description = "Sweeps /tmp daily";
+    Timer = {
+      OnCalendar = "daily";
+      Persistent = true;
+    };
     Install.WantedBy = [ "timers.target" ];
   };
 }
