@@ -1,12 +1,14 @@
-use crate::api::{Api, TvAbilities};
+use crate::api::{Api, Audio, Link, PairState, TvAbilities};
 use crate::layout::back;
+use crate::live::Live;
+use crate::playing::headphones_icon;
 use crate::storage::storage_icon;
 use crate::subtitles::{language_order, style, switch};
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::page;
-use topcoat::runtime::link;
-use topcoat::view::{View, attributes, component, view};
+use topcoat::runtime::{connected, link};
+use topcoat::view::{View, attributes, component, emit, live, view};
 
 fn tv_name(abilities: &TvAbilities) -> String {
     match abilities.kind.as_deref() {
@@ -29,6 +31,92 @@ fn pairing(paired: Option<bool>) -> (&'static str, &'static str) {
         Some(true) => ("Paired", "Pair again"),
         _ => ("Not paired yet, so the volume keys won't work", "Pair with the TV"),
     }
+}
+
+fn link_text(state: Link) -> &'static str {
+    match state {
+        Link::Connected => "Connected",
+        Link::Connecting => "Connecting…",
+        Link::Disconnected => "Paired, not connected",
+    }
+}
+
+#[derive(Debug, PartialEq)]
+enum PairButton {
+    Pair,
+    Cancel,
+    Wait,
+}
+
+struct PairRow {
+    detail: String,
+    button: PairButton,
+    note: String,
+    refused: bool,
+}
+
+fn pair_row(audio: &Audio) -> PairRow {
+    let button = match audio.pairing.as_ref().map(|pairing| pairing.state) {
+        Some(PairState::Scanning) => PairButton::Cancel,
+        Some(PairState::Pairing) => PairButton::Wait,
+        _ => PairButton::Pair,
+    };
+    let detail = match &audio.headphones {
+        Some(headphones) => format!("Replaces {}", headphones.name),
+        None => "AirPods or other Bluetooth headphones, to hear the TV on them".to_string(),
+    };
+    let (note, refused) = match (&audio.error, &audio.pairing) {
+        (Some(error), _) => (error.clone(), true),
+        (None, Some(pairing)) => (pairing.message.clone(), pairing.state == PairState::Failed),
+        (None, None) => (String::new(), false),
+    };
+    PairRow { detail, button, note, refused }
+}
+
+#[component]
+async fn headphones_settings(cx: &Cx) -> Result<impl View> {
+    Ok(live! {
+        let mut audio = app_context::<Live>(cx).audio.clone();
+        loop {
+            let state = audio.borrow_and_update().clone();
+            let token = match state {
+                Some(audio) => {
+                    let row = pair_row(&audio);
+                    emit! {
+                        <section class="settings headphones">
+                            <h2>"Headphones"</h2>
+                            <div class="setting-group">
+                                if let Some(headphones) = &audio.headphones {
+                                    <div class="setting setting-row">
+                                        <span class="setting-name">(headphones.name.as_str()) <small>(link_text(headphones.state))</small></span>
+                                        <button type="button" class="pill quiet" data-post="/api/audio/headphones" data-method="DELETE">"Forget"</button>
+                                        <p class="answer" data-said="true" aria-live="polite"></p>
+                                    </div>
+                                }
+                                <div class="setting setting-row">
+                                    <span class="setting-name">"New headphones" <small>(row.detail.as_str())</small></span>
+                                    match row.button {
+                                        PairButton::Cancel => <button type="button" class="pill quiet" data-post="/api/audio/pair" data-method="DELETE">"Cancel"</button>,
+                                        PairButton::Wait => <span class="pill quiet" aria-busy="true">"Pairing…"</span>,
+                                        PairButton::Pair => <button type="button" class="pill" data-post="/api/audio/pair">
+                                            headphones_icon()
+                                            "Pair"
+                                        </button>,
+                                    }
+                                    <p class=(if row.refused { "answer refused" } else { "answer" }) aria-live="polite">(row.note.as_str())</p>
+                                    <p class="answer" data-said="true" aria-live="polite"></p>
+                                </div>
+                            </div>
+                        </section>
+                    }?
+                }
+                None => emit! {}?,
+            };
+            if !connected(cx) || audio.changed().await.is_err() {
+                break Ok(token);
+            }
+        }
+    })
 }
 
 #[component]
@@ -83,6 +171,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     }
                 </div>
             </section>
+            headphones_settings()
             <section class="settings">
                 <h2>"Library"</h2>
                 <div class="setting-group">

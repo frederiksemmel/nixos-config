@@ -327,7 +327,7 @@ pub enum Output {
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(rename_all = "kebab-case")]
-pub enum Pairing {
+pub enum Link {
     Disconnected,
     Connecting,
     Connected,
@@ -336,13 +336,29 @@ pub enum Pairing {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Headphones {
     pub name: String,
-    pub state: Pairing,
+    pub state: Link,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PairState {
+    Scanning,
+    Pairing,
+    Paired,
+    Failed,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Pairing {
+    pub state: PairState,
+    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct Audio {
     pub output: Output,
-    pub headphones: Headphones,
+    pub headphones: Option<Headphones>,
+    pub pairing: Option<Pairing>,
     pub error: Option<String>,
 }
 

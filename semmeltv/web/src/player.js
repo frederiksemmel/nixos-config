@@ -78,13 +78,13 @@ async function post(button) {
   let ok = false;
   try {
     const response = await fetch(`${api}${button.dataset.post}`, {
-      method: "POST",
+      method: button.dataset.method || "POST",
       headers: { "content-type": "application/json" },
       body: button.dataset.body || "{}",
     });
     const answer = await response.json().catch(() => ({}));
     ok = response.ok && answer.ok !== false;
-    say(said, answer.message || (response.ok ? "" : `The TV answered ${response.status}`), ok);
+    say(said, answer.message || answer.error || (response.ok ? "" : `The TV answered ${response.status}`), ok);
   } catch {
     say(said, "The TV is not answering", false);
   } finally {

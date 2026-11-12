@@ -1,6 +1,7 @@
 import sys
 import time
 import urllib.request
+from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
 
@@ -70,6 +71,7 @@ def scrolls_both_ways(page, engine, step):
 def settings_subpages(page, engine):
     page.locator('a[href="/settings"]').first.tap()
     until(page, engine, "Settings opens", 'location.pathname === "/settings" && document.querySelector("main .settings")')
+    page.wait_for_timeout(500)
     for sub in ("/downloads", "/storage"):
         link = page.locator(f'main a[href="{sub}"]')
         link.scroll_into_view_if_needed()
@@ -118,13 +120,53 @@ def sound(page, engine):
           'document.querySelector(".sound .answer.refused")?.textContent.includes("didn\'t connect")', 5000)
 
 
+def to_settings(page, engine, step):
+    page.locator('a[href="/settings"]').first.tap()
+    until(page, engine, f"{step}: Settings opens", 'location.pathname === "/settings" && document.querySelector("main .headphones")')
+    page.wait_for_timeout(500)
+    page.locator("main .headphones").scroll_into_view_if_needed()
+
+
+def home(page, engine, step):
+    page.locator("main a.back").first.tap()
+    until(page, engine, f"{step}: Back returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
+    page.wait_for_timeout(500)
+
+
+def headphones(page, engine):
+    to_settings(page, engine, "pairing")
+    pair = page.locator("main .headphones .pill:not(.quiet)")
+    pair.tap()
+    until(page, engine, "pairing says what to do with the headphones",
+          '[...document.querySelectorAll("main .headphones .answer")].some((note) => note.textContent.includes("hold the button"))', 3000)
+    page.locator("main .headphones .pill.quiet", has_text="Cancel").tap()
+    until(page, engine, "Cancel stops the pairing", '!document.querySelector("main .headphones .pill.quiet")', 3000)
+    pair.tap()
+    until(page, engine, "the paired headphones show up connected",
+          '[...document.querySelectorAll("main .headphones .setting-name")].some((name) => name.textContent.includes("AirPods von Frederik") && name.textContent.includes("Connected"))', 5000)
+    answers(page, engine, "Settings after pairing")
+    home(page, engine, "after pairing")
+    page.locator(".bar-open").tap()
+    until(page, engine, "sheet opens after pairing", 'document.documentElement.hasAttribute("data-sheet")', 3000)
+    page.wait_for_timeout(800)
+    sound(page, engine)
+    page.locator(".sheet-close").tap()
+    until(page, engine, "sheet closes after the sound choice", '!document.documentElement.hasAttribute("data-sheet")', 3000)
+    page.wait_for_timeout(800)
+    to_settings(page, engine, "forgetting")
+    page.locator("main .headphones .pill.quiet", has_text="Forget").tap()
+    until(page, engine, "Forget removes the headphones and the Sound choice",
+          '!document.querySelector("main .headphones .pill.quiet") && !document.querySelector(".sound")', 3000)
+    home(page, engine, "after forgetting")
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
     page.set_default_timeout(8000)
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.route("**/api/audio", lambda route: route.fulfill(response=route.fetch(url=FAKE + "/api/audio")))
+    page.route("**/api/audio**", lambda route: route.fulfill(response=route.fetch(url=FAKE + urlparse(route.request.url).path)))
     page.goto(BASE + "/", wait_until="commit")
     page.wait_for_timeout(2500)
     if not answers(page, engine, "cold load"):
@@ -163,13 +205,14 @@ def run(p, engine, device):
     until(page, engine, "remote sheet opens", 'document.documentElement.hasAttribute("data-sheet")', 3000)
     page.wait_for_timeout(800)
     answers(page, engine, "sheet open")
-    sound(page, engine)
+    check(engine, "no Sound choice while no headphones are paired", page.evaluate('!document.querySelector(".sound")'))
     page.locator(".sheet-close").tap()
     until(page, engine, "remote sheet closes", '!document.documentElement.hasAttribute("data-sheet")', 3000)
     page.wait_for_timeout(800)
     answers(page, engine, "after the sheet")
     scrolls(page, engine, "after the sheet")
     settings_subpages(page, engine)
+    headphones(page, engine)
     page.locator(".bar-toggle").tap()
     answers(page, engine, "after play/pause")
     opens_title(page, engine, "after play/pause")

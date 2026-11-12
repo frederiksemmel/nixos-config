@@ -13,9 +13,10 @@ STORAGE = json.loads((HERE / "storage.json").read_text())
 DOWNLOADS = json.loads((HERE / "downloads.json").read_text())
 CARDS = {card["key"]: card for row in LIBRARY.values() for card in row}
 playing = {"paused": False, "position": 2223.0}
-audio = {"output": "tv", "headphones": {"name": "AirPods", "state": "disconnected"}, "error": None}
+audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
 CONNECT_SECONDS = 1.5
+SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
 
 
 def now_playing():
@@ -99,6 +100,32 @@ async def choose_output(request):
     return web.json_response(audio)
 
 
+async def finish_pairing():
+    await asyncio.sleep(CONNECT_SECONDS)
+    if not audio["pairing"] or audio["pairing"]["state"] != "scanning":
+        return
+    set_audio(headphones={"name": "AirPods von Frederik", "address": "34:0E:22:67:03:38", "state": "connected"},
+              pairing={"state": "paired", "message": "AirPods von Frederik are paired."})
+
+
+async def pair(request):
+    if audio["pairing"] and audio["pairing"]["state"] in ("scanning", "pairing"):
+        return web.json_response({"error": "Pairing is already running."}, status=409)
+    set_audio(pairing={"state": "scanning", "message": SCANNING}, error=None)
+    asyncio.get_running_loop().create_task(finish_pairing())
+    return web.json_response(audio)
+
+
+async def stop_pairing(request):
+    set_audio(pairing=None)
+    return web.json_response(audio)
+
+
+async def forget(request):
+    set_audio(output="tv", headphones=None, pairing=None, error=None)
+    return web.json_response(audio)
+
+
 async def fail_next_connect(request):
     sound["fail_next"] = True
     return web.json_response({"ok": True})
@@ -117,6 +144,9 @@ app.router.add_get("/api/storage", storage)
 app.router.add_get("/api/downloads", downloads)
 app.router.add_get("/api/playback", playback)
 app.router.add_post("/api/audio", choose_output)
+app.router.add_post("/api/audio/pair", pair)
+app.router.add_delete("/api/audio/pair", stop_pairing)
+app.router.add_delete("/api/audio/headphones", forget)
 app.router.add_post("/fake/fail-next-connect", fail_next_connect)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)

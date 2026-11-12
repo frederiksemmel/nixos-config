@@ -1104,6 +1104,9 @@ html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
 }
 
 .pill:active { opacity: 0.8; }
+.pill.quiet { background: transparent; border: 1px solid var(--line); color: var(--text); }
+.pill:has(svg) { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; }
+.pill svg { width: 18px; height: 18px; }
 .pill[aria-busy="true"] { opacity: 0.6; }
 .setting-row .answer { grid-column: 1 / -1; margin: 0; }
 
