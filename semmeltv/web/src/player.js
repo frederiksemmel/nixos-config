@@ -1,6 +1,7 @@
 const api = document.documentElement.dataset.api || "";
 const root = document.documentElement;
 const UNCONFIRMED = 10000;
+const TRACKS_SETTLE = 2000;
 const OFF_BY_TITLE = "They were found by title only, so if they run early or late, adjust the timing.";
 
 let returnFocus = null;
@@ -89,7 +90,10 @@ async function post(button) {
     const text = answer.message || answer.error || (response.ok ? "" : `The TV answered ${response.status}`);
     say(said, answer.matched === "title" ? `${text}. ${OFF_BY_TITLE}` : text, ok);
     if (ok && button.dataset.done === "hide") button.hidden = true;
-    if (ok && button.dataset.refresh === "tracks") refreshTracks();
+    if (ok && button.dataset.refresh === "tracks") {
+    refreshTracks();
+    setTimeout(refreshTracks, TRACKS_SETTLE);
+  }
   } catch {
     say(said, "The TV is not answering", false);
   } finally {
