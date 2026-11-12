@@ -4,6 +4,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+const CREDITS_FREE: f64 = 20.0 * 60.0;
+const CREDITS_DIVISOR: f64 = 15.0;
+const CREDITS_LONGEST: f64 = 10.0 * 60.0;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Position {
     pub season: u32,
@@ -18,12 +22,31 @@ pub struct Watched {
     pub last_played: Option<u64>,
     #[serde(default)]
     pub finished: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub credits: Option<f64>,
+}
+
+impl Watched {
+    pub fn credits_start(&self) -> Option<f64> {
+        let duration = self.duration.filter(|duration| *duration > 0.0)?;
+        let found = self.credits.filter(|start| (duration / 2.0..duration).contains(start));
+        let estimated = ((duration - CREDITS_FREE) / CREDITS_DIVISOR).min(CREDITS_LONGEST);
+        found.or((estimated > 0.0).then_some(duration - estimated))
+    }
+
+    pub fn in_credits(&self) -> bool {
+        match (self.stopped_at, self.credits_start()) {
+            (Some(at), Some(start)) => at >= start,
+            _ => false,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Place {
     pub position: f64,
     pub duration: f64,
+    pub credits: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -45,6 +68,9 @@ impl Progress {
         if place.duration > 0.0 {
             watched.duration = Some(place.duration);
         }
+        if place.credits.is_some() {
+            watched.credits = place.credits;
+        }
     }
 
     pub fn played(&mut self, file: &Path, now: u64) {
@@ -55,6 +81,13 @@ impl Progress {
         let watched = self.files.entry(file.to_path_buf()).or_default();
         watched.stopped_at = None;
         watched.finished = true;
+    }
+
+    pub fn unfinish(&mut self, file: &Path) {
+        if let Some(watched) = self.files.get_mut(file) {
+            watched.stopped_at = None;
+            watched.finished = false;
+        }
     }
 
     pub fn watched(&self, show: &Show, episode: &Episode) -> bool {
@@ -92,7 +125,47 @@ mod tests {
     const FILM: Place = Place {
         position: 3840.0,
         duration: 7860.0,
+        credits: None,
     };
+
+    fn stopped(position: f64, duration: f64, credits: Option<f64>) -> Watched {
+        Watched {
+            stopped_at: Some(position),
+            duration: Some(duration),
+            credits,
+            ..Watched::default()
+        }
+    }
+
+    #[test]
+    fn without_a_known_start_the_credits_grow_with_the_length_up_to_ten_minutes() {
+        let left = |minutes: f64| {
+            let duration = minutes * 60.0;
+            let watched = stopped(0.0, duration, None);
+            watched.credits_start().map(|start| duration - start)
+        };
+        assert_eq!(left(20.0), None);
+        assert_eq!(left(35.0), Some(60.0));
+        assert_eq!(left(95.0), Some(300.0));
+        assert_eq!(left(170.0), Some(600.0));
+        assert_eq!(left(240.0), Some(600.0));
+    }
+
+    #[test]
+    fn a_stop_in_the_credits_of_airplane_counts_and_one_before_does_not() {
+        assert!(stopped(5009.9, 5261.6, None).in_credits());
+        assert!(stopped(5245.0, 5261.6, None).in_credits());
+        assert!(!stopped(4900.0, 5261.6, None).in_credits());
+        assert!(!Watched::default().in_credits());
+    }
+
+    #[test]
+    fn a_known_credits_start_wins_over_the_estimate_unless_it_cannot_be_right() {
+        assert!(stopped(3420.0, 3486.0, Some(3409.7)).in_credits());
+        assert!(!stopped(3400.0, 3486.0, Some(3409.7)).in_credits());
+        assert!(stopped(1315.0, 1320.0, Some(1330.0)).in_credits());
+        assert!(!stopped(1200.0, 1320.0, Some(300.0)).in_credits());
+    }
 
     #[test]
     fn a_stop_keeps_the_place_and_the_real_duration() {
@@ -106,6 +179,7 @@ mod tests {
                 duration: Some(7860.0),
                 last_played: None,
                 finished: false,
+                credits: None,
             }
         );
     }
@@ -129,6 +203,33 @@ mod tests {
         assert_eq!(progress.files[file].stopped_at, None);
         assert_eq!(progress.files[file].duration, Some(7860.0));
         assert!(progress.files[file].finished);
+    }
+
+    #[test]
+    fn a_known_credits_start_is_kept_with_the_place() {
+        let mut progress = Progress::default();
+        let file = Path::new("/lib/Up.mkv");
+        progress.record(
+            file,
+            Place {
+                credits: Some(7500.0),
+                ..FILM
+            },
+        );
+        progress.record(file, FILM);
+        assert_eq!(progress.files[file].credits, Some(7500.0));
+    }
+
+    #[test]
+    fn an_unwatched_file_loses_its_place_and_its_finish() {
+        let mut progress = Progress::default();
+        let file = Path::new("/lib/Up.mkv");
+        progress.record(file, FILM);
+        progress.finish(file);
+        progress.unfinish(file);
+        assert_eq!(progress.files[file].stopped_at, None);
+        assert!(!progress.files[file].finished);
+        assert_eq!(progress.files[file].duration, Some(7860.0));
     }
 
     #[test]

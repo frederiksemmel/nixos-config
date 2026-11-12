@@ -22,12 +22,15 @@ look like `{ "error": "..." }`, with 400 or 404.
 | --- | --- | --- |
 | GET | `/api/library` | `{ watching, forgotten, newest, shows, movies }`, lists of cards |
 | POST | `/api/forgotten/dismiss` | `{ kind, key }` → `{ message, ok }` |
+| POST | `/api/watched` | `{ kind, key, watched, season?, episode? }` → `{ message, ok, watched }` |
 | GET | `/api/search?q=TEXT` | `{ results }`: cards ranked by how well the title matches, prefixes first, typos forgiven |
 | GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration`, `tags`, `subtitles`, `about`, `last_played` and `last_played_label` |
 | GET | `/api/shows/{key}` | a card plus `next` (where playing carries on), `seasons` (each with `episodes`), `about`, `last_played` and `last_played_label` |
 
 A card is
-`{ kind: "movie" | "show", key, title, years, subtitle, poster, backdrop, ratings }`.
+`{ kind: "movie" | "show", key, title, years, subtitle, poster, backdrop, ratings, finished }`.
+`finished` is true for a film that played to its end, stopped in its credits
+or was marked as watched, and for a series whose last episode did.
 `years` is a film's year, or the years a show ran ("2014–2025", or "2014–"
 while it still runs), or null.
 `ratings` is `{ imdb, rotten_tomatoes, fresh, popcorn, full }`, and any of these
@@ -46,13 +49,35 @@ scale from its IMDb rating: `awesome` (9.0 and up), `great` (8.0), `good`
 `watching` is Currently Watching: up to three series and three films, latest
 first. `forgotten` is Started and Forgotten: every film and series that was
 started and never finished and is not in `watching`, most relevant first. A
-film is finished once it played to its end or stopped in its last 5%; a series
-once its last episode did. Relevance is the share watched (of the film, or of
+file is finished once it played to its end or stopped in its end credits; a
+series once its last episode did. A finished file leaves `watching` (a series
+moves on to its next episode), stays out of `forgotten`, and plays from the
+start next time. Relevance is the share watched (of the film, or of
 the series' regular episodes counting the started one in part) times
 `(days + 7) / (days + 14)`, where `days` is the time since it last played, 90
 when unknown. Both lists hold cards plus `season` and `episode` (where a series
 carries on, else null), `detail` ("S2 E3", "1h 20m left" or both) and
 `progress`, how far into that file it stopped, from 0 to 1.
+
+The credits start where the file has a chapter whose title says "credits", else
+where TheIntroDB says they start, else `(duration − 20 min) / 15` before the
+end, at most 10 minutes: 1 minute of a 35-minute episode, 5 minutes of a
+95-minute film, 10 minutes of anything from 2 h 50 m on. A file of 20 minutes
+or less only finishes at its end. A post-credits scene changes nothing: a stop
+anywhere after the credits start counts.
+
+Marking a title watched or unwatched takes `kind` (`movie` or `show`), `key`
+and `watched`, a boolean. A show with `season` and `episode` marks that
+episode; a show without them marks the whole series. Marked watched, the file
+is finished as if it had played to its end, and a series moves on past that
+episode unless it was already further on; a whole series is marked by its last
+episode. Marked unwatched, the file loses its finish and its resume point; an
+episode marked unwatched becomes where the series resumes if the series was at
+or past it; a film or whole series marked unwatched also leaves `watching`, and
+a whole series forgets where it was. The answer's `watched` is the title's (or
+episode's) state afterwards, so a button can flip without reloading. `ok` is
+false, with 422, for a key or episode the library does not hold, and the status
+is 400 for `season` without `episode`, or either with a film.
 
 Dismissing takes a title (`kind` is `movie` or `show`) out of `forgotten` and
 keeps its resume point. It is stored by the file playback would resume, so

@@ -138,7 +138,6 @@ pub struct Setup {
 
 struct Playing {
     file: PathBuf,
-    show: Option<String>,
 }
 
 struct App {
@@ -696,11 +695,17 @@ impl App {
     }
 
     fn title(&self, path: &Path) -> Option<Title> {
-        let (show, episode) = self.nav.library().find_episode(path)?;
+        let library = self.nav.library();
+        if let Some((show, episode)) = library.find_episode(path) {
+            return Some(Title {
+                tmdb: show.tmdb?,
+                episode: Some((episode.season, episode.number)),
+            });
+        }
+        let movie = library.movies.iter().find(|movie| movie.path == path)?;
         Some(Title {
-            tmdb: show.tmdb?,
-            season: episode.season,
-            episode: episode.number,
+            tmdb: movie.tmdb?,
+            episode: None,
         })
     }
 
@@ -716,7 +721,6 @@ impl App {
         });
         self.playing = Some(Playing {
             file: path.to_path_buf(),
-            show: show.as_ref().map(|(key, _)| key.clone()),
         });
         if let Some((key, position)) = show {
             self.progress.shows.insert(key, position);
@@ -749,13 +753,15 @@ impl App {
         self.player = None;
         self.now_playing = None;
         self.publish_playback();
-        if let Some(playing) = self.playing.take().filter(|_| ended) {
-            self.progress.finish(&playing.file);
-            watching::finished(&mut self.progress, self.nav.library(), &playing.file);
-            if let Some(position) = playing.show.and_then(|key| self.progress.shows.get_mut(&key)) {
-                position.finished = true;
+        if let Some(playing) = self.playing.take() {
+            let library = self.nav.library();
+            if ended {
+                watching::complete(&mut self.progress, library, &playing.file);
+                self.save_progress();
+            } else if watching::stopped(&mut self.progress, library, &playing.file) {
+                self.forget_place(&playing.file);
+                self.save_progress();
             }
-            self.save_progress();
         }
         if !success {
             self.show_message("This video could not be played".to_string());
@@ -891,6 +897,7 @@ impl App {
             Request::Subtitles(change) => return self.change_subtitles(change),
             Request::Storage(change) => return self.change_storage(change),
             Request::Dismiss(kind, key) => return self.dismiss(kind, &key),
+            Request::Mark(kind, key, episode, mark) => return self.mark(kind, &key, episode, mark),
             Request::Listen => {
                 return match &self.voice {
                     Some(voice) => {
@@ -1005,6 +1012,61 @@ impl App {
         Outcome {
             message: "Removed from Started and Forgotten".to_string(),
             ok: true,
+        }
+    }
+
+    fn mark(&mut self, kind: watching::Kind, key: &str, episode: Option<(u32, u32)>, mark: watching::Mark) -> Outcome {
+        let library = self.nav.library();
+        let Some(files) = watching::mark(&mut self.progress, library, kind, key, episode, mark) else {
+            return Outcome {
+                message: format!("There is no {key} in the library"),
+                ok: false,
+            };
+        };
+        let name = match (kind, episode) {
+            (watching::Kind::Movie, _) => library
+                .movies
+                .iter()
+                .find(|movie| movie.key == key)
+                .map(|movie| movie.title.clone()),
+            (watching::Kind::Series, None) => library
+                .shows
+                .iter()
+                .find(|show| show.key == key)
+                .map(|show| show.title.clone()),
+            (watching::Kind::Series, Some((season, number))) => {
+                library.shows.iter().find(|show| show.key == key).and_then(|show| {
+                    Some(format!(
+                        "{} · {}",
+                        show.title,
+                        show.episode(season, number)?.short_label()
+                    ))
+                })
+            }
+        }
+        .unwrap_or_else(|| key.to_string());
+        for file in &files {
+            self.forget_place(file);
+        }
+        self.save_progress();
+        self.present_home();
+        self.queue_downloads(false);
+        let state = match mark {
+            watching::Mark::Watched => "watched",
+            watching::Mark::Unwatched => "unwatched",
+        };
+        Outcome {
+            message: format!("{name} is marked as {state}"),
+            ok: true,
+        }
+    }
+
+    fn forget_place(&self, file: &Path) {
+        match std::fs::remove_dir_all(self.cache.watch_later_dir(file)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
+                eprintln!("progress: could not forget where {} stopped: {error}", file.display());
+            }
+            _ => {}
         }
     }
 

@@ -669,6 +669,7 @@ mod tests {
             Place {
                 position: 600.0,
                 duration: 6000.0,
+                credits: None,
             },
         );
         progress.played(&up, 777);

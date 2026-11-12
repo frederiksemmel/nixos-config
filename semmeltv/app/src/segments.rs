@@ -7,8 +7,7 @@ const TIMEOUT: Duration = Duration::from_secs(8);
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Title {
     pub tmdb: u64,
-    pub season: u32,
-    pub episode: u32,
+    pub episode: Option<(u32, u32)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,6 +44,14 @@ struct Media {
     recap: Vec<Range>,
     #[serde(default)]
     intro: Vec<Range>,
+    #[serde(default)]
+    credits: Vec<Range>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Found {
+    pub segments: Vec<Segment>,
+    pub credits: Option<f64>,
 }
 
 fn first(kind: Kind, ranges: &[Range], duration: f64) -> Option<Segment> {
@@ -68,7 +75,23 @@ fn segments(media: &Media, duration: f64) -> Vec<Segment> {
     .collect()
 }
 
-pub fn fetch(title: Title, duration: f64) -> Result<Vec<Segment>, ureq::Error> {
+fn credits(media: &Media, duration: f64) -> Option<f64> {
+    media
+        .credits
+        .iter()
+        .filter_map(|range| Some(range.start_ms? as f64 / 1000.0))
+        .filter(|start| *start > 0.0 && *start < duration)
+        .min_by(f64::total_cmp)
+}
+
+fn found(media: &Media, duration: f64) -> Found {
+    Found {
+        segments: segments(media, duration),
+        credits: credits(media, duration),
+    }
+}
+
+pub fn fetch(title: Title, duration: f64) -> Result<Found, ureq::Error> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
         .build()
@@ -76,13 +99,17 @@ pub fn fetch(title: Title, duration: f64) -> Result<Vec<Segment>, ureq::Error> {
     let response = agent
         .get(API)
         .query("tmdb_id", title.tmdb.to_string())
-        .query("season", title.season.to_string())
-        .query("episode", title.episode.to_string())
-        .query("duration_ms", ((duration * 1000.0) as u64).to_string())
-        .call();
+        .query("duration_ms", ((duration * 1000.0) as u64).to_string());
+    let response = match title.episode {
+        Some((season, episode)) => response
+            .query("season", season.to_string())
+            .query("episode", episode.to_string()),
+        None => response,
+    }
+    .call();
     match response {
-        Ok(mut response) => Ok(segments(&response.body_mut().read_json()?, duration)),
-        Err(ureq::Error::StatusCode(404)) => Ok(Vec::new()),
+        Ok(mut response) => Ok(found(&response.body_mut().read_json()?, duration)),
+        Err(ureq::Error::StatusCode(404)) => Ok(Found::default()),
         Err(error) => Err(error),
     }
 }
@@ -125,6 +152,18 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn the_credits_start_at_the_earliest_known_start_inside_this_file() {
+        let credits = |json: &str| found(&serde_json::from_str(json).unwrap(), HOUR).credits;
+        assert_eq!(
+            credits(r#"{"credits":[{"start_ms":3485348,"end_ms":null}]}"#),
+            Some(3485.348)
+        );
+        assert_eq!(credits(r#"{"credits":[{"start_ms":3700000,"end_ms":null}]}"#), None);
+        assert_eq!(credits(r#"{"credits":[{"start_ms":null,"end_ms":3600000}]}"#), None);
+        assert_eq!(credits(r#"{"intro":[]}"#), None);
     }
 
     #[test]

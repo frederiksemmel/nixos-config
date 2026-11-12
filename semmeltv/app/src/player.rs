@@ -34,6 +34,7 @@ const ENDED_ID: u64 = 3;
 const VIDEO_ID: u64 = 4;
 const PAUSE_ID: u64 = 5;
 const SUBTITLES_ID: u64 = 6;
+const CHAPTERS_ID: u64 = 7;
 const PROMPT_ID: u64 = 1;
 const LOADING_ID: u64 = 2;
 const OVERLAY_ID: u64 = 3;
@@ -83,6 +84,7 @@ enum Event {
     Started,
     Loaded,
     Subtitles(Observed),
+    Chapters(Option<f64>),
 }
 
 impl Event {
@@ -96,6 +98,7 @@ impl Event {
                 ENDED_ID => message["data"].as_bool()?.then_some(Self::Ended),
                 PAUSE_ID => Some(Self::Paused(message["data"].as_bool()?)),
                 SUBTITLES_ID => Observed::parse(&message).map(Self::Subtitles),
+                CHAPTERS_ID => Some(Self::Chapters(credits_chapter(&message["data"]))),
                 _ => None,
             },
             "client-message" => key_command(message["args"][0].as_str()?).map(Self::Key),
@@ -104,6 +107,13 @@ impl Event {
             _ => None,
         }
     }
+}
+
+fn credits_chapter(chapters: &Value) -> Option<f64> {
+    chapters.as_array()?.iter().find_map(|chapter| {
+        let title = chapter["title"].as_str()?.to_lowercase();
+        title.contains("credits").then(|| chapter["time"].as_f64())?
+    })
 }
 
 fn video(track: &Value) -> Option<Video> {
@@ -152,6 +162,8 @@ struct Playback {
     ended: bool,
     closed: bool,
     segments: Vec<Segment>,
+    credits: Option<f64>,
+    chapter_credits: Option<f64>,
     prompt: Option<Kind>,
     matched: bool,
     scrub: Scrub,
@@ -513,6 +525,7 @@ impl Player {
         Place {
             position: playback.position,
             duration: playback.duration,
+            credits: playback.chapter_credits.or(playback.credits),
         }
     }
 
@@ -631,6 +644,7 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             );
             let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
             let _ = send(&mut stream, json!(["observe_property", PAUSE_ID, "pause"]));
+            let _ = send(&mut stream, json!(["observe_property", CHAPTERS_ID, "chapter-list"]));
             for name in subtitles::OBSERVED {
                 let _ = send(&mut stream, json!(["observe_property", SUBTITLES_ID, name]));
             }
@@ -703,6 +717,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                     playback.send(command);
                 }
             }
+            Some(Event::Chapters(credits)) => shared.lock().unwrap().chapter_credits = credits,
             None => {}
         }
     }
@@ -726,7 +741,8 @@ fn find_segments(title: Title, duration: f64, shared: &Shared) {
     match segments::fetch(title, duration) {
         Ok(found) => {
             let mut playback = shared.lock().unwrap();
-            playback.segments = found;
+            playback.segments = found.segments;
+            playback.credits = found.credits;
             playback.update_prompt();
         }
         Err(error) => eprintln!("segments: {error}"),
@@ -777,6 +793,22 @@ mod tests {
         assert_eq!(Finish::from_exit_code(Some(SIGNALLED_EXIT_CODE)), Finish::Stopped);
         assert_eq!(Finish::from_exit_code(Some(2)), Finish::Failed);
         assert_eq!(Finish::from_exit_code(None), Finish::Failed);
+    }
+
+    #[test]
+    fn a_chapter_named_for_the_credits_says_where_they_start() {
+        let chapters = |list: Value| {
+            let message = json!({"event": "property-change", "id": CHAPTERS_ID, "name": "chapter-list", "data": list});
+            Event::parse(&message.to_string())
+        };
+        let named = json!([
+            {"title": "Scene1", "time": 0.0},
+            {"title": "EndCredits", "time": 6828.5},
+        ]);
+        assert_eq!(chapters(named), Some(Event::Chapters(Some(6828.5))));
+        let numbered = json!([{"title": "Chapter 1", "time": 0.0}, {"title": "Chapter 2", "time": 600.0}]);
+        assert_eq!(chapters(numbered), Some(Event::Chapters(None)));
+        assert_eq!(chapters(json!([])), Some(Event::Chapters(None)));
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::library::{Episode, Item, Library, Movie, Show};
-use crate::progress::{Progress, Watched};
+use crate::progress::{Position, Progress, Watched};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -7,7 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 pub const SERIES: usize = 3;
 pub const MOVIES: usize = 3;
 pub const ENOUGH: f64 = 60.0;
-const CREDITS: f64 = 0.95;
 const A_WHILE_DAYS: f64 = 7.0;
 const UNKNOWN_AGE_DAYS: f64 = 90.0;
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -149,6 +148,110 @@ pub fn finished(progress: &mut Progress, library: &Library, file: &Path) -> bool
     }
 }
 
+pub fn complete(progress: &mut Progress, library: &Library, file: &Path) {
+    progress.finish(file);
+    if let Some((show, episode)) = library.find_episode(file) {
+        let this = (episode.season, episode.number);
+        let ahead = progress
+            .shows
+            .get(&show.key)
+            .is_some_and(|position| (position.season, position.episode) > this);
+        if !ahead {
+            let position = Position {
+                season: episode.season,
+                episode: episode.number,
+                finished: true,
+            };
+            progress.shows.insert(show.key.clone(), position);
+        }
+    }
+    finished(progress, library, file);
+}
+
+pub fn stopped(progress: &mut Progress, library: &Library, file: &Path) -> bool {
+    let in_credits = progress.files.get(file).is_some_and(Watched::in_credits);
+    if in_credits {
+        complete(progress, library, file);
+    }
+    in_credits
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mark {
+    Watched,
+    Unwatched,
+}
+
+fn last_episode(show: &Show) -> Option<&Episode> {
+    show.episodes()
+        .filter(|episode| episode.season > 0)
+        .max_by_key(|episode| (episode.season, episode.number))
+        .or_else(|| show.episodes().last())
+}
+
+pub fn mark(
+    progress: &mut Progress,
+    library: &Library,
+    kind: Kind,
+    key: &str,
+    episode: Option<(u32, u32)>,
+    mark: Mark,
+) -> Option<Vec<PathBuf>> {
+    let files: Vec<PathBuf> = match kind {
+        Kind::Movie => vec![library.movies.iter().find(|movie| movie.key == key)?.path.clone()],
+        Kind::Series => {
+            let show = library.shows.iter().find(|show| show.key == key)?;
+            match (episode, mark) {
+                (Some((season, number)), _) => vec![show.episode(season, number)?.path.clone()],
+                (None, Mark::Watched) => vec![last_episode(show)?.path.clone()],
+                (None, Mark::Unwatched) => show.episodes().map(|episode| episode.path.clone()).collect(),
+            }
+        }
+    };
+    match mark {
+        Mark::Watched => {
+            for file in &files {
+                complete(progress, library, file);
+            }
+        }
+        Mark::Unwatched => {
+            for file in &files {
+                progress.unfinish(file);
+            }
+            match (kind, episode) {
+                (Kind::Series, Some((season, number))) => {
+                    let position = progress.shows.get_mut(key).filter(|position| {
+                        (position.season, position.episode, position.finished) >= (season, number, false)
+                    });
+                    if let Some(position) = position {
+                        *position = Position {
+                            season,
+                            episode: number,
+                            finished: false,
+                        };
+                    }
+                }
+                (Kind::Series, None) => {
+                    progress.shows.remove(key);
+                    progress.watching.leave(kind, key);
+                }
+                (Kind::Movie, _) => {
+                    progress.watching.leave(kind, key);
+                }
+            }
+        }
+    }
+    Some(files)
+}
+
+pub fn movie_finished(progress: &Progress, movie: &Movie) -> bool {
+    progress.files.get(&movie.path).is_some_and(|watched| watched.finished)
+}
+
+pub fn show_finished(progress: &Progress, show: &Show) -> bool {
+    progress.shows.contains_key(&show.key) && progress.resume_episode(show).is_none()
+}
+
 pub fn current(library: &Library, progress: &Progress) -> Vec<Current> {
     let watched = |file: &Path| progress.files.get(file).copied().unwrap_or_default();
     progress
@@ -191,7 +294,7 @@ struct Started {
 fn started_movie(progress: &Progress, index: usize, movie: &Movie) -> Option<Started> {
     let watched = *progress.files.get(&movie.path)?;
     let (at, duration) = (watched.stopped_at?, watched.duration?);
-    if watched.finished || duration <= 0.0 || at <= 0.0 || at / duration >= CREDITS {
+    if watched.finished || watched.in_credits() || duration <= 0.0 || at <= 0.0 {
         return None;
     }
     let entry = progress.watching.last_played(Kind::Movie, &movie.key);
@@ -491,6 +594,7 @@ mod tests {
         let place = Place {
             position: 900.0,
             duration: 3600.0,
+            credits: None,
         };
         progress.record(&file("dark", 1, 2), place);
         let current = &current(&library, &progress)[0];
@@ -549,7 +653,14 @@ mod tests {
     const NOW: u64 = 1_000 * DAY;
 
     fn stop(progress: &mut Progress, path: &Path, position: f64, duration: f64, when: Option<u64>) {
-        progress.record(path, Place { position, duration });
+        progress.record(
+            path,
+            Place {
+                position,
+                duration,
+                credits: None,
+            },
+        );
         if let Some(when) = when {
             progress.played(path, when);
         }
@@ -641,6 +752,181 @@ mod tests {
         assert!(dismiss(&mut progress, &library, Kind::Movie, "up", NOW));
         assert!(dismiss(&mut progress, &library, Kind::Series, "lost", NOW));
         library.movies[0].key = "up-2009".to_string();
+        assert!(forgotten_keys(&library, &progress).is_empty());
+    }
+
+    const AIRPLANE: f64 = 5261.6;
+
+    #[test]
+    fn a_stop_in_the_credits_finishes_the_film() {
+        let library = library();
+        let mut progress = Progress::default();
+        let up = Path::new("/lib/up.mkv");
+        record(&mut progress, &library, up, 90.0, NOW);
+        stop(&mut progress, up, 5009.9, AIRPLANE, Some(NOW));
+        assert!(stopped(&mut progress, &library, up));
+        assert!(progress.watching.entries.is_empty());
+        assert!(progress.files[up].finished);
+        assert_eq!(progress.files[up].stopped_at, None);
+        assert!(forgotten_keys(&library, &progress).is_empty());
+    }
+
+    #[test]
+    fn a_stop_before_the_credits_resumes_there() {
+        let library = library();
+        let mut progress = Progress::default();
+        let up = Path::new("/lib/up.mkv");
+        record(&mut progress, &library, up, 90.0, NOW);
+        stop(&mut progress, up, 4900.0, AIRPLANE, Some(NOW));
+        assert!(!stopped(&mut progress, &library, up));
+        assert_eq!(keys(&progress), ["up"]);
+        assert_eq!(progress.files[up].stopped_at, Some(4900.0));
+        assert!(!progress.files[up].finished);
+    }
+
+    #[test]
+    fn a_stop_in_the_credits_of_an_episode_moves_the_series_on() {
+        let library = library();
+        let mut progress = Progress::default();
+        let episode = file("dark", 1, 2);
+        record(&mut progress, &library, &episode, 90.0, NOW);
+        at(&mut progress, "dark", 1, 2, false);
+        progress.record(
+            &episode,
+            Place {
+                position: 3420.0,
+                duration: 3486.0,
+                credits: Some(3409.7),
+            },
+        );
+        assert!(stopped(&mut progress, &library, &episode));
+        assert_eq!(keys(&progress), ["dark"]);
+        let current = &current(&library, &progress)[0];
+        assert_eq!(current.episode, Some((1, 3)));
+        assert_eq!(current.fraction(), 0.0);
+    }
+
+    #[test]
+    fn a_stop_in_the_credits_of_the_last_episode_ends_the_series() {
+        let library = library();
+        let mut progress = Progress::default();
+        let last = file("dark", 2, 2);
+        record(&mut progress, &library, &last, 90.0, NOW);
+        at(&mut progress, "dark", 2, 2, false);
+        stop(&mut progress, &last, 2990.0, 3000.0, Some(NOW));
+        assert!(stopped(&mut progress, &library, &last));
+        assert!(progress.watching.entries.is_empty());
+        assert!(forgotten_keys(&library, &progress).is_empty());
+    }
+
+    #[test]
+    fn marking_a_film_watched_and_unwatched() {
+        let library = library();
+        let mut progress = Progress::default();
+        let up = Path::new("/lib/up.mkv");
+        record(&mut progress, &library, up, 90.0, NOW);
+        stop(&mut progress, up, 3000.0, 6000.0, Some(NOW));
+        let marked = mark(&mut progress, &library, Kind::Movie, "up", None, Mark::Watched);
+        assert_eq!(marked, Some(vec![up.to_path_buf()]));
+        assert!(movie_finished(&progress, &library.movies[0]));
+        assert!(progress.watching.entries.is_empty());
+        assert_eq!(progress.files[up].stopped_at, None);
+        mark(&mut progress, &library, Kind::Movie, "up", None, Mark::Unwatched);
+        assert!(!movie_finished(&progress, &library.movies[0]));
+        assert!(forgotten_keys(&library, &progress).is_empty());
+        assert_eq!(
+            mark(&mut progress, &library, Kind::Movie, "gone", None, Mark::Watched),
+            None
+        );
+    }
+
+    #[test]
+    fn marking_an_unwatched_film_takes_it_off_currently_watching() {
+        let library = library();
+        let mut progress = Progress::default();
+        let up = Path::new("/lib/up.mkv");
+        record(&mut progress, &library, up, 90.0, NOW);
+        stop(&mut progress, up, 3000.0, 6000.0, Some(NOW));
+        mark(&mut progress, &library, Kind::Movie, "up", None, Mark::Unwatched);
+        assert!(progress.watching.entries.is_empty());
+        assert_eq!(progress.files[up].stopped_at, None);
+    }
+
+    #[test]
+    fn marking_an_episode_watched_moves_the_series_past_it_but_never_back() {
+        let library = library();
+        let mut progress = Progress::default();
+        let dark = &library.shows[0];
+        let episode = Some((1, 2));
+        mark(&mut progress, &library, Kind::Series, "dark", episode, Mark::Watched);
+        assert_eq!(
+            progress.resume_episode(dark).map(|e| (e.season, e.number)),
+            Some((1, 3))
+        );
+        at(&mut progress, "dark", 2, 1, false);
+        mark(
+            &mut progress,
+            &library,
+            Kind::Series,
+            "dark",
+            Some((1, 1)),
+            Mark::Watched,
+        );
+        assert_eq!(
+            progress.resume_episode(dark).map(|e| (e.season, e.number)),
+            Some((2, 1))
+        );
+    }
+
+    #[test]
+    fn marking_an_episode_unwatched_resumes_the_series_there() {
+        let library = library();
+        let mut progress = Progress::default();
+        let dark = &library.shows[0];
+        at(&mut progress, "dark", 2, 1, true);
+        mark(
+            &mut progress,
+            &library,
+            Kind::Series,
+            "dark",
+            Some((1, 2)),
+            Mark::Unwatched,
+        );
+        assert_eq!(
+            progress.resume_episode(dark).map(|e| (e.season, e.number)),
+            Some((1, 2))
+        );
+        assert!(progress.watched(dark, &dark.seasons[0].episodes[0]));
+        assert!(!progress.watched(dark, &dark.seasons[0].episodes[1]));
+        mark(
+            &mut progress,
+            &library,
+            Kind::Series,
+            "dark",
+            Some((2, 2)),
+            Mark::Unwatched,
+        );
+        assert_eq!(
+            progress.resume_episode(dark).map(|e| (e.season, e.number)),
+            Some((1, 2))
+        );
+    }
+
+    #[test]
+    fn marking_a_whole_series_watched_and_unwatched() {
+        let library = library();
+        let mut progress = Progress::default();
+        let dark = &library.shows[0];
+        record(&mut progress, &library, &file("dark", 1, 2), 90.0, NOW);
+        at(&mut progress, "dark", 1, 2, false);
+        mark(&mut progress, &library, Kind::Series, "dark", None, Mark::Watched);
+        assert!(show_finished(&progress, dark));
+        assert!(progress.watching.entries.is_empty());
+        assert!(dark.episodes().all(|episode| progress.watched(dark, episode)));
+        let marked = mark(&mut progress, &library, Kind::Series, "dark", None, Mark::Unwatched).unwrap();
+        assert_eq!(marked.len(), 5);
+        assert!(!show_finished(&progress, dark));
+        assert!(dark.episodes().all(|episode| !progress.watched(dark, episode)));
         assert!(forgotten_keys(&library, &progress).is_empty());
     }
 

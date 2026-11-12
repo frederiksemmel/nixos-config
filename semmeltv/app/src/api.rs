@@ -59,6 +59,7 @@ pub enum Request {
     Subtitles(subtitles::Change),
     Storage(storage::Change),
     Dismiss(watching::Kind, String),
+    Mark(watching::Kind, String, Option<(u32, u32)>, watching::Mark),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -221,6 +222,7 @@ fn router(api: Api) -> Router {
     Router::new()
         .route("/api/library", get(library))
         .route("/api/forgotten/dismiss", post(dismiss))
+        .route("/api/watched", post(mark_watched))
         .route("/api/search", get(search))
         .route("/api/movies/{key}", get(movie))
         .route("/api/movies/{key}/backdrop", get(movie_backdrop))
@@ -289,9 +291,10 @@ struct Card {
     poster: Option<String>,
     backdrop: Option<String>,
     ratings: Ratings,
+    finished: bool,
 }
 
-fn movie_card(root: &FsPath, movie: &Movie) -> Card {
+fn movie_card(root: &FsPath, progress: &Progress, movie: &Movie) -> Card {
     Card {
         kind: CardKind::Movie,
         key: movie.key.clone(),
@@ -301,10 +304,11 @@ fn movie_card(root: &FsPath, movie: &Movie) -> Card {
         poster: movie.poster(root).map(|_| format!("/api/movies/{}/poster", movie.key)),
         backdrop: movie.tmdb.map(|_| format!("/api/movies/{}/backdrop", movie.key)),
         ratings: Ratings::from(&movie.ratings),
+        finished: watching::movie_finished(progress, movie),
     }
 }
 
-fn show_card(root: &FsPath, show: &Show) -> Card {
+fn show_card(root: &FsPath, progress: &Progress, show: &Show) -> Card {
     Card {
         kind: CardKind::Show,
         key: show.key.clone(),
@@ -314,13 +318,14 @@ fn show_card(root: &FsPath, show: &Show) -> Card {
         poster: show.poster(root).map(|_| format!("/api/shows/{}/poster", show.key)),
         backdrop: show.tmdb.map(|_| format!("/api/shows/{}/backdrop", show.key)),
         ratings: Ratings::from(&show.ratings),
+        finished: watching::show_finished(progress, show),
     }
 }
 
-fn card(root: &FsPath, library: &Library, item: Item) -> Card {
+fn card(root: &FsPath, progress: &Progress, library: &Library, item: Item) -> Card {
     match item {
-        Item::Movie(index) => movie_card(root, &library.movies[index]),
-        Item::Show(index) => show_card(root, &library.shows[index]),
+        Item::Movie(index) => movie_card(root, progress, &library.movies[index]),
+        Item::Show(index) => show_card(root, progress, &library.shows[index]),
     }
 }
 
@@ -334,7 +339,7 @@ struct WatchingCard {
     progress: f32,
 }
 
-fn watching_card(root: &FsPath, library: &Library, current: &Current) -> WatchingCard {
+fn watching_card(root: &FsPath, progress: &Progress, library: &Library, current: &Current) -> WatchingCard {
     let episode = match (current.item, current.episode) {
         (Item::Show(index), Some((season, number))) => library.shows[index].episode(season, number),
         _ => None,
@@ -345,7 +350,7 @@ fn watching_card(root: &FsPath, library: &Library, current: &Current) -> Watchin
     ];
     let detail: Vec<_> = parts.into_iter().flatten().collect();
     WatchingCard {
-        card: card(root, library, current.item),
+        card: card(root, progress, library, current.item),
         season: current.episode.map(|(season, _)| season),
         episode: current.episode.map(|(_, number)| number),
         detail: detail.join(" · "),
@@ -368,22 +373,26 @@ async fn library(State(api): State<Api>) -> Json<LibraryView> {
     Json(LibraryView {
         watching: watching::current(&library, &progress)
             .iter()
-            .map(|current| watching_card(&api.root, &library, current))
+            .map(|current| watching_card(&api.root, &progress, &library, current))
             .collect(),
         forgotten: watching::forgotten(&library, &progress, watching::now())
             .iter()
-            .map(|current| watching_card(&api.root, &library, current))
+            .map(|current| watching_card(&api.root, &progress, &library, current))
             .collect(),
         newest: library
             .newest(NEWEST)
             .into_iter()
-            .map(|item| card(&api.root, &library, item))
+            .map(|item| card(&api.root, &progress, &library, item))
             .collect(),
-        shows: library.shows.iter().map(|show| show_card(&api.root, show)).collect(),
+        shows: library
+            .shows
+            .iter()
+            .map(|show| show_card(&api.root, &progress, show))
+            .collect(),
         movies: library
             .movies
             .iter()
-            .map(|movie| movie_card(&api.root, movie))
+            .map(|movie| movie_card(&api.root, &progress, movie))
             .collect(),
     })
 }
@@ -403,6 +412,71 @@ async fn dismiss(State(api): State<Api>, Json(body): Json<Dismiss>) -> Response 
 }
 
 #[derive(Deserialize)]
+struct MarkWatched {
+    kind: CardKind,
+    key: String,
+    watched: bool,
+    season: Option<u32>,
+    episode: Option<u32>,
+}
+
+#[derive(Serialize)]
+struct Marked {
+    message: String,
+    ok: bool,
+    watched: bool,
+}
+
+fn is_watched(library: &Library, progress: &Progress, body: &MarkWatched) -> Option<bool> {
+    match body.kind {
+        CardKind::Movie => {
+            let movie = library.movies.iter().find(|movie| movie.key == body.key)?;
+            Some(watching::movie_finished(progress, movie))
+        }
+        CardKind::Show => {
+            let show = library.shows.iter().find(|show| show.key == body.key)?;
+            match (body.season, body.episode) {
+                (Some(season), Some(number)) => Some(progress.watched(show, show.episode(season, number)?)),
+                _ => Some(watching::show_finished(progress, show)),
+            }
+        }
+    }
+}
+
+async fn mark_watched(State(api): State<Api>, Json(body): Json<MarkWatched>) -> Response {
+    let kind = match body.kind {
+        CardKind::Movie => watching::Kind::Movie,
+        CardKind::Show => watching::Kind::Series,
+    };
+    let episode = match (body.kind, body.season, body.episode) {
+        (CardKind::Show, Some(season), Some(number)) => Some((season, number)),
+        (_, None, None) => None,
+        _ => {
+            return problem(
+                StatusCode::BAD_REQUEST,
+                "season and episode go together, and only with a show".to_string(),
+            );
+        }
+    };
+    let mark = if body.watched {
+        watching::Mark::Watched
+    } else {
+        watching::Mark::Unwatched
+    };
+    let request = Request::Mark(kind, body.key.clone(), episode, mark);
+    let Some(outcome) = answer(&api.app, request).await else {
+        return unanswered();
+    };
+    let watched = is_watched(&api.shared.library(), &api.shared.progress(), &body);
+    let marked = Marked {
+        message: outcome.message,
+        ok: outcome.ok && watched.is_some(),
+        watched: watched.unwrap_or(false),
+    };
+    (status(marked.ok), Json(marked)).into_response()
+}
+
+#[derive(Deserialize)]
 struct SearchQuery {
     q: String,
 }
@@ -414,9 +488,10 @@ struct Results {
 
 async fn search(State(api): State<Api>, Query(query): Query<SearchQuery>) -> Json<Results> {
     let library = api.shared.library();
+    let progress = api.shared.progress();
     let results = intent::search(&library, &query.q)
         .into_iter()
-        .map(|item| card(&api.root, &library, item))
+        .map(|item| card(&api.root, &progress, &library, item))
         .collect();
     Json(Results { results })
 }
@@ -609,7 +684,7 @@ async fn movie(State(api): State<Api>, Path(key): Path<String>) -> Response {
         .last_played([&movie.path])
         .max(progress.watching.last_played(watching::Kind::Movie, &movie.key));
     Json(MovieView {
-        card: movie_card(&api.root, movie),
+        card: movie_card(&api.root, &progress, movie),
         watch: watch(
             &progress,
             &movie.path,
@@ -738,7 +813,7 @@ async fn show(State(api): State<Api>, Path(key): Path<String>) -> Response {
         })
         .collect();
     Json(ShowView {
-        card: show_card(&api.root, show),
+        card: show_card(&api.root, &progress, show),
         next,
         seasons,
         about: about_view(
@@ -960,19 +1035,28 @@ async fn ask(api: &Api, request: Request) -> Response {
     ask_app(&api.app, request).await
 }
 
-pub async fn ask_app(app: &Ask, request: Request) -> Response {
+async fn answer(app: &Ask, request: Request) -> Option<Outcome> {
     let (reply, answer) = oneshot::channel();
     app(Pending { request, reply });
-    match tokio::time::timeout(ANSWER_TIME, answer).await {
-        Ok(Ok(outcome)) => {
-            let status = if outcome.ok {
-                StatusCode::OK
-            } else {
-                StatusCode::UNPROCESSABLE_ENTITY
-            };
-            (status, Json(outcome)).into_response()
-        }
-        _ => problem(StatusCode::SERVICE_UNAVAILABLE, "the TV did not answer".to_string()),
+    tokio::time::timeout(ANSWER_TIME, answer).await.ok()?.ok()
+}
+
+fn status(ok: bool) -> StatusCode {
+    if ok {
+        StatusCode::OK
+    } else {
+        StatusCode::UNPROCESSABLE_ENTITY
+    }
+}
+
+fn unanswered() -> Response {
+    problem(StatusCode::SERVICE_UNAVAILABLE, "the TV did not answer".to_string())
+}
+
+pub async fn ask_app(app: &Ask, request: Request) -> Response {
+    match answer(app, request).await {
+        Some(outcome) => (status(outcome.ok), Json(outcome)).into_response(),
+        None => unanswered(),
     }
 }
 
@@ -1351,11 +1435,13 @@ mod tests {
         let place = crate::progress::Place {
             position: 3600.0,
             duration: 9000.0,
+            credits: None,
         };
         progress.record(&dune, place);
         let up = crate::progress::Place {
             position: 600.0,
             duration: 5400.0,
+            credits: None,
         };
         progress.record(&library().movies[1].path, up);
         shared.set_progress(&progress);
@@ -1471,6 +1557,52 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(body["ok"], true);
         assert_eq!(server.asked.recv().unwrap(), r#"Dismiss(Series, "the-bear")"#);
+    }
+
+    #[test]
+    fn marking_a_title_asks_the_tv_and_answers_with_its_state() {
+        let server = serve(no_root(), None);
+        let (status, body) = post(
+            &server,
+            "/api/watched",
+            json!({ "kind": "show", "key": "outlander", "season": 1, "episode": 1, "watched": true }),
+        );
+        assert_eq!(status, 200);
+        assert_eq!((&body["ok"], &body["watched"]), (&json!(true), &json!(true)));
+        assert_eq!(
+            server.asked.recv().unwrap(),
+            r#"Mark(Series, "outlander", Some((1, 1)), Watched)"#
+        );
+        let (_, body) = post(
+            &server,
+            "/api/watched",
+            json!({ "kind": "movie", "key": "dune-2021", "watched": false }),
+        );
+        assert_eq!(body["watched"], false);
+        assert_eq!(
+            server.asked.recv().unwrap(),
+            r#"Mark(Movie, "dune-2021", None, Unwatched)"#
+        );
+        let (status, _) = post(
+            &server,
+            "/api/watched",
+            json!({ "kind": "movie", "key": "dune-2021", "season": 1, "episode": 1, "watched": true }),
+        );
+        assert_eq!(status, 400);
+        let (status, body) = post(
+            &server,
+            "/api/watched",
+            json!({ "kind": "movie", "key": "gone", "watched": true }),
+        );
+        assert_eq!((status, &body["ok"]), (422, &json!(false)));
+    }
+
+    #[test]
+    fn cards_say_whether_a_title_is_finished() {
+        let server = serve(no_root(), None);
+        let (_, body) = get(&server, "/api/library");
+        assert_eq!(body["movies"][0]["finished"], false);
+        assert_eq!(body["shows"][0]["finished"], false);
     }
 
     #[test]
