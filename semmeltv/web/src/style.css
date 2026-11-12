@@ -1866,3 +1866,8 @@ semmel-shell {
 @media (prefers-reduced-motion: reduce) {
   .bone { animation: none; }
 }
+
+.trouble { display: grid; justify-items: start; gap: 12px; padding-top: 24px; }
+.trouble h1 { margin: 0; }
+.trouble p { margin: 0; color: var(--muted); }
+.trouble .pill { display: inline-flex; align-items: center; margin-top: 8px; }

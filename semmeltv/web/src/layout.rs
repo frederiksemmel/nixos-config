@@ -4,9 +4,10 @@ use crate::public::Public;
 use topcoat::Result;
 use topcoat::asset::{Asset, asset};
 use topcoat::context::{Cx, app_context};
-use topcoat::router::{Slot, layout};
+use topcoat::router::error::NotFoundError;
+use topcoat::router::{Slot, StatusCode, layout, not_found};
 use topcoat::runtime::link;
-use topcoat::view::{View, attributes, component, view};
+use topcoat::view::{View, attributes, component, error_boundary, view};
 
 const STYLE: Asset = asset!("./style.css");
 const MICROPHONE: Asset = asset!("./microphone.js");
@@ -60,10 +61,39 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 </header>
                 playing::voice_feedback()
                 playing::notices()
-                <main>(slot)</main>
+                <main>
+                    error_boundary(
+                        fallback: |error| {
+                            let missing = error.downcast_ref::<NotFoundError>().is_some();
+                            Ok(view! {
+                                if missing {
+                                    (StatusCode::NOT_FOUND)
+                                    trouble(title: "Not in the library", note: "Nothing here, or it was taken out of the library.")
+                                } else {
+                                    (StatusCode::SERVICE_UNAVAILABLE)
+                                    trouble(title: "SemmelTV isn't answering", note: "The TV app didn't answer this time. It may be restarting.")
+                                }
+                            })
+                        },
+                        (slot)
+                    )
+                </main>
                 playing::player()
             </body>
         </html>
+    })
+}
+
+not_found!("/");
+
+#[component]
+async fn trouble(cx: &Cx, title: &'static str, note: &'static str) -> Result<impl View> {
+    Ok(view! {
+        <article class="page trouble">
+            <h1>(title)</h1>
+            <p>(note)</p>
+            link(href: "/", attrs: attributes! { cx => class="pill" }, "Home")
+        </article>
     })
 }
 

@@ -340,6 +340,12 @@ def restart(page, engine):
     page.wait_for_timeout(500)
 
 
+def missing(page, engine):
+    page.goto(BASE + "/movies/not-in-the-library", wait_until="commit")
+    until(page, engine, "a title that isn't there says so inside the app",
+          'document.querySelector("main h1")?.textContent === "Not in the library" && !!document.querySelector("header.top") && !!document.querySelector("main .trouble a[href=\'/\']")')
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
@@ -406,6 +412,7 @@ def run(p, engine, device):
     answers(page, engine, "after play/pause")
     opens_title(page, engine, "after play/pause")
     marks_episodes(page, engine)
+    missing(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
 
