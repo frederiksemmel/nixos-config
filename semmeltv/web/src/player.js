@@ -1,6 +1,7 @@
 const api = document.documentElement.dataset.api || "";
 const root = document.documentElement;
 const UNCONFIRMED = 10000;
+const OFF_BY_TITLE = "They were found by title only, so if they run early or late, adjust the timing.";
 
 let returnFocus = null;
 let shownKey = null;
@@ -24,6 +25,7 @@ function setOpen(open) {
     element.querySelector(".sheet-close").focus({ preventScroll: true });
     refreshTracks();
     markChoices();
+    markDelay();
   } else if (returnFocus && document.contains(returnFocus)) {
     returnFocus.focus({ preventScroll: true });
   }
@@ -84,7 +86,10 @@ async function post(button) {
     });
     const answer = await response.json().catch(() => ({}));
     ok = response.ok && answer.ok !== false;
-    say(said, answer.message || answer.error || (response.ok ? "" : `The TV answered ${response.status}`), ok);
+    const text = answer.message || answer.error || (response.ok ? "" : `The TV answered ${response.status}`);
+    say(said, answer.matched === "title" ? `${text}. ${OFF_BY_TITLE}` : text, ok);
+    if (ok && button.dataset.done === "hide") button.hidden = true;
+    if (ok && button.dataset.refresh === "tracks") refreshTracks();
   } catch {
     say(said, "The TV is not answering", false);
   } finally {
@@ -111,7 +116,14 @@ document.addEventListener("click", (event) => {
   if (target.dataset.sheet === "open") openSheet();
   else if (target.dataset.sheet === "close") closeSheet();
   else if (target.dataset.post && target.getAttribute("aria-busy") !== "true") {
-    if (target.classList.contains("choice")) choose(target);
+    if (target.dataset.step) {
+      const delay = Math.round((currentDelay() + Number(target.dataset.step)) * 10) / 10;
+      target.dataset.body = JSON.stringify({ delay });
+      showDelay(delay);
+    } else if (target.dataset.playing) {
+      const state = document.querySelector(".now-state");
+      target.dataset.body = (state && state.dataset.fetch) || "{}";
+    } else if (target.classList.contains("choice")) choose(target);
     post(target);
   }
 });
@@ -165,11 +177,36 @@ function choice(label, track, path) {
   return button;
 }
 
-function fill(kind, buttons) {
+function fill(kind, buttons, always) {
   const group = document.querySelector(`[data-tracks="${kind}"]`);
   if (!group) return;
-  group.hidden = buttons.length === 0;
-  group.querySelector(".choices").replaceChildren(...buttons);
+  group.hidden = buttons.length === 0 && !always;
+  const choices = group.querySelector(".choices");
+  choices.hidden = buttons.length === 0;
+  choices.replaceChildren(...buttons);
+  const find = group.querySelector(".find-subtitles");
+  if (find) find.hidden = buttons.length > 0;
+}
+
+function currentDelay() {
+  const state = document.querySelector(".now-state");
+  return state ? Number(state.dataset.delay) || 0 : 0;
+}
+
+function showDelay(delay) {
+  const output = document.querySelector("[data-tracks=subtitles] .delay output");
+  if (!output) return;
+  const text = `${delay > 0 ? "+" : delay < 0 ? "−" : ""}${Math.abs(delay).toFixed(1)} s`;
+  if (output.textContent !== text) output.textContent = text;
+}
+
+function markDelay() {
+  const state = document.querySelector(".now-state");
+  const row = document.querySelector("[data-tracks=subtitles] .delay");
+  if (!row) return;
+  const hidden = !state || state.dataset.subtitle === "off";
+  if (row.hidden !== hidden) row.hidden = hidden;
+  showDelay(currentDelay());
 }
 
 async function refreshTracks() {
@@ -192,7 +229,7 @@ async function refreshTracks() {
   const audio = audioTracks.length > 1
     ? audioTracks.map((track, index) => choice(audioNames[index], track.id, "/api/audio/track"))
     : [];
-  fill("subtitles", subtitles);
+  fill("subtitles", subtitles, Boolean(playing));
   fill("audio", audio);
   markChoices();
 }
@@ -243,6 +280,7 @@ new MutationObserver((records) => {
   }
   if (flipFrom !== null && pausedNow() !== flipFrom) unflip();
   markChoices();
+  markDelay();
 }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
 
 const SETTLE_MS = 650;

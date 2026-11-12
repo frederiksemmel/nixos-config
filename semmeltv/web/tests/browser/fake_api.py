@@ -12,7 +12,8 @@ SUBTITLES = json.loads((HERE / "subtitles.json").read_text())
 STORAGE = json.loads((HERE / "storage.json").read_text())
 DOWNLOADS = json.loads((HERE / "downloads.json").read_text())
 CARDS = {card["key"]: card for row in LIBRARY.values() for card in row}
-playing = {"paused": False, "position": 2223.0}
+playing = {"paused": False, "position": 2223.0, "subtitle": 1, "delay": 0.0}
+fetched = set()
 audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
 CONNECT_SECONDS = 1.5
@@ -24,7 +25,8 @@ def now_playing():
         "title": "The Endless Summer", "caption": "1966", "movie": "the-endless-summer-1966",
         "show": None, "season": None, "episode": None,
         "position": playing["position"], "duration": 5498.56, "paused": playing["paused"],
-        "muted": False, "speed": 1.0, "subtitle": None, "audio": 1, "loading": False, "jump": None,
+        "muted": False, "speed": 1.0, "subtitle": playing["subtitle"], "audio": 1, "loading": False, "jump": None,
+        "subtitle_delay": playing["delay"],
     }
 
 
@@ -54,7 +56,7 @@ async def movie(request):
     card = CARDS.get(request.match_info["key"])
     if not card or card["kind"] != "movie":
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response({**MOVIE, **card})
+    return web.json_response({**MOVIE, **card, "subtitles": 1 if card["key"] in fetched else 0})
 
 
 async def subtitles(request):
@@ -126,9 +128,29 @@ async def forget(request):
     return web.json_response(audio)
 
 
+async def forget_subtitles(request):
+    fetched.clear()
+    return web.json_response({"ok": True})
+
+
 async def fail_next_connect(request):
     sound["fail_next"] = True
     return web.json_response({"ok": True})
+
+
+async def subtitle_delay(request):
+    playing["delay"] = round((await request.json())["delay"], 1)
+    return web.json_response({"message": f"Subtitle delay {playing['delay']:+.1f} s", "ok": True})
+
+
+async def fetch_subtitles(request):
+    body = await request.json()
+    await asyncio.sleep(0.5)
+    if "movie" not in body:
+        return web.json_response({"error": "No English subtitles found"}, status=422)
+    fetched.add(body["movie"])
+    return web.json_response({"message": "English subtitles added", "file": "Movies/x.en.srt", "language": "en",
+                              "label": "English", "release": "x", "matched": "title", "shown": False})
 
 
 async def accepted(request):
@@ -143,10 +165,13 @@ app.router.add_get("/api/subtitles", subtitles)
 app.router.add_get("/api/storage", storage)
 app.router.add_get("/api/downloads", downloads)
 app.router.add_get("/api/playback", playback)
+app.router.add_post("/api/subtitles/delay", subtitle_delay)
+app.router.add_post("/api/subtitles/fetch", fetch_subtitles)
 app.router.add_post("/api/audio", choose_output)
 app.router.add_post("/api/audio/pair", pair)
 app.router.add_delete("/api/audio/pair", stop_pairing)
 app.router.add_delete("/api/audio/headphones", forget)
 app.router.add_post("/fake/fail-next-connect", fail_next_connect)
+app.router.add_post("/fake/forget-subtitles", forget_subtitles)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)

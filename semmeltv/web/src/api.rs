@@ -177,6 +177,8 @@ pub struct Movie {
     pub about: About,
     #[serde(flatten)]
     pub played: Played,
+    #[serde(default)]
+    pub subtitles: Option<u32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -192,6 +194,8 @@ pub struct Episode {
     pub watched: bool,
     #[serde(flatten)]
     pub watch: Watch,
+    #[serde(default)]
+    pub subtitles: Option<u32>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -244,6 +248,8 @@ impl Show {
 #[derive(Debug, Deserialize)]
 pub struct Next {
     pub season: u32,
+    #[serde(default)]
+    pub episode: Option<u32>,
     pub label: String,
     pub title: Option<String>,
     pub stopped_at: Option<f64>,
@@ -286,6 +292,8 @@ pub struct NowPlaying {
     pub audio: Option<i64>,
     pub loading: bool,
     pub jump: Option<i32>,
+    #[serde(default)]
+    pub subtitle_delay: f64,
 }
 
 fn normal_speed() -> f64 {

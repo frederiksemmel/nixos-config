@@ -121,6 +121,20 @@ fn key(now: &NowPlaying) -> String {
     )
 }
 
+pub fn fetch_body(now: &NowPlaying) -> String {
+    match (&now.movie, &now.show, now.season, now.episode) {
+        (Some(movie), _, _, _) => serde_json::json!({ "movie": movie }).to_string(),
+        (None, Some(show), Some(season), Some(episode)) => {
+            serde_json::json!({ "show": show, "season": season, "episode": episode }).to_string()
+        }
+        _ => String::new(),
+    }
+}
+
+fn delay_value(delay: f64) -> String {
+    format!("{delay:.1}")
+}
+
 fn line(now: &NowPlaying) -> String {
     if now.loading {
         "Loading…".to_string()
@@ -136,6 +150,7 @@ struct Look {
     line: String,
     paused: bool,
     speed: String,
+    delay: String,
     subtitle: Option<i64>,
     audio: Option<i64>,
 }
@@ -147,6 +162,7 @@ fn look(now: Option<&NowPlaying>) -> Option<Look> {
         line: line(now),
         paused: now.paused || now.loading,
         speed: speed_value(now.speed),
+        delay: delay_value(now.subtitle_delay),
         subtitle: now.subtitle,
         audio: now.audio,
     })
@@ -247,6 +263,15 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                             <div class="pick" data-tracks="subtitles" hidden=(true)>
                                 <h3>"Subtitles"</h3>
                                 <div class="choices" data-state="subtitle"></div>
+                                <div class="delay" hidden=(true)>
+                                    <span>"Timing"</span>
+                                    <button type="button" class="choice" data-post="/api/subtitles/delay" data-step="-0.5" aria-label="Show subtitles half a second earlier">"−0.5 s"</button>
+                                    <output aria-live="polite">"0.0 s"</output>
+                                    <button type="button" class="choice" data-post="/api/subtitles/delay" data-step="0.5" aria-label="Show subtitles half a second later">"+0.5 s"</button>
+                                </div>
+                                <button type="button" class="pill quiet find-subtitles" data-post="/api/subtitles/fetch" data-playing="true"
+                                    data-pending="Looking for subtitles…" data-refresh="tracks" hidden=(true)>"Find subtitles"</button>
+                                <p class="answer" data-said="true" aria-live="polite"></p>
                             </div>
                             <div class="pick" data-tracks="audio" hidden=(true)>
                                 <h3>"Audio"</h3>
@@ -423,7 +448,8 @@ async fn bar_info(cx: &Cx) -> Result<impl View> {
                             <span>(line(&now))</span>
                         </span>
                         <i class=(now_class(&now)) data-key=(key(&now)) data-speed=(speed_value(now.speed))
-                            data-subtitle=(track_state(now.subtitle)) data-audio=(track_state(now.audio)) hidden=(true)></i>
+                            data-subtitle=(track_state(now.subtitle)) data-audio=(track_state(now.audio))
+                            data-delay=(delay_value(now.subtitle_delay)) data-fetch=(fetch_body(&now)) hidden=(true)></i>
                     }?
                 }
                 None => emit! {

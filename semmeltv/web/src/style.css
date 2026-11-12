@@ -966,6 +966,15 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
 .outputs .choice svg { flex: none; width: 20px; height: 20px; }
 .sound > .answer { margin: 0; }
 
+.delay { display: grid; grid-template-columns: auto 1fr auto 1fr; align-items: center; gap: 8px; }
+.delay span { color: var(--muted); font-size: 14px; }
+.delay .choice { padding: 0 12px; font-variant-numeric: tabular-nums; }
+.delay output { justify-self: center; font-variant-numeric: tabular-nums; font-weight: 600; }
+.pick .find-subtitles { justify-self: start; }
+.pick > .answer { margin: 0; }
+.find-subtitles-row { display: grid; justify-items: start; gap: 0; margin-top: 12px; }
+.find-subtitles-row .answer { margin-top: 8px; }
+
 .bar-phones { display: none; flex: none; color: var(--accent); }
 .bar-phones svg { width: 18px; height: 18px; }
 html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }

@@ -649,6 +649,17 @@ async fn links(about: &About) -> Result<impl View> {
 }
 
 #[component]
+async fn find_subtitles(label: &str, body: &str) -> Result<impl View> {
+    Ok(view! {
+        <div class="find-subtitles-row">
+            <button type="button" class="pill quiet" data-post="/api/subtitles/fetch" data-body=(body)
+                data-pending="Looking for subtitles…" data-done="hide">(label)</button>
+            <p class="answer" data-said="true" aria-live="polite"></p>
+        </div>
+    })
+}
+
+#[component]
 async fn last_played(played: &Played) -> Result<impl View> {
     Ok(view! {
         if let Some(label) = &played.last_played_label {
@@ -700,6 +711,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
     if let Some(language) = about.language.clone().filter(|language| language != "English") {
         rows.push(("Language", language));
     }
+    let fetch = (movie.subtitles == Some(0)).then(|| serde_json::json!({ "movie": key }).to_string());
     let file = movie.watch.tags.line();
     if !file.is_empty() {
         rows.push(("File", file));
@@ -728,6 +740,9 @@ async fn movie(cx: &Cx) -> Result<impl View> {
                                 trailer_button(about: &movie.about)
                             </div>
                             <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
+                            if let Some(fetch) = &fetch {
+                                find_subtitles(label: "Find subtitles", body: fetch.as_str())
+                            }
                         </div>
                         facts_list(rows: &rows)
                         links(about: &movie.about)
@@ -769,6 +784,17 @@ async fn show(cx: &Cx) -> Result<impl View> {
         None => "Play".to_string(),
     };
     let next_key = key.clone();
+    let next_fetch = show.next.as_ref().and_then(|next| {
+        let number = next.episode?;
+        let season = show.seasons.iter().find(|season| season.number == next.season)?;
+        let episode = season.episodes.iter().find(|episode| episode.episode == number)?;
+        (episode.subtitles == Some(0)).then(|| {
+            (
+                format!("Find subtitles for {}", next.label),
+                serde_json::json!({ "show": key, "season": next.season, "episode": number }).to_string(),
+            )
+        })
+    });
     let heat = show.heat();
     let columns = heat.first().map_or(0, |row| row.cells.len() as u32);
     let line = facts(&[
@@ -862,6 +888,9 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                 trailer_button(about: &show.about)
                             </div>
                             <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
+                            if let Some((label, fetch)) = &next_fetch {
+                                find_subtitles(label: label.as_str(), body: fetch.as_str())
+                            }
                         </div>
                         facts_list(rows: &rows)
                         links(about: &show.about)

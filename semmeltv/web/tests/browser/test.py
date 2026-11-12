@@ -114,7 +114,7 @@ def sound(page, engine):
           'document.querySelector(".sound").dataset.output === "headphones" && getComputedStyle(document.querySelector(".bar-phones")).display !== "none"', 5000)
     page.locator(".sound .choice").nth(0).tap()
     until(page, engine, "TV takes the sound back", 'document.querySelector(".sound").dataset.output === "tv"', 3000)
-    urllib.request.urlopen(urllib.request.Request(FAKE + "/fake/fail-next-connect", method="POST", data=b""))
+    fake("/fake/fail-next-connect")
     page.locator(".sound .choice").nth(1).tap()
     until(page, engine, "a failed connect says why",
           'document.querySelector(".sound .answer.refused")?.textContent.includes("didn\'t connect")', 5000)
@@ -160,13 +160,48 @@ def headphones(page, engine):
     home(page, engine, "after forgetting")
 
 
+def forward(route):
+    try:
+        route.fulfill(response=route.fetch(url=FAKE + urlparse(route.request.url).path))
+    except Exception:
+        pass
+
+
+def fake(path):
+    urllib.request.urlopen(urllib.request.Request(FAKE + path, method="POST", data=b""))
+
+
+def subtitle_timing(page, engine):
+    row = page.locator("[data-tracks=subtitles] .delay")
+    until(page, engine, "the subtitle timing shows while subtitles are on",
+          '!document.querySelector("[data-tracks=subtitles] .delay").hidden', 3000)
+    row.scroll_into_view_if_needed()
+    row.locator(".choice").nth(1).tap()
+    until(page, engine, "+0.5 s moves the subtitles later",
+          'document.querySelector(".now-state").dataset.delay === "0.5" && document.querySelector("[data-tracks=subtitles] .delay output").textContent === "+0.5 s"', 3000)
+    row.locator(".choice").nth(0).tap()
+    until(page, engine, "−0.5 s moves them back", 'document.querySelector(".now-state").dataset.delay === "0.0"', 3000)
+
+
+def finds_subtitles(page, engine):
+    until(page, engine, "a film without subtitles offers to find them", '!!document.querySelector("main .find-subtitles-row .pill")', 3000)
+    page.wait_for_timeout(300)
+    find = page.locator("main .find-subtitles-row .pill")
+    if not find.count():
+        return
+    find.tap()
+    until(page, engine, "finding subtitles says they were added and how well they fit",
+          '[...document.querySelectorAll("main .find-subtitles-row .answer")].some((note) => note.textContent.includes("found by title only")) && document.querySelector("main .find-subtitles-row .pill").hidden', 5000)
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
     page.set_default_timeout(8000)
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.route("**/api/audio**", lambda route: route.fulfill(response=route.fetch(url=FAKE + urlparse(route.request.url).path)))
+    page.route("**/api/**", forward)
+    fake("/fake/forget-subtitles")
     page.goto(BASE + "/", wait_until="commit")
     page.wait_for_timeout(2500)
     if not answers(page, engine, "cold load"):
@@ -185,6 +220,7 @@ def run(p, engine, device):
     page.wait_for_selector(TILE)
     page.wait_for_timeout(1000)
     opens_title(page, engine, "cold load")
+    finds_subtitles(page, engine)
     answers(page, engine, "title page")
     scrolls(page, engine, "title page")
     page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
@@ -205,6 +241,7 @@ def run(p, engine, device):
     until(page, engine, "remote sheet opens", 'document.documentElement.hasAttribute("data-sheet")', 3000)
     page.wait_for_timeout(800)
     answers(page, engine, "sheet open")
+    subtitle_timing(page, engine)
     check(engine, "no Sound choice while no headphones are paired", page.evaluate('!document.querySelector(".sound")'))
     page.locator(".sheet-close").tap()
     until(page, engine, "remote sheet closes", '!document.documentElement.hasAttribute("data-sheet")', 3000)
