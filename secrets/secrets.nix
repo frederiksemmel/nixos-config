@@ -42,8 +42,4 @@ in
     frederik
     semmeltv5
   ];
-  "opensubtitles.age".publicKeys = [
-    frederik
-    semmeltv5
-  ];
 }
