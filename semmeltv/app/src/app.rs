@@ -1150,9 +1150,9 @@ impl App {
                     }
                     self.play(&place.file);
                 }
+                screen::Effect::ShowOnTv(text) => self.show_message(text),
                 screen::Effect::Tell(notice) => {
                     let id = self.notice.as_ref().map_or(1, |said| said.id + 1);
-                    self.show_message(notice.text.clone());
                     self.notice = Some(screen::Said {
                         id,
                         text: notice.text,

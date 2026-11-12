@@ -114,6 +114,7 @@ pub enum Effect {
     StopTv,
     PlayTv(Place),
     Tell(Notice),
+    ShowOnTv(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -160,11 +161,11 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
         ) => match tv {
             Some(place) => (
                 Moving {
-                    to: device,
                     place: place.clone(),
                     since: now,
+                    to: device.clone(),
                 },
-                vec![Effect::PauseTv],
+                vec![Effect::PauseTv, Effect::ShowOnTv(format!("Moving to {}…", device.name))],
             ),
             None => (Phone { device, play: None }, vec![]),
         },
@@ -237,6 +238,7 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
             place.position = position;
             let effects = vec![
                 Effect::StopTv,
+                Effect::ShowOnTv(format!("Playing on {}", device.name)),
                 notice(format!("Playing on {}", device.name), Tone::Quiet),
             ];
             (
@@ -581,12 +583,13 @@ mod tests {
         let mut screen = Screen::Tv;
         assert_eq!(
             screen.step(flip_to(&iphone), Some(&place(600.0)), now),
-            vec![Effect::PauseTv]
+            vec![Effect::PauseTv, Effect::ShowOnTv("Moving to a phone…".to_string())]
         );
         assert!(matches!(&screen, Screen::Moving { to, place, .. } if *to == iphone && place.position == 600.0));
         assert_eq!(screen.step(flip_to(&iphone), Some(&place(600.0)), now), vec![]);
         let effects = screen.step(started(&iphone, "s1", 600.0), Some(&place(600.0)), now);
         assert_eq!(effects[0], Effect::StopTv);
+        assert!(effects.contains(&Effect::ShowOnTv("Playing on a phone".to_string())));
         assert!(is_told(&effects, Tone::Quiet));
         assert_eq!(screen, playing(&iphone, "s1", 600.0, now));
         assert!(!screen.allows_tv_playing());
@@ -887,6 +890,32 @@ mod tests {
                 "the TV plays while {screen:?}"
             );
         }
+    }
+
+    #[test]
+    fn the_tv_shows_only_the_handoff_itself() {
+        let now = Instant::now();
+        let iphone = phone("a");
+        let tv = place(600.0);
+        let shown = |effects: &[Effect]| {
+            effects
+                .iter()
+                .filter(|effect| matches!(effect, Effect::ShowOnTv(_)))
+                .count()
+        };
+        let mut screen = Screen::Tv;
+        screen.step(flip_to(&iphone), Some(&tv), now);
+        let failed = screen.step(
+            Event::Failed {
+                device: iphone.clone(),
+                reason: "AV1 video".to_string(),
+            },
+            Some(&tv),
+            now,
+        );
+        assert_eq!(shown(&failed), 0);
+        let mut screen = playing(&iphone, "s1", 1.0, now);
+        assert_eq!(shown(&screen.step(Event::Tick, None, now + LOST_AFTER)), 0);
     }
 
     #[test]
