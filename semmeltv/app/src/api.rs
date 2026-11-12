@@ -255,6 +255,7 @@ fn router(api: Api) -> Router {
         .route("/api/audio", get(audio_view).post(choose_audio))
         .route("/api/audio/pair", post(pair_headphones).delete(cancel_pairing))
         .route("/api/audio/headphones", delete(forget_headphones))
+        .route("/api/audio/delay", post(delay_sound))
         .route("/api/volume/{change}", post(volume))
         .route("/api/subtitles/fetch", post(fetch_subtitles))
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
@@ -1301,6 +1302,23 @@ async fn forget_headphones(State(api): State<Api>) -> Response {
     };
     match tokio::task::spawn_blocking(move || audio.forget()).await {
         Ok(view) => Json(view).into_response(),
+        Err(error) => problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DelayBody {
+    by: i32,
+}
+
+async fn delay_sound(State(api): State<Api>, Json(body): Json<DelayBody>) -> Response {
+    let Some(audio) = api.audio else {
+        return no_headphones();
+    };
+    match tokio::task::spawn_blocking(move || audio.delay_sound(body.by)).await {
+        Ok(Ok(view)) => Json(view).into_response(),
+        Ok(Err(error)) => problem(StatusCode::CONFLICT, error),
         Err(error) => problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     }
 }

@@ -379,6 +379,7 @@ again whenever it changes, with the same body as GET `/api/audio`:
 | POST | `/api/audio/pair` | none |
 | DELETE | `/api/audio/pair` | none |
 | DELETE | `/api/audio/headphones` | none |
+| POST | `/api/audio/delay` | `{ "by": 20 }` |
 
 Where the sound goes: the TV over HDMI, or Bluetooth headphones paired with
 SemmelTV. Every request answers the whole state:
@@ -395,6 +396,8 @@ SemmelTV. Every request answers the whole state:
   and `state` is `disconnected`, `connecting` or `connected`. `volume` is
   their own volume while they are connected, `{ "level": 0–100, "muted": bool }`,
   and null otherwise; it follows changes made on the headphones too.
+  `audio_delay` is the lip-sync nudge for the headphones in milliseconds while
+  they are connected (positive: the sound comes later), and null otherwise.
 - `pairing` is null, or `{ "state": "scanning" | "pairing" | "paired" |
   "failed", "message": "..." }` with a sentence to show as it is.
 - `error` is a sentence about the last switch that went wrong, or null.
@@ -432,6 +435,19 @@ headphones have the sound starts on them. BlueALSA counts the headphones'
 reported delay in the ALSA delay mpv reads, so mpv keeps the picture in sync.
 `volume-up` and `volume-down` under `/api/tv` always set the TV's volume; the
 volume keys follow the sound with `/api/volume` below.
+
+### Lip sync
+
+The headphones report their own latency over A2DP delay reporting (AirPods:
+150 ms with AAC), BlueALSA adds it to the ALSA delay mpv reads, and mpv holds
+the picture back to match. When the sound still comes a little early or late,
+POST `/api/audio/delay` with `{ "by": milliseconds }` moves it: positive makes
+the sound later, negative earlier, up to 500 ms either way. It sets BlueALSA's
+delay adjustment for these headphones and their current codec (with the sign
+turned, since a smaller reported delay lets the picture go sooner), which
+BlueALSA keeps in `/var/lib/bluealsa` across reboots. The delay BlueALSA
+reports to mpv changes at once, during playback too. It answers the audio state, or 409 when the
+headphones aren't connected.
 
 ### Volume
 

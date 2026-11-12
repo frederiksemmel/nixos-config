@@ -16,6 +16,8 @@ const NOTHING_FOUND: &str =
 const NONE_PAIRED: &str = "No headphones are paired. Pair them in Settings.";
 const MAX_VOLUME: u8 = 127;
 const VOLUME_STEP: u8 = 8;
+const MAX_AUDIO_DELAY: i32 = 500;
+const FIND_MY: &str = " - Find My";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
@@ -69,6 +71,7 @@ pub struct HeadphonesView {
     pub address: String,
     pub state: Link,
     pub volume: Option<VolumeView>,
+    pub audio_delay: Option<i32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -127,6 +130,8 @@ pub trait Radio: Send + Sync {
     fn forget(&self, address: &str);
     fn sinks(&self) -> Vec<String>;
     fn volume(&self, address: &str) -> Option<Level>;
+    fn delay_adjustment(&self, address: &str) -> Option<i32>;
+    fn set_delay_adjustment(&self, address: &str, milliseconds: i32) -> Result<(), String>;
     fn set_volume(&self, address: &str, level: Level) -> Result<(), String>;
 }
 
@@ -156,6 +161,7 @@ struct State {
     pairing: Option<PairingView>,
     pair_attempt: u64,
     volume: Option<Level>,
+    audio_delay: Option<i32>,
 }
 
 impl State {
@@ -444,6 +450,11 @@ impl Audio {
 
     fn sink(&self, address: &str, present: bool) {
         let level = if present { self.inner.radio.volume(address) } else { None };
+        let adjustment = if present {
+            self.inner.radio.delay_adjustment(address)
+        } else {
+            None
+        };
         let mut state = self.inner.state.lock().unwrap();
         let Some(headphones) = state.headphones.clone().filter(|headphones| headphones.address == address) else {
             return;
@@ -451,6 +462,9 @@ impl Audio {
         let mut route = None;
         if level.is_some() {
             state.volume = level;
+        }
+        if let Some(adjustment) = adjustment {
+            state.audio_delay = Some(-adjustment);
         }
         match (present, state.link) {
             (true, Link::Connecting) => {
@@ -519,6 +533,25 @@ impl Audio {
             VolumeChange::Mute => format!("{} sound on", headphones.name),
             _ => format!("{} volume {}%", headphones.name, changed.percent()),
         }))
+    }
+
+    pub fn delay_sound(&self, by: i32) -> Result<View, String> {
+        let (headphones, delay) = {
+            let state = self.inner.state.lock().unwrap();
+            match (&state.headphones, state.link) {
+                (Some(headphones), Link::Connected) => (headphones.clone(), state.audio_delay.unwrap_or(0)),
+                _ => return Err("The headphones aren't connected".to_string()),
+            }
+        };
+        let delay = (delay + by).clamp(-MAX_AUDIO_DELAY, MAX_AUDIO_DELAY);
+        self.inner.radio.set_delay_adjustment(&headphones.address, -delay).map_err(|error| {
+            eprintln!("headphones: {error}");
+            format!("{} didn't take the timing change", headphones.name)
+        })?;
+        let mut state = self.inner.state.lock().unwrap();
+        state.audio_delay = Some(delay);
+        self.publish(&state);
+        Ok(view_of(&state))
     }
 
     fn volume_changed(&self, address: &str, level: Level) {
@@ -603,6 +636,7 @@ fn view_of(state: &State) -> View {
                 level: level.percent(),
                 muted: level.muted,
             }),
+            audio_delay: state.audio_delay.filter(|_| state.link == Link::Connected),
         }),
         pairing: state.pairing.clone(),
         error: state.error.clone(),
@@ -674,6 +708,10 @@ fn parse_info(text: &str) -> Info {
     info
 }
 
+fn shown_name(name: &str) -> String {
+    name.strip_suffix(FIND_MY).unwrap_or(name).to_string()
+}
+
 fn parse_devices(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|line| {
@@ -707,7 +745,7 @@ impl Bluetoothctl {
         let info = parse_info(&Self::run(&["info", address]));
         let device = Device {
             address: address.to_string(),
-            name: info.name.clone().unwrap_or_else(|| "Headphones".to_string()),
+            name: info.name.as_deref().map_or_else(|| "Headphones".to_string(), shown_name),
         };
         (device, info)
     }
@@ -803,6 +841,30 @@ impl Radio for Bluetoothctl {
         Some(Level { value, muted })
     }
 
+    fn delay_adjustment(&self, address: &str) -> Option<i32> {
+        let path = sink_path(address)?;
+        let said = bluealsa_cli(&["delay-adjustment", &path]);
+        let milliseconds: f64 = pcm_value(&said, "DelayAdjustment:")?.parse().ok()?;
+        Some(milliseconds.round() as i32)
+    }
+
+    fn set_delay_adjustment(&self, address: &str, milliseconds: i32) -> Result<(), String> {
+        let path = sink_path(address).ok_or_else(|| format!("no BlueALSA sink for {address}"))?;
+        let value = format!("{milliseconds:+}");
+        let status = Command::new("bluealsa-cli")
+            .args(["delay-adjustment", &path, &value])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map_err(|error| format!("bluealsa-cli: {error}"))?;
+        if status.success() {
+            Ok(())
+        } else {
+            Err(format!("bluealsa-cli delay-adjustment {path} {value}: {status}"))
+        }
+    }
+
     fn set_volume(&self, address: &str, level: Level) -> Result<(), String> {
         let path = sink_path(address).ok_or_else(|| format!("no BlueALSA sink for {address}"))?;
         let value = level.value.to_string();
@@ -865,6 +927,7 @@ mod tests {
         in_range: Option<Device>,
         pairs: bool,
         volume: Option<Level>,
+        adjustment: i32,
     }
 
     struct FakeRadio {
@@ -927,6 +990,16 @@ mod tests {
 
         fn volume(&self, _address: &str) -> Option<Level> {
             self.world.lock().unwrap().volume
+        }
+
+        fn delay_adjustment(&self, _address: &str) -> Option<i32> {
+            Some(self.world.lock().unwrap().adjustment)
+        }
+
+        fn set_delay_adjustment(&self, address: &str, milliseconds: i32) -> Result<(), String> {
+            self.call(format!("delay {address} {milliseconds}"));
+            self.world.lock().unwrap().adjustment = milliseconds;
+            Ok(())
         }
 
         fn set_volume(&self, address: &str, level: Level) -> Result<(), String> {
@@ -1026,7 +1099,7 @@ mod tests {
             serde_json::json!({
                 "type": "audio",
                 "output": "tv",
-                "headphones": { "name": "AirPods", "address": AIRPODS, "state": "disconnected", "volume": null },
+                "headphones": { "name": "AirPods", "address": AIRPODS, "state": "disconnected", "volume": null, "audio_delay": null },
                 "pairing": null,
                 "error": null,
             })
@@ -1320,6 +1393,29 @@ mod tests {
             Some(Ok("AirPods volume 94%".to_string()))
         );
         assert_eq!(rig.bus.audio_state(), Some(rig.audio.view()));
+    }
+
+    #[test]
+    fn the_sound_on_the_headphones_can_be_nudged_later_or_earlier() {
+        let rig = paired_rig();
+        rig.world.lock().unwrap().adjustment = 20;
+        assert_eq!(
+            rig.audio.delay_sound(-20),
+            Err("The headphones aren't connected".to_string())
+        );
+        rig.audio.sinks_listed(&[AIRPODS.to_string()]);
+        assert_eq!(rig.audio.view().headphones.unwrap().audio_delay, Some(-20));
+        let view = rig.audio.delay_sound(50).unwrap();
+        assert_eq!(view.headphones.unwrap().audio_delay, Some(30));
+        assert_eq!(call(&rig), format!("delay {AIRPODS} -30"));
+        assert_eq!(rig.audio.delay_sound(900).unwrap().headphones.unwrap().audio_delay, Some(500));
+        assert_eq!(rig.bus.audio_state(), Some(rig.audio.view()));
+    }
+
+    #[test]
+    fn find_my_is_left_out_of_the_name() {
+        assert_eq!(shown_name("airpodsfs - Find My"), "airpodsfs");
+        assert_eq!(shown_name("AirPods"), "AirPods");
     }
 
     #[test]
