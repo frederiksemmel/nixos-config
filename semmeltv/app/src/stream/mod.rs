@@ -128,7 +128,7 @@ impl Live {
     }
 }
 
-type Captions = HashMap<(Source, i64), Arc<String>>;
+type Captions = HashMap<(Source, i64), Arc<OnceCell<Arc<String>>>>;
 
 #[derive(Clone)]
 struct Streams {
@@ -365,11 +365,11 @@ fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media) -> Ve
     }
     for embedded in &media.subtitles {
         let language = embedded.language.clone();
-        let named = language
-            .as_deref()
-            .and_then(crate::subtitles::language_name)
-            .unwrap_or("Subtitles");
-        let mut name = embedded.title.clone().unwrap_or_else(|| named.to_string());
+        let named = match language.as_deref() {
+            Some(code) => crate::subtitles::language_name(code).map_or_else(|| code.to_uppercase(), str::to_string),
+            None => "Subtitles".to_string(),
+        };
+        let mut name = embedded.title.clone().unwrap_or(named);
         if !embedded.is_text() {
             name.push_str(" (picture subtitles show only on the TV)");
         }
@@ -471,6 +471,16 @@ async fn open(State(streams): State<Streams>, Json(body): Json<OpenBody>) -> Res
     session.start(start);
     let subtitles = subtitle_list(&streams, &chosen.file, &media);
     let delay = streams.shared.subtitles().file_delay(&chosen.file);
+    if let Some(source) = subtitles
+        .iter()
+        .find(|subtitle| subtitle.default)
+        .and_then(|subtitle| subtitle.source.clone())
+    {
+        let warming = streams.clone();
+        tokio::spawn(async move {
+            let _ = caption(&warming, source, delay).await;
+        });
+    }
     let video = media.video.as_ref();
     let bitrate = media.bitrate;
     let live = Arc::new(Live {
@@ -665,24 +675,23 @@ async fn subtitles(State(streams): State<Streams>, Path((id, name)): Path<(Strin
     let Some(source) = subtitle.source.clone() else {
         return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}"));
     };
-    let key = (source.clone(), (live.delay * 1000.0).round() as i64);
-    let cached = streams.captions.lock().unwrap().get(&key).cloned();
-    let text = match cached {
-        Some(text) => text,
-        None => match vtt::convert(&source, live.delay).await {
-            Ok(text) => {
-                let text = Arc::new(text);
-                streams.captions.lock().unwrap().insert(key, text.clone());
-                text
-            }
-            Err(error) => return problem(StatusCode::UNPROCESSABLE_ENTITY, error),
-        },
+    let text = match caption(&streams, source, live.delay).await {
+        Ok(text) => text,
+        Err(error) => return problem(StatusCode::UNPROCESSABLE_ENTITY, error),
     };
     body(
         "text/vtt; charset=utf-8",
         "private, max-age=3600",
         text.as_ref().clone(),
     )
+}
+
+async fn caption(streams: &Streams, source: Source, delay: f64) -> Result<Arc<String>, String> {
+    let key = (source.clone(), (delay * 1000.0).round() as i64);
+    let cell = streams.captions.lock().unwrap().entry(key).or_default().clone();
+    cell.get_or_try_init(|| async { vtt::convert(&source, delay).await.map(Arc::new) })
+        .await
+        .cloned()
 }
 
 async fn marks(State(streams): State<Streams>, Path(id): Path<String>) -> Response {

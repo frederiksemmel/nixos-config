@@ -86,8 +86,9 @@ function note(text, hold = 4500) {
 
 function capabilities() {
   const probe = document.createElement("video");
-  const native = probe.canPlayType("application/vnd.apple.mpegurl") !== "";
   const MSE = window.ManagedMediaSource || window.MediaSource;
+  const apple = /Apple/.test(navigator.vendor || "");
+  const native = probe.canPlayType("application/vnd.apple.mpegurl") !== "" && (apple || !MSE);
   const supports = (type) => native ? probe.canPlayType(type) !== "" : Boolean(MSE && MSE.isTypeSupported(type));
   return {
     native,
@@ -209,8 +210,9 @@ class Player {
     this.pip = button("pp-icon pp-pip", "Picture in Picture", icons.pip);
     this.airplay.hidden = true;
     this.pip.hidden = !(document.pictureInPictureEnabled || this.video.webkitSupportsPresentationMode);
+    this.tvButton = button("pp-icon pp-tv", "Continue on TV", icons.tv);
     const top = element("div", "pp-top");
-    top.append(this.closeButton, this.titleText, this.airplay, this.pip);
+    top.append(this.closeButton, this.titleText, this.airplay, this.pip, this.tvButton);
 
     this.backButton = button("pp-icon pp-jump", `Back ${JUMP} seconds`, `${icons.back}<span>${JUMP}</span>`);
     this.playButton = button("pp-icon pp-play", "Play", icons.play);
@@ -228,12 +230,11 @@ class Player {
     line.append(this.elapsed, track, this.remaining);
 
     this.tracksButton = element("button", "pp-pill", { type: "button", html: `${icons.tracks}<span>Audio &amp; subtitles</span>` });
-    this.nextButton = element("button", "pp-pill", { type: "button", html: `${icons.next}<span>Next episode</span>` });
-    this.tvButton = element("button", "pp-pill", { type: "button", html: `${icons.tv}<span>Continue on TV</span>` });
+    this.nextButton = element("button", "pp-pill", { type: "button", "aria-label": "Next episode", html: `${icons.next}<span>Next</span>` });
     this.fullButton = button("pp-icon pp-full", "Full screen", icons.full);
     this.nextButton.hidden = true;
     const actions = element("div", "pp-actions");
-    actions.append(this.tracksButton, this.nextButton, this.tvButton, this.fullButton);
+    actions.append(this.tracksButton, this.nextButton, this.fullButton);
 
     const bottom = element("div", "pp-bottom");
     bottom.append(line, actions);
