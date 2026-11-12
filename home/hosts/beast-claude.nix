@@ -86,6 +86,8 @@ let
   };
 in
 {
+  systemd.user.tmpfiles.rules = [ "d %h/claude-agent-home 0700 - - -" ];
+
   home.packages = [
     session-group
     session-end

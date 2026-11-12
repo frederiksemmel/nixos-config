@@ -7,6 +7,7 @@ const self = path self
 const sessions_nu = path self sessions.nu
 const connect_options = [-o ConnectTimeout=5]
 const reset_terminal = "\e[?25h\e[?1000;1002;1003;1006;2004l\e[<99u"
+const agent_home = "~/claude-agent-home"
 
 def on-beast-itself [] {
   (sys host).hostname == "beast"
@@ -166,9 +167,12 @@ def take [session: string, --wait] {
 
 # Keeps this terminal on one background session and exits with it. Only ssh
 # failing (exit 255) reconnects; on beast itself there is no connection to lose.
+# Leaving the session opens the agent view in the directory of the attach, so it
+# runs in ~/claude-agent-home, where agent-view sessions start too.
 def connect [id: string, title: string] {
   set-title $title
   if (on-beast-itself) {
+    cd $agent_home
     ^claude attach $id
     return
   }
@@ -177,7 +181,7 @@ def connect [id: string, title: string] {
     set-title $title
     let started = date now
     let code = try {
-      ^ssh -t ...$connect_options beast claude attach $id
+      ^ssh -t ...$connect_options beast $"cd ($agent_home); claude attach ($id)"
       0
     } catch {|failure|
       $failure.exit_code? | default 1
