@@ -207,8 +207,9 @@ impl Playback {
 
     fn set_audio_device(&mut self, device: &str) {
         self.send(json!(["set_property", "audio-device", device]));
-        let track = self.subtitles.chosen().1.map_or_else(|| json!("auto"), |track| json!(track));
-        self.send(json!(["set_property", "aid", track]));
+        if let Some(track) = self.subtitles.audio_to_restore() {
+            self.send(json!(["set_property", "aid", track]));
+        }
     }
 
     fn step(&mut self, direction: Direction, now: Instant) {
@@ -1138,13 +1139,21 @@ mod tests {
     }
 
     #[test]
-    fn moving_the_sound_selects_the_audio_track_again() {
-        let sent = sent_by(|playback| playback.set_audio_device("auto"), playing());
+    fn moving_the_sound_selects_the_last_audio_track_again() {
+        let subtitles = Subtitles::default();
+        subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
+        subtitles.observe(Observed::Audio(Some(2)));
+        subtitles.observe(Observed::Audio(None));
+        let playback = Playback {
+            subtitles,
+            ..playing()
+        };
+        let sent = sent_by(|playback| playback.set_audio_device("auto"), playback);
         assert_eq!(
             sent,
             [
                 json!(["set_property", "audio-device", "auto"]),
-                json!(["set_property", "aid", "auto"])
+                json!(["set_property", "aid", 2])
             ]
         );
     }

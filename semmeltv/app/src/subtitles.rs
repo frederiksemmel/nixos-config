@@ -287,6 +287,8 @@ pub struct Playing {
     pub tracks: Vec<Track>,
     pub audio: Option<i64>,
     pub audio_tracks: Vec<Track>,
+    #[serde(skip)]
+    last_audio: Option<i64>,
 }
 
 impl Playing {
@@ -536,6 +538,14 @@ impl Subtitles {
         })
     }
 
+    pub fn audio_to_restore(&self) -> Option<i64> {
+        self.playing().and_then(|playing| {
+            playing
+                .last_audio
+                .or_else(|| playing.audio_tracks.first().map(|track| track.id))
+        })
+    }
+
     pub fn delay(&self) -> f64 {
         self.playing().map_or(0.0, |playing| playing.delay)
     }
@@ -618,7 +628,10 @@ impl Subtitles {
                 remembered = state.remember(|remembered| remembered.embedded = Some(embedded));
             }
             Observed::Track(track) => playing.track = track,
-            Observed::Audio(track) => playing.audio = track,
+            Observed::Audio(track) => {
+                playing.audio = track;
+                playing.last_audio = track.or(playing.last_audio);
+            }
             Observed::Visible(visible) => playing.visible = visible,
             Observed::Delay(delay) => playing.delay = delay,
         }
