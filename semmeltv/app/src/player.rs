@@ -205,6 +205,12 @@ impl Playback {
         self.present(now);
     }
 
+    fn set_audio_device(&mut self, device: &str) {
+        self.send(json!(["set_property", "audio-device", device]));
+        let track = self.subtitles.chosen().1.map_or_else(|| json!("auto"), |track| json!(track));
+        self.send(json!(["set_property", "aid", track]));
+    }
+
     fn step(&mut self, direction: Direction, now: Instant) {
         if self.started {
             let order = self.scrub.step(direction, self.position, self.duration, now);
@@ -589,10 +595,7 @@ impl Player {
     }
 
     pub fn set_audio_device(&self, device: &str) {
-        self.playback
-            .lock()
-            .unwrap()
-            .send(json!(["set_property", "audio-device", device]));
+        self.playback.lock().unwrap().set_audio_device(device);
     }
 
     pub fn set_speed(&self, speed: f64) -> f64 {
@@ -1132,6 +1135,18 @@ mod tests {
             playing(),
         );
         assert!(sent[0]["data"].as_str().unwrap().contains("No subtitles in this file"));
+    }
+
+    #[test]
+    fn moving_the_sound_selects_the_audio_track_again() {
+        let sent = sent_by(|playback| playback.set_audio_device("auto"), playing());
+        assert_eq!(
+            sent,
+            [
+                json!(["set_property", "audio-device", "auto"]),
+                json!(["set_property", "aid", "auto"])
+            ]
+        );
     }
 
     fn during_the_intro() -> Playback {
