@@ -28,7 +28,7 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use tokio::sync::OnceCell;
+use tokio::sync::{OnceCell, watch};
 use vtt::Source;
 
 const NEEDS_TAILSCALE: &str = "Watching on this phone needs Tailscale on";
@@ -129,7 +129,8 @@ impl Live {
     }
 }
 
-type Captions = HashMap<(Source, i64), Arc<OnceCell<Arc<String>>>>;
+type Converted = Option<Result<Arc<String>, String>>;
+type Captions = HashMap<(Source, i64), watch::Receiver<Converted>>;
 
 #[derive(Clone)]
 struct Streams {
@@ -699,10 +700,32 @@ async fn subtitles(State(streams): State<Streams>, Path((id, name)): Path<(Strin
 
 async fn caption(streams: &Streams, source: Source, delay: f64) -> Result<Arc<String>, String> {
     let key = (source.clone(), (delay * 1000.0).round() as i64);
-    let cell = streams.captions.lock().unwrap().entry(key).or_default().clone();
-    cell.get_or_try_init(|| async { vtt::convert(&source, delay).await.map(Arc::new) })
+    let mut converted = {
+        let mut captions = streams.captions.lock().unwrap();
+        match captions.get(&key) {
+            Some(converted) => converted.clone(),
+            None => {
+                let (done, converted) = watch::channel(None);
+                captions.insert(key.clone(), converted.clone());
+                let captions = streams.captions.clone();
+                tokio::spawn(async move {
+                    let result = vtt::convert(&source, delay).await.map(Arc::new);
+                    if result.is_err() {
+                        captions.lock().unwrap().remove(&key);
+                    }
+                    let _ = done.send(Some(result));
+                });
+                converted
+            }
+        }
+    };
+    let finished = converted
+        .wait_for(Option::is_some)
         .await
-        .cloned()
+        .map_err(|_| "the subtitles could not be converted".to_string())?;
+    finished
+        .clone()
+        .unwrap_or_else(|| Err("the subtitles could not be converted".to_string()))
 }
 
 async fn marks(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
