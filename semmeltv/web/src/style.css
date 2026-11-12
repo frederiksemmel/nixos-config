@@ -621,6 +621,27 @@ main {
   z-index: 1;
 }
 
+.episode-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; }
+.episode-row .episode { margin-right: 0; }
+
+.mark-seen {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  color: var(--muted);
+}
+
+.mark-seen svg { width: 20px; height: 20px; stroke-width: 2.6; }
+.mark-seen[aria-pressed="true"] { border-color: rgba(90, 209, 126, 0.55); color: #5ad17e; }
+.mark-seen:active { transform: scale(0.94); }
+
+.mark-film { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding-left: 12px; }
+.mark-film svg { width: 18px; height: 18px; stroke-width: 2.6; }
+.pill.mark-film[aria-pressed="true"] { border-color: rgba(90, 209, 126, 0.55); color: #5ad17e; }
+
 .episode-text { display: grid; gap: 2px; min-width: 0; }
 .episode-text b { font-size: 15px; line-height: 1.25; }
 .episode-text span { color: var(--muted); font-size: 13px; }

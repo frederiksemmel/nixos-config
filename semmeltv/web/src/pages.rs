@@ -1,4 +1,4 @@
-use crate::api::{About, Api, Card, CastMember, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard};
+use crate::api::{About, Api, Card, CastMember, Episode, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard};
 use crate::layout::back;
 use crate::playing::{play_episode, play_movie, play_show, tell};
 use crate::public::Public;
@@ -117,6 +117,26 @@ async fn forget(cx: &Cx, kind: String, key: String) -> Result<(bool, String)> {
         _ => return Ok((false, format!("No such kind: {kind}"))),
     };
     Ok(app_context::<Api>(cx).dismiss_forgotten(kind, &key).await)
+}
+
+#[procedure]
+async fn mark(cx: &Cx, kind: String, key: String, watched: bool, season: Option<u32>, episode: Option<u32>) -> Result<(bool, String)> {
+    let mut body = serde_json::json!({ "kind": kind, "key": key, "watched": watched });
+    if let (Some(season), Some(episode)) = (season, episode) {
+        body["season"] = season.into();
+        body["episode"] = episode.into();
+    }
+    Ok(match app_context::<Api>(cx).mark_watched(body).await {
+        Ok(now) => (now, String::new()),
+        Err(error) => (!watched, error),
+    })
+}
+
+#[component]
+async fn check_icon() -> Result<impl View> {
+    Ok(view! {
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12.5 4 4 8-9"></path></svg>
+    })
 }
 
 #[component]
@@ -649,6 +669,67 @@ async fn links(about: &About) -> Result<impl View> {
 }
 
 #[component]
+async fn movie_mark(cx: &Cx, key: &str, finished: bool, said: Signal<String>) -> Result<impl View> {
+    let key = key.to_string();
+    let seen = signal(cx, move || finished);
+    Ok(view! {
+        <button type="button" class="pill quiet mark-film" :aria-pressed=$(if seen.get() { "true" } else { "false" })
+            @click=$(async |_e| {
+                let wanted = !seen.get();
+                seen.set(wanted);
+                let answer = mark("movie".to_owned(), key.to_owned(), wanted, None, None).await;
+                seen.set(answer.0);
+                said.set(answer.1);
+            })>
+            check_icon()
+            $(if seen.get() { "Watched" } else { "Mark as watched" })
+        </button>
+    })
+}
+
+#[component]
+async fn episode_row(cx: &Cx, public: &Public, series: &str, episode: &Episode, said: Signal<String>) -> Result<impl View> {
+    let show_key = series.to_string();
+    let (season_number, episode_number) = (episode.season, episode.episode);
+    let still = episode.still.as_deref().map(|path| public.url(path));
+    let watched = episode.watched;
+    let seen = signal(cx, move || watched);
+    let label = episode.short_label.clone();
+    Ok(view! {
+        <li class="episode-row">
+            <button type="button" class="episode" @click=$(async |_e| {
+                let answer = play_episode(show_key.to_owned(), season_number, episode_number).await;
+                said.set(answer);
+            })>
+                <span class="still" style=(tint(&episode.label))>
+                    if let Some(still) = still {
+                        <img src=(still) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                    }
+                    <span class="detail-seen" title="Watched" :hidden=$(!seen.get())>check_icon()</span>
+                    progress(watch: &episode.watch)
+                </span>
+                <span class="episode-text">
+                    <b>(episode.label.as_str())</b>
+                    scores(of: &episode.ratings)
+                    <span>(episode.short_label.as_str()) " · " (episode.watch.details.as_str())</span>
+                </span>
+            </button>
+            <button type="button" class="mark-seen" aria-label=(format!("Watched {label}"))
+                :aria-pressed=$(if seen.get() { "true" } else { "false" })
+                @click=$(async |_e| {
+                    let wanted = !seen.get();
+                    seen.set(wanted);
+                    let answer = mark("show".to_owned(), show_key.to_owned(), wanted, Some(season_number), Some(episode_number)).await;
+                    seen.set(answer.0);
+                    said.set(answer.1);
+                })>
+                check_icon()
+            </button>
+        </li>
+    })
+}
+
+#[component]
 async fn find_subtitles(label: &str, body: &str) -> Result<impl View> {
     Ok(view! {
         <div class="find-subtitles-row">
@@ -740,6 +821,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
                                 trailer_button(about: &movie.about)
                             </div>
                             <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
+                            movie_mark(key: key.as_str(), finished: movie.card.finished, said: said.clone())
                             if let Some(fetch) = &fetch {
                                 find_subtitles(label: "Find subtitles", body: fetch.as_str())
                             }
@@ -922,36 +1004,7 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                 <ol class="episodes" :hidden=$(season.get() != number)>
                                     #[key(episode.episode)]
                                     for episode in &group.episodes {
-                                        let show_key = key.clone();
-                                        let (season_number, episode_number) = (episode.season, episode.episode);
-                                        let still = episode.still.as_deref().map(|path| public.url(path));
-                                        let seen = episode.watched;
-                                        <li>
-                                            <button type="button" class="episode" @click=$(async |_e| {
-                                                let answer = play_episode(show_key, season_number, episode_number).await;
-                                                said.set(answer);
-                                            })>
-                                                <span class="still" style=(tint(&episode.label))>
-                                                    if let Some(still) = still {
-                                                        <img src=(still) alt="" loading="lazy" decoding="async" onerror="this.remove()">
-                                                    }
-                                                    if seen {
-                                                        <span class="detail-seen" title="Watched">
-                                                            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 12.5 4 4 8-9"></path></svg>
-                                                        </span>
-                                                    }
-                                                    progress(watch: &episode.watch)
-                                                </span>
-                                                <span class="episode-text">
-                                                    <b>(episode.label.as_str())</b>
-                                                    scores(of: &episode.ratings)
-                                                    <span>
-                                                        (episode.short_label.as_str()) " · " (episode.watch.details.as_str())
-                                                        if seen { " · Watched" }
-                                                    </span>
-                                                </span>
-                                            </button>
-                                        </li>
+                                        episode_row(public: &public, series: key.as_str(), episode: episode, said: said.clone())
                                     }
                                 </ol>
                             }

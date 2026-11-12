@@ -34,6 +34,8 @@ pub struct Card {
     pub poster: Option<String>,
     pub backdrop: Option<String>,
     pub ratings: Ratings,
+    #[serde(default)]
+    pub finished: bool,
 }
 
 impl Card {
@@ -423,6 +425,13 @@ struct Answer {
 }
 
 #[derive(Debug, Deserialize)]
+struct Marked {
+    message: String,
+    ok: bool,
+    watched: bool,
+}
+
+#[derive(Debug, Deserialize)]
 struct Problem {
     error: String,
 }
@@ -570,6 +579,17 @@ impl Api {
         };
         self.answer("/api/forgotten/dismiss", json!({ "kind": kind, "key": key }))
             .await
+    }
+
+    pub async fn mark_watched(&self, body: Value) -> Result<bool, String> {
+        let sent = self.client.post(format!("{}/api/watched", self.base)).json(&body).send().await;
+        let response = sent.map_err(|error| format!("The TV is not answering: {error}"))?;
+        let text = response.text().await.unwrap_or_default();
+        match serde_json::from_str::<Marked>(&text) {
+            Ok(marked) if marked.ok => Ok(marked.watched),
+            Ok(marked) => Err(marked.message),
+            Err(_) => Err(serde_json::from_str::<Problem>(&text).map_or(text, |problem| problem.error)),
+        }
     }
 
     async fn answer(&self, path: &str, body: Value) -> (bool, String) {

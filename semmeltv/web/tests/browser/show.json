@@ -1,0 +1,172 @@
+{
+ "kind": "show",
+ "key": "brooklyn-nine-nine",
+ "title": "Brooklyn Nine-Nine",
+ "years": "2013\u20132021",
+ "subtitle": "10 episodes",
+ "poster": "/api/shows/brooklyn-nine-nine/poster",
+ "backdrop": "/api/shows/brooklyn-nine-nine/backdrop",
+ "ratings": {
+  "imdb": 8.4,
+  "rotten_tomatoes": 95,
+  "fresh": true,
+  "popcorn": 88,
+  "full": true
+ },
+ "finished": false,
+ "next": {
+  "season": 8,
+  "episode": 2,
+  "label": "S8 E2",
+  "title": "The Lake House",
+  "stopped_at": 566.9,
+  "duration": 1290.016
+ },
+ "seasons": [
+  {
+   "number": 8,
+   "label": "Season 8",
+   "episodes": [
+    {
+     "season": 8,
+     "episode": 1,
+     "title": "The Good Ones",
+     "label": "1. The Good Ones",
+     "short_label": "S8 E1",
+     "still": "/api/shows/brooklyn-nine-nine/episodes/8/1/still",
+     "ratings": {
+      "imdb": 4.9,
+      "rotten_tomatoes": null,
+      "fresh": null,
+      "popcorn": null,
+      "full": null
+     },
+     "band": "garbage",
+     "watched": true,
+     "last_played": null,
+     "details": "H.264 \u00b7 1080p \u00b7 22m",
+     "runtime_minutes": 22,
+     "stopped_at": null,
+     "duration": 1305.44,
+     "tags": {
+      "video": "H.264",
+      "resolution": "1080p",
+      "audio": null
+     },
+     "subtitles": 0
+    },
+    {
+     "season": 8,
+     "episode": 2,
+     "title": "The Lake House",
+     "label": "2. The Lake House",
+     "short_label": "S8 E2",
+     "still": "/api/shows/brooklyn-nine-nine/episodes/8/2/still",
+     "ratings": {
+      "imdb": 7.6,
+      "rotten_tomatoes": null,
+      "fresh": null,
+      "popcorn": null,
+      "full": null
+     },
+     "band": "good",
+     "watched": false,
+     "last_played": 1794330562,
+     "details": "H.264 \u00b7 1080p \u00b7 22m \u00b7 Stopped at 9m",
+     "runtime_minutes": 22,
+     "stopped_at": 566.9,
+     "duration": 1290.016,
+     "tags": {
+      "video": "H.264",
+      "resolution": "1080p",
+      "audio": null
+     },
+     "subtitles": 0
+    },
+    {
+     "season": 8,
+     "episode": 3,
+     "title": "Blue Flu",
+     "label": "3. Blue Flu",
+     "short_label": "S8 E3",
+     "still": "/api/shows/brooklyn-nine-nine/episodes/8/3/still",
+     "ratings": {
+      "imdb": 7.0,
+      "rotten_tomatoes": null,
+      "fresh": null,
+      "popcorn": null,
+      "full": null
+     },
+     "band": "good",
+     "watched": false,
+     "last_played": null,
+     "details": "H.264 \u00b7 1080p \u00b7 22m",
+     "runtime_minutes": 22,
+     "stopped_at": null,
+     "duration": 1320.0,
+     "tags": {
+      "video": "H.264",
+      "resolution": "1080p",
+      "audio": null
+     },
+     "subtitles": 0
+    }
+   ]
+  }
+ ],
+ "about": {
+  "tagline": "The law. Without the order.",
+  "plot": "A single-camera ensemble comedy following the lives of an eclectic group of detectives in a New York precinct, including one slacker who is forced to shape up when he gets a new boss.",
+  "genres": [
+   "Comedy",
+   "Crime"
+  ],
+  "original_title": null,
+  "language": "English",
+  "released": null,
+  "first_aired": "2013-09-17",
+  "last_aired": "2021-09-16",
+  "seasons": 8,
+  "episodes": 152,
+  "networks": [
+   "NBC",
+   "FOX"
+  ],
+  "directors": [],
+  "creators": [
+   "Daniel J. Goor",
+   "Michael Schur"
+  ],
+  "certificate": {
+   "country": "CH",
+   "rating": "16"
+  },
+  "trailer": "https://www.youtube.com/watch?v=icTOP9F17pU",
+  "imdb": "https://www.imdb.com/title/tt2467372/",
+  "tmdb": "https://www.themoviedb.org/tv/48891",
+  "cast": [
+   {
+    "name": "Andy Samberg",
+    "character": "Jake Peralta",
+    "photo": "/api/people/62861/photo"
+   },
+   {
+    "name": "Melissa Fumero",
+    "character": "Amy Santiago",
+    "photo": "/api/people/1220767/photo"
+   },
+   {
+    "name": "Terry Crews",
+    "character": "Terry Jeffords",
+    "photo": "/api/people/53256/photo"
+   }
+  ],
+  "scores": {
+   "metacritic": 73,
+   "letterboxd": null,
+   "ebert": null
+  }
+ },
+ "last_played": 1794330562,
+ "last_played_label": "Tuesday 18:09"
+}

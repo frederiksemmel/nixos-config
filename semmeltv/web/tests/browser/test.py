@@ -194,6 +194,35 @@ def finds_subtitles(page, engine):
           '[...document.querySelectorAll("main .find-subtitles-row .answer")].some((note) => note.textContent.includes("found by title only")) && document.querySelector("main .find-subtitles-row .pill").hidden', 5000)
 
 
+def marks_watched(page, engine):
+    film = page.locator("main .mark-film")
+    until(page, engine, "a film page offers to mark it watched", '!!document.querySelector("main .mark-film")', 3000)
+    film.scroll_into_view_if_needed()
+    film.tap()
+    until(page, engine, "marking a film watched flips the button",
+          'document.querySelector("main .mark-film").getAttribute("aria-pressed") === "true"', 3000)
+    film.tap()
+    until(page, engine, "and back to unwatched",
+          'document.querySelector("main .mark-film").getAttribute("aria-pressed") === "false"', 3000)
+
+
+def marks_episodes(page, engine):
+    page.goto(BASE + "/shows/brooklyn-nine-nine", wait_until="commit")
+    until(page, engine, "a show page lists episodes with a watched toggle", 'document.querySelectorAll("main .episode-row .mark-seen").length > 1', 8000)
+    page.wait_for_timeout(500)
+    toggle = page.locator("main .episode-row .mark-seen").nth(1)
+    before = toggle.get_attribute("aria-pressed")
+    toggle.scroll_into_view_if_needed()
+    toggle.tap()
+    after = "false" if before == "true" else "true"
+    until(page, engine, "tapping an episode's check flips it",
+          f'document.querySelectorAll("main .episode-row .mark-seen")[1].getAttribute("aria-pressed") === "{after}"', 3000)
+    check(engine, "and does not start the episode", page.evaluate("location.pathname") == "/shows/brooklyn-nine-nine")
+    page.reload(wait_until="commit")
+    until(page, engine, "the episode stays flipped after a reload",
+          f'document.querySelectorAll("main .episode-row .mark-seen")[1]?.getAttribute("aria-pressed") === "{after}"', 8000)
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
@@ -202,6 +231,7 @@ def run(p, engine, device):
     page.on("pageerror", lambda error: errors.append(str(error)))
     page.route("**/api/**", forward)
     fake("/fake/forget-subtitles")
+    fake("/fake/forget-marks")
     page.goto(BASE + "/", wait_until="commit")
     page.wait_for_timeout(2500)
     if not answers(page, engine, "cold load"):
@@ -221,6 +251,7 @@ def run(p, engine, device):
     page.wait_for_timeout(1000)
     opens_title(page, engine, "cold load")
     finds_subtitles(page, engine)
+    marks_watched(page, engine)
     answers(page, engine, "title page")
     scrolls(page, engine, "title page")
     page.evaluate("window.scrollTo(0, document.documentElement.scrollHeight)")
@@ -253,6 +284,7 @@ def run(p, engine, device):
     page.locator(".bar-toggle").tap()
     answers(page, engine, "after play/pause")
     opens_title(page, engine, "after play/pause")
+    marks_episodes(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
 

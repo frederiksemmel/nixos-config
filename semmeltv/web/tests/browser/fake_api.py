@@ -11,9 +11,11 @@ MOVIE = json.loads((HERE / "movie.json").read_text())
 SUBTITLES = json.loads((HERE / "subtitles.json").read_text())
 STORAGE = json.loads((HERE / "storage.json").read_text())
 DOWNLOADS = json.loads((HERE / "downloads.json").read_text())
+SHOW = json.loads((HERE / "show.json").read_text())
 CARDS = {card["key"]: card for row in LIBRARY.values() for card in row}
 playing = {"paused": False, "position": 2223.0, "subtitle": 1, "delay": 0.0}
 fetched = set()
+marked = {}
 audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
 CONNECT_SECONDS = 1.5
@@ -56,7 +58,29 @@ async def movie(request):
     card = CARDS.get(request.match_info["key"])
     if not card or card["kind"] != "movie":
         return web.json_response({"error": "not found"}, status=404)
-    return web.json_response({**MOVIE, **card, "subtitles": 1 if card["key"] in fetched else 0})
+    return web.json_response({**MOVIE, **card, "subtitles": 1 if card["key"] in fetched else 0,
+                              "finished": marked.get(("movie", card["key"]), False)})
+
+
+async def show(request):
+    seasons = [dict(season, episodes=[dict(episode, watched=marked.get(("show", episode["season"], episode["episode"]), episode["watched"]))
+                                      for episode in season["episodes"]])
+               for season in SHOW["seasons"]]
+    return web.json_response({**SHOW, "seasons": seasons})
+
+
+async def watched(request):
+    body = await request.json()
+    if body["kind"] == "movie":
+        marked[("movie", body["key"])] = body["watched"]
+    else:
+        marked[("show", body["season"], body["episode"])] = body["watched"]
+    return web.json_response({"message": "Marked", "ok": True, "watched": body["watched"]})
+
+
+async def forget_marks(request):
+    marked.clear()
+    return web.json_response({"ok": True})
 
 
 async def subtitles(request):
@@ -161,12 +185,15 @@ app = web.Application()
 app.router.add_get("/api/events", events)
 app.router.add_get("/api/library", library)
 app.router.add_get("/api/movies/{key}", movie)
+app.router.add_get("/api/shows/{key}", show)
 app.router.add_get("/api/subtitles", subtitles)
 app.router.add_get("/api/storage", storage)
 app.router.add_get("/api/downloads", downloads)
 app.router.add_get("/api/playback", playback)
 app.router.add_post("/api/subtitles/delay", subtitle_delay)
 app.router.add_post("/api/subtitles/fetch", fetch_subtitles)
+app.router.add_post("/api/watched", watched)
+app.router.add_post("/fake/forget-marks", forget_marks)
 app.router.add_post("/api/audio", choose_output)
 app.router.add_post("/api/audio/pair", pair)
 app.router.add_delete("/api/audio/pair", stop_pairing)
