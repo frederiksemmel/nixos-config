@@ -304,6 +304,18 @@ def watches_on_the_phone(page, engine):
     page.wait_for_timeout(800)
 
 
+def top_bar(page, engine):
+    bar = page.evaluate("""() => {
+      const box = (selector) => document.querySelector(selector).getBoundingClientRect();
+      const top = box("header.top"), brand = box(".brand"), talk = box(".microphone-talk"), settings = box(".top-link");
+      const border = parseFloat(getComputedStyle(document.querySelector("header.top")).borderBottomWidth);
+      return { above: talk.top - top.top, below: top.bottom - border - talk.bottom, left: brand.left, right: innerWidth - settings.right,
+               brand: brand.top + brand.height / 2 - (talk.top + talk.height / 2) };
+    }""")
+    check(engine, "the top bar's buttons sit in its middle", abs(bar["above"] - bar["below"]) < 1 and abs(bar["brand"]) < 1, str(bar))
+    check(engine, "the top bar's buttons line up with its edges", abs(bar["left"] - bar["right"]) < 1, str(bar))
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
@@ -323,6 +335,7 @@ def run(p, engine, device):
     page.wait_for_timeout(2500)
     answers(page, engine, "after the TV paused and resumed")
     scrolls(page, engine, "cold load")
+    top_bar(page, engine)
     check(engine, "page chrome is not selectable", page.evaluate('getComputedStyle(document.body).userSelect === "none" || getComputedStyle(document.body).webkitUserSelect === "none"'))
     page.locator("main .chips .chip", has_text="Movies").tap()
     until(page, engine, "a tapped chip switches", '[...document.querySelectorAll("main .chips .chip.on")].some((chip) => chip.textContent.trim() === "Movies")', 3000)
