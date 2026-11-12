@@ -567,6 +567,7 @@ in
 
   services.usbmuxd.enable = true;
   services.logind.settings.Login.HandlePowerKey = "ignore";
+  services.logind.settings.Login.HandleSuspendKey = "ignore";
 
   zramSwap = {
     enable = true;
