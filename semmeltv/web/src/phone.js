@@ -102,7 +102,9 @@ function capabilities() {
 
 function applyMode(next) {
   mode = next;
-  html.dataset.mode = next;
+  if (html.dataset.mode !== next) html.dataset.mode = next;
+  if (!html.hasAttribute("data-phone-ready")) html.dataset.phoneReady = "";
+  if (player && !html.classList.contains("pp-open")) html.classList.add("pp-open");
   const toggle = document.getElementById("mode");
   if (toggle) {
     toggle.dataset.mode = next;
@@ -829,8 +831,15 @@ window.addEventListener("click", (event) => {
   openPlayer(pick);
 }, true);
 
-applyMode(stored(MODE_KEY) === "phone" ? "phone" : "tv");
-new MutationObserver(() => {
+function keepMode() {
   const toggle = document.getElementById("mode");
-  if (toggle && toggle.dataset.mode !== mode) applyMode(mode);
-}).observe(document.body, { childList: true, subtree: true });
+  const drifted = html.dataset.mode !== mode
+    || !html.hasAttribute("data-phone-ready")
+    || (player && !html.classList.contains("pp-open"))
+    || (toggle && toggle.dataset.mode !== mode);
+  if (drifted) applyMode(mode);
+}
+
+applyMode(stored(MODE_KEY) === "phone" ? "phone" : "tv");
+new MutationObserver(keepMode).observe(document.body, { childList: true, subtree: true });
+new MutationObserver(keepMode).observe(html, { attributes: true });
