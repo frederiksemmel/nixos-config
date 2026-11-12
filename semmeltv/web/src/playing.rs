@@ -1,4 +1,4 @@
-use crate::api::{Api, NowPlaying, Pick, TvAbilities, Voice};
+use crate::api::{Api, Audio, NowPlaying, Output, Pairing, Pick, TvAbilities, Voice};
 use crate::live::{Live, VoiceLog};
 use crate::public::Public;
 use std::time::Duration;
@@ -199,6 +199,7 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                 bar_progress()
                 <button type="button" class="bar-open" data-sheet="open" aria-haspopup="dialog" aria-controls="sheet">
                     bar_info()
+                    <span class="bar-phones" aria-label="Sound on headphones">headphones_icon()</span>
                     <svg class="bar-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 14.5 6-6 6 6"></path></svg>
                 </button>
                 <button type="button" class="bar-toggle" aria-label="Play or pause"
@@ -257,6 +258,7 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                                 "Stop playing"
                             </button>
                         </section>
+                        sound()
                         remote(abilities: &abilities)
                     </div>
                 </div>
@@ -264,6 +266,78 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
             <script type="module" src=(SCRUB)></script>
             <script type="module" src=(PLAYER)></script>
         </div>
+    })
+}
+
+#[component]
+async fn headphones_icon() -> Result<impl View> {
+    Ok(view! {
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 15v-3a8 8 0 0 1 16 0v3"></path><path class="solid" d="M4 14.5h3.5v6H5.5a1.5 1.5 0 0 1-1.5-1.5zM20 14.5h-3.5v6h2a1.5 1.5 0 0 0 1.5-1.5z"></path></svg>
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct Sound {
+    on_headphones: bool,
+    connecting: bool,
+    name: String,
+    note: String,
+    refused: bool,
+}
+
+fn sound_of(audio: &Audio) -> Sound {
+    let connecting = audio.headphones.state == Pairing::Connecting;
+    let name = audio.headphones.name.clone();
+    let (note, refused) = match (&audio.error, connecting) {
+        (Some(error), _) => (error.clone(), true),
+        (None, true) => (format!("Connecting to {name}…"), false),
+        (None, false) => (String::new(), false),
+    };
+    Sound {
+        on_headphones: audio.output == Output::Headphones,
+        connecting,
+        name,
+        note,
+        refused,
+    }
+}
+
+#[component]
+async fn sound(cx: &Cx) -> Result<impl View> {
+    Ok(live! {
+        let mut audio = app_context::<Live>(cx).audio.clone();
+        loop {
+            let state = audio.borrow_and_update().as_ref().map(sound_of);
+            let token = match state {
+                Some(sound) => {
+                    let on_tv = !sound.on_headphones && !sound.connecting;
+                    let waiting = sound.connecting && !sound.on_headphones;
+                    emit! {
+                        <section class="pick sound" aria-label="Sound" data-output=(if sound.on_headphones { "headphones" } else { "tv" })>
+                            <h3>"Sound"</h3>
+                            <div class="choices outputs">
+                                <button type="button" class="choice" aria-pressed=(on_tv.to_string())
+                                    data-post="/api/audio" data-body=r#"{"output":"tv"}"#>
+                                    tv_icon()
+                                    <span>"TV"</span>
+                                </button>
+                                <button type="button" class=(if waiting { "choice pending" } else { "choice" })
+                                    aria-pressed=(sound.on_headphones.to_string())
+                                    data-post="/api/audio" data-body=r#"{"output":"headphones"}"#>
+                                    headphones_icon()
+                                    <span>(sound.name.as_str())</span>
+                                </button>
+                            </div>
+                            <p class=(if sound.refused { "answer refused" } else { "answer" }) data-said="true" aria-live="polite">(sound.note.as_str())</p>
+                        </section>
+                    }?
+                }
+                None => emit! {}?,
+            };
+            if !connected(cx) || audio.changed().await.is_err() {
+                break Ok(token);
+            }
+        }
     })
 }
 

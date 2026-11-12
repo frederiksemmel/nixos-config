@@ -950,6 +950,26 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
 .choice:active { transform: scale(0.96); }
 .sheet-playback > .answer { margin: -8px 0 0; }
 
+.choices.outputs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+
+.outputs .choice {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 52px;
+  padding: 0 12px;
+}
+
+.outputs .choice span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.outputs .choice svg { flex: none; width: 20px; height: 20px; }
+.sound > .answer { margin: 0; }
+
+.bar-phones { display: none; flex: none; color: var(--accent); }
+.bar-phones svg { width: 18px; height: 18px; }
+html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
+
 .stop {
   justify-self: start;
   display: inline-flex;

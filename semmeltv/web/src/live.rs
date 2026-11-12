@@ -1,4 +1,4 @@
-use crate::api::{Event, NowPlaying, Voice};
+use crate::api::{Audio, Event, NowPlaying, Voice};
 use futures_util::StreamExt;
 use std::collections::VecDeque;
 use std::time::Duration;
@@ -44,11 +44,13 @@ impl VoiceLog {
 pub struct Live {
     pub playback: watch::Receiver<Option<NowPlaying>>,
     pub voice: watch::Receiver<VoiceLog>,
+    pub audio: watch::Receiver<Option<Audio>>,
 }
 
 pub fn follow(url: String) -> Live {
     let (playback, playback_seen) = watch::channel(None);
     let (voice, voice_seen) = watch::channel(VoiceLog::default());
+    let (audio, audio_seen) = watch::channel(None);
     tokio::spawn(async move {
         loop {
             match tokio_tungstenite::connect_async(&url).await {
@@ -60,10 +62,14 @@ pub fn follow(url: String) -> Live {
                                 playback.send_if_modified(|current| replace(current, now_playing));
                             }
                             Ok(Event::Voice(event)) => voice.send_modify(|log| log.record(event)),
+                            Ok(Event::Audio(state)) => {
+                                audio.send_if_modified(|current| replace(current, Some(state)));
+                            }
                             Err(error) => eprintln!("events: {error}: {text}"),
                         }
                     }
                     playback.send_replace(None);
+                    audio.send_replace(None);
                 }
                 Err(error) => eprintln!("events {url}: {error}"),
             }
@@ -73,6 +79,7 @@ pub fn follow(url: String) -> Live {
     Live {
         playback: playback_seen,
         voice: voice_seen,
+        audio: audio_seen,
     }
 }
 

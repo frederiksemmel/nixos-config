@@ -1,9 +1,11 @@
 import sys
 import time
+import urllib.request
 
 from playwright.sync_api import sync_playwright
 
 BASE = sys.argv[1]
+FAKE = sys.argv[2]
 TILE = 'main a[data-topcoat-link][href^="/movies/"]'
 failures = []
 
@@ -41,7 +43,10 @@ def scrolls(page, engine, step):
     else:
         page.mouse.move(200, 400)
         page.mouse.wheel(0, 600)
-    page.wait_for_timeout(700)
+    try:
+        page.wait_for_function("scrollY > 100", timeout=3000)
+    except Exception:
+        pass
     y = page.evaluate("scrollY")
     check(engine, f"{step}: page scrolls", y > 100, f"scrollY {y}")
     page.evaluate("window.scrollTo(0, 0)")
@@ -97,12 +102,29 @@ def opens_title(page, engine, step):
           f'location.pathname === {href!r} && !document.querySelector("semmel-shell") && document.querySelector("main .detail h1")')
 
 
+def sound(page, engine):
+    phones = page.locator(".sound .choice").nth(1)
+    phones.scroll_into_view_if_needed()
+    phones.tap()
+    until(page, engine, "tapping AirPods shows it connecting",
+          'document.querySelector(".sound .answer").textContent.startsWith("Connecting")', 3000)
+    until(page, engine, "AirPods take over the sound",
+          'document.querySelector(".sound").dataset.output === "headphones" && getComputedStyle(document.querySelector(".bar-phones")).display !== "none"', 5000)
+    page.locator(".sound .choice").nth(0).tap()
+    until(page, engine, "TV takes the sound back", 'document.querySelector(".sound").dataset.output === "tv"', 3000)
+    urllib.request.urlopen(urllib.request.Request(FAKE + "/fake/fail-next-connect", method="POST", data=b""))
+    page.locator(".sound .choice").nth(1).tap()
+    until(page, engine, "a failed connect says why",
+          'document.querySelector(".sound .answer.refused")?.textContent.includes("didn\'t connect")', 5000)
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
     page.set_default_timeout(8000)
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
+    page.route("**/api/audio", lambda route: route.fulfill(response=route.fetch(url=FAKE + "/api/audio")))
     page.goto(BASE + "/", wait_until="commit")
     page.wait_for_timeout(2500)
     if not answers(page, engine, "cold load"):
@@ -141,6 +163,7 @@ def run(p, engine, device):
     until(page, engine, "remote sheet opens", 'document.documentElement.hasAttribute("data-sheet")', 3000)
     page.wait_for_timeout(800)
     answers(page, engine, "sheet open")
+    sound(page, engine)
     page.locator(".sheet-close").tap()
     until(page, engine, "remote sheet closes", '!document.documentElement.hasAttribute("data-sheet")', 3000)
     page.wait_for_timeout(800)

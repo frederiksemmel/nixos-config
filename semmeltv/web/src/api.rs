@@ -315,6 +315,35 @@ pub enum Voice {
 pub enum Event {
     Voice(Voice),
     Playback { now_playing: Option<NowPlaying> },
+    Audio(Audio),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Output {
+    Tv,
+    Headphones,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Pairing {
+    Disconnected,
+    Connecting,
+    Connected,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Headphones {
+    pub name: String,
+    pub state: Pairing,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Audio {
+    pub output: Output,
+    pub headphones: Headphones,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

@@ -31,6 +31,6 @@ runCommand "semmeltv-web-browser-test"
     PORT=3000 SEMMELTV_API_URL=http://127.0.0.1:8090 SEMMELTV_DOWNLOADS_URL=http://127.0.0.1:8090 semmeltv-web &
     curl --silent --retry 30 --retry-delay 1 --retry-connrefused --output /dev/null http://127.0.0.1:8090/api/library
     curl --silent --retry 30 --retry-delay 1 --retry-connrefused --output /dev/null http://127.0.0.1:3000/
-    python3 -I ${./tests/browser}/test.py http://127.0.0.1:3000
+    python3 -I ${./tests/browser}/test.py http://127.0.0.1:3000 http://127.0.0.1:8090
     touch $out
   ''

@@ -13,6 +13,9 @@ STORAGE = json.loads((HERE / "storage.json").read_text())
 DOWNLOADS = json.loads((HERE / "downloads.json").read_text())
 CARDS = {card["key"]: card for row in LIBRARY.values() for card in row}
 playing = {"paused": False, "position": 2223.0}
+audio = {"output": "tv", "headphones": {"name": "AirPods", "state": "disconnected"}, "error": None}
+sound = {"changed": 0, "fail_next": False}
+CONNECT_SECONDS = 1.5
 
 
 def now_playing():
@@ -28,8 +31,12 @@ async def events(request):
     socket = web.WebSocketResponse()
     await socket.prepare(request)
     tick = 0
+    sent = None
     while not socket.closed:
         await socket.send_str(json.dumps({"type": "playback", "now_playing": now_playing()}))
+        if sent != sound["changed"]:
+            sent = sound["changed"]
+            await socket.send_str(json.dumps({"type": "audio", **audio}))
         await asyncio.sleep(0.5)
         tick += 1
         playing["position"] += 0.5
@@ -65,6 +72,38 @@ async def playback(request):
     return web.json_response({"now_playing": now_playing()})
 
 
+def set_audio(**fields):
+    audio.update(fields)
+    sound["changed"] += 1
+
+
+async def connect_headphones(fail):
+    await asyncio.sleep(CONNECT_SECONDS)
+    if audio["headphones"]["state"] != "connecting":
+        return
+    if fail:
+        set_audio(output="tv", headphones={**audio["headphones"], "state": "disconnected"},
+                  error="AirPods didn't connect. Open the case near the TV and try again.")
+    else:
+        set_audio(output="headphones", headphones={**audio["headphones"], "state": "connected"})
+
+
+async def choose_output(request):
+    output = (await request.json())["output"]
+    if output == "headphones" and audio["output"] != "headphones":
+        set_audio(headphones={**audio["headphones"], "state": "connecting"}, error=None)
+        asyncio.get_running_loop().create_task(connect_headphones(sound["fail_next"]))
+        sound["fail_next"] = False
+    elif output == "tv":
+        set_audio(output="tv", headphones={**audio["headphones"], "state": "disconnected"}, error=None)
+    return web.json_response(audio)
+
+
+async def fail_next_connect(request):
+    sound["fail_next"] = True
+    return web.json_response({"ok": True})
+
+
 async def accepted(request):
     return web.json_response({"ok": True})
 
@@ -77,5 +116,7 @@ app.router.add_get("/api/subtitles", subtitles)
 app.router.add_get("/api/storage", storage)
 app.router.add_get("/api/downloads", downloads)
 app.router.add_get("/api/playback", playback)
+app.router.add_post("/api/audio", choose_output)
+app.router.add_post("/fake/fail-next-connect", fail_next_connect)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)
