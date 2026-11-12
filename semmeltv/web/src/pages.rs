@@ -533,6 +533,15 @@ fn initials(name: &str) -> String {
         .collect()
 }
 
+fn dotted(first: &str, rest: &str) -> String {
+    std::iter::once(first)
+        .chain(rest.split(" · "))
+        .filter(|part| !part.is_empty())
+        .map(|part| part.replace(' ', "\u{a0}"))
+        .collect::<Vec<_>>()
+        .join("\u{a0}· ")
+}
+
 fn facts(parts: &[Option<String>]) -> String {
     parts
         .iter()
@@ -713,7 +722,7 @@ async fn episode_row(cx: &Cx, public: &Public, series: &str, episode: &Episode, 
                 <span class="episode-text">
                     <b>(episode.label.as_str())</b>
                     scores(of: &episode.ratings)
-                    <span>(episode.short_label.as_str()) " · " (episode.watch.details.as_str())</span>
+                    <span>(dotted(&episode.short_label, &episode.watch.details))</span>
                 </span>
             </button>
             <button type="button" class="mark-seen" aria-label=(format!("Watched {label}"))
@@ -1082,6 +1091,15 @@ async fn show(cx: &Cx) -> Result<impl View> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn an_episode_line_breaks_only_after_a_dot() {
+        assert_eq!(
+            dotted("S8 E3", "H.264 · 22m · Stopped at 20m"),
+            "S8\u{a0}E3\u{a0}· H.264\u{a0}· 22m\u{a0}· Stopped\u{a0}at\u{a0}20m"
+        );
+        assert_eq!(dotted("S1 E1", ""), "S1\u{a0}E1");
+    }
 
     fn card(key: &str, kind: &str, years: Option<&str>, imdb: Option<f64>) -> Card {
         serde_json::from_value(json!({
