@@ -18,11 +18,20 @@ html.pp-open, html.pp-open body { overflow: hidden; overscroll-behavior: none; }
 
 .pp-video {
   position: absolute;
-  inset: 0;
+  top: 50%;
+  left: 0;
   width: 100%;
-  height: 100%;
+  height: auto;
+  max-height: 100%;
+  transform: translateY(-50%);
   object-fit: contain;
   background: #000;
+}
+
+.pp-video::-webkit-media-text-track-container { transition: transform 0.25s; }
+
+@media (orientation: landscape) {
+  .pp.pp-controls .pp-video::-webkit-media-text-track-container { transform: translateY(-96px); }
 }
 
 .pp-video::cue {
