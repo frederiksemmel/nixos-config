@@ -54,6 +54,12 @@ in
           IdentityFile = identity "~/.ssh/beast_login";
           IdentitiesOnly = true;
         };
+        # Protectli VP2410 running Windows, on the tailnet as tag:client-remote.
+        "office-windows" = {
+          User = "frede";
+          IdentityFile = identity "~/.ssh/beast_login";
+          IdentitiesOnly = true;
+        };
       };
     };
   };

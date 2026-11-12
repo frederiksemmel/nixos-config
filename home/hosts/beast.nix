@@ -19,6 +19,7 @@
     IdentityFile = "~/.ssh/id_fstux";
     IdentitiesOnly = true;
   };
+  programs.ssh.settings."office-windows".IdentityFile = lib.mkForce "~/.ssh/id_fstux";
 
   nix.package = pkgs.nix;
   nix.settings = {
