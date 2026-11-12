@@ -45,7 +45,7 @@ html.pp-open, html.pp-open body { overflow: hidden; overscroll-behavior: none; }
   inset: 0;
   display: grid;
   grid-template-rows: auto 1fr auto;
-  padding: max(env(safe-area-inset-top), 10px) max(env(safe-area-inset-right), 12px) max(env(safe-area-inset-bottom), 12px) max(env(safe-area-inset-left), 12px);
+  padding: max(env(safe-area-inset-top), 10px) max(env(safe-area-inset-right), 16px) max(env(safe-area-inset-bottom), 12px) max(env(safe-area-inset-left), 16px);
 }
 
 .pp-layer::before {
@@ -158,7 +158,7 @@ html.pp-open, html.pp-open body { overflow: hidden; overscroll-behavior: none; }
   align-items: center;
   gap: 7px;
   flex: none;
-  min-height: 38px;
+  min-height: 44px;
   padding: 0 14px;
   border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 999px;

@@ -278,7 +278,7 @@ class Player {
     middle.append(this.backButton, this.playButton, this.aheadButton);
 
     this.elapsed = element("span", "pp-time", { text: "0:00" });
-    this.remaining = element("span", "pp-time", { text: "" });
+    this.remaining = element("span", "pp-time", { text: "–:––" });
     this.scrub = element("input", "pp-scrub", { type: "range", min: "0", max: "1", step: "any", value: "0", "aria-label": "Position" });
     this.bubble = element("span", "pp-bubble");
     const line = element("div", "pp-line");
@@ -461,7 +461,7 @@ class Player {
     this.scrub.value = String(at);
     this.scrub.style.setProperty("--done", `${duration ? (at / duration) * 100 : 0}%`);
     this.elapsed.textContent = clock(at);
-    this.remaining.textContent = `-${clock(duration - at)}`;
+    this.remaining.textContent = duration ? `-${clock(duration - at)}` : "–:––";
   }
 
   duration() {
