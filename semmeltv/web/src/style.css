@@ -1094,6 +1094,11 @@ html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
 
 .key svg { width: 26px; height: 26px; }
 .keys.volume .key { min-height: 60px; }
+.volume-block { display: grid; gap: 8px; margin-top: 4px; }
+.volume-head { display: flex; justify-content: space-between; align-items: baseline; padding: 0 4px; color: var(--muted); font-size: 14px; font-weight: 600; }
+.volume-head output { color: var(--text); font-variant-numeric: tabular-nums; }
+.volume-level { display: block; height: 4px; margin: 0 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
+.volume-level i { display: block; height: 100%; background: var(--accent); transition: width 0.2s ease-out; }
 .key:active { background: #30303b; transform: scale(0.97); }
 .key[aria-busy="true"], .choice[aria-busy="true"] { opacity: 0.6; }
 .remote .answer { margin: 2px 4px 0; }

@@ -347,6 +347,14 @@ pub enum Link {
 pub struct Headphones {
     pub name: String,
     pub state: Link,
+    #[serde(default)]
+    pub volume: Option<Volume>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+pub struct Volume {
+    pub level: u8,
+    pub muted: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

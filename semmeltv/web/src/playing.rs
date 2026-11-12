@@ -368,6 +368,71 @@ async fn sound(cx: &Cx) -> Result<impl View> {
     })
 }
 
+#[derive(Debug, PartialEq)]
+struct VolumeLook {
+    label: String,
+    level: Option<u8>,
+    muted: bool,
+}
+
+fn volume_look(audio: Option<&Audio>) -> Option<VolumeLook> {
+    let headphones = audio
+        .filter(|audio| audio.output == Output::Headphones)
+        .and_then(|audio| audio.headphones.as_ref())?;
+    Some(VolumeLook {
+        label: format!("{} volume", headphones.name),
+        level: headphones.volume.map(|volume| volume.level),
+        muted: headphones.volume.is_some_and(|volume| volume.muted),
+    })
+}
+
+#[component]
+async fn volume_keys(cx: &Cx, tv: bool) -> Result<impl View> {
+    Ok(live! {
+        let mut audio = app_context::<Live>(cx).audio.clone();
+        loop {
+            let look = volume_look(audio.borrow_and_update().as_ref());
+            let shown = look.is_some() || tv;
+            let label = look.as_ref().map_or_else(|| "TV volume".to_string(), |look| look.label.clone());
+            let reading = match &look {
+                Some(VolumeLook { muted: true, .. }) => "Muted".to_string(),
+                Some(VolumeLook { level: Some(level), .. }) => format!("{level}%"),
+                _ => String::new(),
+            };
+            let width = look.as_ref().and_then(|look| look.level).filter(|_| !look.as_ref().is_some_and(|look| look.muted)).unwrap_or(0);
+            let token = if shown {
+                emit! {
+                    <div class="volume-block">
+                        <div class="volume-head">
+                            <span>(label.as_str())</span>
+                            <output aria-live="polite">(reading.as_str())</output>
+                        </div>
+                        if look.as_ref().is_some_and(|look| look.level.is_some()) {
+                            <span class="volume-level" aria-hidden="true"><i style=(format!("width:{width}%"))></i></span>
+                        }
+                        <div class="keys volume" role="group" aria-label=(label.as_str())>
+                            <button type="button" class="key" data-post="/api/volume/down" aria-label="Quieter">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 12h5"></path></svg>
+                            </button>
+                            <button type="button" class="key" data-post="/api/volume/mute" aria-label="Mute">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="m15.5 9.5 5 5M20.5 9.5l-5 5"></path></svg>
+                            </button>
+                            <button type="button" class="key" data-post="/api/volume/up" aria-label="Louder">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 12h5M18 9.5v5"></path></svg>
+                            </button>
+                        </div>
+                    </div>
+                }?
+            } else {
+                emit! {}?
+            };
+            if !connected(cx) || audio.changed().await.is_err() {
+                break Ok(token);
+            }
+        }
+    })
+}
+
 #[component]
 async fn remote(abilities: &TvAbilities) -> Result<impl View> {
     let unpaired = abilities.paired == Some(false);
@@ -388,19 +453,7 @@ async fn remote(abilities: &TvAbilities) -> Result<impl View> {
                     <span>"SemmelTV"</span>
                 </button>
             </div>
-            if abilities.volume {
-                <div class="keys volume" role="group" aria-label="TV volume">
-                    <button type="button" class="key" data-post="/api/tv/volume-down" aria-label="Quieter">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 12h5"></path></svg>
-                    </button>
-                    <button type="button" class="key" data-post="/api/tv/mute" aria-label="Mute">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="m15.5 9.5 5 5M20.5 9.5l-5 5"></path></svg>
-                    </button>
-                    <button type="button" class="key" data-post="/api/tv/volume-up" aria-label="Louder">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"></path><path d="M15.5 12h5M18 9.5v5"></path></svg>
-                    </button>
-                </div>
-            }
+            volume_keys(tv: abilities.volume)
             if unpaired {
                 <div class="pair">
                     <p>"The TV's volume works once the TV allows SemmelTV."</p>

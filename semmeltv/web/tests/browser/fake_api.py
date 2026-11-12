@@ -112,7 +112,7 @@ async def connect_headphones(fail):
         set_audio(output="tv", headphones={**audio["headphones"], "state": "disconnected"},
                   error="AirPods didn't connect. Open the case near the TV and try again.")
     else:
-        set_audio(output="headphones", headphones={**audio["headphones"], "state": "connected"})
+        set_audio(output="headphones", headphones={**audio["headphones"], "state": "connected", "volume": {"level": 50, "muted": False}})
 
 
 async def choose_output(request):
@@ -157,6 +157,21 @@ async def forget_subtitles(request):
     return web.json_response({"ok": True})
 
 
+async def volume(request):
+    step = request.match_info["step"]
+    phones = audio["headphones"]
+    if audio["output"] != "headphones" or not phones or not phones.get("volume"):
+        return web.json_response({"message": "TV volume 13", "ok": True})
+    level, muted = phones["volume"]["level"], phones["volume"]["muted"]
+    if step == "mute":
+        muted = not muted
+    else:
+        level = max(0, min(100, level + (6 if step == "up" else -6)))
+        muted = False
+    set_audio(headphones={**phones, "volume": {"level": level, "muted": muted}})
+    return web.json_response({"message": "AirPods muted" if muted else f"AirPods volume {level}%", "ok": True})
+
+
 async def fail_next_connect(request):
     sound["fail_next"] = True
     return web.json_response({"ok": True})
@@ -194,6 +209,7 @@ app.router.add_post("/api/subtitles/delay", subtitle_delay)
 app.router.add_post("/api/subtitles/fetch", fetch_subtitles)
 app.router.add_post("/api/watched", watched)
 app.router.add_post("/fake/forget-marks", forget_marks)
+app.router.add_post("/api/volume/{step}", volume)
 app.router.add_post("/api/audio", choose_output)
 app.router.add_post("/api/audio/pair", pair)
 app.router.add_delete("/api/audio/pair", stop_pairing)
