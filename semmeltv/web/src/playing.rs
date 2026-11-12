@@ -278,6 +278,10 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                                 <div class="choices" data-state="audio"></div>
                             </div>
                             <p class="answer" data-said="true" aria-live="polite"></p>
+                            <button type="button" class="pill handoff" data-handoff="phone">
+                                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"></rect><path d="M11 18.5h2"></path></svg>
+                                "Continue on phone"
+                            </button>
                             <button type="button" class="stop" data-post="/api/playback/stop">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M7 7h10v10H7z"></path></svg>
                                 "Stop playing"

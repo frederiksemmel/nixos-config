@@ -1193,6 +1193,8 @@ html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
 .pill:active { opacity: 0.8; }
 .pill.play-tv { display: none; }
 html[data-mode="phone"] .pill.play-tv { display: inline-flex; justify-self: start; margin-top: 2px; }
+.pill.handoff { display: none; }
+html[data-mode="phone"] .pill.handoff { display: inline-flex; justify-self: start; }
 .pill.quiet { background: transparent; border: 1px solid var(--line); color: var(--text); }
 .pill:has(svg) { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; }
 .pill svg { width: 18px; height: 18px; }
