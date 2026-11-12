@@ -838,10 +838,12 @@ async fn movie(cx: &Cx) -> Result<impl View> {
                                 "Play on TV"
                             </button>
                             <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
-                            movie_mark(key: key.as_str(), finished: movie.card.finished, said: said.clone())
-                            if let Some(fetch) = &fetch {
-                                find_subtitles(label: "Find subtitles", body: fetch.as_str())
-                            }
+                            <div class="detail-more">
+                                movie_mark(key: key.as_str(), finished: movie.card.finished, said: said.clone())
+                                if let Some(fetch) = &fetch {
+                                    find_subtitles(label: "Find subtitles", body: fetch.as_str())
+                                }
+                            </div>
                         </div>
                         facts_list(rows: &rows)
                         links(about: &movie.about)

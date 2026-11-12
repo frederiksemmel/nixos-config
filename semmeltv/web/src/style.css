@@ -1630,6 +1630,9 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 
 .detail-playback .said { margin: 0; }
 
+.detail-more { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 4px; }
+.detail-more .mark-film, .detail-more .find-subtitles-row { margin-top: 0; }
+
 .detail-plot { margin: 18px 0 0; font-size: 16px; line-height: 1.55; }
 
 .detail-facts {
