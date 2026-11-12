@@ -169,9 +169,11 @@ async function continueOnPhone() {
       note("The TV isn't playing anything");
       return;
     }
-    await request("POST", "/api/playback/stop");
     const pick = now.movie ? { movie: now.movie } : { show: now.show, season: now.season, episode: now.episode };
-    openPlayer(pick, { start: now.position });
+    openPlayer(pick, {
+      start: now.position,
+      opened: () => request("POST", "/api/playback/stop").catch((error) => note(error.message)),
+    });
   } catch (error) {
     note(error.message);
   }
@@ -452,6 +454,7 @@ class Player {
       return;
     }
     this.session = session;
+    if (options.opened) options.opened();
     this.played = 0;
     this.started = false;
     this.lastTime = null;
