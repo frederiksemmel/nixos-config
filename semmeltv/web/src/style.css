@@ -9,7 +9,7 @@
   --listening: #5ad17e;
   --working: #ffc861;
   --refused: #ff9b6a;
-  --radius: 14px;
+  --radius: 16px;
   --gutter: max(16px, env(safe-area-inset-left), env(safe-area-inset-right));
   --edge: env(safe-area-inset-top, 0px);
   --top: calc(var(--edge) + 65px);
@@ -180,7 +180,7 @@ html[data-phone-ready] .mode { display: grid; }
   right: var(--gutter);
   z-index: 21;
   padding: 10px 14px;
-  border-radius: 14px;
+  border-radius: var(--radius);
   background: #2a1d1d;
   color: var(--refused);
   font-size: 14px;
@@ -252,7 +252,7 @@ html[data-phone-ready] .mode { display: grid; }
   display: grid;
   gap: 3px;
   padding: 12px 16px 12px 36px;
-  border-radius: 18px;
+  border-radius: var(--radius);
   background: rgba(30, 30, 37, 0.88);
   -webkit-backdrop-filter: var(--glass-blur);
   backdrop-filter: var(--glass-blur);
@@ -883,7 +883,7 @@ html[data-sheet] .sheet-dim { pointer-events: auto; }
   bottom: -60px;
   padding-bottom: 60px;
   overflow: hidden;
-  border-radius: 16px 16px 0 0;
+  border-radius: var(--radius) var(--radius) 0 0;
   background: #111116;
   box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.45);
   visibility: hidden;
@@ -959,7 +959,7 @@ html[data-sheet] body { overflow: hidden; }
   position: relative;
   aspect-ratio: 16 / 9;
   overflow: hidden;
-  border-radius: 18px;
+  border-radius: var(--radius);
   background:
     radial-gradient(120% 90% at 0% 0%, hsl(220 55% 30%), transparent 70%),
     linear-gradient(135deg, hsl(220 45% 18%), hsl(260 55% 9%));
