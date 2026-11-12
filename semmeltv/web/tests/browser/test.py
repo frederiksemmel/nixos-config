@@ -116,13 +116,19 @@ def sound(page, engine):
           '[...document.querySelectorAll(".toast")].some((toast) => toast.textContent.includes("Sound is on AirPods"))', 3000)
     until(page, engine, "the volume keys follow the sound to the AirPods",
           'document.querySelector(".volume-head span").textContent.includes("AirPods") && document.querySelector(".volume-head output").textContent === "50%"', 3000)
+    until(page, engine, "the AirPods timing shows while they have the sound",
+          'document.querySelector(".sound-timing output")?.textContent === "0 ms"', 3000)
+    later = page.locator(".sound-timing .choice").nth(1)
+    later.scroll_into_view_if_needed()
+    later.tap()
+    until(page, engine, "+20 ms makes the AirPods sound later", 'document.querySelector(".sound-timing output")?.textContent === "+20 ms"', 3000)
     louder = page.locator('.keys.volume .key[aria-label="Louder"]')
     louder.scroll_into_view_if_needed()
     louder.tap()
     until(page, engine, "Louder turns the AirPods up", 'document.querySelector(".volume-head output").textContent === "56%"', 3000)
     page.locator(".sound .choice").nth(0).scroll_into_view_if_needed()
     page.locator(".sound .choice").nth(0).tap()
-    until(page, engine, "TV takes the sound back", 'document.querySelector(".sound").dataset.output === "tv"', 3000)
+    until(page, engine, "TV takes the sound back", 'document.querySelector(".sound").dataset.output === "tv" && !document.querySelector(".sound-timing")', 3000)
     fake("/fake/fail-next-connect")
     page.locator(".sound .choice").nth(1).tap()
     until(page, engine, "a failed connect says why",

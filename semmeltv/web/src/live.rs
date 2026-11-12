@@ -187,6 +187,7 @@ mod tests {
                 name: "AirPods".to_string(),
                 state: Link::Connected,
                 volume: None,
+                audio_delay: None,
             }),
             pairing: pairing.map(|state| Pairing {
                 state,

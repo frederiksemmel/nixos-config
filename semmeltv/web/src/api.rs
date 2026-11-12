@@ -349,6 +349,8 @@ pub struct Headphones {
     pub state: Link,
     #[serde(default)]
     pub volume: Option<Volume>,
+    #[serde(default)]
+    pub audio_delay: Option<i32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

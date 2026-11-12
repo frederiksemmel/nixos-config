@@ -310,6 +310,15 @@ struct Sound {
     connecting: bool,
     name: String,
     note: String,
+    delay: Option<i32>,
+}
+
+fn lip_sync(delay: i32) -> String {
+    match delay {
+        0 => "0 ms".to_string(),
+        later if later > 0 => format!("+{later} ms"),
+        earlier => format!("−{} ms", -earlier),
+    }
 }
 
 fn sound_of(audio: &Audio) -> Option<Sound> {
@@ -322,6 +331,7 @@ fn sound_of(audio: &Audio) -> Option<Sound> {
         connecting,
         name,
         note,
+        delay: headphones.audio_delay.filter(|_| audio.output == Output::Headphones),
     })
 }
 
@@ -351,6 +361,16 @@ async fn sound(cx: &Cx) -> Result<impl View> {
                                     <span>(sound.name.as_str())</span>
                                 </button>
                             </div>
+                            if let Some(delay) = sound.delay {
+                                <div class="delay sound-timing">
+                                    <span>"Timing"</span>
+                                    <button type="button" class="choice" data-post="/api/audio/delay" data-body=r#"{"by":-20}"#
+                                        aria-label="Play the sound 20 milliseconds earlier">"−20 ms"</button>
+                                    <output aria-live="polite">(lip_sync(delay))</output>
+                                    <button type="button" class="choice" data-post="/api/audio/delay" data-body=r#"{"by":20}"#
+                                        aria-label="Play the sound 20 milliseconds later">"+20 ms"</button>
+                                </div>
+                            }
                             <p class="answer" aria-live="polite">(sound.note.as_str())</p>
                         </section>
                     }?
