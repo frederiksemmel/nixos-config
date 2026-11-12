@@ -351,7 +351,10 @@ in
           Unit = {
             Description = "Empty ssh-agent when the session locks or suspends";
             PartOf = [ "graphical-session.target" ];
-            After = [ "ssh-agent.service" ];
+            After = [
+              "graphical-session.target"
+              "ssh-agent.service"
+            ];
           };
           Service = {
             ExecStart = lib.getExe sshAgentClear;
