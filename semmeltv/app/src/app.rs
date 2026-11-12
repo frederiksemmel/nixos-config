@@ -1145,6 +1145,7 @@ impl App {
                     muted: state.muted,
                     speed: state.speed,
                     subtitle: state.subtitle,
+                    subtitle_delay: state.subtitle_delay,
                     audio: state.audio,
                     loading: !state.started,
                     jump: state.jump,

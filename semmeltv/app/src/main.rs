@@ -27,7 +27,9 @@ mod player;
 mod progress;
 mod seek;
 mod segments;
+mod sidecar;
 mod storage;
+mod subfetch;
 mod subtitles;
 mod tags;
 mod tmdb;
@@ -202,6 +204,8 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
         token: cache.tv_token_path(),
     };
+    let library = args.library.clone();
+    let downloads = env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new);
     let setup = app::Setup {
         store: offline::Store::new(args.library.clone(), args.vfs_cache, capacity),
         storage,
@@ -214,10 +218,12 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
         led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
-        downloads: env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new),
         headphones: env_text("SEMMELTV_HEADPHONES").is_some_and(|value| value == "bluetooth"),
+        downloads: downloads.clone(),
         api: args.api.map(|address| api::Config {
             address,
+            library,
+            downloads,
             phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
                 .ok()
                 .filter(|device| !device.is_empty()),

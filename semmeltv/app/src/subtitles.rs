@@ -1,4 +1,5 @@
 use crate::api::{self, Ask, Pending, Request};
+use crate::sidecar::Sidecar;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -6,13 +7,14 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 
-pub const OBSERVED: [&str; 4] = ["track-list", "sid", "sub-visibility", "aid"];
+pub const OBSERVED: [&str; 5] = ["track-list", "sid", "sub-visibility", "aid", "sub-delay"];
 const LANGUAGES: &[(&[&str], &str)] = &[
     (&["de", "ger", "deu"], "German"),
     (&["en", "eng"], "English"),
@@ -50,11 +52,23 @@ const LANGUAGES: &[(&[&str], &str)] = &[
     (&["ko", "kor"], "Korean"),
     (&["zh", "chi", "zho"], "Chinese"),
     (&["ca", "cat"], "Catalan"),
+    (&["et", "est"], "Estonian"),
+    (&["lv", "lav"], "Latvian"),
+    (&["lt", "lit"], "Lithuanian"),
+    (&["mk", "mac", "mkd"], "Macedonian"),
+];
+const ALIASES: &[(&str, &str)] = &[
+    ("bokmal", "no"),
+    ("bokmål", "no"),
+    ("nynorsk", "no"),
+    ("brazilian", "pt"),
 ];
 const MOST_LANGUAGES: usize = 8;
 const PER_FILE_STYLE: [&str; 3] = ["sub-pos", "sub-scale", "sub-ass-override"];
 const NO_SUBTITLES: &str = "No subtitles in this file";
 const OFF: &str = "Subtitles off";
+const MOST_DELAY: f64 = 60.0;
+const FILES: &str = "subtitle-files.json";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -151,7 +165,8 @@ impl Settings {
         let mut args = vec![
             format!("--slang={}", self.languages.join(",")),
             format!("--sub-visibility={}", if self.shown { "yes" } else { "no" }),
-            "--sub-auto=fuzzy".to_string(),
+            "--sub-auto=no".to_string(),
+            "--watch-later-options-remove=sub-delay".to_string(),
         ];
         for name in PER_FILE_STYLE {
             args.push(format!("--watch-later-options-remove={name}"));
@@ -201,6 +216,25 @@ pub fn language_name(code: &str) -> Option<&'static str> {
         .map(|(_, name)| *name)
 }
 
+pub fn bibliographic(code: &str) -> Option<&'static str> {
+    let code = primary(code);
+    LANGUAGES
+        .iter()
+        .find(|(codes, _)| codes.contains(&code.as_str()))
+        .and_then(|(codes, _)| codes.iter().find(|code| code.len() == 3).copied())
+}
+
+pub fn language_code(word: &str) -> Option<&'static str> {
+    let word = word.trim().to_lowercase();
+    if let Some((_, code)) = ALIASES.iter().find(|(alias, _)| *alias == word) {
+        return Some(code);
+    }
+    LANGUAGES
+        .iter()
+        .find(|(codes, name)| codes.contains(&word.as_str()) || name.to_lowercase() == word)
+        .map(|(codes, _)| codes[0])
+}
+
 fn same_language(code: &str, wanted: &str) -> bool {
     primary(code) == primary(wanted) || language_name(code).is_some_and(|name| language_name(wanted) == Some(name))
 }
@@ -221,18 +255,25 @@ impl Track {
         let language = text("lang");
         let title = text("title");
         let flag = |key: &str| track[key].as_bool().unwrap_or(false);
+        let titled = |word: &str| {
+            title
+                .as_deref()
+                .is_some_and(|title| title.split_whitespace().any(|part| part.eq_ignore_ascii_case(word)))
+        };
         let name = language.as_deref().and_then(language_name).map(str::to_string);
         let label = name
             .or_else(|| title.clone())
             .or_else(|| language.clone())
             .unwrap_or_else(|| format!("Track {id}"));
+        let forced = flag("forced") || titled("forced");
+        let hearing_impaired = flag("hearing-impaired") || titled("SDH");
         Some(Self {
             id,
             language,
             title,
             label,
-            forced: flag("forced"),
-            hearing_impaired: flag("hearing-impaired"),
+            forced,
+            hearing_impaired,
             external: flag("external"),
         })
     }
@@ -241,6 +282,7 @@ impl Track {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Playing {
     pub visible: bool,
+    pub delay: f64,
     pub track: Option<i64>,
     pub tracks: Vec<Track>,
     pub audio: Option<i64>,
@@ -326,6 +368,7 @@ pub enum Observed {
     Track(Option<i64>),
     Audio(Option<i64>),
     Visible(bool),
+    Delay(f64),
 }
 
 impl Observed {
@@ -343,6 +386,7 @@ impl Observed {
             "sid" => Some(Self::Track(data.as_i64())),
             "aid" => Some(Self::Audio(data.as_i64())),
             "sub-visibility" => data.as_bool().map(Self::Visible),
+            "sub-delay" => data.as_f64().map(Self::Delay),
             _ => None,
         }
     }
@@ -373,18 +417,61 @@ impl Answer {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Change {
     Restyle,
     Toggle,
     Track(Option<i64>),
     Audio(i64),
+    Delay(f64),
+    Add { video: PathBuf, sidecar: Sidecar },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+struct Remembered {
+    delay: f64,
+    embedded: Option<usize>,
+}
+
+impl Remembered {
+    fn is_empty(&self) -> bool {
+        self.delay == 0.0 && self.embedded.is_none()
+    }
 }
 
 #[derive(Default)]
 struct Inner {
     settings: Settings,
     playing: Option<Playing>,
+    file: Option<PathBuf>,
+    sidecars: Vec<Sidecar>,
+    awaited: usize,
+    files: BTreeMap<PathBuf, Remembered>,
+}
+
+impl Inner {
+    fn remember(&mut self, change: impl FnOnce(&mut Remembered)) -> bool {
+        let Some(file) = self.file.clone() else {
+            return false;
+        };
+        let remembered = self.files.entry(file.clone()).or_default();
+        let before = *remembered;
+        change(remembered);
+        let changed = *remembered != before;
+        if remembered.is_empty() {
+            self.files.remove(&file);
+        }
+        changed
+    }
+}
+
+fn delay_label(delay: f64) -> String {
+    if delay == 0.0 {
+        "Subtitle delay off".to_string()
+    } else {
+        format!("Subtitle delay {delay:+.1} s")
+    }
 }
 
 #[derive(Clone, Default)]
@@ -400,17 +487,43 @@ impl Subtitles {
             .and_then(|bytes| serde_json::from_slice::<Settings>(&bytes).ok())
             .and_then(|settings| settings.checked().ok())
             .unwrap_or_default();
+        let files = fs::read(path.with_file_name(FILES))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
+            .unwrap_or_default();
         Self {
             path: Some(path),
             state: Arc::new(Mutex::new(Inner {
                 settings,
-                playing: None,
+                files,
+                ..Inner::default()
             })),
         }
     }
 
     pub fn settings(&self) -> Settings {
         self.state.lock().unwrap().settings.clone()
+    }
+
+    pub fn mpv_args(&self, file: &Path) -> Vec<String> {
+        let state = self.state.lock().unwrap();
+        let mut args = state.settings.mpv_args();
+        let delay = state.files.get(file).map_or(0.0, |remembered| remembered.delay);
+        args.push(format!("--sub-delay={delay}"));
+        args
+    }
+
+    pub fn plays(&self, file: &Path) -> bool {
+        self.state.lock().unwrap().file.as_deref() == Some(file)
+    }
+
+    pub fn embedded(&self, file: &Path) -> Option<usize> {
+        self.state
+            .lock()
+            .unwrap()
+            .files
+            .get(file)
+            .and_then(|remembered| remembered.embedded)
     }
 
     fn playing(&self) -> Option<Playing> {
@@ -423,43 +536,102 @@ impl Subtitles {
         })
     }
 
+    pub fn delay(&self) -> f64 {
+        self.playing().map_or(0.0, |playing| playing.delay)
+    }
+
     fn save(&self, settings: Settings) -> io::Result<()> {
         if let Some(path) = &self.path {
-            let temporary = path.with_extension("json.tmp");
-            if let Some(dir) = path.parent() {
-                fs::create_dir_all(dir)?;
-            }
-            fs::write(&temporary, serde_json::to_vec_pretty(&settings)?)?;
-            fs::rename(temporary, path)?;
+            write(path, &settings)?;
         }
         self.state.lock().unwrap().settings = settings;
         Ok(())
     }
 
-    pub fn started(&self) {
-        self.state.lock().unwrap().playing = Some(Playing::default());
+    fn save_files(&self, files: &BTreeMap<PathBuf, Remembered>) {
+        if let Some(path) = &self.path {
+            let path = path.with_file_name(FILES);
+            if let Err(error) = write(&path, files) {
+                eprintln!("subtitles: {}: {error}", path.display());
+            }
+        }
+    }
+
+    pub fn started(&self, file: &Path, sidecars: Vec<Sidecar>) {
+        let mut state = self.state.lock().unwrap();
+        state.playing = Some(Playing::default());
+        state.file = Some(file.to_path_buf());
+        state.awaited = sidecars.len();
+        state.sidecars = sidecars;
     }
 
     pub fn stopped(&self) {
-        self.state.lock().unwrap().playing = None;
+        let mut state = self.state.lock().unwrap();
+        state.playing = None;
+        state.file = None;
+        state.sidecars.clear();
+        state.awaited = 0;
     }
 
-    pub fn observe(&self, observed: Observed) {
+    pub fn loaded(&self) -> Vec<Value> {
+        self.state
+            .lock()
+            .unwrap()
+            .sidecars
+            .iter()
+            .map(|sidecar| {
+                json!([
+                    "sub-add",
+                    sidecar.path,
+                    "auto",
+                    sidecar.title,
+                    sidecar.language.as_deref().unwrap_or_default()
+                ])
+            })
+            .collect()
+    }
+
+    pub fn observe(&self, observed: Observed) -> Vec<Value> {
         let mut state = self.state.lock().unwrap();
+        let mut commands = Vec::new();
+        let mut remembered = false;
+        let shown = state.settings.shown;
+        let languages = state.settings.languages.clone();
+        let awaited = state.awaited;
         let playing = state.playing.get_or_insert_with(Playing::default);
         match observed {
             Observed::Tracks { subtitles, audio } => {
                 playing.tracks = subtitles;
                 playing.audio_tracks = audio;
+                let external = playing.tracks.iter().filter(|track| track.external).count();
+                let embedded = playing.tracks.len() - external;
+                let settled = awaited > 0 && external >= awaited;
+                if settled
+                    && shown
+                    && let Some(id) = playing.preferred(&languages)
+                {
+                    commands = playing.show(id).0;
+                }
+                if settled {
+                    state.awaited = 0;
+                }
+                remembered = state.remember(|remembered| remembered.embedded = Some(embedded));
             }
             Observed::Track(track) => playing.track = track,
             Observed::Audio(track) => playing.audio = track,
             Observed::Visible(visible) => playing.visible = visible,
+            Observed::Delay(delay) => playing.delay = delay,
         }
+        if remembered {
+            let files = state.files.clone();
+            drop(state);
+            self.save_files(&files);
+        }
+        commands
     }
 
     pub fn change(&self, change: Change) -> Answer {
-        let state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
         let playing = state.playing.clone().unwrap_or_default();
         match change {
             Change::Restyle => {
@@ -474,8 +646,49 @@ impl Subtitles {
             Change::Toggle => playing.toggle(&state.settings.languages),
             Change::Track(track) => playing.choose(track).map_or_else(Answer::refused, Answer::done),
             Change::Audio(track) => playing.choose_audio(track).map_or_else(Answer::refused, Answer::done),
+            Change::Delay(delay) => {
+                if state.file.is_none() {
+                    return Answer::refused("Nothing is playing".to_string());
+                }
+                if !delay.is_finite() {
+                    return Answer::refused("The delay must be a number of seconds".to_string());
+                }
+                let delay = ((delay * 10.0).round() / 10.0).clamp(-MOST_DELAY, MOST_DELAY);
+                if state.remember(|remembered| remembered.delay = delay) {
+                    let files = state.files.clone();
+                    drop(state);
+                    self.save_files(&files);
+                }
+                Answer::done((vec![json!(["set_property", "sub-delay", delay])], delay_label(delay)))
+            }
+            Change::Add { video, sidecar } => {
+                if state.file.as_deref() != Some(video.as_path()) {
+                    return Answer::refused("That is not what plays now".to_string());
+                }
+                state.sidecars.push(sidecar.clone());
+                let commands = vec![
+                    json!([
+                        "sub-add",
+                        sidecar.path,
+                        "select",
+                        sidecar.title,
+                        sidecar.language.as_deref().unwrap_or_default()
+                    ]),
+                    json!(["set_property", "sub-visibility", true]),
+                ];
+                Answer::done((commands, format!("Subtitles: {}", sidecar.title)))
+            }
         }
     }
+}
+
+fn write(path: &Path, value: &impl Serialize) -> io::Result<()> {
+    let temporary = path.with_extension("json.tmp");
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    fs::write(&temporary, serde_json::to_vec_pretty(value)?)?;
+    fs::rename(temporary, path)
 }
 
 #[derive(Serialize)]
@@ -495,6 +708,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(subtitles: Subtitles, app: Ask) 
         .route("/api/subtitles", get(show).put(update))
         .route("/api/subtitles/track", post(track))
         .route("/api/subtitles/toggle", post(toggle))
+        .route("/api/subtitles/delay", post(delay))
         .route("/api/audio/track", post(audio))
         .with_state(Endpoint { subtitles, app })
 }
@@ -548,6 +762,16 @@ struct AudioBody {
 
 async fn audio(State(endpoint): State<Endpoint>, Json(body): Json<AudioBody>) -> Response {
     api::ask_app(&endpoint.app, Request::Subtitles(Change::Audio(body.track))).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DelayBody {
+    delay: f64,
+}
+
+async fn delay(State(endpoint): State<Endpoint>, Json(body): Json<DelayBody>) -> Response {
+    api::ask_app(&endpoint.app, Request::Subtitles(Change::Delay(body.delay))).await
 }
 
 async fn toggle(State(endpoint): State<Endpoint>) -> Response {
@@ -771,7 +995,7 @@ mod tests {
     #[test]
     fn the_state_follows_what_mpv_reports_until_playback_stops() {
         let subtitles = Subtitles::default();
-        subtitles.started();
+        subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
         let tracks = Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap();
         subtitles.observe(tracks);
         subtitles.observe(Observed::Track(Some(1)));
@@ -801,7 +1025,7 @@ mod tests {
     fn serve(name: &str) -> Server {
         let dir = std::env::temp_dir().join(format!("semmeltv-subtitles-api-{name}-{}", std::process::id()));
         let subtitles = Subtitles::load(dir.join("subtitles.json"));
-        subtitles.started();
+        subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
         subtitles.observe(Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap());
         let (asked, received) = mpsc::channel();
         let app: Ask = Arc::new(move |pending: Pending| {
@@ -907,5 +1131,123 @@ mod tests {
         assert_eq!(commands, [json!(["set_property", "aid", 2])]);
         assert_eq!(message, "Audio: German");
         assert_eq!(playing.choose_audio(7), Err("There is no audio track 7".to_string()));
+    }
+
+    fn english(path: &str) -> Sidecar {
+        Sidecar {
+            path: PathBuf::from(path),
+            language: Some("en".to_string()),
+            title: "English".to_string(),
+            forced: false,
+            hearing_impaired: false,
+        }
+    }
+
+    #[test]
+    fn library_subtitles_are_added_once_the_file_loads_and_shown_when_wanted() {
+        let subtitles = Subtitles::default();
+        subtitles
+            .save(Settings {
+                shown: true,
+                ..Settings::default()
+            })
+            .unwrap();
+        let film = Path::new("/lib/Movies/Airplane 1980/Airplane.mp4");
+        subtitles.started(film, vec![english("/lib/Movies/Airplane 1980/Subs/13_English.srt")]);
+        assert!(subtitles.mpv_args(film).contains(&"--sub-auto=no".to_string()));
+        assert_eq!(
+            subtitles.loaded(),
+            [json!([
+                "sub-add",
+                "/lib/Movies/Airplane 1980/Subs/13_English.srt",
+                "auto",
+                "English",
+                "en"
+            ])]
+        );
+        let none = json!([{ "id": 1, "type": "audio", "lang": "en" }]);
+        let tracks = |data: Value| Observed::parse(&json!({ "name": "track-list", "data": data })).unwrap();
+        assert!(subtitles.observe(tracks(none)).is_empty());
+        let added = json!([
+            { "id": 1, "type": "audio", "lang": "en" },
+            { "id": 1, "type": "sub", "lang": "en", "title": "English", "external": true },
+        ]);
+        assert_eq!(
+            subtitles.observe(tracks(added.clone())),
+            [
+                json!(["set_property", "sid", 1]),
+                json!(["set_property", "sub-visibility", true])
+            ]
+        );
+        assert!(subtitles.observe(tracks(added)).is_empty());
+        assert_eq!(subtitles.embedded(film), Some(0));
+    }
+
+    #[test]
+    fn the_delay_applies_live_and_is_remembered_for_the_file() {
+        let dir = std::env::temp_dir().join(format!("semmeltv-delay-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let film = Path::new("/lib/Movies/Up/Up.mkv");
+        let subtitles = Subtitles::load(dir.join("subtitles.json"));
+        assert!(!subtitles.change(Change::Delay(0.5)).ok);
+        subtitles.started(film, Vec::new());
+        let answer = subtitles.change(Change::Delay(-1.04));
+        assert_eq!(answer.commands, [json!(["set_property", "sub-delay", -1.0])]);
+        assert_eq!(answer.message, "Subtitle delay -1.0 s");
+        subtitles.observe(Observed::Delay(-1.0));
+        assert_eq!(subtitles.delay(), -1.0);
+        subtitles.stopped();
+        let again = Subtitles::load(dir.join("subtitles.json"));
+        assert!(again.mpv_args(film).contains(&"--sub-delay=-1".to_string()));
+        assert!(
+            again
+                .mpv_args(Path::new("/lib/other.mkv"))
+                .contains(&"--sub-delay=0".to_string())
+        );
+        again.started(film, Vec::new());
+        assert_eq!(again.change(Change::Delay(0.0)).message, "Subtitle delay off");
+        assert!(!fs::read_to_string(dir.join(FILES)).unwrap().contains("Up.mkv"));
+        assert_eq!(
+            again.change(Change::Delay(500.0)).commands,
+            [json!(["set_property", "sub-delay", 60.0])]
+        );
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn fetched_subtitles_are_added_only_to_the_file_that_plays() {
+        let subtitles = Subtitles::default();
+        let film = PathBuf::from("/lib/Movies/Up/Up.mkv");
+        subtitles.started(&film, Vec::new());
+        let added = subtitles.change(Change::Add {
+            video: film.clone(),
+            sidecar: english("/lib/Movies/Up/Up.en.srt"),
+        });
+        assert!(added.ok);
+        assert_eq!(
+            added.commands,
+            [
+                json!(["sub-add", "/lib/Movies/Up/Up.en.srt", "select", "English", "en"]),
+                json!(["set_property", "sub-visibility", true]),
+            ]
+        );
+        let elsewhere = subtitles.change(Change::Add {
+            video: PathBuf::from("/lib/Movies/Cars/Cars.mkv"),
+            sidecar: english("/lib/Movies/Cars/Cars.en.srt"),
+        });
+        assert!(!elsewhere.ok);
+        assert!(subtitles.plays(&film));
+    }
+
+    #[test]
+    fn language_names_and_codes_find_their_code() {
+        assert_eq!(language_code("English"), Some("en"));
+        assert_eq!(language_code("eng"), Some("en"));
+        assert_eq!(language_code("Bokmal"), Some("no"));
+        assert_eq!(language_code("mac"), Some("mk"));
+        assert_eq!(language_code("Klingon"), None);
+        assert_eq!(bibliographic("en"), Some("eng"));
+        assert_eq!(bibliographic("de-DE"), Some("ger"));
+        assert_eq!(bibliographic("no"), Some("nor"));
     }
 }

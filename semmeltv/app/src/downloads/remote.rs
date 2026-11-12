@@ -1,7 +1,9 @@
 use super::resolve::Wish;
 use super::{Outcome, Proposal, SearchBody};
+use crate::subfetch::{Fetched, Wanted};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde_json::Value;
 use std::time::Duration;
 
 const SEARCH_TIME: Duration = Duration::from_secs(120);
@@ -54,6 +56,30 @@ impl Downloads {
             "/api/downloads/confirm",
             &serde_json::json!({ "proposal": proposal, "choice": 0 }),
         )
+    }
+
+    pub fn subtitles(&self, wanted: &Wanted) -> Result<Fetched, String> {
+        let mut response = self
+            .agent
+            .post(&format!("{}/api/downloads/subtitles", self.base))
+            .config()
+            .http_status_as_error(false)
+            .build()
+            .send_json(wanted)
+            .map_err(|error| format!("downloads: {error}"))?;
+        let ok = response.status().is_success();
+        let body: Value = response
+            .body_mut()
+            .read_json()
+            .map_err(|error| format!("downloads: {error}"))?;
+        if ok {
+            serde_json::from_value(body).map_err(|error| format!("downloads: {error}"))
+        } else {
+            Err(body["error"]
+                .as_str()
+                .unwrap_or("downloads: the subtitle fetch failed")
+                .to_string())
+        }
     }
 
     pub fn dismiss(&self, proposal: &str) -> Result<Outcome, String> {

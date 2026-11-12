@@ -4,6 +4,7 @@ pub mod remote;
 mod resolve;
 mod rqbit;
 mod score;
+mod sidecars;
 mod torznab;
 
 use crate::intent::{self, Action};
@@ -187,6 +188,7 @@ struct Service {
     meta: PathBuf,
     tmdb: tmdb::Client,
     shelf: Mutex<Shelf>,
+    sidecars: sidecars::Sidecars,
     deliveries: Mutex<Sender<String>>,
 }
 
@@ -882,6 +884,14 @@ async fn stop(State(service): State<Shared>, UrlPath(id): UrlPath<String>) -> Re
     }
 }
 
+async fn subtitles(State(service): State<Shared>, Json(wanted): Json<crate::subfetch::Wanted>) -> Response {
+    match blocking(move || service.sidecars.fetch(&wanted)).await {
+        Ok(Ok(fetched)) => Json(fetched).into_response(),
+        Ok(Err(error)) => crate::api::problem(StatusCode::UNPROCESSABLE_ENTITY, error),
+        Err(response) => response,
+    }
+}
+
 fn router(service: Shared) -> Router {
     Router::new()
         .route("/api/downloads", get(overview))
@@ -889,6 +899,7 @@ fn router(service: Shared) -> Router {
         .route("/api/downloads/confirm", post(confirm))
         .route("/api/downloads/dismiss", post(dismiss))
         .route("/api/downloads/jobs/{id}/stop", post(stop))
+        .route("/api/downloads/subtitles", post(subtitles))
         .with_state(service)
 }
 
@@ -920,6 +931,12 @@ pub fn run(config: Config) -> Result<(), String> {
         reserve: config.reserve,
         meta: config.meta.clone(),
         tmdb: tmdb::Client::new(config.tmdb_token.clone()),
+        sidecars: sidecars::Sidecars {
+            client: crate::subfetch::Client::default(),
+            remote: config.remote.clone(),
+            mount_rc: config.mount_rc.clone(),
+            work: config.state.join("subtitles"),
+        },
         shelf: Mutex::new(Shelf {
             remote: config.remote,
             meta: config.meta,

@@ -23,7 +23,7 @@ look like `{ "error": "..." }`, with 400 or 404.
 | GET | `/api/library` | `{ watching, forgotten, newest, shows, movies }`, lists of cards |
 | POST | `/api/forgotten/dismiss` | `{ kind, key }` → `{ message, ok }` |
 | GET | `/api/search?q=TEXT` | `{ results }`: cards ranked by how well the title matches, prefixes first, typos forgiven |
-| GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration`, `tags`, `about`, `last_played` and `last_played_label` |
+| GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration`, `tags`, `subtitles`, `about`, `last_played` and `last_played_label` |
 | GET | `/api/shows/{key}` | a card plus `next` (where playing carries on), `seasons` (each with `episodes`), `about`, `last_played` and `last_played_label` |
 
 A card is
@@ -38,7 +38,7 @@ the library. `backdrop` is an artwork path, or null for a title without a TMDB
 id. An
 episode has `season`, `episode`, `title`, `label`, `short_label`, `still`,
 `ratings` (the same shape as a card's, mostly IMDb only), `band`, `details`,
-`stopped_at` and `duration`. `band` names the episode's place on the heatmap
+`stopped_at`, `duration` and `subtitles`. `band` names the episode's place on the heatmap
 scale from its IMDb rating: `awesome` (9.0 and up), `great` (8.0), `good`
 (7.0), `regular` (6.0), `bad` (5.0) or `garbage`, and is null without one. Keys are the TV's own: `dune-2021`,
 `outlander`.
@@ -59,6 +59,12 @@ keeps its resume point. It is stored by the file playback would resume, so
 it outlasts a change of the title's key, and the title comes back once it plays
 again. `ok` is
 false, with 422, for a key the library does not hold.
+
+`subtitles` counts the subtitles a film or episode is known to have: the
+subtitle files beside it in the library (see Subtitles), counted in the
+background after each library load, plus the tracks inside the video, which
+are known only once it has played. 0 means none are known, so a "Find
+subtitles" offer fits.
 
 An episode also has `watched` and `last_played`. `watched` is true once the
 episode played to its end, or when it comes before the episode where the show
@@ -121,8 +127,9 @@ such image.
 | POST | `/api/playback/speed` | `{ "speed": 1.25 }`: 0.5 to 2, in steps of 0.05. Every video starts at 1 |
 
 `now_playing` is null or
-`{ title, caption, movie, show, season, episode, position, duration, paused, muted, speed, subtitle, audio, loading, jump }`.
-`subtitle` is the id of the subtitle track that shows, or null when none does, and `audio` is the playing
+`{ title, caption, movie, show, season, episode, position, duration, paused, muted, speed, subtitle, subtitle_delay, audio, loading, jump }`.
+`subtitle` is the id of the subtitle track that shows, or null when none does.
+`subtitle_delay` is the subtitle delay in seconds, positive to show them later. `audio` is the playing
 audio track's id. They follow what mpv reports, so a change made by the remote, by voice or from the web
 reaches every event listener.
 For a movie, `movie` is its key. For an episode, `show`, `season` and `episode`
@@ -195,6 +202,8 @@ The TV's own error code goes to the app's log.
 | PUT | `/api/subtitles` | any of the settings below; fields left out keep their value |
 | POST | `/api/subtitles/track` | `{ "track": id }` to show that track, `{ "track": null }` to hide subtitles |
 | POST | `/api/subtitles/toggle` | none: show or hide, as the remote's yellow key does |
+| POST | `/api/subtitles/delay` | `{ "delay": seconds }`: show subtitles that much later, negative for earlier |
+| POST | `/api/subtitles/fetch` | `{ "movie": key }` or `{ "show": key, "season": 2, "episode": 3 }`, and optionally `"language": "de"` |
 | POST | `/api/audio/track` | `{ "track": id }`: play that audio track |
 
 GET and PUT answer `{ settings, playing }`. The TV keeps the settings in
@@ -217,7 +226,8 @@ numbers into their range.
 | `restyle` | also restyle subtitles that bring their own styling | `false` |
 
 `playing` is null when nothing plays, or
-`{ visible, track, tracks, audio, audio_tracks }`. `track` is the selected
+`{ visible, delay, track, tracks, audio, audio_tracks }`. `delay` is the
+subtitle delay in seconds. `track` is the selected
 subtitle track's id or null, and `visible` says whether it shows. `audio` is
 the playing audio track's id, and `audio_tracks` lists the audio tracks in the
 same shape as `tracks`. Each track is
@@ -229,6 +239,60 @@ The track and toggle requests answer like the playing requests above, for
 example `{ "message": "Subtitles: English", "ok": true }`, and the TV shows
 the same message on screen. They refuse with "Nothing is playing" or "No
 subtitles in this file".
+
+### Subtitle files in the library
+
+Every video starts with the subtitle files that sit beside it in the library,
+each as its own track named after its language:
+
+- files next to the video whose name starts with the video's name, such as
+  `Up.2009.1080p.en.srt` beside `Up.2009.1080p.mkv`
+- for a video alone in its folder, any subtitle file there and in its `Subs/`
+  folder, such as `Subs/13_English.srt`
+- for an episode, the files in `Subs/<the episode's file name>/`
+
+The language comes from the file name: a code (`en`, `eng`, `en-US`) or an
+English name (`English`, `Bokmal`). `SDH`, `HI` or `CC` in the name marks the
+track `hearing_impaired`, and `forced` marks it `forced`, as does being less
+than a fifth of the size of the largest file in the same language. Formats are
+`.srt`, `.ass`, `.ssa` and `.vtt`. When subtitles are set to show, the
+preferred language among all tracks is chosen once the files are loaded.
+
+### Delay
+
+`POST /api/subtitles/delay` sets the delay of what plays, rounded to 0.1 s
+and clamped to ±60 s, and answers like the track request, for example
+"Subtitle delay +0.5 s". The TV remembers it per video file, in
+`subtitle-files.json` beside `subtitles.json`, and starts the file with it
+next time. A delay of 0 forgets it.
+
+### Finding subtitles
+
+`POST /api/subtitles/fetch` looks up subtitles for a film or episode on
+OpenSubtitles.org, which needs no account, and saves the best one in the
+library as `<video name>.<language>.srt` beside the video, so every later
+start shows it. The language is the one asked for, else the first preferred
+language. The search goes by the video's OpenSubtitles hash (its size plus the
+first and last 64 KiB), which finds subtitles timed for this exact file, and
+by the IMDb id, with season and episode for a series. Among the results, a
+hash match comes first, then the release name closest to the video's file
+name; files split over several CDs, rated bad, machine translated or in other
+encodings than UTF-8 or Windows-1252 are skipped, and advert cues are removed.
+
+It takes a few seconds and answers only when done:
+
+    { "message": "English subtitles added", "file": "Movies/Up (2009)/Up.2009.1080p.en.srt",
+      "language": "en", "label": "English", "release": "Up.2009.1080p.BluRay.x264",
+      "matched": "hash" | "release" | "title", "shown": true }
+
+`matched` says how well the subtitles should fit: `hash` is timed for this
+very file, `release` for a release with a close name, `title` only for the
+film or episode, so its timing may need the delay. When the video is playing,
+the subtitles are added to it at once and shown, and `shown` is true. Errors
+are `{ "error": "..." }` with a sentence to show as it is: 404 for an unknown
+title, 422 for "No English subtitles found", a title without an IMDb id or a
+failed download, and 503 when the TV has no downloads service, which does the
+lookup and the upload to pCloud.
 
 ## Storage
 
@@ -380,6 +444,7 @@ paths start with `/api/downloads` too.
 | POST | `/api/downloads/confirm` | `{ proposal, choice }` | `{ message, ok, job }` |
 | POST | `/api/downloads/dismiss` | `{ proposal }` | `{ message, ok }` |
 | POST | `/api/downloads/jobs/{id}/stop` | | `{ message, ok, job }` |
+| POST | `/api/downloads/subtitles` | `{ video, imdb, season, episode, language, hash, size }` | `{ file, language, release, matched }` |
 
 `text` is what was said or typed, such as "outlander season 8". It resolves to
 one TMDB title, or to a `question` with up to four `options`
@@ -395,6 +460,12 @@ A job moves through `checking` (reading the torrent's files), `downloading`,
 `uploaded`, the bytes sent to peers. `room` is the space left for a new
 download: the quota minus running downloads, and the free disk minus what they
 still need and a reserve.
+
+`/api/downloads/subtitles` is what `/api/subtitles/fetch` calls: `video` is
+the path under the library, `hash` and `size` the video's OpenSubtitles hash
+and size or null. It saves the subtitles beside the video on pCloud, refreshes
+that folder on the TV's mount, and answers with the saved file's path, or 422
+and `{ error }`.
 
 ## Trying it
 

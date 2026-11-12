@@ -130,6 +130,31 @@ fn run(program: &str, args: &[&str]) -> Result<String, String> {
     }
 }
 
+fn remote_size(remote: &str, path: &str) -> Result<Option<u64>, String> {
+    let listing = run("rclone", &["lsjson", "--files-only", &format!("{remote}/{path}")])?;
+    let entries: Vec<serde_json::Value> = serde_json::from_str(&listing).unwrap_or_default();
+    Ok(entries.first().and_then(|entry| entry["Size"].as_u64()))
+}
+
+pub fn upload_to(remote: &str, placed: &Placed) -> Result<(), String> {
+    let local = placed.local.to_string_lossy();
+    run("rclone", &["copyto", &local, &format!("{remote}/{}", placed.destination)])?;
+    match remote_size(remote, &placed.destination)? {
+        Some(size) if size == placed.size => Ok(()),
+        Some(size) => Err(format!(
+            "{} is {size} bytes on pCloud, {} here",
+            placed.destination, placed.size
+        )),
+        None => Err(format!("{} is missing on pCloud after the upload", placed.destination)),
+    }
+}
+
+pub fn refresh(mount_rc: &Path, dir: &str) -> Result<(), String> {
+    let socket = mount_rc.to_string_lossy();
+    let argument = format!("dir={dir}");
+    run("rclone", &["rc", "--unix-socket", &socket, "vfs/refresh", &argument]).map(|_| ())
+}
+
 fn copy_dir(from: &Path, to: &Path) -> io::Result<()> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
@@ -166,23 +191,8 @@ impl Shelf {
             .ok_or_else(|| format!("no library.toml in {}", self.remote))
     }
 
-    fn remote_size(&self, path: &str) -> Result<Option<u64>, String> {
-        let listing = run("rclone", &["lsjson", "--files-only", &self.remote(path)])?;
-        let entries: Vec<serde_json::Value> = serde_json::from_str(&listing).unwrap_or_default();
-        Ok(entries.first().and_then(|entry| entry["Size"].as_u64()))
-    }
-
     pub fn upload(&self, placed: &Placed) -> Result<(), String> {
-        let local = placed.local.to_string_lossy();
-        run("rclone", &["copyto", &local, &self.remote(&placed.destination)])?;
-        match self.remote_size(&placed.destination)? {
-            Some(size) if size == placed.size => Ok(()),
-            Some(size) => Err(format!(
-                "{} is {size} bytes on pCloud, {} here",
-                placed.destination, placed.size
-            )),
-            None => Err(format!("{} is missing on pCloud after the upload", placed.destination)),
-        }
+        upload_to(&self.remote, placed)
     }
 
     pub fn import(&self, target: &Target, placed: &[Placed], log: &dyn Fn(String)) -> Result<(), String> {
@@ -297,10 +307,8 @@ impl Shelf {
     }
 
     pub fn show_in_library(&self, placed: &[Placed], log: &dyn Fn(String)) {
-        let socket = self.mount_rc.to_string_lossy();
         for dir in folders(placed) {
-            let argument = format!("dir={dir}");
-            match run("rclone", &["rc", "--unix-socket", &socket, "vfs/refresh", &argument]) {
+            match refresh(&self.mount_rc, &dir) {
                 Ok(_) => log(format!("refreshed {dir} on the mount")),
                 Err(error) => log(format!("could not refresh {dir} on the mount: {error}")),
             }

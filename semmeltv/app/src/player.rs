@@ -4,6 +4,7 @@ use crate::overlay::{self, View};
 use crate::progress::Place;
 use crate::seek::{self, Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
+use crate::sidecar;
 use crate::subtitles::{self, Answer, Change, Observed, Subtitles};
 use serde_json::{Value, json};
 use std::env;
@@ -80,6 +81,7 @@ enum Event {
     Paused(bool),
     Key(Command),
     Started,
+    Loaded,
     Subtitles(Observed),
 }
 
@@ -98,6 +100,7 @@ impl Event {
             },
             "client-message" => key_command(message["args"][0].as_str()?).map(Self::Key),
             "playback-restart" => Some(Self::Started),
+            "file-loaded" => Some(Self::Loaded),
             _ => None,
         }
     }
@@ -261,11 +264,12 @@ impl Playback {
     }
 
     fn change_subtitles(&mut self, change: Change, now: Instant) -> Answer {
+        let told = change != Change::Restyle;
         let answer = self.subtitles.change(change);
         for command in &answer.commands {
             self.send(command.clone());
         }
-        if change != Change::Restyle {
+        if told {
             self.toast("", &answer.message, now + SAY_FOR);
         }
         answer
@@ -438,6 +442,7 @@ pub struct State {
     pub muted: bool,
     pub speed: f64,
     pub subtitle: Option<i64>,
+    pub subtitle_delay: f64,
     pub audio: Option<i64>,
     pub started: bool,
     pub jump: Option<i32>,
@@ -475,12 +480,12 @@ impl Player {
             .arg(format!("--osd-font={OSD_FONT}"))
             .arg(format!("--osd-fonts-dir={OSD_FONTS}"))
             .arg(format!("--input-ipc-server={}", socket_path.display()))
-            .args(subtitles.settings().mpv_args())
+            .args(subtitles.mpv_args(path))
             .arg("--")
             .arg(path)
             .stdin(Stdio::null())
             .spawn()?;
-        subtitles.started();
+        subtitles.started(path, sidecar::find(path));
         let playback = Shared::new(Mutex::new(Playback {
             name,
             subtitles,
@@ -525,6 +530,7 @@ impl Player {
             muted: playback.muted,
             speed: playback.speed,
             subtitle,
+            subtitle_delay: playback.subtitles.delay(),
             audio,
             started: playback.started,
             jump: playback.scrub.jump_shown(Instant::now()),
@@ -685,7 +691,18 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 }
             }
             Some(Event::Key(command)) => shared.lock().unwrap().key(command, Instant::now()),
-            Some(Event::Subtitles(observed)) => shared.lock().unwrap().subtitles.observe(observed),
+            Some(Event::Loaded) => {
+                let mut playback = shared.lock().unwrap();
+                for command in playback.subtitles.loaded() {
+                    playback.send(command);
+                }
+            }
+            Some(Event::Subtitles(observed)) => {
+                let mut playback = shared.lock().unwrap();
+                for command in playback.subtitles.observe(observed) {
+                    playback.send(command);
+                }
+            }
             None => {}
         }
     }
@@ -1059,7 +1076,7 @@ mod tests {
     #[test]
     fn the_subtitle_key_toggles_and_says_what_it_did() {
         let subtitles = Subtitles::default();
-        subtitles.started();
+        subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
         let tracks = json!({ "event": "property-change", "id": SUBTITLES_ID, "name": "track-list",
             "data": [{ "id": 1, "type": "sub", "lang": "en" }] });
         let Some(Event::Subtitles(observed)) = Event::parse(&tracks.to_string()) else {

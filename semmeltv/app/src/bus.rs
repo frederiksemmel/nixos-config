@@ -45,6 +45,7 @@ pub struct NowPlaying {
     pub muted: bool,
     pub speed: f64,
     pub subtitle: Option<i64>,
+    pub subtitle_delay: f64,
     pub audio: Option<i64>,
     pub loading: bool,
     pub jump: Option<i32>,

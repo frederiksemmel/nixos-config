@@ -2,13 +2,16 @@ use crate::artwork;
 use crate::audio::{self, Audio};
 use crate::bus::{Bus, Event};
 use crate::details::{self, Details};
+use crate::downloads::remote::Downloads;
 use crate::heatmap;
 use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::manifest::{About, Date};
 use crate::progress::Progress;
 use crate::seek::Direction;
+use crate::sidecar::{self, Sidecar};
 use crate::storage;
+use crate::subfetch::{self, Match, Wanted};
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
@@ -21,8 +24,10 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::{Duration, UNIX_EPOCH};
@@ -38,6 +43,8 @@ const TRY_AGAIN_LATER: u16 = 1013;
 pub struct Config {
     pub address: String,
     pub phone_microphone: Option<String>,
+    pub library: PathBuf,
+    pub downloads: Option<Downloads>,
 }
 
 #[derive(Debug)]
@@ -80,6 +87,8 @@ pub struct Shared {
     pub storage: storage::Board,
     library: RwLock<Arc<Library>>,
     progress: RwLock<Arc<Progress>>,
+    sidecars: RwLock<HashMap<PathBuf, usize>>,
+    scans: AtomicU64,
 }
 
 impl Shared {
@@ -90,8 +99,34 @@ impl Shared {
         }
     }
 
-    pub fn set_library(&self, library: &Library) {
-        *self.library.write().unwrap() = Arc::new(library.clone());
+    pub fn set_library(self: &Arc<Self>, library: &Library) {
+        let library = Arc::new(library.clone());
+        *self.library.write().unwrap() = library.clone();
+        let scan = self.scans.fetch_add(1, Ordering::SeqCst) + 1;
+        let shared = self.clone();
+        let spawned = thread::Builder::new().name("sidecars".to_string()).spawn(move || {
+            let mut counts = HashMap::new();
+            for path in library.paths() {
+                if shared.scans.load(Ordering::SeqCst) != scan {
+                    return;
+                }
+                counts.insert(path.clone(), sidecar::find(path).len());
+            }
+            *shared.sidecars.write().unwrap() = counts;
+        });
+        if let Err(error) = spawned {
+            eprintln!("sidecars: {error}");
+        }
+    }
+
+    fn recount(&self, video: &FsPath) {
+        let count = sidecar::find(video).len();
+        self.sidecars.write().unwrap().insert(video.to_path_buf(), count);
+    }
+
+    fn subtitle_count(&self, video: &FsPath) -> usize {
+        let sidecars = self.sidecars.read().unwrap().get(video).copied().unwrap_or(0);
+        sidecars + self.subtitles.embedded(video).unwrap_or(0)
     }
 
     pub fn set_progress(&self, progress: &Progress) {
@@ -116,6 +151,8 @@ struct Api {
     microphone: Option<Arc<Microphone>>,
     television: Television,
     audio: Option<Audio>,
+    library: PathBuf,
+    downloads: Option<Downloads>,
 }
 
 impl Api {
@@ -151,6 +188,8 @@ pub fn spawn(
         }),
         television,
         audio,
+        library: config.library,
+        downloads: config.downloads,
     };
     let address = config.address;
     let spawned = thread::Builder::new().name("api".to_string()).spawn(move || {
@@ -205,6 +244,7 @@ fn router(api: Api) -> Router {
         .route("/api/audio", get(audio_view).post(choose_audio))
         .route("/api/audio/pair", post(pair_headphones).delete(cancel_pairing))
         .route("/api/audio/headphones", delete(forget_headphones))
+        .route("/api/subtitles/fetch", post(fetch_subtitles))
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
         .merge(tv::routes(api.television.clone()))
         .merge(storage::routes(api.shared.storage.clone(), api.app.clone()))
@@ -405,9 +445,10 @@ struct Watch {
     stopped_at: Option<f64>,
     duration: Option<f64>,
     tags: TagsView,
+    subtitles: usize,
 }
 
-fn watch(progress: &Progress, file: &std::path::Path, tags: &Tags, runtime: Option<u32>) -> Watch {
+fn watch(progress: &Progress, file: &std::path::Path, tags: &Tags, runtime: Option<u32>, subtitles: usize) -> Watch {
     let watched = progress.files.get(file).copied().unwrap_or_default();
     let duration = watched.duration.or(runtime.map(|minutes| f64::from(minutes) * 60.0));
     Watch {
@@ -423,6 +464,7 @@ fn watch(progress: &Progress, file: &std::path::Path, tags: &Tags, runtime: Opti
         stopped_at: watched.stopped_at,
         duration,
         tags: TagsView::from(tags),
+        subtitles,
     }
 }
 
@@ -568,7 +610,13 @@ async fn movie(State(api): State<Api>, Path(key): Path<String>) -> Response {
         .max(progress.watching.last_played(watching::Kind::Movie, &movie.key));
     Json(MovieView {
         card: movie_card(&api.root, movie),
-        watch: watch(&progress, &movie.path, &movie.tags, movie.runtime),
+        watch: watch(
+            &progress,
+            &movie.path,
+            &movie.tags,
+            movie.runtime,
+            api.shared.subtitle_count(&movie.path),
+        ),
         about: about_view(
             &api.art(),
             &movie.about,
@@ -626,7 +674,7 @@ struct ShowView {
     played: Played,
 }
 
-fn episode_view(show: &Show, episode: &Episode, progress: &Progress) -> EpisodeView {
+fn episode_view(shared: &Shared, show: &Show, episode: &Episode, progress: &Progress) -> EpisodeView {
     EpisodeView {
         season: episode.season,
         episode: episode.number,
@@ -646,7 +694,13 @@ fn episode_view(show: &Show, episode: &Episode, progress: &Progress) -> EpisodeV
             .map(|rating| heatmap::band(rating).label.to_lowercase()),
         watched: progress.watched(show, episode),
         last_played: progress.last_played([&episode.path]),
-        watch: watch(progress, &episode.path, &episode.tags, episode.runtime),
+        watch: watch(
+            progress,
+            &episode.path,
+            &episode.tags,
+            episode.runtime,
+            shared.subtitle_count(&episode.path),
+        ),
     }
 }
 
@@ -657,7 +711,7 @@ async fn show(State(api): State<Api>, Path(key): Path<String>) -> Response {
     };
     let progress = api.shared.progress();
     let next = progress.resume_episode(show).map(|episode| {
-        let place = watch(&progress, &episode.path, &episode.tags, episode.runtime);
+        let place = watch(&progress, &episode.path, &episode.tags, episode.runtime, 0);
         Next {
             season: episode.season,
             episode: episode.number,
@@ -679,7 +733,7 @@ async fn show(State(api): State<Api>, Path(key): Path<String>) -> Response {
             episodes: season
                 .episodes
                 .iter()
-                .map(|episode| episode_view(show, episode, &progress))
+                .map(|episode| episode_view(&api.shared, show, episode, &progress))
                 .collect(),
         })
         .collect();
@@ -920,6 +974,173 @@ pub async fn ask_app(app: &Ask, request: Request) -> Response {
         }
         _ => problem(StatusCode::SERVICE_UNAVAILABLE, "the TV did not answer".to_string()),
     }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FetchBody {
+    movie: Option<String>,
+    show: Option<String>,
+    season: Option<u32>,
+    episode: Option<u32>,
+    language: Option<String>,
+}
+
+#[derive(Serialize)]
+struct FetchedView {
+    message: String,
+    file: String,
+    language: String,
+    label: String,
+    release: String,
+    matched: Match,
+    shown: bool,
+}
+
+struct Chosen {
+    video: PathBuf,
+    imdb: Option<String>,
+    season: Option<u32>,
+    episode: Option<u32>,
+    name: String,
+}
+
+fn chosen(library: &Library, body: &FetchBody) -> Result<Chosen, Response> {
+    match (&body.movie, &body.show, body.season, body.episode) {
+        (Some(key), None, None, None) => {
+            let movie = library
+                .movies
+                .iter()
+                .find(|movie| &movie.key == key)
+                .ok_or_else(|| not_found(format!("no movie {key}")))?;
+            Ok(Chosen {
+                video: movie.path.clone(),
+                imdb: movie.imdb.clone(),
+                season: None,
+                episode: None,
+                name: movie.title.clone(),
+            })
+        }
+        (None, Some(key), Some(season), Some(number)) => {
+            let show = library
+                .shows
+                .iter()
+                .find(|show| &show.key == key)
+                .ok_or_else(|| not_found(format!("no show {key}")))?;
+            let episode = show
+                .episode(season, number)
+                .ok_or_else(|| not_found(format!("{} has no season {season} episode {number}", show.title)))?;
+            Ok(Chosen {
+                video: episode.path.clone(),
+                imdb: show.imdb.clone(),
+                season: Some(season),
+                episode: Some(number),
+                name: format!("{} {}", show.title, episode.short_label()),
+            })
+        }
+        _ => Err(problem(
+            StatusCode::BAD_REQUEST,
+            "Send {\"movie\": key} or {\"show\": key, \"season\": n, \"episode\": n}".to_string(),
+        )),
+    }
+}
+
+async fn fetch_subtitles(State(api): State<Api>, Json(body): Json<FetchBody>) -> Response {
+    let Some(downloads) = api.downloads.clone() else {
+        return problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "This TV can't fetch subtitles".to_string(),
+        );
+    };
+    let library = api.shared.library();
+    let chosen = match chosen(&library, &body) {
+        Ok(chosen) => chosen,
+        Err(response) => return response,
+    };
+    let Some(imdb) = chosen.imdb else {
+        return problem(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("{} has no IMDb id, so I can't look up its subtitles", chosen.name),
+        );
+    };
+    let asked = body
+        .language
+        .or_else(|| api.shared.subtitles.settings().languages.first().cloned())
+        .unwrap_or_else(|| "en".to_string());
+    let Some(language) = subtitles::language_code(&asked) else {
+        return problem(StatusCode::BAD_REQUEST, format!("{asked} is not a language I know"));
+    };
+    let label = subtitles::language_name(language).unwrap_or(language).to_string();
+    let Ok(relative) = chosen.video.strip_prefix(&api.library) else {
+        return problem(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("{} is outside the library", chosen.video.display()),
+        );
+    };
+    let video = chosen.video.clone();
+    let hashed = tokio::task::spawn_blocking(move || subfetch::hash(&video).ok())
+        .await
+        .ok()
+        .flatten();
+    let wanted = Wanted {
+        video: relative.to_string_lossy().into_owned(),
+        imdb,
+        season: chosen.season,
+        episode: chosen.episode,
+        language: language.to_string(),
+        hash: hashed.as_ref().map(|(hash, _)| hash.clone()),
+        size: hashed.map(|(_, size)| size),
+    };
+    let fetched = match tokio::task::spawn_blocking(move || downloads.subtitles(&wanted)).await {
+        Ok(Ok(fetched)) => fetched,
+        Ok(Err(error)) => return problem(StatusCode::UNPROCESSABLE_ENTITY, error),
+        Err(error) => return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    };
+    let path = api.library.join(&fetched.file);
+    let (video, shared) = (chosen.video.clone(), api.shared.clone());
+    let found = tokio::task::spawn_blocking(move || {
+        shared.recount(&video);
+        sidecar::find(&video)
+    })
+    .await
+    .unwrap_or_default();
+    let sidecar = found
+        .into_iter()
+        .find(|sidecar| sidecar.path == path)
+        .unwrap_or_else(|| Sidecar {
+            path,
+            language: Some(language.to_string()),
+            title: label.clone(),
+            forced: false,
+            hearing_impaired: false,
+        });
+    let mut shown = false;
+    if api.shared.subtitles.plays(&chosen.video) {
+        let (reply, answer) = oneshot::channel();
+        (api.app)(Pending {
+            request: Request::Subtitles(subtitles::Change::Add {
+                video: chosen.video.clone(),
+                sidecar,
+            }),
+            reply,
+        });
+        shown = matches!(tokio::time::timeout(ANSWER_TIME, answer).await, Ok(Ok(outcome)) if outcome.ok);
+    }
+    let message = if shown {
+        format!("{label} subtitles added")
+    } else {
+        format!("{label} subtitles saved for {}", chosen.name)
+    };
+    Json(FetchedView {
+        message,
+        file: fetched.file,
+        language: fetched.language,
+        label,
+        release: fetched.release,
+        matched: fetched.matched,
+        shown,
+    })
+    .into_response()
 }
 
 #[derive(Serialize)]
@@ -1165,6 +1386,8 @@ mod tests {
                 token: std::env::temp_dir().join("semmeltv-api-tv-token"),
             }),
             audio: None,
+            library: PathBuf::from("/lib"),
+            downloads: None,
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
