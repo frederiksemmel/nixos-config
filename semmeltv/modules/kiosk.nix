@@ -18,6 +18,7 @@ in
   imports = [
     (import ./web.nix { inherit crane nixpkgs; })
     (import ./downloads.nix { inherit nixpkgs vpnConfinement agenix; })
+    ./headphones.nix
   ];
 
   options.services.semmeltv = {

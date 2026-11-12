@@ -450,6 +450,7 @@ impl Player {
         name: String,
         title: Option<Title>,
         subtitles: Subtitles,
+        audio_device: &str,
         on_save: impl Fn() + Send + 'static,
         on_key: impl Fn(Command) + Send + 'static,
         on_exit: impl FnOnce(Finish) + Send + 'static,
@@ -466,6 +467,7 @@ impl Player {
             .arg(format!("--watch-later-dir={}", watch_later_dir.display()))
             .arg("--keep-open")
             .arg("--hwdec=drm")
+            .arg(format!("--audio-device={audio_device}"))
             .arg("--gpu-context=wayland")
             .arg("--profile=fast")
             .arg("--video-sync=display-resample")
@@ -565,6 +567,13 @@ impl Player {
         let mut playback = self.playback.lock().unwrap();
         playback.muted = muted;
         playback.send(json!(["set_property", "mute", muted]));
+    }
+
+    pub fn set_audio_device(&self, device: &str) {
+        self.playback
+            .lock()
+            .unwrap()
+            .send(json!(["set_property", "audio-device", device]));
     }
 
     pub fn set_speed(&self, speed: f64) -> f64 {

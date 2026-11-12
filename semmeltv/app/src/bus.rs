@@ -1,3 +1,4 @@
+use crate::audio;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -9,6 +10,7 @@ const BACKLOG: usize = 64;
 pub enum Event {
     Voice(Voice),
     Playback { now_playing: Option<NowPlaying> },
+    Audio(audio::View),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -66,6 +68,7 @@ impl NowPlaying {
 pub struct Bus {
     events: broadcast::Sender<Event>,
     now_playing: Arc<Mutex<Option<NowPlaying>>>,
+    audio: Arc<Mutex<Option<audio::View>>>,
 }
 
 impl Default for Bus {
@@ -73,6 +76,7 @@ impl Default for Bus {
         Self {
             events: broadcast::Sender::new(BACKLOG),
             now_playing: Arc::default(),
+            audio: Arc::default(),
         }
     }
 }
@@ -85,6 +89,18 @@ impl Bus {
 
     pub fn now_playing(&self) -> Option<NowPlaying> {
         self.now_playing.lock().unwrap().clone()
+    }
+
+    pub fn audio_state(&self) -> Option<audio::View> {
+        self.audio.lock().unwrap().clone()
+    }
+
+    pub fn audio(&self, view: audio::View) {
+        let mut current = self.audio.lock().unwrap();
+        if current.as_ref() != Some(&view) {
+            *current = Some(view.clone());
+            let _ = self.events.send(Event::Audio(view));
+        }
     }
 
     pub fn voice(&self, voice: Voice) {
@@ -151,7 +167,7 @@ mod tests {
         let positions: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
             .map(|event| match event {
                 Event::Playback { now_playing } => now_playing.map(|playing| playing.position),
-                Event::Voice(_) => panic!("no voice events were sent"),
+                Event::Voice(_) | Event::Audio(_) => panic!("only playback events were sent"),
             })
             .collect();
         assert_eq!(positions, [Some(10.1), Some(11.2), None]);

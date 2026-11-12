@@ -276,6 +276,88 @@ while playing, and every voice event:
     { "type": "voice", "state": "no-microphone" }
     { "type": "voice", "state": "failed", "message": "..." }
 
+On a TV with headphones it sends the audio state right after the playback, and
+again whenever it changes, with the same body as GET `/api/audio`:
+
+    { "type": "audio", "output": "tv", "headphones": { "name": "AirPods", "address": "34:0E:22:67:03:38", "state": "connecting" }, "pairing": null, "error": null }
+
+## Audio
+
+| Method | Path | Body |
+| --- | --- | --- |
+| GET | `/api/audio` | none |
+| POST | `/api/audio` | `{ "output": "headphones" }` or `{ "output": "tv" }` |
+| POST | `/api/audio/pair` | none |
+| DELETE | `/api/audio/pair` | none |
+| DELETE | `/api/audio/headphones` | none |
+
+Where the sound goes: the TV over HDMI, or Bluetooth headphones paired with
+SemmelTV. Every request answers the whole state:
+
+    {
+      "output": "tv",
+      "headphones": { "name": "AirPods von Frederik", "address": "34:0E:22:67:03:38", "state": "disconnected" },
+      "pairing": null,
+      "error": null
+    }
+
+- `output` is where the sound is now, `tv` or `headphones`.
+- `headphones` is null while none are paired. `name` is their Bluetooth name,
+  and `state` is `disconnected`, `connecting` or `connected`.
+- `pairing` is null, or `{ "state": "scanning" | "pairing" | "paired" |
+  "failed", "message": "..." }` with a sentence to show as it is.
+- `error` is a sentence about the last switch that went wrong, or null.
+
+All of them answer 404 on a TV without Bluetooth (`SEMMELTV_HEADPHONES` unset;
+`services.semmeltv.headphones.enable` sets it to `bluetooth`), so a client
+hides its switch. The state also goes out on the event stream whenever it
+changes.
+
+### Switching
+
+POST `/api/audio` answers at once and clears `error`. Choosing `headphones`
+while they are disconnected answers with state `connecting`, runs
+`bluetoothctl connect`, and moves the sound once BlueALSA offers their A2DP
+sink. Headphones already connected take the sound at once. The rest comes on
+the event stream:
+
+- connected: `output` becomes `headphones`, `state` `connected`.
+- not connected within about 30 seconds: `output` stays `tv`, `state` goes
+  back to `disconnected`, and `error` is "AirPods didn't connect. Open the case
+  near the TV and try again."
+- the headphones drop later (case closed, out of range): `output` goes back to
+  `tv` on its own and `error` is "AirPods disconnected. The sound is back on
+  the TV."
+- none paired: `error` is "No headphones are paired. Pair them in Settings."
+
+Choosing `tv` moves the sound back and disconnects the headphones, so a phone
+can take them again. Headphones that connect on their own don't take the
+sound; they only show as `connected`.
+
+A film moves without stopping: the app sets mpv's `audio-device` to
+`alsa/bluealsa:DEV=<address>,PROFILE=a2dp`, or back to `auto` for HDMI, and the
+TV shows "Sound on AirPods" or "Sound on the TV". A film started while the
+headphones have the sound starts on them. BlueALSA counts the headphones'
+reported delay in the ALSA delay mpv reads, so mpv keeps the picture in sync.
+`volume-up` and `volume-down` under `/api/tv` still set the TV's volume.
+
+### Pairing
+
+POST `/api/audio/pair` starts a 60 second Bluetooth scan and answers at once
+with `pairing.state` `scanning` and the message "Open the case near the TV and
+hold the button on its back until the light flashes white." It answers 409
+while a pairing is running. The first headphones that show up (Bluetooth icon
+`audio-headphones` or `audio-headset`) are paired and trusted with
+`bluetoothctl`, then connected without taking the sound; `pairing.state`
+becomes `pairing`, then `paired` with `headphones` filled in, or `failed` with
+a message saying what to do. New headphones replace the ones paired before,
+and pairing the same ones again forgets them first. BlueZ keeps the pairing in
+`/var/lib/bluetooth`, so it survives reboots.
+
+DELETE `/api/audio/pair` stops a scan that hasn't found anything yet.
+DELETE `/api/audio/headphones` moves the sound to the TV and forgets the
+headphones (`bluetoothctl remove`).
+
 ## Phone microphone
 
 `GET /api/microphone` upgrades to a WebSocket that takes binary messages of

@@ -1,6 +1,7 @@
 mod api;
 mod app;
 mod artwork;
+mod audio;
 mod bus;
 mod cache;
 mod cec;
@@ -214,6 +215,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
         led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
         downloads: env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new),
+        headphones: env_text("SEMMELTV_HEADPHONES").is_some_and(|value| value == "bluetooth"),
         api: args.api.map(|address| api::Config {
             address,
             phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")

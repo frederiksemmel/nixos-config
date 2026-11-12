@@ -8,6 +8,8 @@
   mpv,
   wlr-randr,
   alsa-utils,
+  bluez,
+  bluez-alsa,
 }:
 
 let
@@ -63,6 +65,8 @@ craneLib.buildPackage (
           mpv
           wlr-randr
           alsa-utils
+          bluez
+          bluez-alsa
         ]
       }
     '';

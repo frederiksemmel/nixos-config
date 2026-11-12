@@ -1,5 +1,6 @@
 use crate::api::{self, Outcome, Pending, Request, Seek, Shared};
 use crate::artwork;
+use crate::audio::{self, Audio};
 use crate::bus::{Bus, NowPlaying, Voice as VoiceEvent};
 use crate::cache::Cache;
 use crate::cec;
@@ -66,6 +67,7 @@ enum Input {
     Download(Found),
     TvWaking,
     TvShowing,
+    Audio(audio::Route),
 }
 
 enum Found {
@@ -93,6 +95,10 @@ impl Remote {
 
     pub fn stop(&self) {
         self.deliver(Input::Stop);
+    }
+
+    fn move_audio(&self, route: audio::Route) {
+        self.deliver(Input::Audio(route));
     }
 
     fn request(&self, pending: Pending) {
@@ -127,6 +133,7 @@ pub struct Setup {
     pub api: Option<api::Config>,
     pub tv: tv::Settings,
     pub downloads: Option<Downloads>,
+    pub headphones: bool,
 }
 
 struct Playing {
@@ -169,6 +176,7 @@ struct App {
     subtitles: Subtitles,
     television: Television,
     downloads: Option<Downloads>,
+    audio: Option<Audio>,
     offer: Option<Offer>,
     waking_tv: Arc<AtomicBool>,
     paused_for_tv: Cell<bool>,
@@ -189,6 +197,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         api,
         tv,
         downloads,
+        headphones,
     } = setup;
     let ui = AppWindow::new()?;
     splash_after_first_frame(&ui);
@@ -235,6 +244,10 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     let bus = Bus::default();
     let subtitles = Subtitles::load(cache.subtitles_path());
     let television = Television::new(tv);
+    let audio = headphones.then(|| {
+        let keys = keys.clone();
+        Audio::spawn(bus.clone(), Box::new(move |route| keys.move_audio(route)))
+    });
     let shared = Arc::new(Shared::new(subtitles.clone()));
     shared.set_library(&library);
     shared.set_progress(&progress);
@@ -274,6 +287,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         subtitles,
         television: television.clone(),
         downloads,
+        audio: audio.clone(),
         offer: None,
         waking_tv: Arc::new(AtomicBool::new(false)),
         paused_for_tv: Cell::new(false),
@@ -306,6 +320,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
                     Input::Download(found) => app.borrow_mut().download_found(found),
                     Input::TvWaking => app.borrow().pause_for_tv(),
                     Input::TvShowing => app.borrow().resume_after_tv(),
+                    Input::Audio(route) => app.borrow().move_audio(&route),
                 }
             }
         }
@@ -321,7 +336,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     if let Some(config) = api {
         let keys = keys.clone();
         let ask: api::Ask = Arc::new(move |pending| keys.request(pending));
-        api::spawn(config, shared, meta.clone(), bus, ask, television);
+        api::spawn(config, shared, meta.clone(), bus, ask, television, audio);
     }
     cec::spawn(keys);
 
@@ -629,6 +644,7 @@ impl App {
             self.caption(path),
             self.title(path),
             self.subtitles.clone(),
+            &self.audio_device(),
             saved,
             move |command| keys.send(command),
             finished,
@@ -644,6 +660,19 @@ impl App {
                 self.queue_downloads(true);
             }
             Err(error) => self.show_message(format!("mpv did not start: {error}")),
+        }
+    }
+
+    fn audio_device(&self) -> String {
+        self.audio
+            .as_ref()
+            .map_or_else(|| audio::TV_DEVICE.to_string(), Audio::device)
+    }
+
+    fn move_audio(&self, route: &audio::Route) {
+        if let Some(player) = &self.player {
+            player.set_audio_device(&route.device);
+            player.say(&route.said);
         }
     }
 

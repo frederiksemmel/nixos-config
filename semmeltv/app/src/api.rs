@@ -1,4 +1,5 @@
 use crate::artwork;
+use crate::audio::{self, Audio};
 use crate::bus::{Bus, Event};
 use crate::details::{self, Details};
 use crate::heatmap;
@@ -17,7 +18,7 @@ use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::path::{Path as FsPath, PathBuf};
@@ -114,6 +115,7 @@ struct Api {
     app: Ask,
     microphone: Option<Arc<Microphone>>,
     television: Television,
+    audio: Option<Audio>,
 }
 
 impl Api {
@@ -127,7 +129,15 @@ struct Microphone {
     busy: tokio::sync::Mutex<()>,
 }
 
-pub fn spawn(config: Config, shared: Arc<Shared>, root: PathBuf, bus: Bus, app: Ask, television: Television) {
+pub fn spawn(
+    config: Config,
+    shared: Arc<Shared>,
+    root: PathBuf,
+    bus: Bus,
+    app: Ask,
+    television: Television,
+    audio: Option<Audio>,
+) {
     let api = Api {
         shared,
         root,
@@ -140,6 +150,7 @@ pub fn spawn(config: Config, shared: Arc<Shared>, root: PathBuf, bus: Bus, app: 
             })
         }),
         television,
+        audio,
     };
     let address = config.address;
     let spawned = thread::Builder::new().name("api".to_string()).spawn(move || {
@@ -191,6 +202,9 @@ fn router(api: Api) -> Router {
         .route("/api/tv/{control}", post(tv))
         .route("/api/events", get(events))
         .route("/api/microphone", get(microphone))
+        .route("/api/audio", get(audio_view).post(choose_audio))
+        .route("/api/audio/pair", post(pair_headphones).delete(cancel_pairing))
+        .route("/api/audio/headphones", delete(forget_headphones))
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
         .merge(tv::routes(api.television.clone()))
         .merge(storage::routes(api.shared.storage.clone(), api.app.clone()))
@@ -921,6 +935,55 @@ fn not_found(error: String) -> Response {
     problem(StatusCode::NOT_FOUND, error)
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AudioBody {
+    output: audio::Output,
+}
+
+fn no_headphones() -> Response {
+    not_found("this TV has no Bluetooth headphones".to_string())
+}
+
+async fn audio_view(State(api): State<Api>) -> Response {
+    match api.audio {
+        Some(audio) => Json(audio.view()).into_response(),
+        None => no_headphones(),
+    }
+}
+
+async fn choose_audio(State(api): State<Api>, Json(body): Json<AudioBody>) -> Response {
+    match api.audio {
+        Some(audio) => Json(audio.choose(body.output)).into_response(),
+        None => no_headphones(),
+    }
+}
+
+async fn pair_headphones(State(api): State<Api>) -> Response {
+    match api.audio.map(|audio| audio.pair()) {
+        Some(Ok(view)) => Json(view).into_response(),
+        Some(Err(audio::Busy)) => problem(StatusCode::CONFLICT, "headphones are already being paired".to_string()),
+        None => no_headphones(),
+    }
+}
+
+async fn cancel_pairing(State(api): State<Api>) -> Response {
+    match api.audio {
+        Some(audio) => Json(audio.cancel_pairing()).into_response(),
+        None => no_headphones(),
+    }
+}
+
+async fn forget_headphones(State(api): State<Api>) -> Response {
+    let Some(audio) = api.audio else {
+        return no_headphones();
+    };
+    match tokio::task::spawn_blocking(move || audio.forget()).await {
+        Ok(view) => Json(view).into_response(),
+        Err(error) => problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    }
+}
+
 async fn events(State(api): State<Api>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |socket| stream_events(socket, api.bus))
 }
@@ -930,6 +993,11 @@ async fn stream_events(mut socket: WebSocket, bus: Bus) {
     if send_event(&mut socket, &Event::Playback { now_playing }).await.is_err() {
         return;
     }
+    if let Some(audio) = bus.audio_state()
+        && send_event(&mut socket, &Event::Audio(audio)).await.is_err()
+    {
+        return;
+    }
     loop {
         tokio::select! {
             event = events.recv() => match event {
@@ -937,6 +1005,8 @@ async fn stream_events(mut socket: WebSocket, bus: Bus) {
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     let now_playing = bus.now_playing();
                     if send_event(&mut socket, &Event::Playback { now_playing }).await.is_err() { return }
+                    if let Some(audio) = bus.audio_state()
+                        && send_event(&mut socket, &Event::Audio(audio)).await.is_err() { return }
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
             },
@@ -1094,6 +1164,7 @@ mod tests {
                 renderer: None,
                 token: std::env::temp_dir().join("semmeltv-api-tv-token"),
             }),
+            audio: None,
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
@@ -1343,5 +1414,13 @@ mod tests {
             Err(tungstenite::Error::Http(response)) => assert_eq!(response.status(), 404),
             other => panic!("expected a 404, got {:?}", other.map(|_| ())),
         }
+    }
+
+    #[test]
+    fn a_tv_without_headphones_offers_no_audio_choice() {
+        let server = serve(no_root(), None);
+        assert_eq!(get(&server, "/api/audio").0, 404);
+        assert_eq!(post(&server, "/api/audio", json!({ "output": "headphones" })).0, 404);
+        assert_eq!(post(&server, "/api/audio/pair", json!({})).0, 404);
     }
 }
