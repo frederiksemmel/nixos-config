@@ -15,6 +15,7 @@ in
     hardware.bluetooth = {
       enable = true;
       powerOnBoot = true;
+      settings.Policy.ReconnectAttempts = 0;
     };
 
     users.users.bluealsa = {

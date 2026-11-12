@@ -439,9 +439,15 @@ while a pairing is running. The first headphones that show up (Bluetooth icon
 `audio-headphones` or `audio-headset`) are paired and trusted with
 `bluetoothctl`, then connected without taking the sound; `pairing.state`
 becomes `pairing`, then `paired` with `headphones` filled in, or `failed` with
-a message saying what to do. New headphones replace the ones paired before,
-and pairing the same ones again forgets them first. BlueZ keeps the pairing in
-`/var/lib/bluetooth`, so it survives reboots.
+a message saying what to do. The adapter is pairable only during the pair, and
+a pair that leaves no link key (BlueZ "Bonded: no") counts as failed. New
+headphones replace the ones paired before; the same ones found again are
+forgotten and paired once the scan sees them again. Only bonded headphones
+count as paired, and BlueZ keeps them in `/var/lib/bluetooth`, so they survive
+reboots.
+
+BlueZ's own reconnecting is off (`ReconnectAttempts=0`), so the TV connects to
+the headphones only when asked to, and never fights a phone for them.
 
 DELETE `/api/audio/pair` stops a scan that hasn't found anything yet.
 DELETE `/api/audio/headphones` moves the sound to the TV and forgets the

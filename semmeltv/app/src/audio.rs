@@ -296,13 +296,19 @@ impl Audio {
         let still = || self.inner.state.lock().unwrap().pair_attempt == attempt;
         radio.start_scan();
         let deadline = Instant::now() + self.inner.timing.scan;
+        let mut forgotten = false;
         let found = loop {
             if !still() {
                 radio.stop_scan();
                 return;
             }
             if let Some(device) = radio.found() {
-                break Some(device);
+                let earlier = self.inner.state.lock().unwrap().headphones.clone();
+                if forgotten || earlier.is_none_or(|earlier| earlier.address != device.address) {
+                    break Some(device);
+                }
+                radio.forget(&device.address);
+                forgotten = true;
             }
             if Instant::now() >= deadline {
                 break None;
@@ -316,10 +322,6 @@ impl Audio {
         };
         if !self.paired(attempt, Stage::Pairing, format!("Pairing with {}…", device.name)) {
             return;
-        }
-        let earlier = self.inner.state.lock().unwrap().headphones.clone();
-        if earlier.as_ref().is_some_and(|earlier| earlier.address == device.address) {
-            radio.forget(&device.address);
         }
         if let Err(error) = radio.pair(&device.address) {
             eprintln!("headphones: {error}");
@@ -539,6 +541,7 @@ struct Info {
     name: Option<String>,
     headphones: bool,
     in_range: bool,
+    bonded: bool,
 }
 
 fn parse_info(text: &str) -> Info {
@@ -552,6 +555,7 @@ fn parse_info(text: &str) -> Info {
             "Name" if info.name.is_none() => info.name = Some(value.trim().to_string()),
             "Icon" => info.headphones = HEADPHONE_ICONS.contains(&value.trim()),
             "RSSI" => info.in_range = true,
+            "Bonded" => info.bonded = value.trim() == "yes",
             _ => {}
         }
     }
@@ -599,10 +603,10 @@ impl Bluetoothctl {
 
 impl Radio for Bluetoothctl {
     fn paired(&self) -> Option<Device> {
-        parse_devices(&Self::run(&["devices", "Paired"]))
+        parse_devices(&Self::run(&["devices", "Bonded"]))
             .iter()
             .map(|address| Self::device(address))
-            .find(|(_, info)| info.headphones)
+            .find(|(_, info)| info.headphones && info.bonded)
             .map(|(device, _)| device)
     }
 
@@ -648,6 +652,7 @@ impl Radio for Bluetoothctl {
     }
 
     fn pair(&self, address: &str) -> Result<(), String> {
+        Self::run(&["pairable", "on"]);
         let said = Self::run(&[
             "--agent",
             "NoInputNoOutput",
@@ -656,8 +661,12 @@ impl Radio for Bluetoothctl {
             "pair",
             address,
         ]);
+        Self::run(&["pairable", "off"]);
         if !said.contains("Pairing successful") {
             return Err(format!("bluetoothctl pair {address}: {}", said.trim()));
+        }
+        if !Self::device(address).1.bonded {
+            return Err(format!("bluetoothctl pair {address}: paired without bonding"));
         }
         let trusted = Self::run(&["trust", address]);
         if trusted.contains("trust succeeded") {
@@ -1043,12 +1052,19 @@ mod tests {
     }
 
     #[test]
-    fn pairing_the_same_headphones_again_starts_from_scratch() {
+    fn pairing_the_same_headphones_again_forgets_them_and_pairs_them_once_found_again() {
         let rig = paired_rig();
         rig.world.lock().unwrap().in_range = Some(airpods());
         rig.audio.pair().unwrap();
-        let calls = calls_until(&rig, &format!("pair {AIRPODS}"));
-        assert_eq!(calls[calls.len() - 2], format!("forget {AIRPODS}"));
+        assert_eq!(
+            calls_until(&rig, &format!("pair {AIRPODS}")),
+            [
+                "scan".to_string(),
+                format!("forget {AIRPODS}"),
+                "stop scan".to_string(),
+                format!("pair {AIRPODS}")
+            ]
+        );
     }
 
     #[test]
@@ -1115,7 +1131,7 @@ mod tests {
     #[test]
     fn bluetoothctl_info_tells_headphones_in_range() {
         let info = parse_info(
-            "Device 34:0E:22:67:03:38 (public)\n\tName: AirPods\n\tAlias: AirPods von Frederik\n\tClass: 0x00240418 (2360344)\n\tIcon: audio-headphones\n\tPaired: no\n\tTrusted: no\n\tRSSI: 0xffffffc4 (-60)\n",
+            "Device 34:0E:22:67:03:38 (public)\n\tName: AirPods\n\tAlias: AirPods von Frederik\n\tClass: 0x00240418 (2360344)\n\tIcon: audio-headphones\n\tPaired: no\n\tBonded: no\n\tTrusted: no\n\tRSSI: 0xffffffc4 (-60)\n",
         );
         assert_eq!(
             info,
@@ -1123,6 +1139,7 @@ mod tests {
                 name: Some("AirPods von Frederik".to_string()),
                 headphones: true,
                 in_range: true,
+                bonded: false,
             }
         );
         let tv = parse_info("Device D0:C2:4E:8A:F1:37 (public)\n\tName: [TV] Samsung\n\tIcon: video-display\n\tRSSI: -70\n");
