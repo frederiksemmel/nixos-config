@@ -26,6 +26,7 @@ mod parse;
 mod player;
 mod progress;
 mod seek;
+mod screen;
 mod segments;
 mod sidecar;
 mod storage;

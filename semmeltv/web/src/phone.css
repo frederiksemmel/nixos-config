@@ -46,13 +46,21 @@ html.pp-open, html.pp-open body { overflow: hidden; overscroll-behavior: none; }
   display: grid;
   grid-template-rows: auto 1fr auto;
   padding: max(env(safe-area-inset-top), 10px) max(env(safe-area-inset-right), 12px) max(env(safe-area-inset-bottom), 12px) max(env(safe-area-inset-left), 12px);
+}
+
+.pp-layer::before {
+  content: "";
+  position: absolute;
+  inset: 0;
   background: linear-gradient(to bottom, rgba(0, 0, 0, 0.66), transparent 26%, transparent 62%, rgba(0, 0, 0, 0.78));
   opacity: 0;
   transition: opacity 0.25s;
+  pointer-events: none;
 }
 
-.pp.pp-controls .pp-layer { opacity: 1; }
-.pp:not(.pp-controls) .pp-layer > * { pointer-events: none; }
+.pp-layer > * { position: relative; }
+.pp.pp-controls .pp-layer::before { opacity: 1; }
+.pp:not(.pp-controls) .pp-layer > * { visibility: hidden; }
 
 .pp svg { width: 24px; height: 24px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .pp svg .fill { fill: currentColor; stroke: none; }
@@ -340,26 +348,6 @@ html.pp-open, html.pp-open body { overflow: hidden; overscroll-behavior: none; }
 
 @keyframes pp-toast { 0%, 85% { opacity: 1; } 100% { opacity: 0; } }
 
-.pp-handoff {
-  position: fixed;
-  z-index: 900;
-  left: 50%;
-  top: calc(var(--top) + 8px);
-  transform: translateX(-50%);
-  width: min(380px, calc(100vw - 32px));
-  display: grid;
-  gap: 10px;
-  padding: 14px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius);
-  background: var(--glass-bar);
-  backdrop-filter: var(--glass-blur);
-  -webkit-backdrop-filter: var(--glass-blur);
-  color: var(--text);
-}
-
-.pp-handoff p { margin: 0; font-size: 14px; line-height: 1.4; }
-.pp-handoff .pp-pill { border-color: var(--line); }
 
 @media (prefers-reduced-motion: reduce) {
   .pp, .pp-layer { transition: none; }

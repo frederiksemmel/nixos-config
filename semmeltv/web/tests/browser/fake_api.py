@@ -18,11 +18,15 @@ fetched = set()
 marked = {}
 audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
+screen = {"kind": "tv", "device": None, "play": None, "notice": None}
+tv = {"on": True}
 CONNECT_SECONDS = 1.5
 SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
 
 
 def now_playing():
+    if not tv["on"]:
+        return None
     return {
         "title": "The Endless Summer", "caption": "1966", "movie": "the-endless-summer-1966",
         "show": None, "season": None, "episode": None,
@@ -39,6 +43,7 @@ async def events(request):
     sent = None
     while not socket.closed:
         await socket.send_str(json.dumps({"type": "playback", "now_playing": now_playing()}))
+        await socket.send_str(json.dumps({"type": "screen", "screen": screen}))
         if sent != sound["changed"]:
             sent = sound["changed"]
             await socket.send_str(json.dumps({"type": "audio", **audio}))
@@ -201,6 +206,49 @@ async def fetch_subtitles(request):
                               "label": "English", "release": "x", "matched": "title", "shown": False})
 
 
+def film_place(position, state, session=None):
+    return {"state": state, "kind": "movie", "movie": "the-endless-summer-1966", "name": "The Endless Summer",
+            "caption": "1966", "position": position, "session": session, "paused": False}
+
+
+async def screen_view(request):
+    return web.json_response(screen)
+
+
+async def screen_command(request):
+    body = await request.json()
+    action = body["action"]
+    if action == "flip" and body["to"] == "phone":
+        play = film_place(playing["position"], "playing", "fake-session") if tv["on"] else None
+        tv["on"] = False
+        screen.update(kind="phone", device=body["device"], play=play)
+    elif action == "flip":
+        if screen["play"]:
+            playing["position"] = body.get("position") or screen["play"]["position"]
+            tv["on"] = True
+        screen.update(kind="tv", device=None, play=None)
+    elif action == "play":
+        tv["on"] = False
+        screen.update(kind="phone", device=body["device"], play=film_place(0.0, "starting"))
+    elif action == "failed":
+        screen.update(play=None)
+    return web.json_response({"message": "done", "ok": True})
+
+
+async def stream_open(request):
+    return web.json_response({"id": "fake-session", "playlist": "/api/stream/fake-session/main.m3u8", "kind": "movie",
+                              "key": "the-endless-summer-1966", "title": "The Endless Summer", "caption": "1966",
+                              "season": None, "episode": None, "poster": "/api/movies/the-endless-summer-1966/poster",
+                              "backdrop": "", "start": 0, "duration": 5498.56, "audio": [], "audio_index": None,
+                              "converted_audio": False, "subtitles": [], "subtitle_delay": 0, "credits": None,
+                              "next": None, "bitrate": 4000000, "heavy": False})
+
+
+async def stream_slow(request):
+    await asyncio.sleep(30)
+    return web.Response(status=404)
+
+
 async def accepted(request):
     return web.json_response({"ok": True})
 
@@ -214,6 +262,10 @@ app.router.add_get("/api/subtitles", subtitles)
 app.router.add_get("/api/storage", storage)
 app.router.add_get("/api/downloads", downloads)
 app.router.add_get("/api/playback", playback)
+app.router.add_get("/api/screen", screen_view)
+app.router.add_post("/api/screen", screen_command)
+app.router.add_post("/api/stream/open", stream_open)
+app.router.add_get("/api/stream/{tail:.*}", stream_slow)
 app.router.add_post("/api/subtitles/delay", subtitle_delay)
 app.router.add_post("/api/subtitles/fetch", fetch_subtitles)
 app.router.add_post("/api/watched", watched)

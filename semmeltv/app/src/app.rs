@@ -21,6 +21,7 @@ use crate::player::{self, Finish, Player};
 use crate::progress::{self, Position, Progress};
 use crate::seek::Direction;
 use crate::segments::Title;
+use crate::screen;
 use crate::storage::{self, Keep};
 use crate::stream;
 use crate::subtitles::{self, Subtitles};
@@ -51,6 +52,7 @@ const EMPTY_LIBRARY: &str = "The library is empty";
 const OUT_OF_REACH: &str = "Not downloaded, and pCloud can't be reached right now";
 const NOTHING_PLAYING: &str = "Nothing is playing";
 const PLAYBACK_EVERY: Duration = Duration::from_millis(500);
+const SCREEN_EVERY: Duration = Duration::from_secs(2);
 const OFFER_TIME: Duration = Duration::from_secs(60);
 const TV_WAKE_WAIT: Duration = Duration::from_secs(20);
 const TV_PICTURE_SETTLE: Duration = Duration::from_secs(2);
@@ -180,6 +182,9 @@ struct App {
     offer: Option<Offer>,
     waking_tv: Arc<AtomicBool>,
     paused_for_tv: Cell<bool>,
+    screen: screen::Screen,
+    notice: Option<screen::Said>,
+    stopping_tv: bool,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -291,6 +296,9 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         offer: None,
         waking_tv: Arc::new(AtomicBool::new(false)),
         paused_for_tv: Cell::new(false),
+        screen: screen::Screen::Tv,
+        notice: None,
+        stopping_tv: false,
     }));
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
@@ -347,6 +355,17 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
             && let Ok(app) = app.try_borrow()
         {
             app.publish_playback();
+        }
+    });
+
+    let screen_timer = Timer::default();
+    let watching_screen = Rc::downgrade(&app);
+    screen_timer.start(TimerMode::Repeated, SCREEN_EVERY, move || {
+        if let Some(app) = watching_screen.upgrade()
+            && let Ok(mut app) = app.try_borrow_mut()
+            && app.screen != screen::Screen::Tv
+        {
+            app.screen_step(screen::Event::Tick);
         }
     });
 
@@ -618,6 +637,10 @@ impl App {
     }
 
     fn play(&mut self, path: &Path) {
+        self.stopping_tv = false;
+        if self.screen != screen::Screen::Tv {
+            self.screen_step(screen::Event::TvPlays);
+        }
         let source = match self.store.source(path, self.online) {
             Source::Stream => path.to_path_buf(),
             Source::Cached(file) => file,
@@ -750,6 +773,7 @@ impl App {
     }
 
     fn finish_playback(&mut self, success: bool, ended: bool) {
+        self.stopping_tv = false;
         self.record_place();
         self.player = None;
         self.now_playing = None;
@@ -900,6 +924,7 @@ impl App {
             Request::Dismiss(kind, key) => return self.dismiss(kind, &key),
             Request::Mark(kind, key, episode, mark) => return self.mark(kind, &key, episode, mark),
             Request::Phone(report) => return self.phone(report),
+            Request::Screen(command) => return self.screen_command(command),
             Request::Listen => {
                 return match &self.voice {
                     Some(voice) => {
@@ -1063,7 +1088,170 @@ impl App {
         }
     }
 
+    fn place_of(&self, file: &Path, position: f64) -> Option<screen::Place> {
+        let library = self.nav.library();
+        if let Some((show, episode)) = library.find_episode(file) {
+            return Some(screen::Place {
+                title: screen::Title::Episode {
+                    show: show.key.clone(),
+                    season: episode.season,
+                    episode: episode.number,
+                },
+                name: show.title.clone(),
+                caption: episode.label(),
+                file: file.to_path_buf(),
+                position,
+            });
+        }
+        let movie = library.movies.iter().find(|movie| movie.path == file)?;
+        Some(screen::Place {
+            title: screen::Title::Movie {
+                movie: movie.key.clone(),
+            },
+            name: movie.title.clone(),
+            caption: movie.year.map(|year| year.to_string()).unwrap_or_default(),
+            file: file.to_path_buf(),
+            position,
+        })
+    }
+
+    fn tv_place(&self) -> Option<screen::Place> {
+        if self.stopping_tv {
+            return None;
+        }
+        let (player, playing) = (self.player.as_ref()?, self.playing.as_ref()?);
+        self.place_of(&playing.file, player.place().position)
+    }
+
+    fn resume_point(&self, file: &Path) -> f64 {
+        match self.progress.files.get(file) {
+            Some(watched) if !watched.finished && !watched.in_credits() => watched.stopped_at.unwrap_or(0.0),
+            _ => 0.0,
+        }
+    }
+
+    fn screen_step(&mut self, event: screen::Event) {
+        let tv = self.tv_place();
+        let effects = self.screen.step(event, tv.as_ref(), Instant::now());
+        for effect in effects {
+            match effect {
+                screen::Effect::PauseTv => self.control(Control::Pause),
+                screen::Effect::ResumeTv => self.control(Control::Resume),
+                screen::Effect::StopTv => {
+                    self.stopping_tv = self.player.is_some();
+                    self.control(Control::Stop);
+                }
+                screen::Effect::PlayTv(place) => {
+                    if place.position > 1.0
+                        && let Err(error) =
+                            stream::resume::write(&self.cache.watch_later_dir(&place.file), &place.file, place.position)
+                    {
+                        eprintln!("screen: could not keep where {} stopped: {error}", place.file.display());
+                    }
+                    self.play(&place.file);
+                }
+                screen::Effect::Tell(notice) => {
+                    let id = self.notice.as_ref().map_or(1, |said| said.id + 1);
+                    self.show_message(notice.text.clone());
+                    self.notice = Some(screen::Said {
+                        id,
+                        text: notice.text,
+                        tone: notice.tone,
+                    });
+                }
+            }
+        }
+        self.bus.screen(screen::View::of(&self.screen, self.notice.clone()));
+    }
+
+    fn screen_command(&mut self, command: api::ScreenCommand) -> Outcome {
+        let done = |message: String| Outcome { message, ok: true };
+        match command {
+            api::ScreenCommand::Flip {
+                to: api::ScreenKind::Tv,
+                position,
+                ..
+            } => {
+                self.screen_step(screen::Event::Flip {
+                    to: screen::Target::Tv,
+                    position,
+                });
+                done("Watching on the TV".to_string())
+            }
+            api::ScreenCommand::Flip {
+                to: api::ScreenKind::Phone,
+                device,
+                ..
+            } => {
+                let name = device.name.clone();
+                self.screen_step(screen::Event::Flip {
+                    to: screen::Target::Phone(device),
+                    position: None,
+                });
+                done(format!("Watching on {name}"))
+            }
+            api::ScreenCommand::Play {
+                device,
+                movie,
+                show,
+                season,
+                episode,
+            } => {
+                let pick = match (movie, show) {
+                    (Some(key), None) => intent::Pick::Movie(key),
+                    (None, Some(key)) => intent::Pick::Show { key, season, episode },
+                    _ => {
+                        return Outcome {
+                            message: "Give either movie or show".to_string(),
+                            ok: false,
+                        };
+                    }
+                };
+                let path = match intent::choose(&pick, self.nav.library(), &self.progress) {
+                    Action::Play(path) => path,
+                    other => {
+                        return Outcome {
+                            message: self.describe(&other),
+                            ok: false,
+                        };
+                    }
+                };
+                let Some(place) = self.place_of(&path, self.resume_point(&path)) else {
+                    return Outcome {
+                        message: "That is not in the library".to_string(),
+                        ok: false,
+                    };
+                };
+                let message = format!("Playing {} on {}", place.name, device.name);
+                self.screen_step(screen::Event::Play { device, place });
+                done(message)
+            }
+            api::ScreenCommand::Failed { device, reason } => {
+                self.screen_step(screen::Event::Failed { device, reason });
+                done("Noted".to_string())
+            }
+        }
+    }
+
     fn phone(&mut self, report: stream::Report) -> Outcome {
+        if let Some(device) = report.device.clone() {
+            let session = report.session.clone();
+            let event = match report.moment {
+                stream::Moment::Start => screen::Event::Started {
+                    device,
+                    session,
+                    position: report.position,
+                },
+                stream::Moment::Playing | stream::Moment::Paused => screen::Event::Report {
+                    device,
+                    session,
+                    position: report.position,
+                    paused: report.moment == stream::Moment::Paused,
+                },
+                stream::Moment::Stopped | stream::Moment::Ended => screen::Event::Stopped { device, session },
+            };
+            self.screen_step(event);
+        }
         if self.playing.as_ref().is_some_and(|playing| playing.file == report.file) {
             return Outcome {
                 message: "The TV is playing this, so it keeps its own place".to_string(),

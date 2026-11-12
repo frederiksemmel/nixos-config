@@ -495,6 +495,49 @@ DELETE `/api/audio/pair` stops a scan that hasn't found anything yet.
 DELETE `/api/audio/headphones` moves the sound to the TV and forgets the
 headphones (`bluetoothctl remove`).
 
+## Where it plays
+
+One thing plays at a time: on the TV or on one phone. The app keeps that as
+the screen, and every front end shows what it says.
+
+| Method | Path | Answer |
+| --- | --- | --- |
+| GET | `/api/screen` | the screen, see below |
+| POST | `/api/screen` | a command, see below → `{ message, ok }` |
+
+The screen is `{ kind, device, play, notice }`. `kind` is `tv` (Play goes to
+the TV, whether or not it plays), `moving` (the TV is paused while a phone
+starts the same video at the same place) or `phone` (Play goes to `device`).
+`device` is `{ id, name }`, a browser's own random id and a name such as
+"iPhone". `play` is null or what the phone plays: `{ state, kind, movie, show,
+season, episode, name, caption, position, session, paused }`, where `state` is
+`moving`, `starting` or `playing`. `notice` is the last thing worth saying,
+`{ id, text, tone }` with `tone` `quiet` or `error`; a new `id` means a new
+notice.
+
+Commands carry `action` and the sending `device`:
+
+- `{ "action": "flip", "to": "phone" }`: the screen moves to this phone. If
+  the TV plays, it pauses, and once the phone has started the same video at
+  the same place the TV stops the usual way, keeping its place. If the phone
+  doesn't start within 20 s, or reports a failure, the TV carries on.
+- `{ "action": "flip", "to": "tv", "position": 1234.5 }`: the screen moves to
+  the TV. If a phone plays, the TV plays the same video from `position` (else
+  from the phone's last report), turning the TV on.
+- `{ "action": "play", "movie": key }` or `{ "action": "play", "show": key,
+  "season"?, "episode"? }`: this phone plays it, from where it last stopped.
+  A TV that plays stops. Any other phone loses the screen.
+- `{ "action": "failed", "reason": text }`: this phone could not play.
+
+A phone that starts, plays or stops reports it through the stream's
+`progress`, which moves the screen too. A phone that hasn't reported for 45 s
+(asleep, gone) stops being played on, keeping its place; one that doesn't
+start within 30 s likewise. Anything the TV itself plays, from the remote,
+voice or `/api/play`, takes the screen back to the TV.
+
+The event stream sends `{ "type": "screen", "screen": {...} }` when it
+connects and whenever the screen changes.
+
 ## Watching on a phone
 
 These stream a film or episode to the browser that asks, as HLS with fMP4
@@ -506,7 +549,7 @@ gets 403 with `{ "error": "Watching on this phone needs Tailscale on" }`.
 | Method | Path | Answer |
 | --- | --- | --- |
 | GET | `/api/stream/access` | `{ ok, user }`: 200 on the tailnet, 403 otherwise |
-| POST | `/api/stream/open` | `{ movie }` or `{ show, season?, episode? }`, plus `client`, `audio?`, `start?`, `replaces?` → a session |
+| POST | `/api/stream/open` | `{ movie }` or `{ show, season?, episode? }`, plus `client`, `device?`, `audio?`, `start?`, `replaces?` → a session |
 | GET | `/api/stream/{id}/main.m3u8` | the master playlist, to give the `<video>` or hls.js |
 | GET | `/api/stream/{id}/marks` | `{ segments, credits }`: TheIntroDB's recap and intro, and where the credits start |
 | POST | `/api/stream/{id}/progress` | `{ position, played, state }` → `{ message, ok }` |

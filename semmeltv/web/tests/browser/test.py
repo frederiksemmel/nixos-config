@@ -265,6 +265,45 @@ def toasts(page, engine):
     until(page, engine, "a toast goes away by itself", '!document.querySelector(".toast")', 7000)
 
 
+def tv_plays(engine, step, wanted, timeout=5.0):
+    import json
+    deadline = time.time() + timeout
+    while True:
+        with urllib.request.urlopen(FAKE + "/api/playback") as response:
+            playing = json.load(response)["now_playing"] is not None
+        if playing == wanted or time.time() > deadline:
+            check(engine, step, playing == wanted)
+            return
+        time.sleep(0.2)
+
+
+HLS_STUB = (
+    "window.Hls = class { static isSupported() { return true; } "
+    "on() {} loadSource() {} attachMedia() {} destroy() {} };"
+    "window.Hls.Events = { ERROR: 'e', MANIFEST_PARSED: 'm', SUBTITLE_TRACKS_UPDATED: 's' };"
+)
+
+
+def watches_on_the_phone(page, engine):
+    page.route("https://cdn.jsdelivr.net/**", lambda route: route.fulfill(body=HLS_STUB, content_type="text/javascript"))
+    page.locator("#mode").tap()
+    until(page, engine, "flipping to the phone opens the player", 'document.documentElement.dataset.mode === "phone" && !!document.querySelector(".pp")', 5000)
+    tv_plays(engine, "flipping to the phone stops the TV", False)
+    page.wait_for_timeout(600)
+    page.reload(wait_until="commit")
+    until(page, engine, "after a reload the player matches the backend", 'document.documentElement.dataset.mode === "phone" && !!document.querySelector(".pp")', 8000)
+    page.evaluate('document.querySelector(".pp-tv").click()')
+    until(page, engine, "Continue on TV closes the player", '!document.querySelector(".pp") && document.documentElement.dataset.mode === "tv"', 5000)
+    tv_plays(engine, "Continue on TV plays on the TV again", True)
+    page.locator("#mode").tap()
+    until(page, engine, "flipping again moves it to the phone", 'document.documentElement.dataset.mode === "phone" && !!document.querySelector(".pp")', 5000)
+    page.evaluate('document.querySelector("#mode").click()')
+    until(page, engine, "flipping back leaves the switch on the TV while the TV plays",
+          'document.documentElement.dataset.mode === "tv" && !document.querySelector(".pp")', 5000)
+    tv_plays(engine, "and the TV plays", True)
+    page.wait_for_timeout(800)
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
@@ -324,6 +363,7 @@ def run(p, engine, device):
     toasts(page, engine)
     settings_subpages(page, engine)
     headphones(page, engine)
+    watches_on_the_phone(page, engine)
     page.locator(".bar-toggle").tap()
     answers(page, engine, "after play/pause")
     opens_title(page, engine, "after play/pause")

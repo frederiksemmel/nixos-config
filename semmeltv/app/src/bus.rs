@@ -1,4 +1,5 @@
 use crate::audio;
+use crate::screen;
 use serde::Serialize;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
@@ -11,6 +12,7 @@ pub enum Event {
     Voice(Voice),
     Playback { now_playing: Option<NowPlaying> },
     Audio(audio::View),
+    Screen { screen: screen::View },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -70,6 +72,7 @@ pub struct Bus {
     events: broadcast::Sender<Event>,
     now_playing: Arc<Mutex<Option<NowPlaying>>>,
     audio: Arc<Mutex<Option<audio::View>>>,
+    screen: Arc<Mutex<screen::View>>,
 }
 
 impl Default for Bus {
@@ -78,6 +81,7 @@ impl Default for Bus {
             events: broadcast::Sender::new(BACKLOG),
             now_playing: Arc::default(),
             audio: Arc::default(),
+            screen: Arc::default(),
         }
     }
 }
@@ -101,6 +105,18 @@ impl Bus {
         if current.as_ref() != Some(&view) {
             *current = Some(view.clone());
             let _ = self.events.send(Event::Audio(view));
+        }
+    }
+
+    pub fn screen_state(&self) -> screen::View {
+        self.screen.lock().unwrap().clone()
+    }
+
+    pub fn screen(&self, view: screen::View) {
+        let mut current = self.screen.lock().unwrap();
+        if *current != view {
+            *current = view.clone();
+            let _ = self.events.send(Event::Screen { screen: view });
         }
     }
 
@@ -168,7 +184,7 @@ mod tests {
         let positions: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
             .map(|event| match event {
                 Event::Playback { now_playing } => now_playing.map(|playing| playing.position),
-                Event::Voice(_) | Event::Audio(_) => panic!("only playback events were sent"),
+                Event::Voice(_) | Event::Audio(_) | Event::Screen { .. } => panic!("only playback events were sent"),
             })
             .collect();
         assert_eq!(positions, [Some(10.1), Some(11.2), None]);

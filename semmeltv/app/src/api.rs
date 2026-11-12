@@ -10,6 +10,7 @@ use crate::manifest::{About, Date};
 use crate::progress::Progress;
 use crate::seek::Direction;
 use crate::sidecar::{self, Sidecar};
+use crate::screen;
 use crate::storage;
 use crate::stream;
 use crate::subfetch::{self, Match, Wanted};
@@ -63,6 +64,35 @@ pub enum Request {
     Dismiss(watching::Kind, String),
     Mark(watching::Kind, String, Option<(u32, u32)>, watching::Mark),
     Phone(stream::Report),
+    Screen(ScreenCommand),
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
+pub enum ScreenCommand {
+    Flip {
+        to: ScreenKind,
+        device: screen::Device,
+        position: Option<f64>,
+    },
+    Play {
+        device: screen::Device,
+        movie: Option<String>,
+        show: Option<String>,
+        season: Option<u32>,
+        episode: Option<u32>,
+    },
+    Failed {
+        device: screen::Device,
+        reason: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScreenKind {
+    Tv,
+    Phone,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -251,6 +281,7 @@ fn router(api: Api) -> Router {
         .route("/api/playback/{control}", post(control))
         .route("/api/tv/{control}", post(tv))
         .route("/api/events", get(events))
+        .route("/api/screen", get(screen_view).post(screen_command))
         .route("/api/microphone", get(microphone))
         .route("/api/audio", get(audio_view).post(choose_audio))
         .route("/api/audio/pair", post(pair_headphones).delete(cancel_pairing))
@@ -1349,6 +1380,14 @@ async fn volume(State(api): State<Api>, Path(change): Path<String>) -> Response 
     }
 }
 
+async fn screen_view(State(api): State<Api>) -> Json<screen::View> {
+    Json(api.bus.screen_state())
+}
+
+async fn screen_command(State(api): State<Api>, Json(command): Json<ScreenCommand>) -> Response {
+    ask(&api, Request::Screen(command)).await
+}
+
 async fn events(State(api): State<Api>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |socket| stream_events(socket, api.bus))
 }
@@ -1363,6 +1402,10 @@ async fn stream_events(mut socket: WebSocket, bus: Bus) {
     {
         return;
     }
+    let screen = bus.screen_state();
+    if send_event(&mut socket, &Event::Screen { screen }).await.is_err() {
+        return;
+    }
     loop {
         tokio::select! {
             event = events.recv() => match event {
@@ -1372,6 +1415,8 @@ async fn stream_events(mut socket: WebSocket, bus: Bus) {
                     if send_event(&mut socket, &Event::Playback { now_playing }).await.is_err() { return }
                     if let Some(audio) = bus.audio_state()
                         && send_event(&mut socket, &Event::Audio(audio)).await.is_err() { return }
+                    let screen = bus.screen_state();
+                    if send_event(&mut socket, &Event::Screen { screen }).await.is_err() { return }
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
             },
@@ -1816,6 +1861,7 @@ mod tests {
         let first = next();
         assert_eq!(first["type"], "playback");
         assert_eq!(first["now_playing"]["title"], "Dune");
+        assert_eq!(next()["screen"]["kind"], "tv");
         server.bus.voice(Voice::Listening);
         assert_eq!(next(), json!({ "type": "voice", "state": "listening" }));
         server.bus.playback(None);

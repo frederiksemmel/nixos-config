@@ -67,6 +67,8 @@ pub enum Moment {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Report {
+    pub device: Option<crate::screen::Device>,
+    pub session: String,
     pub file: PathBuf,
     pub position: f64,
     pub duration: f64,
@@ -103,6 +105,7 @@ struct Marks {
 
 struct Live {
     session: Arc<Session>,
+    device: Option<crate::screen::Device>,
     file: PathBuf,
     start: f64,
     duration: f64,
@@ -227,6 +230,7 @@ struct OpenBody {
     #[serde(default)]
     client: Client,
     replaces: Option<String>,
+    device: Option<crate::screen::Device>,
 }
 
 #[derive(Serialize)]
@@ -497,6 +501,7 @@ async fn open(State(streams): State<Streams>, Json(body): Json<OpenBody>) -> Res
     let bitrate = media.bitrate;
     let live = Arc::new(Live {
         session,
+        device: body.device.clone(),
         file: chosen.file.clone(),
         start,
         duration,
@@ -794,6 +799,8 @@ async fn progress(
         );
     }
     let request = Request::Phone(Report {
+        device: live.device.clone(),
+        session: id,
         file: live.file.clone(),
         position: report.position.clamp(0.0, live.duration),
         duration: live.duration,

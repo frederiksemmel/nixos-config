@@ -1,5 +1,4 @@
 const api = document.documentElement.dataset.api || "";
-const MODE_KEY = "semmeltv.mode";
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const REPORT_EVERY = 10000;
 const HIDE_AFTER = 3200;
@@ -22,9 +21,13 @@ const icons = {
 };
 
 const html = document.documentElement;
-let mode = "tv";
+const DEVICE_KEY = "semmeltv.device";
+const RECONNECT = 2000;
 let player = null;
-let noteTimer = 0;
+let screen = { kind: "tv", device: null, play: null, notice: null };
+let tvPlaying = null;
+let seenNotice = undefined;
+let socket = null;
 
 function stored(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -76,12 +79,8 @@ async function request(method, path, body, options = {}) {
   return data;
 }
 
-function note(text, hold = 4500) {
-  const target = document.getElementById("mode-note");
-  if (!target) return;
-  target.textContent = text;
-  clearTimeout(noteTimer);
-  if (text && hold) noteTimer = setTimeout(() => { target.textContent = ""; }, hold);
+function toast(text, tone = "info") {
+  window.dispatchEvent(new CustomEvent("semmeltv:toast", { detail: { text, tone } }));
 }
 
 function capabilities() {
@@ -101,82 +100,136 @@ function capabilities() {
   };
 }
 
-function applyMode(next) {
-  mode = next;
-  if (html.dataset.mode !== next) html.dataset.mode = next;
+function deviceName() {
+  const agent = navigator.userAgent;
+  if (/iPhone/.test(agent)) return "iPhone";
+  if (/iPad/.test(agent) || (/Macintosh/.test(agent) && navigator.maxTouchPoints > 1)) return "iPad";
+  if (/Android/.test(agent)) return "Android phone";
+  if (/Macintosh/.test(agent)) return "Mac";
+  if (/Windows/.test(agent)) return "Windows PC";
+  return "browser";
+}
+
+function thisDevice() {
+  let id = stored(DEVICE_KEY);
+  if (!id) {
+    const bytes = new Uint8Array(16);
+    crypto.getRandomValues(bytes);
+    id = Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+    store(DEVICE_KEY, id);
+  }
+  document.cookie = `semmeltv-device=${id}; path=/; max-age=31536000; samesite=lax`;
+  return { id, name: deviceName() };
+}
+
+const device = thisDevice();
+
+function samePick(a, b) {
+  if (!a || !b) return false;
+  if (a.movie || b.movie) return a.movie === b.movie;
+  return a.show === b.show && a.season === b.season && a.episode === b.episode;
+}
+
+function pickOfPlay(play) {
+  return play.kind === "movie" ? { movie: play.movie } : { show: play.show, season: play.season, episode: play.episode };
+}
+
+function pickOfPlaying(playing) {
+  if (!playing || (!playing.movie && !playing.show)) return null;
+  return playing.movie ? { movie: playing.movie } : { show: playing.show, season: playing.season, episode: playing.episode };
+}
+
+function ours(view) {
+  return Boolean(view.device && view.device.id === device.id);
+}
+
+function render() {
+  const mode = screen.kind === "tv" ? "tv" : "phone";
+  if (html.dataset.mode !== mode) html.dataset.mode = mode;
   if (!html.hasAttribute("data-phone-ready")) html.dataset.phoneReady = "";
-  if (player && !html.classList.contains("pp-open")) html.classList.add("pp-open");
-  const toggle = document.getElementById("mode");
-  if (toggle) {
-    toggle.dataset.mode = next;
-    toggle.setAttribute("aria-pressed", String(next === "phone"));
-    toggle.setAttribute("aria-label", next === "phone" ? "Watch on the TV" : "Watch on this phone");
-  }
+  if (player && !player.closed && !html.classList.contains("pp-open")) html.classList.add("pp-open");
 }
 
-async function switchMode() {
-  if (mode === "phone") {
-    applyMode("tv");
-    store(MODE_KEY, "tv");
-    note("Play goes to the TV", 2500);
-    return;
+function adopt(view) {
+  screen = view;
+  const notice = view.notice;
+  if (seenNotice === undefined) {
+    seenNotice = notice ? notice.id : null;
+  } else if (notice && notice.id !== seenNotice) {
+    seenNotice = notice.id;
+    toast(notice.text, notice.tone === "error" ? "error" : "info");
   }
-  if (!capabilities().playable) {
-    note("This browser can't play the videos");
-    return;
-  }
-  try {
-    await request("GET", "/api/stream/access");
-  } catch (error) {
-    note(error.status === 403 ? "Watching on this phone needs Tailscale on" : error.message);
-    return;
-  }
-  applyMode("phone");
-  store(MODE_KEY, "phone");
-  note("Play stays on this phone", 2500);
-  offerHandoff();
+  render();
+  reconcile();
 }
 
-async function offerHandoff() {
-  let playing = null;
-  try {
-    playing = (await request("GET", "/api/playback")).now_playing;
-  } catch {
-    return;
-  }
-  if (!playing || (!playing.movie && !playing.show)) return;
-  document.querySelector(".pp-handoff")?.remove();
-  const card = element("div", "pp-handoff", { role: "dialog", "aria-label": "Continue on this phone" });
-  const text = element("p", "", { text: `The TV is playing ${playing.title}${playing.caption ? ` · ${playing.caption}` : ""}` });
-  const move = element("button", "pp-pill pp-strong", { type: "button", text: "Watch here" });
-  const stay = element("button", "pp-pill", { type: "button", text: "Leave it" });
-  card.append(text, element("div", "pp-row"));
-  card.lastChild.append(move, stay);
-  document.body.append(card);
-  stay.addEventListener("click", () => card.remove());
-  move.addEventListener("click", () => {
-    card.remove();
-    continueOnPhone();
-  });
-  setTimeout(() => card.remove(), 15000);
-}
-
-async function continueOnPhone() {
-  document.querySelector("#sheet .sheet-close")?.click();
-  try {
-    const now = (await request("GET", "/api/playback")).now_playing;
-    if (!now || (!now.movie && !now.show)) {
-      note("The TV isn't playing anything");
-      return;
+function reconcile() {
+  const view = screen;
+  const play = view.play;
+  const wanted = ours(view) && play && ["moving", "starting", "playing"].includes(play.state);
+  if (!wanted) {
+    if (player && !player.closed && !player.fresh()) {
+      if (ours(view) && view.kind === "phone" && !play) player.idle();
+      else player.close(false);
     }
-    const pick = now.movie ? { movie: now.movie } : { show: now.show, season: now.season, episode: now.episode };
-    openPlayer(pick, {
-      start: now.position,
-      opened: () => request("POST", "/api/playback/stop").catch((error) => note(error.message)),
-    });
-  } catch (error) {
-    note(error.message);
+    return;
   }
+  const pick = pickOfPlay(play);
+  if (player && !player.closed && player.shows(pick)) return;
+  openPlayer(pick, { start: play.position });
+}
+
+function listen() {
+  if (socket && socket.readyState <= 1) return;
+  const base = api ? api.replace(/^http/, "ws") : location.origin.replace(/^http/, "ws");
+  socket = new WebSocket(`${base}/api/events`);
+  socket.addEventListener("message", (message) => {
+    let event;
+    try { event = JSON.parse(message.data); } catch { return; }
+    if (event.type === "screen") adopt(event.screen);
+    if (event.type === "playback") tvPlaying = event.now_playing;
+  });
+  socket.addEventListener("close", () => {
+    socket = null;
+    setTimeout(listen, RECONNECT);
+  });
+}
+
+async function command(body) {
+  try {
+    await request("POST", "/api/screen", { ...body, device });
+    adopt(await request("GET", "/api/screen"));
+  } catch (error) {
+    toast(error.message, "error");
+    if (player && player.waiting) player.close(false);
+    request("GET", "/api/screen").then(adopt).catch(() => {});
+  }
+}
+
+function canWatchHere() {
+  if (!capabilities().playable) {
+    toast("This browser can't play the videos", "error");
+    return false;
+  }
+  return true;
+}
+
+function flip() {
+  if (screen.kind === "tv") {
+    if (!canWatchHere()) return;
+    const pick = pickOfPlaying(tvPlaying);
+    if (pick) openPlayer(pick, { waiting: true });
+    command({ action: "flip", to: "phone" });
+  } else {
+    const position = player && !player.closed && ours(screen) && player.video.currentTime > 0 ? player.video.currentTime : undefined;
+    command({ action: "flip", to: "tv", position });
+  }
+}
+
+function playHere(pick) {
+  if (!canWatchHere()) return;
+  openPlayer(pick, { waiting: true });
+  command({ action: "play", ...pick });
 }
 
 class Player {
@@ -198,6 +251,8 @@ class Player {
     this.hideTimer = 0;
     this.countdown = null;
     this.closed = false;
+    this.waiting = false;
+    this.idling = false;
     this.marks = { segments: [], credits: null };
     this.bind();
     this.show(true);
@@ -330,7 +385,7 @@ class Player {
     video.addEventListener("error", () => { if (!this.recover()) this.failed(video.error && video.error.message); });
 
     this.reportTimer = setInterval(() => {
-      if (this.started && !video.paused) this.report("playing");
+      if (this.started && !this.idling) this.report(video.paused ? "paused" : "playing");
     }, REPORT_EVERY);
     this.onHide = () => {
       if (document.visibilityState === "hidden" && this.started) this.report(video.paused ? "paused" : "playing", true);
@@ -432,13 +487,57 @@ class Player {
     this.show();
   }
 
+  shows(pick) {
+    return !this.idling && samePick(this.pick, pick) && !(this.waiting && !this.session);
+  }
+
+  idle() {
+    if (this.video.ended || !this.session) {
+      this.close(false);
+      return;
+    }
+    if (this.idling) return;
+    this.idling = true;
+    this.started = false;
+    this.video.pause();
+    this.root.classList.remove("pp-loading");
+    this.root.classList.add("pp-failed");
+    this.message.innerHTML = "";
+    this.message.append(element("p", "", { text: `Stopped at ${clock(this.video.currentTime)}` }));
+    const row = element("div", "pp-row");
+    const resume = element("button", "pp-pill pp-strong", { type: "button", text: "Resume" });
+    resume.addEventListener("click", () => {
+      this.video.play()?.catch(() => {});
+      command({ action: "play", ...this.pick });
+    });
+    const shut = element("button", "pp-pill", { type: "button", text: "Close" });
+    shut.addEventListener("click", () => this.close(false));
+    row.append(resume, shut);
+    this.message.append(row);
+    this.show(true);
+  }
+
+  fresh() {
+    return this.waiting && !this.session && Date.now() - this.waitingSince < 5000;
+  }
+
+  wait(pick) {
+    this.pick = pick;
+    this.waiting = true;
+    this.waitingSince = Date.now();
+    this.root.classList.add("pp-loading");
+    this.show(true);
+  }
+
   async open(pick, options = {}) {
     this.pick = pick;
+    this.waiting = false;
+    this.idling = false;
     this.root.classList.add("pp-loading");
     this.message.textContent = "";
     this.root.classList.remove("pp-failed");
     const previous = this.session;
-    const body = { ...pick, client: this.capabilities.client };
+    const body = { ...pick, client: this.capabilities.client, device };
     if (options.start !== undefined) body.start = options.start;
     if (options.audio !== undefined) body.audio = options.audio;
     if (previous) body.replaces = previous.id;
@@ -446,6 +545,7 @@ class Player {
     try {
       session = await request("POST", "/api/stream/open", body);
     } catch (error) {
+      command({ action: "failed", reason: error.message });
       this.failed(error.message, error.status);
       return;
     }
@@ -454,7 +554,6 @@ class Player {
       return;
     }
     this.session = session;
-    if (options.opened) options.opened();
     this.played = 0;
     this.started = false;
     this.lastTime = null;
@@ -633,44 +732,39 @@ class Player {
     const session = this.session;
     if (!session || !session.next) return;
     this.cancelCountdown();
-    await this.report(this.video.ended ? "ended" : "stopped");
-    this.open({ show: session.key, season: session.next.season, episode: session.next.episode }, { start: 0 });
+    const finished = this.video.ended ? "ended" : "stopped";
+    const next = { show: session.key, season: session.next.season, episode: session.next.episode };
+    this.wait(next);
+    await command({ action: "play", ...next });
+    this.reportFor(session, finished);
   }
 
   ended() {
     const session = this.session;
     if (!session) return;
-    this.report("ended");
     this.started = false;
     if (session.next && this.countdownDismissed !== session.id) {
       this.playNext();
     } else {
+      this.report("ended");
       this.show(true);
     }
   }
 
   async report(state, keepalive = false) {
-    const session = this.session;
-    if (!session) return;
+    if (this.session) await this.reportFor(this.session, state, keepalive);
+  }
+
+  async reportFor(session, state, keepalive = false) {
     const body = { position: this.video.currentTime || 0, played: this.played, state };
     try {
       await request("POST", `/api/stream/${session.id}/progress`, body, { keepalive });
     } catch {}
   }
 
-  async continueOnTv() {
-    const session = this.session;
-    if (!session) return;
+  continueOnTv() {
     this.video.pause();
-    await this.report("stopped");
-    const pick = this.pickOf(session);
-    this.close(false);
-    try {
-      await request("POST", "/api/play", pick);
-      note("Playing on the TV", 3000);
-    } catch (error) {
-      note(error.message);
-    }
+    command({ action: "flip", to: "tv", position: this.video.currentTime || undefined });
   }
 
   fullscreen() {
@@ -752,7 +846,7 @@ class Player {
       tv.addEventListener("click", async () => {
         const pick = this.pick;
         this.close(false);
-        try { await request("POST", "/api/play", pick); note("Playing on the TV", 3000); } catch (error) { note(error.message); }
+        try { await request("POST", "/api/play", pick); } catch (error) { toast(error.message, "error"); }
       });
       row.append(tv);
     }
@@ -802,9 +896,9 @@ function loadHls() {
 }
 
 function openPlayer(pick, options = {}) {
-  if (player) player.close();
-  player = new Player();
-  player.open(pick, options);
+  if (!player || player.closed) player = new Player();
+  if (options.waiting) player.wait(pick);
+  else player.open(pick, options);
 }
 
 function pickFrom(target) {
@@ -821,38 +915,29 @@ function pickFrom(target) {
 }
 
 window.addEventListener("click", (event) => {
-  const toggle = event.target.closest("#mode");
-  if (toggle) {
+  if (event.target.closest("#mode") || event.target.closest('[data-handoff="phone"]')) {
     event.preventDefault();
     event.stopImmediatePropagation();
-    switchMode();
+    flip();
     return;
   }
-  if (mode !== "phone") return;
-  if (event.target.closest('[data-handoff="phone"]')) {
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    continueOnPhone();
-    return;
-  }
+  if (screen.kind === "tv") return;
   const target = event.target.closest("[data-play-movie], [data-play-show]");
   if (!target) return;
   const pick = pickFrom(target);
   if (!pick) return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  openPlayer(pick);
+  playHere(pick);
 }, true);
 
-function keepMode() {
-  const toggle = document.getElementById("mode");
-  const drifted = html.dataset.mode !== mode
-    || !html.hasAttribute("data-phone-ready")
-    || (player && !html.classList.contains("pp-open"))
-    || (toggle && toggle.dataset.mode !== mode);
-  if (drifted) applyMode(mode);
-}
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible") return;
+  listen();
+  request("GET", "/api/screen").then(adopt).catch(() => {});
+});
 
-applyMode(stored(MODE_KEY) === "phone" ? "phone" : "tv");
-new MutationObserver(keepMode).observe(document.body, { childList: true, subtree: true });
-new MutationObserver(keepMode).observe(html, { attributes: true });
+new MutationObserver(render).observe(html, { attributes: true });
+render();
+listen();
+request("GET", "/api/screen").then(adopt).catch(() => {});
