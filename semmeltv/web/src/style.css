@@ -1274,7 +1274,8 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
   border: 1px solid var(--line);
   border-radius: 10px;
   min-width: 9em;
-  padding: 7px 10px;
+  min-height: 44px;
+  padding: 0 10px;
 }
 
 .switch {
@@ -1439,7 +1440,7 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .storage-numbers { margin: 0 0 6px; font-size: 15px; font-variant-numeric: tabular-nums; }
 
 .storage-sort { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
-.storage-sort .track { text-align: center; padding: 9px 12px; }
+.storage-sort .track { min-height: 44px; place-content: center; text-align: center; padding: 0 12px; }
 
 .storage-titles {
   display: flex;
