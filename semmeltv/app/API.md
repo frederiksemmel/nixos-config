@@ -385,14 +385,16 @@ SemmelTV. Every request answers the whole state:
 
     {
       "output": "tv",
-      "headphones": { "name": "AirPods von Frederik", "address": "34:0E:22:67:03:38", "state": "disconnected" },
+      "headphones": { "name": "AirPods von Frederik", "address": "34:0E:22:67:03:38", "state": "connected", "volume": { "level": 80, "muted": false } },
       "pairing": null,
       "error": null
     }
 
 - `output` is where the sound is now, `tv` or `headphones`.
 - `headphones` is null while none are paired. `name` is their Bluetooth name,
-  and `state` is `disconnected`, `connecting` or `connected`.
+  and `state` is `disconnected`, `connecting` or `connected`. `volume` is
+  their own volume while they are connected, `{ "level": 0–100, "muted": bool }`,
+  and null otherwise; it follows changes made on the headphones too.
 - `pairing` is null, or `{ "state": "scanning" | "pairing" | "paired" |
   "failed", "message": "..." }` with a sentence to show as it is.
 - `error` is a sentence about the last switch that went wrong, or null.
@@ -428,7 +430,30 @@ A film moves without stopping: the app sets mpv's `audio-device` to
 TV shows "Sound on AirPods" or "Sound on the TV". A film started while the
 headphones have the sound starts on them. BlueALSA counts the headphones'
 reported delay in the ALSA delay mpv reads, so mpv keeps the picture in sync.
-`volume-up` and `volume-down` under `/api/tv` still set the TV's volume.
+`volume-up` and `volume-down` under `/api/tv` always set the TV's volume; the
+volume keys follow the sound with `/api/volume` below.
+
+### Volume
+
+| Method | Path | Body |
+| --- | --- | --- |
+| POST | `/api/volume/up` | none |
+| POST | `/api/volume/down` | none |
+| POST | `/api/volume/mute` | none |
+
+The volume keys go where the sound is. While `output` is `headphones`, they
+set the headphones' own volume over AVRCP absolute volume (BlueALSA's
+`--a2dp-volume`, through `bluealsa-cli volume` and `mute`), so the level is
+the one the headphones and a phone would show: 16 steps over BlueALSA's
+0–127, and up or down also unmutes. They answer `{ "message": "AirPods volume
+56%", "ok": true }`, "AirPods muted" or "AirPods sound on", or 422 with
+"AirPods didn't take the volume change". The new level also goes out as
+`headphones.volume` in the audio state.
+
+Otherwise they do what `/api/tv/volume-up`, `volume-down` and `mute` do, with
+the same answers. The app doesn't act on CEC volume keys from the TV's
+remote.
+
 
 ### Pairing
 

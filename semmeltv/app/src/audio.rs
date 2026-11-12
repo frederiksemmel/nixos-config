@@ -14,6 +14,8 @@ const SCANNING: &str = "Open the case near the TV and hold the button on its bac
 const NOTHING_FOUND: &str =
     "No headphones showed up. Open the case near the TV, hold the button on its back until the light flashes white, and try again.";
 const NONE_PAIRED: &str = "No headphones are paired. Pair them in Settings.";
+const MAX_VOLUME: u8 = 127;
+const VOLUME_STEP: u8 = 8;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
@@ -66,6 +68,40 @@ pub struct HeadphonesView {
     pub name: String,
     pub address: String,
     pub state: Link,
+    pub volume: Option<VolumeView>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct VolumeView {
+    pub level: u8,
+    pub muted: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Level {
+    pub value: u8,
+    pub muted: bool,
+}
+
+impl Level {
+    fn from_property(raw: u16) -> Self {
+        let left = (raw >> 8) as u8;
+        Self {
+            value: left & 0x7f,
+            muted: left & 0x80 != 0,
+        }
+    }
+
+    fn percent(self) -> u8 {
+        ((u32::from(self.value) * 100 + u32::from(MAX_VOLUME) / 2) / u32::from(MAX_VOLUME)) as u8
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VolumeChange {
+    Up,
+    Down,
+    Mute,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -90,6 +126,8 @@ pub trait Radio: Send + Sync {
     fn pair(&self, address: &str) -> Result<(), String>;
     fn forget(&self, address: &str);
     fn sinks(&self) -> Vec<String>;
+    fn volume(&self, address: &str) -> Option<Level>;
+    fn set_volume(&self, address: &str, level: Level) -> Result<(), String>;
 }
 
 pub type Mover = Box<dyn Fn(Route) + Send + Sync>;
@@ -117,6 +155,7 @@ struct State {
     attempt: u64,
     pairing: Option<PairingView>,
     pair_attempt: u64,
+    volume: Option<Level>,
 }
 
 impl State {
@@ -404,11 +443,15 @@ impl Audio {
     }
 
     fn sink(&self, address: &str, present: bool) {
+        let level = if present { self.inner.radio.volume(address) } else { None };
         let mut state = self.inner.state.lock().unwrap();
         let Some(headphones) = state.headphones.clone().filter(|headphones| headphones.address == address) else {
             return;
         };
         let mut route = None;
+        if level.is_some() {
+            state.volume = level;
+        }
         match (present, state.link) {
             (true, Link::Connecting) => {
                 state.link = Link::Connected;
@@ -438,6 +481,54 @@ impl Audio {
         }
     }
 
+    pub fn change_volume(&self, change: VolumeChange) -> Option<Result<String, String>> {
+        let (headphones, level) = {
+            let state = self.inner.state.lock().unwrap();
+            if state.output != Output::Headphones {
+                return None;
+            }
+            (state.headphones.clone()?, state.volume)
+        };
+        let level = level
+            .or_else(|| self.inner.radio.volume(&headphones.address))
+            .unwrap_or(Level {
+                value: MAX_VOLUME / 2,
+                muted: false,
+            });
+        let changed = match change {
+            VolumeChange::Up => Level {
+                value: level.value.saturating_add(VOLUME_STEP).min(MAX_VOLUME),
+                muted: false,
+            },
+            VolumeChange::Down => Level {
+                value: level.value.saturating_sub(VOLUME_STEP),
+                muted: false,
+            },
+            VolumeChange::Mute => Level {
+                muted: !level.muted,
+                ..level
+            },
+        };
+        if let Err(error) = self.inner.radio.set_volume(&headphones.address, changed) {
+            eprintln!("headphones: {error}");
+            return Some(Err(format!("{} didn't take the volume change", headphones.name)));
+        }
+        self.volume_changed(&headphones.address, changed);
+        Some(Ok(match change {
+            VolumeChange::Mute if changed.muted => format!("{} muted", headphones.name),
+            VolumeChange::Mute => format!("{} sound on", headphones.name),
+            _ => format!("{} volume {}%", headphones.name, changed.percent()),
+        }))
+    }
+
+    fn volume_changed(&self, address: &str, level: Level) {
+        let mut state = self.inner.state.lock().unwrap();
+        if state.headphones.as_ref().is_some_and(|headphones| headphones.address == address) {
+            state.volume = Some(level);
+            self.publish(&state);
+        }
+    }
+
     fn sinks_listed(&self, sinks: &[String]) {
         let current = self.inner.state.lock().unwrap().headphones.clone();
         if let Some(headphones) = current {
@@ -464,7 +555,7 @@ impl Audio {
     fn watch_sinks(&self) {
         loop {
             let monitor = Command::new("bluealsa-cli")
-                .arg("monitor")
+                .args(["monitor", "--properties=Volume"])
                 .stdin(Stdio::null())
                 .stdout(Stdio::piped())
                 .stderr(Stdio::null())
@@ -478,6 +569,7 @@ impl Audio {
                                 Some(Change::Added(address)) => self.sink(&address, true),
                                 Some(Change::Removed(address)) => self.sink(&address, false),
                                 Some(Change::Stopped) => self.sinks_listed(&[]),
+                                Some(Change::Volume(address, level)) => self.volume_changed(&address, level),
                                 None => {}
                             }
                         }
@@ -507,6 +599,10 @@ fn view_of(state: &State) -> View {
             name: headphones.name.clone(),
             address: headphones.address.clone(),
             state: state.link,
+            volume: state.volume.filter(|_| state.link == Link::Connected).map(|level| VolumeView {
+                level: level.percent(),
+                muted: level.muted,
+            }),
         }),
         pairing: state.pairing.clone(),
         error: state.error.clone(),
@@ -518,6 +614,7 @@ enum Change {
     Added(String),
     Removed(String),
     Stopped,
+    Volume(String, Level),
 }
 
 fn sink_address(path: &str) -> Option<String> {
@@ -532,8 +629,23 @@ fn sink_change(line: &str) -> Option<Change> {
         (Some("PCMAdded"), Some(path)) => sink_address(path).map(Change::Added),
         (Some("PCMRemoved"), Some(path)) => sink_address(path).map(Change::Removed),
         (Some("ServiceStopped"), _) => Some(Change::Stopped),
+        (Some("PropertyChanged"), Some(path)) => match (words.next(), words.next()) {
+            (Some("Volume"), Some(raw)) => {
+                let raw = u16::from_str_radix(raw.trim_start_matches("0x"), 16).ok()?;
+                sink_address(path).map(|address| Change::Volume(address, Level::from_property(raw)))
+            }
+            _ => None,
+        },
         _ => None,
     }
+}
+
+fn pcm_value(text: &str, key: &str) -> Option<String> {
+    text.lines().find_map(|line| {
+        let rest = line.trim().strip_prefix(key)?.trim();
+        let rest = rest.strip_prefix("L:").unwrap_or(rest);
+        rest.split_whitespace().next().map(str::to_string)
+    })
 }
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -681,19 +793,51 @@ impl Radio for Bluetoothctl {
     }
 
     fn sinks(&self) -> Vec<String> {
-        Command::new("bluealsa-cli")
-            .arg("list-pcms")
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .output()
-            .map(|output| {
-                String::from_utf8_lossy(&output.stdout)
-                    .lines()
-                    .filter_map(sink_address)
-                    .collect()
-            })
-            .unwrap_or_default()
+        bluealsa_cli(&["list-pcms"]).lines().filter_map(sink_address).collect()
     }
+
+    fn volume(&self, address: &str) -> Option<Level> {
+        let path = sink_path(address)?;
+        let value = pcm_value(&bluealsa_cli(&["volume", &path]), "Volume:")?.parse().ok()?;
+        let muted = pcm_value(&bluealsa_cli(&["mute", &path]), "Muted:")? == "true";
+        Some(Level { value, muted })
+    }
+
+    fn set_volume(&self, address: &str, level: Level) -> Result<(), String> {
+        let path = sink_path(address).ok_or_else(|| format!("no BlueALSA sink for {address}"))?;
+        let value = level.value.to_string();
+        let muted = if level.muted { "on" } else { "off" };
+        for args in [["volume", path.as_str(), value.as_str()], ["mute", path.as_str(), muted]] {
+            let status = Command::new("bluealsa-cli")
+                .args(args)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map_err(|error| format!("bluealsa-cli: {error}"))?;
+            if !status.success() {
+                return Err(format!("bluealsa-cli {}: {status}", args.join(" ")));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn bluealsa_cli(args: &[&str]) -> String {
+    Command::new("bluealsa-cli")
+        .args(args)
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
+        .unwrap_or_default()
+}
+
+fn sink_path(address: &str) -> Option<String> {
+    bluealsa_cli(&["list-pcms"])
+        .lines()
+        .find(|line| sink_address(line).as_deref() == Some(address))
+        .map(str::to_string)
 }
 
 #[cfg(test)]
@@ -720,6 +864,7 @@ mod tests {
         sinks: Vec<String>,
         in_range: Option<Device>,
         pairs: bool,
+        volume: Option<Level>,
     }
 
     struct FakeRadio {
@@ -778,6 +923,16 @@ mod tests {
 
         fn sinks(&self) -> Vec<String> {
             self.world.lock().unwrap().sinks.clone()
+        }
+
+        fn volume(&self, _address: &str) -> Option<Level> {
+            self.world.lock().unwrap().volume
+        }
+
+        fn set_volume(&self, address: &str, level: Level) -> Result<(), String> {
+            self.call(format!("volume {address} {} {}", level.value, level.muted));
+            self.world.lock().unwrap().volume = Some(level);
+            Ok(())
         }
     }
 
@@ -871,7 +1026,7 @@ mod tests {
             serde_json::json!({
                 "type": "audio",
                 "output": "tv",
-                "headphones": { "name": "AirPods", "address": AIRPODS, "state": "disconnected" },
+                "headphones": { "name": "AirPods", "address": AIRPODS, "state": "disconnected", "volume": null },
                 "pairing": null,
                 "error": null,
             })
@@ -1117,6 +1272,91 @@ mod tests {
         assert_eq!(route(&rig).device, TV_DEVICE);
         assert_eq!(call(&rig), format!("forget {AIRPODS}"));
         assert_eq!(rig.audio.device(), TV_DEVICE);
+    }
+
+    #[test]
+    fn volume_keys_change_the_headphones_only_while_they_have_the_sound() {
+        let rig = paired_rig();
+        rig.world.lock().unwrap().volume = Some(Level {
+            value: 102,
+            muted: false,
+        });
+        rig.audio.sinks_listed(&[AIRPODS.to_string()]);
+        assert_eq!(
+            rig.audio.view().headphones.unwrap().volume,
+            Some(VolumeView {
+                level: 80,
+                muted: false
+            })
+        );
+        assert_eq!(rig.audio.change_volume(VolumeChange::Up), None);
+        rig.audio.choose(Output::Headphones);
+        route(&rig);
+        assert_eq!(
+            rig.audio.change_volume(VolumeChange::Up),
+            Some(Ok("AirPods volume 87%".to_string()))
+        );
+        assert_eq!(call(&rig), format!("volume {AIRPODS} 110 false"));
+        for _ in 0..3 {
+            rig.audio.change_volume(VolumeChange::Up);
+        }
+        assert_eq!(
+            rig.audio.change_volume(VolumeChange::Up),
+            Some(Ok("AirPods volume 100%".to_string()))
+        );
+        assert_eq!(
+            rig.audio.change_volume(VolumeChange::Mute),
+            Some(Ok("AirPods muted".to_string()))
+        );
+        assert_eq!(
+            rig.audio.view().headphones.unwrap().volume,
+            Some(VolumeView {
+                level: 100,
+                muted: true
+            })
+        );
+        assert_eq!(
+            rig.audio.change_volume(VolumeChange::Down),
+            Some(Ok("AirPods volume 94%".to_string()))
+        );
+        assert_eq!(rig.bus.audio_state(), Some(rig.audio.view()));
+    }
+
+    #[test]
+    fn the_headphones_own_volume_changes_show_up() {
+        let rig = paired_rig();
+        rig.audio.sinks_listed(&[AIRPODS.to_string()]);
+        let line = format!("PropertyChanged {SINK} Volume 0x4040");
+        let Some(Change::Volume(address, level)) = sink_change(&line) else {
+            panic!("a volume change");
+        };
+        rig.audio.volume_changed(&address, level);
+        assert_eq!(
+            rig.audio.view().headphones.unwrap().volume,
+            Some(VolumeView {
+                level: 50,
+                muted: false
+            })
+        );
+        assert_eq!(
+            sink_change(&format!("PropertyChanged {SINK} Volume 0xE6E6")),
+            Some(Change::Volume(
+                AIRPODS.to_string(),
+                Level {
+                    value: 102,
+                    muted: true
+                }
+            ))
+        );
+        rig.audio.sinks_listed(&[]);
+        assert_eq!(rig.audio.view().headphones.unwrap().volume, None);
+    }
+
+    #[test]
+    fn bluealsa_cli_volume_and_mute_are_read_from_the_left_channel() {
+        assert_eq!(pcm_value("Volume: L: 102 R: 100\n", "Volume:"), Some("102".to_string()));
+        assert_eq!(pcm_value("Muted: L: true R: true\n", "Muted:"), Some("true".to_string()));
+        assert_eq!(pcm_value("Volume: 90\n", "Volume:"), Some("90".to_string()));
     }
 
     #[test]

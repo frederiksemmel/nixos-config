@@ -274,14 +274,14 @@ async fn abilities(State(television): State<Television>) -> Response {
     }
 }
 
-async fn volume_up(State(television): State<Television>) -> Response {
+pub async fn volume_up(State(television): State<Television>) -> Response {
     act(television, |television| {
         television.step_volume(STEP).map(|volume| format!("TV volume {volume}"))
     })
     .await
 }
 
-async fn volume_down(State(television): State<Television>) -> Response {
+pub async fn volume_down(State(television): State<Television>) -> Response {
     act(television, |television| {
         television
             .step_volume(-STEP)
@@ -290,7 +290,7 @@ async fn volume_down(State(television): State<Television>) -> Response {
     .await
 }
 
-async fn mute(State(television): State<Television>) -> Response {
+pub async fn mute(State(television): State<Television>) -> Response {
     act(television, |television| {
         television
             .toggle_mute()

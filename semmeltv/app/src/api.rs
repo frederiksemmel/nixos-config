@@ -246,6 +246,7 @@ fn router(api: Api) -> Router {
         .route("/api/audio", get(audio_view).post(choose_audio))
         .route("/api/audio/pair", post(pair_headphones).delete(cancel_pairing))
         .route("/api/audio/headphones", delete(forget_headphones))
+        .route("/api/volume/{change}", post(volume))
         .route("/api/subtitles/fetch", post(fetch_subtitles))
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
         .merge(tv::routes(api.television.clone()))
@@ -1289,6 +1290,32 @@ async fn forget_headphones(State(api): State<Api>) -> Response {
     }
 }
 
+async fn volume(State(api): State<Api>, Path(change): Path<String>) -> Response {
+    let change = match change.as_str() {
+        "up" => audio::VolumeChange::Up,
+        "down" => audio::VolumeChange::Down,
+        "mute" => audio::VolumeChange::Mute,
+        _ => return not_found(format!("no volume change {change}")),
+    };
+    if let Some(audio) = api.audio.clone() {
+        let changed = tokio::task::spawn_blocking(move || audio.change_volume(change)).await;
+        match changed {
+            Ok(Some(Ok(message))) => return (StatusCode::OK, Json(Outcome { message, ok: true })).into_response(),
+            Ok(Some(Err(message))) => {
+                return (StatusCode::UNPROCESSABLE_ENTITY, Json(Outcome { message, ok: false })).into_response();
+            }
+            Ok(None) => {}
+            Err(error) => return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+        }
+    }
+    let television = State(api.television);
+    match change {
+        audio::VolumeChange::Up => tv::volume_up(television).await,
+        audio::VolumeChange::Down => tv::volume_down(television).await,
+        audio::VolumeChange::Mute => tv::mute(television).await,
+    }
+}
+
 async fn events(State(api): State<Api>, upgrade: WebSocketUpgrade) -> Response {
     upgrade.on_upgrade(move |socket| stream_events(socket, api.bus))
 }
@@ -1777,5 +1804,14 @@ mod tests {
         assert_eq!(get(&server, "/api/audio").0, 404);
         assert_eq!(post(&server, "/api/audio", json!({ "output": "headphones" })).0, 404);
         assert_eq!(post(&server, "/api/audio/pair", json!({})).0, 404);
+    }
+
+    #[test]
+    fn volume_keys_without_headphones_go_to_the_tv() {
+        let server = serve(no_root(), None);
+        let (status, body) = post(&server, "/api/volume/up", json!({}));
+        assert_eq!(status, 422);
+        assert_eq!(body["message"], "Volume control is not supported by this TV");
+        assert_eq!(post(&server, "/api/volume/sideways", json!({})).0, 404);
     }
 }
