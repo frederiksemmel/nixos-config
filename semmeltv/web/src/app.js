@@ -6,6 +6,45 @@ const pages = new Map();
 const docUrl = (href) => href.split("#")[0];
 let shownUrl = docUrl(location.href);
 
+const UNAVAILABLE = new Set([502, 503, 504]);
+const RETRY_MS = [1000, 1500, 2500, 4000];
+const fetchNow = window.fetch.bind(window);
+
+function pause(ms, signal) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) return reject(signal.reason);
+    const timer = setTimeout(resolve, ms);
+    signal?.addEventListener("abort", () => {
+      clearTimeout(timer);
+      reject(signal.reason);
+    }, { once: true });
+  });
+}
+
+function waiting(failures) {
+  if (failures < 2) return;
+  window.dispatchEvent(new CustomEvent("semmeltv:toast", {
+    detail: { id: "unreachable", text: "SemmelTV isn't answering", detail: "Trying again every few seconds", tone: "pending" },
+  }));
+}
+
+window.fetch = async (input, init = {}) => {
+  if (new Headers(init.headers).get("X-Topcoat-Runtime") !== "true") return fetchNow(input, init);
+  for (let failures = 0; ; failures += 1) {
+    try {
+      const response = await fetchNow(input, init);
+      if (!UNAVAILABLE.has(response.status)) {
+        if (failures >= 2) window.dispatchEvent(new CustomEvent("semmeltv:toast", { detail: { id: "unreachable", dismiss: true } }));
+        return response;
+      }
+    } catch (error) {
+      if (init.signal?.aborted) throw error;
+    }
+    waiting(failures + 1);
+    await pause(RETRY_MS[Math.min(failures, RETRY_MS.length - 1)], init.signal);
+  }
+};
+
 for (const name of ["pushState", "replaceState"]) {
   const real = history[name].bind(history);
   history[name] = (...args) => {

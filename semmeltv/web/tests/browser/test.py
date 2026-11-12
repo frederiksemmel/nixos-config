@@ -316,6 +316,30 @@ def top_bar(page, engine):
     check(engine, "the top bar's buttons line up with its edges", abs(bar["left"] - bar["right"]) < 1, str(bar))
 
 
+def restart(page, engine):
+    def down(route):
+        if route.request.headers.get("x-topcoat-runtime") == "true":
+            route.fulfill(status=502, body="")
+        else:
+            route.fallback()
+
+    page.route(BASE + "/**", down)
+    page.evaluate('window.dispatchEvent(new Event("topcoat:invalidate-prefetches"))')
+    tile = page.locator(TILE).first
+    href = tile.get_attribute("href")
+    tile.scroll_into_view_if_needed()
+    tile.tap()
+    until(page, engine, "a title tapped while the server restarts says it is waiting",
+          '[...document.querySelectorAll(".toast")].some((toast) => toast.textContent.includes("isn\'t answering"))', 6000)
+    check(engine, "and stays on the page it was on", page.evaluate("location.pathname") == "/")
+    page.unroute(BASE + "/**", down)
+    until(page, engine, "the title opens once the server is back",
+          f'location.pathname === {href!r} && !!document.querySelector("main .detail h1") && !document.querySelector(".toast:not([data-leaving])")', 8000)
+    page.evaluate("history.back()")
+    until(page, engine, "and Back still returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
+    page.wait_for_timeout(500)
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
@@ -362,6 +386,7 @@ def run(p, engine, device):
     page.evaluate("history.back()")
     until(page, engine, "history back returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
     page.wait_for_timeout(500)
+    restart(page, engine)
     page.locator(".bar-open").tap()
     until(page, engine, "remote sheet opens", 'document.documentElement.hasAttribute("data-sheet")', 3000)
     page.wait_for_timeout(800)
