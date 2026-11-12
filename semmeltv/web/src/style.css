@@ -137,7 +137,7 @@ svg .solid { fill: currentColor; stroke: none; }
   display: none;
   grid-template-columns: 1fr 1fr;
   align-items: center;
-  width: 84px;
+  width: 80px;
   height: 44px;
   padding: 3px;
   border-radius: 22px;
@@ -152,7 +152,7 @@ svg .solid { fill: currentColor; stroke: none; }
   top: 3px;
   bottom: 3px;
   left: 3px;
-  width: 38px;
+  width: 36px;
   border-radius: 50%;
   background: #34343f;
   transition: transform 0.2s ease-out;
@@ -162,7 +162,7 @@ html[data-phone-ready] .mode { display: grid; }
 .mode span { position: relative; display: grid; place-items: center; height: 100%; transition: color 0.2s; }
 .mode svg { width: 20px; height: 20px; }
 .mode[data-mode="tv"] .mode-tv, .mode:is([data-mode="phone"], [data-mode="moving"]) .mode-phone { color: var(--text); }
-.mode:is([data-mode="phone"], [data-mode="moving"])::before { transform: translateX(38px); }
+.mode:is([data-mode="phone"], [data-mode="moving"])::before { transform: translateX(36px); }
 .mode[data-mode="moving"]::before { animation: pulse 0.8s infinite alternate; }
 
 @media (prefers-reduced-motion: reduce) {
