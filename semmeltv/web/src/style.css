@@ -120,6 +120,7 @@ svg .solid { fill: currentColor; stroke: none; }
 .brand {
   display: flex;
   flex: none;
+  margin-right: auto;
 }
 
 .brand:active { opacity: 0.7; }
@@ -133,12 +134,11 @@ svg .solid { fill: currentColor; stroke: none; }
 .mode {
   flex: none;
   position: relative;
-  display: grid;
+  display: none;
   grid-template-columns: 1fr 1fr;
   align-items: center;
   width: 84px;
   height: 44px;
-  margin-left: auto;
   padding: 3px;
   border-radius: 22px;
   background: var(--raised);
@@ -158,6 +158,7 @@ svg .solid { fill: currentColor; stroke: none; }
   transition: transform 0.2s ease-out;
 }
 
+html[data-phone-ready] .mode { display: grid; }
 .mode span { position: relative; display: grid; place-items: center; height: 100%; transition: color 0.2s; }
 .mode svg { width: 20px; height: 20px; }
 .mode[data-mode="tv"] .mode-tv, .mode[data-mode="phone"] .mode-phone { color: var(--text); }
@@ -1192,9 +1193,9 @@ html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
 
 .pill:active { opacity: 0.8; }
 .pill.play-tv { display: none; }
-html[data-mode="phone"] .pill.play-tv { display: inline-flex; justify-self: start; margin-top: 2px; }
+html[data-phone-ready][data-mode="phone"] .pill.play-tv { display: inline-flex; justify-self: start; margin-top: 2px; }
 .pill.handoff { display: none; }
-html[data-mode="phone"] .pill.handoff { display: inline-flex; justify-self: start; }
+html[data-phone-ready][data-mode="phone"] .pill.handoff { display: inline-flex; justify-self: start; }
 .pill.quiet { background: transparent; border: 1px solid var(--line); color: var(--text); }
 .pill:has(svg) { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; }
 .pill svg { width: 18px; height: 18px; }
