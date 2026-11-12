@@ -112,6 +112,8 @@ def sound(page, engine):
           'document.querySelector(".sound .answer").textContent.startsWith("Connecting")', 3000)
     until(page, engine, "AirPods take over the sound",
           'document.querySelector(".sound").dataset.output === "headphones" && getComputedStyle(document.querySelector(".bar-phones")).display !== "none"', 5000)
+    until(page, engine, "a toast says the sound moved to the AirPods",
+          '[...document.querySelectorAll(".toast")].some((toast) => toast.textContent.includes("Sound is on AirPods"))', 3000)
     until(page, engine, "the volume keys follow the sound to the AirPods",
           'document.querySelector(".volume-head span").textContent.includes("AirPods") && document.querySelector(".volume-head output").textContent === "50%"', 3000)
     louder = page.locator('.keys.volume .key[aria-label="Louder"]')
@@ -124,7 +126,7 @@ def sound(page, engine):
     fake("/fake/fail-next-connect")
     page.locator(".sound .choice").nth(1).tap()
     until(page, engine, "a failed connect says why",
-          'document.querySelector(".sound .answer.refused")?.textContent.includes("didn\'t connect")', 5000)
+          '[...document.querySelectorAll(".toast[data-tone=error]")].some((toast) => toast.textContent.includes("didn\'t connect"))', 5000)
 
 
 def to_settings(page, engine, step):
@@ -198,7 +200,7 @@ def finds_subtitles(page, engine):
         return
     find.tap()
     until(page, engine, "finding subtitles says they were added and how well they fit",
-          '[...document.querySelectorAll("main .find-subtitles-row .answer")].some((note) => note.textContent.includes("found by title only")) && document.querySelector("main .find-subtitles-row .pill").hidden', 5000)
+          '[...document.querySelectorAll(".toast")].some((toast) => toast.textContent.includes("found by title only")) && document.querySelector("main .find-subtitles-row .pill").hidden', 5000)
 
 
 def marks_watched(page, engine):
@@ -228,6 +230,33 @@ def marks_episodes(page, engine):
     page.reload(wait_until="commit")
     until(page, engine, "the episode stays flipped after a reload",
           f'document.querySelectorAll("main .episode-row .mark-seen")[1]?.getAttribute("aria-pressed") === "{after}"', 8000)
+
+
+def raise_toast(page, text, tone="info"):
+    page.evaluate("([text, tone]) => window.dispatchEvent(new CustomEvent('semmeltv:toast', { detail: { text, tone } }))", [text, tone])
+
+
+def toasts(page, engine):
+    check(engine, "the top bar has no microphone text", page.evaluate('!document.getElementById("microphone-note")'))
+    if engine == "chromium":
+        page.locator("#microphone-talk").tap()
+        until(page, engine, "a microphone problem shows as a toast, not in the bar",
+              '!!document.querySelector(".toast[data-tone=error]") && document.getElementById("microphone").dataset.state === "idle"', 5000)
+    page.evaluate('document.querySelectorAll(".toast").forEach((toast) => toast.remove())')
+    raise_toast(page, "first")
+    raise_toast(page, "second")
+    until(page, engine, "toasts stack, newest on top", '[...document.querySelectorAll(".toast")].map((t) => t.textContent).join() === "second,first"', 2000)
+    newest = page.locator(".toast").first.bounding_box()
+    page.mouse.move(newest["x"] + 60, newest["y"] + 20)
+    page.mouse.down()
+    for step in range(1, 9):
+        page.mouse.move(newest["x"] + 60 + 25 * step, newest["y"] + 20)
+    page.mouse.up()
+    until(page, engine, "swiping a toast sideways sends it away", '[...document.querySelectorAll(".toast:not([data-leaving])")].map((t) => t.textContent).join() === "first"', 2000)
+    page.locator(".toast:not([data-leaving])").first.click()
+    until(page, engine, "tapping a toast dismisses it", '!document.querySelector(".toast:not([data-leaving])")', 2000)
+    raise_toast(page, "goes by itself")
+    until(page, engine, "a toast goes away by itself", '!document.querySelector(".toast")', 7000)
 
 
 def run(p, engine, device):
@@ -286,6 +315,7 @@ def run(p, engine, device):
     page.wait_for_timeout(800)
     answers(page, engine, "after the sheet")
     scrolls(page, engine, "after the sheet")
+    toasts(page, engine)
     settings_subpages(page, engine)
     headphones(page, engine)
     page.locator(".bar-toggle").tap()

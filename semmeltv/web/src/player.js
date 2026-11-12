@@ -60,23 +60,15 @@ window.addEventListener("popstate", () => {
   setOpen(Boolean(history.state && history.state.sheet));
 });
 
-function answerFor(button) {
-  for (let element = button.parentElement; element; element = element.parentElement) {
-    const said = element.querySelector("[data-said]");
-    if (said) return said;
-  }
-  return null;
-}
+let posts = 0;
 
-function say(said, text, ok) {
-  if (!said) return;
-  said.textContent = text;
-  said.classList.toggle("refused", !ok);
+function notify(detail) {
+  window.dispatchEvent(new CustomEvent("semmeltv:toast", { detail }));
 }
 
 async function post(button) {
-  const said = answerFor(button);
-  if (button.dataset.pending) say(said, button.dataset.pending, true);
+  const id = `post-${(posts += 1)}`;
+  if (button.dataset.pending) notify({ text: button.dataset.pending, tone: "pending", id });
   button.setAttribute("aria-busy", "true");
   let ok = false;
   try {
@@ -88,14 +80,15 @@ async function post(button) {
     const answer = await response.json().catch(() => ({}));
     ok = response.ok && answer.ok !== false;
     const text = answer.message || answer.error || (response.ok ? "" : `The TV answered ${response.status}`);
-    say(said, answer.matched === "title" ? `${text}. ${OFF_BY_TITLE}` : text, ok);
+    if (text) notify({ text, detail: answer.matched === "title" ? OFF_BY_TITLE : "", tone: ok ? "ok" : "error", id });
+    else if (button.dataset.pending) notify({ id, dismiss: true });
     if (ok && button.dataset.done === "hide") button.hidden = true;
     if (ok && button.dataset.refresh === "tracks") {
     refreshTracks();
     setTimeout(refreshTracks, TRACKS_SETTLE);
   }
   } catch {
-    say(said, "The TV is not answering", false);
+    notify({ text: "The TV is not answering", tone: "error", id });
   } finally {
     button.removeAttribute("aria-busy");
   }

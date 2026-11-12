@@ -12,6 +12,7 @@ const STYLE: Asset = asset!("./style.css");
 const MICROPHONE: Asset = asset!("./microphone.js");
 const APP: Asset = asset!("./app.js");
 const PHONE: Asset = asset!("./phone.js");
+const TOAST: Asset = asset!("./toast.js");
 const PHONE_STYLE: Asset = asset!("./phone.css");
 
 #[layout("/")]
@@ -37,6 +38,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <link rel="stylesheet" href=(PHONE_STYLE)>
                 topcoat::runtime::script()
                 <script type="module" src=(MICROPHONE)></script>
+                <script type="module" src=(TOAST)></script>
                 <script type="module" src=(APP)></script>
                 <script type="module" src=(PHONE)></script>
             </head>
@@ -51,7 +53,6 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     </button>
                     <span class="mode-note" id="mode-note" role="status"></span>
                     <div class="microphone" id="microphone" data-state="idle">
-                        <span class="microphone-note" id="microphone-note" role="status"></span>
                         <button class="microphone-talk" id="microphone-talk" type="button" aria-label="Talk to the TV" aria-pressed="false">
                             <svg viewBox="0 0 24 24" aria-hidden="true">
                                 <path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15Z"></path>
@@ -63,6 +64,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     link(href: "/settings", attrs: attributes! { cx => class="top-link" aria-label="Settings" }, playing::settings_icon())
                 </header>
                 playing::voice_feedback()
+                playing::notices()
                 <main>(slot)</main>
                 playing::player()
             </body>

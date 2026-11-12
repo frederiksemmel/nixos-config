@@ -52,7 +52,6 @@ struct PairRow {
     detail: String,
     button: PairButton,
     note: String,
-    refused: bool,
 }
 
 fn pair_row(audio: &Audio) -> PairRow {
@@ -65,12 +64,11 @@ fn pair_row(audio: &Audio) -> PairRow {
         Some(headphones) => format!("Replaces {}", headphones.name),
         None => "AirPods or other Bluetooth headphones, to hear the TV on them".to_string(),
     };
-    let (note, refused) = match (&audio.error, &audio.pairing) {
-        (Some(error), _) => (error.clone(), true),
-        (None, Some(pairing)) => (pairing.message.clone(), pairing.state == PairState::Failed),
-        (None, None) => (String::new(), false),
+    let note = match &audio.pairing {
+        Some(pairing) if matches!(pairing.state, PairState::Scanning | PairState::Pairing) => pairing.message.clone(),
+        _ => String::new(),
     };
-    PairRow { detail, button, note, refused }
+    PairRow { detail, button, note }
 }
 
 #[component]
@@ -90,7 +88,6 @@ async fn headphones_settings(cx: &Cx) -> Result<impl View> {
                                     <div class="setting setting-row">
                                         <span class="setting-name">(headphones.name.as_str()) <small>(link_text(headphones.state))</small></span>
                                         <button type="button" class="pill quiet" data-post="/api/audio/headphones" data-method="DELETE">"Forget"</button>
-                                        <p class="answer" data-said="true" aria-live="polite"></p>
                                     </div>
                                 }
                                 <div class="setting setting-row">
@@ -103,8 +100,7 @@ async fn headphones_settings(cx: &Cx) -> Result<impl View> {
                                             "Pair"
                                         </button>,
                                     }
-                                    <p class=(if row.refused { "answer refused" } else { "answer" }) aria-live="polite">(row.note.as_str())</p>
-                                    <p class="answer" data-said="true" aria-live="polite"></p>
+                                    <p class="answer" aria-live="polite">(row.note.as_str())</p>
                                 </div>
                             </div>
                         </section>
@@ -166,7 +162,6 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                         <div class="setting setting-row">
                             <span class="setting-name">"Pairing" <small>(paired)</small></span>
                             <button type="button" class="pill" data-post="/api/tv/pair" data-pending="Press Allow on the TV">(pair)</button>
-                            <p class="answer" data-said="true" aria-live="polite"></p>
                         </div>
                     }
                 </div>

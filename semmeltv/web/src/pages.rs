@@ -737,7 +737,6 @@ async fn find_subtitles(label: &str, body: &str) -> Result<impl View> {
         <div class="find-subtitles-row">
             <button type="button" class="pill quiet" data-post="/api/subtitles/fetch" data-body=(body)
                 data-pending="Looking for subtitles…" data-done="hide">(label)</button>
-            <p class="answer" data-said="true" aria-live="polite"></p>
         </div>
     })
 }

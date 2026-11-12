@@ -1,5 +1,5 @@
 use crate::api::{Api, Audio, Link, NowPlaying, Output, Pick, TvAbilities, Voice};
-use crate::live::{Live, VoiceLog};
+use crate::live::Live;
 use crate::public::Public;
 use std::time::Duration;
 use topcoat::Result;
@@ -9,6 +9,7 @@ use topcoat::runtime::{connected, link, procedure, shard};
 use topcoat::view::{View, attributes, component, emit, live, view};
 
 const SETTLE: Duration = Duration::from_secs(4);
+const FRESH: Duration = Duration::from_secs(10);
 const SCRUB: Asset = asset!("./scrub.js");
 const PLAYER: Asset = asset!("./player.js");
 const DIRECTIONS: [&str; 2] = ["back", "forward"];
@@ -271,13 +272,11 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                                 </div>
                                 <button type="button" class="pill quiet find-subtitles" data-post="/api/subtitles/fetch" data-playing="true"
                                     data-pending="Looking for subtitles…" data-refresh="tracks" hidden=(true)>"Find subtitles"</button>
-                                <p class="answer" data-said="true" aria-live="polite"></p>
                             </div>
                             <div class="pick" data-tracks="audio" hidden=(true)>
                                 <h3>"Audio"</h3>
                                 <div class="choices" data-state="audio"></div>
                             </div>
-                            <p class="answer" data-said="true" aria-live="polite"></p>
                             <button type="button" class="pill handoff" data-handoff="phone">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"></rect><path d="M11 18.5h2"></path></svg>
                                 "Continue on phone"
@@ -311,24 +310,18 @@ struct Sound {
     connecting: bool,
     name: String,
     note: String,
-    refused: bool,
 }
 
 fn sound_of(audio: &Audio) -> Option<Sound> {
     let headphones = audio.headphones.as_ref()?;
     let connecting = headphones.state == Link::Connecting;
     let name = headphones.name.clone();
-    let (note, refused) = match (&audio.error, connecting) {
-        (Some(error), _) => (error.clone(), true),
-        (None, true) => (format!("Connecting to {name}…"), false),
-        (None, false) => (String::new(), false),
-    };
+    let note = if connecting { format!("Connecting to {name}…") } else { String::new() };
     Some(Sound {
         on_headphones: audio.output == Output::Headphones,
         connecting,
         name,
         note,
-        refused,
     })
 }
 
@@ -358,8 +351,7 @@ async fn sound(cx: &Cx) -> Result<impl View> {
                                     <span>(sound.name.as_str())</span>
                                 </button>
                             </div>
-                            <p class=(if sound.refused { "answer refused" } else { "answer" }) aria-live="polite">(sound.note.as_str())</p>
-                            <p class="answer" data-said="true" aria-live="polite"></p>
+                            <p class="answer" aria-live="polite">(sound.note.as_str())</p>
                         </section>
                     }?
                 }
@@ -464,7 +456,6 @@ async fn remote(abilities: &TvAbilities) -> Result<impl View> {
                     <button type="button" class="pill" data-post="/api/tv/pair" data-pending="Press Allow on the TV">"Pair with the TV"</button>
                 </div>
             }
-            <p class="answer" data-said="true" aria-live="polite"></p>
         </section>
     })
 }
@@ -608,14 +599,14 @@ async fn track(cx: &Cx) -> Result<impl View> {
 pub async fn voice_feedback(cx: &Cx) -> Result<impl View> {
     Ok(live! {
         let mut changes = app_context::<Live>(cx).voice.clone();
-        let mut settled = !lasting(&changes.borrow().state);
+        let mut settled = !lasting(&changes.borrow());
         loop {
-            let log = changes.borrow_and_update().clone();
-            let token = emit! { panel(log: &log, settled: settled) }?;
+            let state = changes.borrow_and_update().clone();
+            let token = emit! { <i class="voice" data-state=(voice_state(&state, settled)) hidden=(true)></i> }?;
             if !connected(cx) {
                 break Ok(token);
             }
-            if settled || lasting(&log.state) || log.state.is_none() {
+            if settled || lasting(&state) || state.is_none() {
                 if changes.changed().await.is_err() {
                     break Ok(token);
                 }
@@ -635,49 +626,39 @@ fn lasting(state: &Option<Voice>) -> bool {
     matches!(state, Some(Voice::Listening | Voice::Transcribing))
 }
 
-fn state_text(voice: &Voice) -> Option<String> {
-    match voice {
-        Voice::Listening => Some("Listening…".to_string()),
-        Voice::Transcribing => Some("Working it out…".to_string()),
-        Voice::Nothing => Some("Didn't catch that".to_string()),
-        Voice::Cancelled => Some("Cancelled".to_string()),
-        Voice::NoMicrophone => Some("The TV has no microphone".to_string()),
-        Voice::Failed { .. } => Some("Speech recognition isn't working right now".to_string()),
-        Voice::Heard { .. } => None,
+fn voice_state(state: &Option<Voice>, settled: bool) -> &'static str {
+    match state {
+        Some(Voice::Listening) => "listening",
+        Some(Voice::Transcribing) => "transcribing",
+        Some(_) if !settled => "done",
+        _ => "",
     }
 }
 
-fn state_class(voice: &Voice) -> &'static str {
-    match voice {
-        Voice::Listening => "voice-state listening",
-        Voice::Transcribing => "voice-state transcribing",
-        _ => "voice-state",
-    }
-}
-
-#[component]
-async fn panel(log: &VoiceLog, settled: bool) -> Result<impl View> {
-    let state = log
-        .state
-        .as_ref()
-        .filter(|_| !settled)
-        .and_then(|voice| state_text(voice).map(|text| (state_class(voice), text)));
-    let latest = log.heard.front().cloned();
-    let fresh = !settled && matches!(log.state, Some(Voice::Heard { .. }));
-    Ok(view! {
-        <section class="voice" aria-live="polite">
-            if let Some((class, text)) = state {
-                <p class=(class)>(text)</p>
+#[shard]
+pub async fn notices(cx: &Cx) -> Result<impl View> {
+    Ok(live! {
+        let mut changes = app_context::<Live>(cx).notices.clone();
+        loop {
+            let fresh: Vec<_> = changes
+                .borrow_and_update()
+                .recent
+                .iter()
+                .filter(|notice| notice.at.elapsed() < FRESH)
+                .cloned()
+                .collect();
+            let token = emit! {
+                <div class="notices" hidden=(true)>
+                    for notice in &fresh {
+                        <i data-notice=(notice.id.as_str()) data-text=(notice.text.as_str())
+                            data-detail=(notice.detail.as_str()) data-tone=(notice.tone.name())></i>
+                    }
+                </div>
+            }?;
+            if !connected(cx) || changes.changed().await.is_err() {
+                break Ok(token);
             }
-            if let Some(heard) = latest {
-                if fresh {
-                    <p class=(if heard.understood { "voice-heard" } else { "voice-heard refused" })>
-                        <q>(heard.text)</q>
-                        <span>(heard.action)</span>
-                    </p>
-                }
-            }
-        </section>
+        }
     })
 }
 

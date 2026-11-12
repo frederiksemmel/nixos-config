@@ -23,7 +23,6 @@ const QUIET_AFTER_SPEECH = 1.5;
 const NOTHING_SAID = 8;
 const LONGEST = 12;
 const ANSWER_WAIT = 10;
-const NOTE_SECONDS = 4;
 const TRY_AGAIN_LATER = 1013;
 
 const api = document.documentElement.dataset.api || "";
@@ -31,14 +30,12 @@ let context = null;
 let worklet = null;
 let session = null;
 let state = "idle";
-let noteTimer = 0;
 
 function elements() {
   return {
     root: document.getElementById("microphone"),
     talk: document.getElementById("microphone-talk"),
     level: document.getElementById("microphone-level"),
-    note: document.getElementById("microphone-note"),
   };
 }
 
@@ -53,12 +50,7 @@ function show(next) {
 }
 
 function say(text) {
-  const { note } = elements();
-  if (!note) return;
-  clearTimeout(noteTimer);
-  note.textContent = text;
-  note.classList.add("shown");
-  noteTimer = setTimeout(() => note.classList.remove("shown"), NOTE_SECONDS * 1000);
+  window.dispatchEvent(new CustomEvent("semmeltv:toast", { detail: { text, tone: "error" } }));
 }
 
 function audioContext() {
@@ -75,12 +67,7 @@ function socketUrl() {
 }
 
 function voiceState() {
-  const panel = document.querySelector(".voice");
-  if (!panel) return null;
-  if (panel.querySelector(".voice-state.listening")) return "listening";
-  if (panel.querySelector(".voice-state.transcribing")) return "transcribing";
-  if (panel.querySelector(".voice-heard, .voice-state")) return "done";
-  return null;
+  return document.querySelector(".voice")?.dataset.state || null;
 }
 
 function problem(error) {
@@ -217,7 +204,7 @@ new MutationObserver(() => {
   }
   if (state === "processing" && current.heardServer && voice === "done") settle(current);
   if (state === "processing" && voice === "transcribing") current.heardServer = true;
-}).observe(document.documentElement, { subtree: true, childList: true, characterData: true });
+}).observe(document.documentElement, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["data-state"] });
 
 document.addEventListener("click", (event) => {
   if (!event.target.closest?.("#microphone-talk")) return;
