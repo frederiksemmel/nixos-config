@@ -251,6 +251,8 @@ def toasts(page, engine):
     page.evaluate('document.querySelectorAll(".toast").forEach((toast) => toast.remove())')
     raise_toast(page, "first")
     raise_toast(page, "second")
+    check(engine, "a toast has no backdrop blur, so its fade is one smooth step",
+          page.evaluate('["backdropFilter", "webkitBackdropFilter"].every((name) => [undefined, "none"].includes(getComputedStyle(document.querySelector(".toast"))[name]))'))
     until(page, engine, "toasts stack, newest on top", '[...document.querySelectorAll(".toast")].map((t) => t.textContent).join() === "second,first"', 2000)
     newest = page.locator(".toast").first.bounding_box()
     page.mouse.move(newest["x"] + 60, newest["y"] + 20)
