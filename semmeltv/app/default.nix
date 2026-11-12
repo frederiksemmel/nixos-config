@@ -9,7 +9,7 @@
   wlr-randr,
   alsa-utils,
   bluez,
-  bluez-alsa,
+  callPackage,
 }:
 
 let
@@ -66,7 +66,7 @@ craneLib.buildPackage (
           wlr-randr
           alsa-utils
           bluez
-          bluez-alsa
+          (callPackage ./bluez-alsa.nix { })
         ]
       }
     '';
