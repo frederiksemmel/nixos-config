@@ -392,8 +392,9 @@ SemmelTV. Every request answers the whole state:
     }
 
 - `output` is where the sound is now, `tv` or `headphones`.
-- `headphones` is null while none are paired. `name` is their Bluetooth name,
-  and `state` is `disconnected`, `connecting` or `connected`. `volume` is
+- `headphones` is null while none are paired. `name` is "AirPods" for Apple
+  headphones (Bluetooth vendor 0x004C in BlueZ's Modalias), and otherwise
+  their Bluetooth name without a " - Find My" ending; `state` is `disconnected`, `connecting` or `connected`. `volume` is
   their own volume while they are connected, `{ "level": 0–100, "muted": bool }`,
   and null otherwise; it follows changes made on the headphones too.
   `audio_delay` is the lip-sync nudge for the headphones in milliseconds while

@@ -18,6 +18,7 @@ const MAX_VOLUME: u8 = 127;
 const VOLUME_STEP: u8 = 8;
 const MAX_AUDIO_DELAY: i32 = 500;
 const FIND_MY: &str = " - Find My";
+const APPLE: &str = "bluetooth:v004C";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
@@ -688,6 +689,7 @@ struct Info {
     headphones: bool,
     in_range: bool,
     bonded: bool,
+    apple: bool,
 }
 
 fn parse_info(text: &str) -> Info {
@@ -702,14 +704,19 @@ fn parse_info(text: &str) -> Info {
             "Icon" => info.headphones = HEADPHONE_ICONS.contains(&value.trim()),
             "RSSI" => info.in_range = true,
             "Bonded" => info.bonded = value.trim() == "yes",
+            "Modalias" => info.apple = value.trim().starts_with(APPLE),
             _ => {}
         }
     }
     info
 }
 
-fn shown_name(name: &str) -> String {
-    name.strip_suffix(FIND_MY).unwrap_or(name).to_string()
+fn shown_name(info: &Info) -> String {
+    match (&info.name, info.apple && info.headphones) {
+        (_, true) => "AirPods".to_string(),
+        (Some(name), false) => name.strip_suffix(FIND_MY).unwrap_or(name).to_string(),
+        (None, false) => "Headphones".to_string(),
+    }
 }
 
 fn parse_devices(text: &str) -> Vec<String> {
@@ -745,7 +752,7 @@ impl Bluetoothctl {
         let info = parse_info(&Self::run(&["info", address]));
         let device = Device {
             address: address.to_string(),
-            name: info.name.as_deref().map_or_else(|| "Headphones".to_string(), shown_name),
+            name: shown_name(&info),
         };
         (device, info)
     }
@@ -1413,9 +1420,14 @@ mod tests {
     }
 
     #[test]
-    fn find_my_is_left_out_of_the_name() {
-        assert_eq!(shown_name("airpodsfs - Find My"), "airpodsfs");
-        assert_eq!(shown_name("AirPods"), "AirPods");
+    fn apple_headphones_are_called_airpods_and_others_keep_their_name() {
+        let airpods = parse_info(
+            "\tName: airpodsfs - Find My\n\tAlias: airpodsfs - Find My\n\tIcon: audio-headphones\n\tModalias: bluetooth:v004Cp2027d242F\n",
+        );
+        assert_eq!(shown_name(&airpods), "AirPods");
+        let other = parse_info("\tAlias: Sony WH - Find My\n\tIcon: audio-headphones\n\tModalias: bluetooth:v0039p4EF0d0001\n");
+        assert_eq!(shown_name(&other), "Sony WH");
+        assert_eq!(shown_name(&Info::default()), "Headphones");
     }
 
     #[test]
@@ -1476,6 +1488,7 @@ mod tests {
                 headphones: true,
                 in_range: true,
                 bonded: false,
+                apple: false,
             }
         );
         let tv = parse_info("Device D0:C2:4E:8A:F1:37 (public)\n\tName: [TV] Samsung\n\tIcon: video-display\n\tRSSI: -70\n");
