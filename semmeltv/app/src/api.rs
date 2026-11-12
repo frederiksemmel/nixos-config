@@ -11,6 +11,7 @@ use crate::progress::Progress;
 use crate::seek::Direction;
 use crate::sidecar::{self, Sidecar};
 use crate::storage;
+use crate::stream;
 use crate::subfetch::{self, Match, Wanted};
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
@@ -45,6 +46,7 @@ pub struct Config {
     pub phone_microphone: Option<String>,
     pub library: PathBuf,
     pub downloads: Option<Downloads>,
+    pub stream: PathBuf,
 }
 
 #[derive(Debug)]
@@ -60,6 +62,7 @@ pub enum Request {
     Storage(storage::Change),
     Dismiss(watching::Kind, String),
     Mark(watching::Kind, String, Option<(u32, u32)>, watching::Mark),
+    Phone(stream::Report),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -134,12 +137,16 @@ impl Shared {
         *self.progress.write().unwrap() = Arc::new(progress.clone());
     }
 
-    fn library(&self) -> Arc<Library> {
+    pub(crate) fn library(&self) -> Arc<Library> {
         self.library.read().unwrap().clone()
     }
 
-    fn progress(&self) -> Arc<Progress> {
+    pub(crate) fn progress(&self) -> Arc<Progress> {
         self.progress.read().unwrap().clone()
+    }
+
+    pub(crate) fn subtitles(&self) -> &Subtitles {
+        &self.subtitles
     }
 }
 
@@ -154,6 +161,7 @@ struct Api {
     audio: Option<Audio>,
     library: PathBuf,
     downloads: Option<Downloads>,
+    stream: PathBuf,
 }
 
 impl Api {
@@ -191,6 +199,7 @@ pub fn spawn(
         audio,
         library: config.library,
         downloads: config.downloads,
+        stream: config.stream,
     };
     let address = config.address;
     let spawned = thread::Builder::new().name("api".to_string()).spawn(move || {
@@ -251,6 +260,12 @@ fn router(api: Api) -> Router {
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
         .merge(tv::routes(api.television.clone()))
         .merge(storage::routes(api.shared.storage.clone(), api.app.clone()))
+        .merge(stream::routes(
+            api.shared.clone(),
+            api.bus.clone(),
+            api.app.clone(),
+            api.stream.clone(),
+        ))
         .with_state(api)
 }
 
@@ -1501,6 +1516,7 @@ mod tests {
             audio: None,
             library: PathBuf::from("/lib"),
             downloads: None,
+            stream: std::env::temp_dir().join(format!("semmeltv-api-stream-{}", std::process::id())),
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();

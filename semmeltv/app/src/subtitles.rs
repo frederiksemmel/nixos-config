@@ -515,6 +515,10 @@ impl Subtitles {
         args
     }
 
+    pub fn file_delay(&self, file: &Path) -> f64 {
+        self.state.lock().unwrap().files.get(file).map_or(0.0, |remembered| remembered.delay)
+    }
+
     pub fn plays(&self, file: &Path) -> bool {
         self.state.lock().unwrap().file.as_deref() == Some(file)
     }

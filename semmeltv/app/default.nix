@@ -9,6 +9,7 @@
   wlr-randr,
   alsa-utils,
   bluez,
+  ffmpeg-headless,
   callPackage,
 }:
 
@@ -66,6 +67,7 @@ craneLib.buildPackage (
           wlr-randr
           alsa-utils
           bluez
+          ffmpeg-headless
           (callPackage ./bluez-alsa.nix { })
         ]
       }

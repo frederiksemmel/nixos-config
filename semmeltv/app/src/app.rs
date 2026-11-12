@@ -18,10 +18,11 @@ use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence, Source, Store};
 use crate::player::{self, Finish, Player};
-use crate::progress::{Position, Progress};
+use crate::progress::{self, Position, Progress};
 use crate::seek::Direction;
 use crate::segments::Title;
 use crate::storage::{self, Keep};
+use crate::stream;
 use crate::subtitles::{self, Subtitles};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
@@ -898,6 +899,7 @@ impl App {
             Request::Storage(change) => return self.change_storage(change),
             Request::Dismiss(kind, key) => return self.dismiss(kind, &key),
             Request::Mark(kind, key, episode, mark) => return self.mark(kind, &key, episode, mark),
+            Request::Phone(report) => return self.phone(report),
             Request::Listen => {
                 return match &self.voice {
                     Some(voice) => {
@@ -1057,6 +1059,60 @@ impl App {
         };
         Outcome {
             message: format!("{name} is marked as {state}"),
+            ok: true,
+        }
+    }
+
+    fn phone(&mut self, report: stream::Report) -> Outcome {
+        if self.playing.as_ref().is_some_and(|playing| playing.file == report.file) {
+            return Outcome {
+                message: "The TV is playing this, so it keeps its own place".to_string(),
+                ok: false,
+            };
+        }
+        let file = report.file.as_path();
+        let now = watching::now();
+        let library = self.nav.library();
+        if report.moment == stream::Moment::Start
+            && let Some((show, episode)) = library.find_episode(file)
+        {
+            let position = Position {
+                season: episode.season,
+                episode: episode.number,
+                finished: false,
+            };
+            self.progress.shows.insert(show.key.clone(), position);
+        }
+        let place = progress::Place {
+            position: report.position,
+            duration: report.duration,
+            credits: report.credits,
+        };
+        self.progress.record(file, place);
+        self.progress.played(file, now);
+        let joined = watching::record(&mut self.progress, library, file, report.played, now);
+        let remember = match report.moment {
+            stream::Moment::Ended => {
+                watching::complete(&mut self.progress, library, file);
+                false
+            }
+            stream::Moment::Stopped => !watching::stopped(&mut self.progress, library, file),
+            _ => true,
+        };
+        if remember && report.position > 0.0 {
+            if let Err(error) = stream::resume::write(&self.cache.watch_later_dir(file), file, report.position) {
+                eprintln!("progress: could not keep where {} stopped: {error}", file.display());
+            }
+        } else if !remember {
+            self.forget_place(file);
+        }
+        self.save_progress();
+        if joined || report.moment != stream::Moment::Playing && report.moment != stream::Moment::Paused {
+            self.present_home();
+            self.queue_downloads(false);
+        }
+        Outcome {
+            message: "Kept the place".to_string(),
             ok: true,
         }
     }

@@ -29,6 +29,7 @@ mod seek;
 mod segments;
 mod sidecar;
 mod storage;
+mod stream;
 mod subfetch;
 mod subtitles;
 mod tags;
@@ -227,6 +228,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
             phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
                 .ok()
                 .filter(|device| !device.is_empty()),
+            stream: env_path("SEMMELTV_STREAM_DIR").unwrap_or_else(|| PathBuf::from("/dev/shm/semmeltv-stream")),
         }),
     };
     app::run(setup).map_err(|error| error.to_string())

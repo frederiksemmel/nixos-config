@@ -478,6 +478,68 @@ DELETE `/api/audio/pair` stops a scan that hasn't found anything yet.
 DELETE `/api/audio/headphones` moves the sound to the TV and forgets the
 headphones (`bluetoothctl remove`).
 
+## Watching on a phone
+
+These stream a film or episode to the browser that asks, as HLS with fMP4
+segments, instead of playing it on the TV. They answer only requests that came
+over the tailnet: `tailscale serve` adds `Tailscale-User-Login` to those, and
+adds `Tailscale-Funnel-Request` to requests from the internet. Anything else
+gets 403 with `{ "error": "Watching on this phone needs Tailscale on" }`.
+
+| Method | Path | Answer |
+| --- | --- | --- |
+| GET | `/api/stream/access` | `{ ok, user }`: 200 on the tailnet, 403 otherwise |
+| POST | `/api/stream/open` | `{ movie }` or `{ show, season?, episode? }`, plus `client`, `audio?`, `start?`, `replaces?` → a session |
+| GET | `/api/stream/{id}/main.m3u8` | the master playlist, to give the `<video>` or hls.js |
+| GET | `/api/stream/{id}/marks` | `{ segments, credits }`: TheIntroDB's recap and intro, and where the credits start |
+| POST | `/api/stream/{id}/progress` | `{ position, played, state }` → `{ message, ok }` |
+| DELETE | `/api/stream/{id}` | ends the session |
+
+`client` says what the browser decodes: `{ hevc, eac3, ac3 }`, all booleans.
+The video is never converted, since the Pi has no video encoder: H.264 (8-bit)
+and HEVC are copied, and a title in anything else is refused with 422 and a
+reason, as is HEVC for a browser without `hevc`. The audio is copied when the
+browser plays it (AAC always; E-AC-3 and AC-3 when `client` says so), and
+otherwise converted to stereo AAC. `audio` picks an audio track by its `index`
+in the answer, else the file's default track plays. A show without `season`
+and `episode` plays where it carries on. `start` is in seconds; without it,
+the video starts where the TV or a phone last stopped it, or at the beginning
+once it was finished or stopped in its credits. `replaces` ends that session
+first, for the next episode or another audio track.
+
+At most three sessions play at once, and only one while the TV plays; the
+others get 429. A session ends 3 minutes after its last request.
+
+The answer is
+
+    { id, playlist, kind, key, title, caption, season, episode, poster,
+      backdrop, start, duration, audio, audio_index, converted_audio,
+      subtitles, subtitle_delay, credits, next, bitrate, heavy }
+
+`audio` lists the tracks as `{ index, codec, channels, language, name,
+default }`. `subtitles` lists the subtitle files beside the video, then the
+tracks inside it, as `{ id, name, language, forced, default, supported }`.
+Picture subtitles (PGS, VobSub) are listed with `supported` false: they show
+only on the TV. The others are WebVTT renditions in the master playlist,
+moved by the file's subtitle delay. `default` is the first one in the
+subtitle languages when subtitles are on. `next` is the episode after it,
+`{ season, episode, label, title, still }`, or null. `heavy` is true above
+8 Mbit/s, a hint for mobile data.
+
+The playlist cuts the video at its keyframes, read from the Matroska Cues or
+the MP4 sample table, about every 6 seconds, so any point can be sought at
+once. ffmpeg copies the video from the segment asked for, keeps up to a
+minute ahead of the player and pauses beyond that. A file without a keyframe
+index is refused.
+
+`progress` records the place exactly as the TV does: `state` is `start`,
+`playing`, `paused`, `stopped` or `ended`, `position` is in seconds and
+`played` is the seconds watched in this session. It moves Currently Watching
+and the show's place, finishes the file when it stops in the credits or ends,
+and otherwise writes the position into the file's mpv resume entry, so the TV
+carries on from there. While the TV plays the same file, `ok` is false and
+nothing changes.
+
 ## Phone microphone
 
 `GET /api/microphone` upgrades to a WebSocket that takes binary messages of
