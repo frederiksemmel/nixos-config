@@ -186,6 +186,7 @@ in
       zip
       unzip
       ncdu
+      btdu
       google-cloud-sdk
       tealdeer
       usbutils
