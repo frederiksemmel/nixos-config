@@ -34,7 +34,8 @@ use vtt::Source;
 const NEEDS_TAILSCALE: &str = "Watching on this phone needs Tailscale on";
 const FUNNEL: &str = "tailscale-funnel-request";
 const LOGIN: &str = "tailscale-user-login";
-const IDLE: Duration = Duration::from_secs(180);
+const REST: Duration = Duration::from_secs(180);
+const FORGET: Duration = Duration::from_secs(12 * 3600);
 const MOST_SESSIONS: usize = 3;
 const CELLULAR_WARNING: u64 = 8_000_000;
 const PLAYLIST: &str = "application/vnd.apple.mpegurl";
@@ -171,16 +172,25 @@ pub fn routes<S: Clone + Send + Sync + 'static>(shared: Arc<Shared>, bus: Bus, a
 async fn reap(streams: Streams) {
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
-        let idle: Vec<Arc<Live>> = {
+        let (resting, gone): (Vec<Arc<Live>>, Vec<Arc<Live>>) = {
             let mut live = streams.live.lock().unwrap();
-            let gone: Vec<String> = live
+            let forgotten: Vec<String> = live
                 .iter()
-                .filter(|(_, live)| live.session.idle() > IDLE)
+                .filter(|(_, live)| live.session.idle() > FORGET)
                 .map(|(id, _)| id.clone())
                 .collect();
-            gone.iter().filter_map(|id| live.remove(id)).collect()
+            let gone = forgotten.iter().filter_map(|id| live.remove(id)).collect();
+            let resting = live
+                .values()
+                .filter(|live| live.session.idle() > REST)
+                .cloned()
+                .collect();
+            (resting, gone)
         };
-        for live in idle {
+        for live in resting {
+            live.session.rest();
+        }
+        for live in gone {
             live.session.close();
         }
     }
@@ -442,7 +452,8 @@ async fn open(State(streams): State<Streams>, Json(body): Json<OpenBody>) -> Res
             replaced.session.close();
         }
         let limit = if tv_playing { 1 } else { MOST_SESSIONS };
-        if live.len() >= limit {
+        let watching = live.values().filter(|live| live.session.idle() < REST).count();
+        if watching >= limit {
             let reason = if tv_playing {
                 "The TV is playing, so only one phone can watch at a time"
             } else {
@@ -752,6 +763,7 @@ async fn progress(
         Ok(live) => live,
         Err(response) => return response,
     };
+    live.session.keep_alive();
     if !report.position.is_finite() || !report.played.is_finite() {
         return problem(
             StatusCode::BAD_REQUEST,

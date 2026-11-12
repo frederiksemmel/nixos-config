@@ -327,7 +327,7 @@ class Player {
       this.mediaState("paused");
     });
     video.addEventListener("ended", () => this.ended());
-    video.addEventListener("error", () => this.failed(video.error && video.error.message));
+    video.addEventListener("error", () => { if (!this.recover()) this.failed(video.error && video.error.message); });
 
     this.reportTimer = setInterval(() => {
       if (this.started && !video.paused) this.report("playing");
@@ -492,7 +492,7 @@ class Player {
       if (this.closed || this.session !== session) return;
       const hls = new Hls({ startPosition: session.start, maxBufferLength: 30, backBufferLength: 30 });
       this.hls = hls;
-      hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) this.failed(data.details); });
+      hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal && !this.recover()) this.failed(data.details); });
       hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => this.show(true)));
       hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => this.applyDefaultSubtitles(session));
       hls.loadSource(source);
@@ -723,6 +723,15 @@ class Player {
     try {
       navigator.mediaSession.setPositionState({ duration, position: Math.min(this.video.currentTime, duration), playbackRate: this.video.playbackRate || 1 });
     } catch {}
+  }
+
+  recover() {
+    const session = this.session;
+    if (!session || this.closed || Date.now() - (this.recovered || 0) < 30000) return false;
+    this.recovered = Date.now();
+    const at = this.video.currentTime > 1 ? this.video.currentTime : session.start;
+    this.open(this.pickOf(session), { start: at, audio: session.audio_index ?? undefined });
+    return true;
   }
 
   toast(text) {

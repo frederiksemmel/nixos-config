@@ -88,6 +88,18 @@ impl Session {
             .map_or(Duration::MAX, |used| used.elapsed())
     }
 
+    pub fn keep_alive(&self) {
+        self.state.lock().unwrap().used = Some(Instant::now());
+    }
+
+    pub fn rest(&self) {
+        let mut state = self.state.lock().unwrap();
+        state.run = None;
+        for (_, fragment) in std::mem::take(&mut state.fragments) {
+            let _ = std::fs::remove_file(fragment.path);
+        }
+    }
+
     pub fn close(&self) {
         let mut state = self.state.lock().unwrap();
         state.run = None;
@@ -503,6 +515,9 @@ mod tests {
         jumped.start(plan.start(middle));
         let order: Vec<usize> = (middle..count).chain(0..middle).collect();
         joined(&jumped, plan.start(middle), &order, &out.join("jumped")).await;
+        jumped.rest();
+        assert!(!jumped.segment(middle).await.unwrap().is_empty());
+        assert!(!jumped.segment(0).await.unwrap().is_empty());
         straight.close();
         jumped.close();
     }

@@ -525,7 +525,9 @@ once it was finished or stopped in its credits. `replaces` ends that session
 first, for the next episode or another audio track.
 
 At most three sessions play at once, and only one while the TV plays; the
-others get 429. A session ends 3 minutes after its last request.
+others get 429. Three minutes after its last request a session stops its
+ffmpeg and drops its segments, and no longer counts towards that limit; it
+picks up again on the next request, and is forgotten after 12 hours.
 
 The answer is
 
