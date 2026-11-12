@@ -326,6 +326,31 @@ pub enum Event {
     Voice(Voice),
     Playback { now_playing: Option<NowPlaying> },
     Audio(Audio),
+    Screen { screen: Screen },
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Device {
+    pub id: String,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct PhonePlay {
+    pub state: String,
+    pub title: String,
+    #[serde(default)]
+    pub caption: String,
+    #[serde(default)]
+    pub paused: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum Screen {
+    Tv,
+    Moving { device: Device },
+    Phone { device: Device, play: Option<PhonePlay> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

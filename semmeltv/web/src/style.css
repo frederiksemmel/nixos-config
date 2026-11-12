@@ -161,8 +161,13 @@ svg .solid { fill: currentColor; stroke: none; }
 html[data-phone-ready] .mode { display: grid; }
 .mode span { position: relative; display: grid; place-items: center; height: 100%; transition: color 0.2s; }
 .mode svg { width: 20px; height: 20px; }
-.mode[data-mode="tv"] .mode-tv, .mode[data-mode="phone"] .mode-phone { color: var(--text); }
-.mode[data-mode="phone"]::before { transform: translateX(38px); }
+.mode[data-mode="tv"] .mode-tv, .mode:is([data-mode="phone"], [data-mode="moving"]) .mode-phone { color: var(--text); }
+.mode:is([data-mode="phone"], [data-mode="moving"])::before { transform: translateX(38px); }
+.mode[data-mode="moving"]::before { animation: pulse 0.8s infinite alternate; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mode[data-mode="moving"]::before { animation: none; opacity: 0.6; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   .mode::before { transition: none; }
@@ -1207,9 +1212,9 @@ html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
 
 .pill:active { opacity: 0.8; }
 .pill.play-tv { display: none; }
-html[data-phone-ready][data-mode="phone"] .pill.play-tv { display: inline-flex; justify-self: start; margin-top: 2px; }
+html[data-phone-ready]:is([data-mode="phone"], :has(.mode[data-mode="phone"])) .pill.play-tv { display: inline-flex; justify-self: start; margin-top: 2px; }
 .pill.handoff { display: none; }
-html[data-phone-ready][data-mode="phone"] .pill.handoff { display: inline-flex; justify-self: start; }
+html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inline-flex; justify-self: start; }
 .pill.quiet { background: transparent; border: 1px solid var(--line); color: var(--text); }
 .pill:has(svg) { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; }
 .pill svg { width: 18px; height: 18px; }

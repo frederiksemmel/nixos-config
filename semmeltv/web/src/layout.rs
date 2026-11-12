@@ -45,12 +45,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
             <body>
                 <header class="top">
                     link(href: "/", attrs: attributes! { cx => class="brand" }, <img src=(brand::WORDMARK) alt="SemmelTV">)
-                    <button class="mode" id="mode" type="button" aria-pressed="false" aria-label="Watch on this phone" data-mode="tv">
-                        <span class="mode-tv">playing::tv_icon()</span>
-                        <span class="mode-phone">
-                            <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"></rect><path d="M11 18.5h2"></path></svg>
-                        </span>
-                    </button>
+                    playing::mode_switch()
                     <span class="mode-note" id="mode-note" role="status"></span>
                     <div class="microphone" id="microphone" data-state="idle">
                         <button class="microphone-talk" id="microphone-talk" type="button" aria-label="Talk to the TV" aria-pressed="false">

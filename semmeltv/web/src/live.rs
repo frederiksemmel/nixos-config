@@ -1,4 +1,4 @@
-use crate::api::{Audio, Event, NowPlaying, Output, PairState, Voice};
+use crate::api::{Audio, Event, NowPlaying, Output, PairState, Screen, Voice};
 use futures_util::StreamExt;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -118,6 +118,7 @@ pub struct Live {
     pub voice: watch::Receiver<Option<Voice>>,
     pub audio: watch::Receiver<Option<Audio>>,
     pub notices: watch::Receiver<Notices>,
+    pub screen: watch::Receiver<Option<Screen>>,
 }
 
 pub fn follow(url: String) -> Live {
@@ -125,6 +126,7 @@ pub fn follow(url: String) -> Live {
     let (voice, voice_seen) = watch::channel(None);
     let (audio, audio_seen) = watch::channel(None);
     let (notices, notices_seen) = watch::channel(Notices::default());
+    let (screen, screen_seen) = watch::channel(None);
     let boot = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis());
     let mut raise = Raise { boot, count: 0 };
     tokio::spawn(async move {
@@ -150,11 +152,15 @@ pub fn follow(url: String) -> Live {
                                 }
                                 audio.send_if_modified(|current| replace(current, Some(state)));
                             }
+                            Ok(Event::Screen { screen: state }) => {
+                                screen.send_if_modified(|current| replace(current, Some(state)));
+                            }
                             Err(error) => eprintln!("events: {error}: {text}"),
                         }
                     }
                     playback.send_replace(None);
                     audio.send_replace(None);
+                    screen.send_replace(None);
                 }
                 Err(error) => eprintln!("events {url}: {error}"),
             }
@@ -166,6 +172,7 @@ pub fn follow(url: String) -> Live {
         voice: voice_seen,
         audio: audio_seen,
         notices: notices_seen,
+        screen: screen_seen,
     }
 }
 

@@ -1,4 +1,4 @@
-use crate::api::{Api, Audio, Link, NowPlaying, Output, Pick, TvAbilities, Voice};
+use crate::api::{Api, Audio, Link, NowPlaying, Output, Pick, Screen, TvAbilities, Voice};
 use crate::live::Live;
 use crate::public::Public;
 use std::time::Duration;
@@ -495,13 +495,64 @@ async fn bar_progress(cx: &Cx) -> Result<impl View> {
 }
 
 #[component]
+async fn phone_icon() -> Result<impl View> {
+    Ok(view! {
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"></rect><path d="M11 18.5h2"></path></svg>
+    })
+}
+
+fn mode_of(screen: Option<&Screen>) -> (&'static str, String) {
+    match screen {
+        Some(Screen::Phone { device, .. }) => ("phone", format!("Watching on {}. Switch to the TV", device.name)),
+        Some(Screen::Moving { device }) => ("moving", format!("Moving to {}", device.name)),
+        _ => ("tv", "Watching on the TV. Switch to this phone".to_string()),
+    }
+}
+
+#[shard]
+pub async fn mode_switch(cx: &Cx) -> Result<impl View> {
+    Ok(live! {
+        let mut screen = app_context::<Live>(cx).screen.clone();
+        loop {
+            let (mode, label) = mode_of(screen.borrow_and_update().as_ref());
+            let token = emit! {
+                <button class="mode" id="mode" type="button" aria-pressed=(if mode == "tv" { "false" } else { "true" })
+                    aria-label=(label.as_str()) data-mode=(mode)>
+                    <span class="mode-tv">tv_icon()</span>
+                    <span class="mode-phone">phone_icon()</span>
+                </button>
+            }?;
+            if !connected(cx) || screen.changed().await.is_err() {
+                break Ok(token);
+            }
+        }
+    })
+}
+
+fn phone_line(screen: Option<&Screen>) -> Option<(String, String)> {
+    let Some(Screen::Phone { device, play: Some(play) }) = screen else {
+        return None;
+    };
+    let doing = if play.state == "starting" {
+        "Starting on"
+    } else if play.paused {
+        "Paused on"
+    } else {
+        "Playing on"
+    };
+    Some((play.title.clone(), format!("{doing} {}", device.name)))
+}
+
+#[component]
 async fn bar_info(cx: &Cx) -> Result<impl View> {
     let public = app_context::<Public>(cx).clone();
     Ok(live! {
         let mut playback = app_context::<Live>(cx).playback.clone();
+        let mut screen = app_context::<Live>(cx).screen.clone();
         'shown: loop {
             let now = playback.borrow_and_update().clone();
-            let shown = look(now.as_ref());
+            let elsewhere = phone_line(screen.borrow_and_update().as_ref());
+            let shown = (look(now.as_ref()), elsewhere.clone());
             let token = match now {
                 Some(now) => {
                     let art = poster(&now).map(|path| public.url(&path));
@@ -520,19 +571,35 @@ async fn bar_info(cx: &Cx) -> Result<impl View> {
                             data-delay=(delay_value(now.subtitle_delay)) data-fetch=(fetch_body(&now)) hidden=(true)></i>
                     }?
                 }
-                None => emit! {
-                    <span class="bar-art idle">tv_icon()</span>
-                    <span class="bar-text">
-                        <strong>"TV remote"</strong>
-                        <span>"Nothing is playing"</span>
-                    </span>
-                }?,
+                None => match elsewhere {
+                    Some((title, line)) => emit! {
+                        <span class="bar-art idle">phone_icon()</span>
+                        <span class="bar-text">
+                            <strong>(title.as_str())</strong>
+                            <span>(line.as_str())</span>
+                        </span>
+                    }?,
+                    None => emit! {
+                        <span class="bar-art idle">tv_icon()</span>
+                        <span class="bar-text">
+                            <strong>"TV remote"</strong>
+                            <span>"Nothing is playing"</span>
+                        </span>
+                    }?,
+                },
             };
             loop {
-                if !connected(cx) || playback.changed().await.is_err() {
+                if !connected(cx) {
                     break 'shown Ok(token);
                 }
-                if look(playback.borrow().as_ref()) != shown {
+                let changed = tokio::select! {
+                    changed = playback.changed() => changed,
+                    changed = screen.changed() => changed,
+                };
+                if changed.is_err() {
+                    break 'shown Ok(token);
+                }
+                if (look(playback.borrow().as_ref()), phone_line(screen.borrow().as_ref())) != shown {
                     break;
                 }
             }
