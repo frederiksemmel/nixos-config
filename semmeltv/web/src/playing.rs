@@ -387,7 +387,7 @@ async fn sheet_now(cx: &Cx) -> Result<impl View> {
                             <div class="now-art">
                                 if let Some(art) = art {
                                     <img src=(art) alt="" data-fallback=(fallback.unwrap_or_default())
-                                        onerror="if (this.dataset.fallback && this.src !== this.dataset.fallback) { this.src = this.dataset.fallback } else { this.remove() }">
+                                        onerror="if (this.dataset.fallback && this.getAttribute('src') !== this.dataset.fallback) { this.src = this.dataset.fallback } else { this.remove() }">
                                 }
                             </div>
                             link(href: destination(&now), attrs: attributes! { cx => class="now-title" },
