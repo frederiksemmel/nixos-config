@@ -26,6 +26,9 @@ let
   rqbit = newer.rqbit.overrideAttrs (old: {
     cargoBuildFeatures = (old.cargoBuildFeatures or [ ]) ++ [ "disable-upload" ];
     cargoCheckFeatures = (old.cargoCheckFeatures or [ ]) ++ [ "disable-upload" ];
+    preBuild = (old.preBuild or "") + ''
+      export AWS_LC_SYS_USE_SYSTEM=0
+    '';
   });
 
   indexer =
