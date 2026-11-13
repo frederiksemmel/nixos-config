@@ -104,14 +104,6 @@
             claude-notify = final.callPackage ./packages/claude-notify.nix { };
             nordwand-mono = final.callPackage ./packages/nordwand-mono.nix { };
             plymouth-spades-vision = final.callPackage ./packages/plymouth-spades-vision { };
-            # The viewer makes every recording streamed in from an SDK the active one,
-            # so it keeps jumping while several recordings stream in at once. The patch
-            # adds a "Switch to newly streamed recordings" setting; with it off, such a
-            # recording only shows up in the recordings panel while another one is being
-            # shown. Upstream issue: rerun-io/rerun#12950.
-            rerun = prev.rerun.overrideAttrs (old: {
-              patches = (old.patches or [ ]) ++ [ ./packages/rerun-streamed-recordings-setting.patch ];
-            });
             # When its notification helper fails to start, foot keeps -1 as the
             # helper's pid and closes the notification with kill(-1, SIGINT), which
             # interrupts every process of the user, niri included.
@@ -134,20 +126,6 @@
                   inherit (finalAttrs) pname version src;
                   hash = "sha256-K27VE9IBvldouiYr0RjUn2aqkVJjPF/FipBNsG5Nba8=";
                 };
-              }
-            );
-            # The tuxedo-drivers Makefile pastes $(MAKEFLAGS) into a shell command, so
-            # the kernel's `cmd_sign=…kmodigest$(space)$@` flag reaches bash as `$$(space)`
-            # and the build dies with a syntax error. A plain $(MAKE) still hands the
-            # sub-make every flag. Drop once nixpkgs fixes tuxedo-drivers.
-            linuxPackages = prev.linuxPackages.extend (
-              _: lpPrev: {
-                tuxedo-drivers = lpPrev.tuxedo-drivers.overrideAttrs (old: {
-                  postPatch = (old.postPatch or "") + ''
-                    substituteInPlace Makefile \
-                      --replace-fail 'make -C $(KDIR) M=$(PWD) $(MAKEFLAGS)' '$(MAKE) -C $(KDIR) M=$(PWD)'
-                  '';
-                });
               }
             );
           };
