@@ -12,6 +12,37 @@ let
   api = "http://127.0.0.1:${toString cfg.api.port}";
   web = "http://127.0.0.1:${toString cfg.web.port}";
   serve = if cfg.web.funnel then "funnel" else "serve";
+  lan = cfg.web.lan;
+  lanPort = 8443;
+  subname = lib.removeSuffix ".${lan.zone}" lan.domain;
+
+  publishAddress = pkgs.writeShellApplication {
+    name = "semmeltv-publish-address";
+    runtimeInputs = [
+      pkgs.curl
+      pkgs.iproute2
+      pkgs.gnused
+    ];
+    text = ''
+      address=$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+      if [[ -z $address ]]; then
+        echo "no IPv4 address yet"
+        exit 0
+      fi
+      published="$STATE_DIRECTORY/address"
+      if [[ $(cat "$published" 2>/dev/null) == "$address" ]]; then
+        exit 0
+      fi
+      curl --fail-with-body --silent --show-error --request PATCH \
+        --header "Authorization: Token $DESEC_TOKEN" \
+        --header "Content-Type: application/json" \
+        --data '[{"subname": "${subname}", "type": "A", "ttl": 3600, "records": ["'"$address"'"]}]' \
+        "https://desec.io/api/v1/domains/${lan.zone}/rrsets/"
+      echo
+      printf '%s\n' "$address" >"$published"
+      echo "${lan.domain} now points to $address"
+    '';
+  };
 in
 {
   options.services.semmeltv = {
@@ -51,6 +82,31 @@ in
       tailscale = lib.mkEnableOption "the web app and the API over HTTPS on the tailnet, with `tailscale serve`";
 
       funnel = lib.mkEnableOption "the web app and the API on the public internet, with `tailscale funnel` in place of `tailscale serve`";
+
+      lan = {
+        domain = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "semmeltv5.semmeltv.ch";
+          description = ''
+            Name the web app and the API answer on over HTTPS in the local network, or null for none.
+            Its A record at deSEC follows the TV's local IPv4 address, so the name only works at home;
+            its Let's Encrypt certificate comes from a DNS challenge at deSEC.
+          '';
+        };
+
+        zone = lib.mkOption {
+          type = lib.types.str;
+          default = "semmeltv.ch";
+          description = "The domain at deSEC that `domain` lies in.";
+        };
+
+        desecTokenFile = lib.mkOption {
+          type = lib.types.str;
+          example = "/run/agenix/desec_token";
+          description = "File with `DESEC_TOKEN=<token>`, a deSEC token that may change the zone's records.";
+        };
+      };
     };
   };
 
@@ -115,6 +171,90 @@ in
               "${tailscale} ${serve} --bg --https=443 --set-path=/api ${api}/api"
             ];
             ExecStop = "${tailscale} serve reset";
+          };
+        };
+      })
+
+      (lib.mkIf (cfg.web.enable && lan.domain != null) {
+        assertions = [
+          {
+            assertion = lib.hasSuffix ".${lan.zone}" lan.domain;
+            message = "services.semmeltv.web.lan.domain must lie in services.semmeltv.web.lan.zone";
+          }
+        ];
+
+        security.acme = {
+          acceptTerms = true;
+          certs.${lan.domain} = {
+            dnsProvider = "desec";
+            environmentFile = lan.desecTokenFile;
+            dnsResolver = "9.9.9.9:53";
+            group = config.services.nginx.group;
+            reloadServices = [ "nginx.service" ];
+          };
+        };
+
+        services.nginx = {
+          enable = true;
+          recommendedProxySettings = true;
+          recommendedTlsSettings = true;
+          recommendedGzipSettings = true;
+          virtualHosts.${lan.domain} = {
+            useACMEHost = lan.domain;
+            onlySSL = true;
+            listen = [
+              {
+                addr = "0.0.0.0";
+                port = lanPort;
+                ssl = true;
+              }
+            ];
+            locations."/".proxyPass = web;
+            locations."/api" = {
+              proxyPass = api;
+              proxyWebsockets = true;
+              extraConfig = ''
+                proxy_read_timeout 1h;
+                proxy_send_timeout 1h;
+                proxy_buffering off;
+              '';
+            };
+          };
+        };
+
+        networking.firewall = {
+          allowedTCPPorts = [ lanPort ];
+          extraCommands = ''
+            iptables -t nat -N semmeltv-https 2>/dev/null || true
+            iptables -t nat -F semmeltv-https
+            iptables -t nat -A semmeltv-https ! -i tailscale0 -m addrtype --dst-type LOCAL -p tcp --dport 443 -j REDIRECT --to-ports ${toString lanPort}
+            iptables -t nat -C PREROUTING -j semmeltv-https 2>/dev/null || iptables -t nat -A PREROUTING -j semmeltv-https
+          '';
+          extraStopCommands = ''
+            iptables -t nat -D PREROUTING -j semmeltv-https 2>/dev/null || true
+            iptables -t nat -F semmeltv-https 2>/dev/null || true
+            iptables -t nat -X semmeltv-https 2>/dev/null || true
+          '';
+        };
+
+        systemd.services.semmeltv-publish-address = {
+          description = "Point ${lan.domain} at the TV's local IPv4 address";
+          wants = [ "network-online.target" ];
+          after = [ "network-online.target" ];
+          serviceConfig = {
+            Type = "oneshot";
+            ExecStart = lib.getExe publishAddress;
+            EnvironmentFile = lan.desecTokenFile;
+            DynamicUser = true;
+            StateDirectory = "semmeltv-publish-address";
+          };
+        };
+
+        systemd.timers.semmeltv-publish-address = {
+          wantedBy = [ "timers.target" ];
+          timerConfig = {
+            OnBootSec = "30s";
+            OnUnitActiveSec = "5min";
           };
         };
       })

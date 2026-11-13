@@ -38,6 +38,10 @@ in
     frederik
     semmeltv5
   ];
+  "desec_token.age".publicKeys = [
+    frederik
+    semmeltv5
+  ];
   "tmdb_token.age".publicKeys = [
     frederik
     semmeltv5

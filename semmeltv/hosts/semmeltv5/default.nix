@@ -30,6 +30,10 @@
     web = {
       enable = true;
       tailscale = true;
+      lan = {
+        domain = "semmeltv5.semmeltv.ch";
+        desecTokenFile = config.age.secrets.desec_token.path;
+      };
     };
     downloads = {
       enable = true;
@@ -38,6 +42,7 @@
   };
 
   age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard.age;
+  age.secrets.desec_token.file = ../../../secrets/desec_token.age;
 
   hardware.hailo = {
     enable = true;
