@@ -1,14 +1,23 @@
 --- a/drivers/gpu/drm/vc4/vc4_hdmi.c
 +++ b/drivers/gpu/drm/vc4/vc4_hdmi.c
-@@ -392,6 +392,11 @@ static void vc4_hdmi_handle_hotplug(struct vc4_hdmi *vc4_hdmi,
+@@ -41,6 +41,7 @@
+ #include <drm/drm_edid.h>
+ #include <drm/drm_probe_helper.h>
+ #include <drm/drm_simple_kms_helper.h>
++#include <linux/cec.h>
+ #include <linux/clk.h>
+ #include <linux/component.h>
+ #include <linux/gpio/consumer.h>
+@@ -385,6 +386,12 @@
+ 	if (status != connector_status_connected)
  		return;
- 	}
-
-+	if (status == connector_status_connected &&
-+	    connector->display_info.source_physical_address == CEC_PHYS_ADDR_INVALID &&
-+	    drm_edid_override_connector_update(connector) > 0)
+ 
++	if (connector->display_info.source_physical_address == CEC_PHYS_ADDR_INVALID &&
++	    drm_edid_override_connector_update(connector) > 0) {
 +		drm_connector_hdmi_audio_plugged_notify(connector, true);
++		drm_connector_cec_phys_addr_set(connector);
++	}
 +
- 	cec_s_phys_addr(vc4_hdmi->cec_adap,
- 			connector->display_info.source_physical_address, false);
-
+ 	for (;;) {
+ 		ret = vc4_hdmi_reset_link(connector, ctx);
+ 		if (ret == -EDEADLK) {
