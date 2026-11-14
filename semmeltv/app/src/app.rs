@@ -1214,7 +1214,15 @@ impl App {
 
     fn screen_step(&mut self, event: screen::Event) {
         let tv = self.tv_place();
+        let before = self.screen.clone();
+        let reason = event.describe();
+        let tick = event.is_tick();
         let effects = self.screen.step(event, tv.as_ref(), Instant::now());
+        if before.summary() != self.screen.summary() {
+            eprintln!("screen: {} -> {} ({reason})", before.summary(), self.screen.summary());
+        } else if before == self.screen && !tick {
+            eprintln!("screen: ignored {reason}; it stays {}", self.screen.summary());
+        }
         for effect in effects {
             match effect {
                 screen::Effect::PauseTv => {
@@ -1240,6 +1248,7 @@ impl App {
                 }
                 screen::Effect::ShowOnTv(text) => self.show_message(text),
                 screen::Effect::Tell(notice) => {
+                    eprintln!("screen: told phones \"{}\"", notice.text);
                     let id = self.notice.as_ref().map_or(1, |said| said.id + 1);
                     self.notice = Some(screen::Said {
                         id,
@@ -1329,23 +1338,34 @@ impl App {
         if let Some(device) = report.device.clone() {
             let session = report.session.clone();
             let event = match report.moment {
-                stream::Moment::Start => screen::Event::Started {
+                stream::Moment::Start => Some(screen::Event::Started {
                     device,
                     session,
                     position: report.position,
-                },
-                stream::Moment::Playing | stream::Moment::Paused => screen::Event::Report {
-                    device,
-                    session,
-                    file: report.file.clone(),
-                    position: report.position,
-                    paused: report.moment == stream::Moment::Paused,
-                },
-                stream::Moment::Stopped | stream::Moment::Ended => screen::Event::Stopped { device, session },
+                }),
+                stream::Moment::Playing | stream::Moment::Paused => {
+                    self.place_of(&report.file, report.position).map(|place| screen::Event::Report {
+                        device,
+                        session,
+                        place,
+                        paused: report.moment == stream::Moment::Paused,
+                    })
+                }
+                stream::Moment::Stopped | stream::Moment::Ended => Some(screen::Event::Stopped { device, session }),
             };
-            self.screen_step(event);
+            match event {
+                Some(event) => self.screen_step(event),
+                None => eprintln!("screen: a report for {} is not in the library", report.file.display()),
+            }
         }
         if self.playing.as_ref().is_some_and(|playing| playing.file == report.file) {
+            eprintln!(
+                "stream {}: {:?} at {:.0} s not recorded, the TV plays {}",
+                report.session.get(..8).unwrap_or(&report.session),
+                report.moment,
+                report.position,
+                report.file.display()
+            );
             return Outcome {
                 message: "The TV is playing this, so it keeps its own place".to_string(),
                 ok: false,

@@ -92,12 +92,13 @@ impl Session {
         self.state.lock().unwrap().used = Some(Instant::now());
     }
 
-    pub fn rest(&self) {
+    pub fn rest(&self) -> bool {
         let mut state = self.state.lock().unwrap();
-        state.run = None;
+        let busy = state.run.take().is_some() || !state.fragments.is_empty();
         for (_, fragment) in std::mem::take(&mut state.fragments) {
             let _ = std::fs::remove_file(fragment.path);
         }
+        busy
     }
 
     pub fn close(&self) {

@@ -92,8 +92,7 @@ pub enum Event {
     Report {
         device: Device,
         session: String,
-        file: PathBuf,
-        position: f64,
+        place: Place,
         paused: bool,
     },
     Stop {
@@ -138,7 +137,64 @@ fn notice(text: String, tone: Tone) -> Effect {
     Effect::Tell(Notice { text, tone })
 }
 
+fn short(session: &str) -> &str {
+    session.get(..8).unwrap_or(session)
+}
+
+impl Event {
+    pub fn describe(&self) -> String {
+        match self {
+            Self::Flip { to: Target::Tv, position } => match position {
+                Some(position) => format!("flip to the TV at {position:.0} s"),
+                None => "flip to the TV".to_string(),
+            },
+            Self::Flip { to: Target::Phone(device), .. } => format!("flip to {}", device.name),
+            Self::Play { device, place } => format!("{} plays {} from {:.0} s", device.name, place.name, place.position),
+            Self::Started { device, session, position } => {
+                format!("{} started stream {} at {position:.0} s", device.name, short(session))
+            }
+            Self::Report { device, session, place, paused } => format!(
+                "{} reported stream {} {} at {:.0} s",
+                device.name,
+                short(session),
+                if *paused { "paused" } else { "playing" },
+                place.position
+            ),
+            Self::Stop { device } => format!("{} closed its player", device.name),
+            Self::Stopped { device, session } => format!("{} stopped stream {}", device.name, short(session)),
+            Self::Failed { device, reason } => format!("{} failed: {reason}", device.name),
+            Self::TvPlays => "the TV plays something itself".to_string(),
+            Self::Tick => "time passed".to_string(),
+        }
+    }
+
+    pub fn is_tick(&self) -> bool {
+        matches!(self, Self::Tick)
+    }
+}
+
 impl Screen {
+    pub fn summary(&self) -> String {
+        match self {
+            Self::Tv => "tv".to_string(),
+            Self::Moving { to, place, .. } => format!("moving {} to {}", place.name, to.name),
+            Self::Phone { device, play: None } => format!("{}, nothing playing", device.name),
+            Self::Phone { device, play: Some(PhonePlay::Starting { place, .. }) } => {
+                format!("{}, starting {}", device.name, place.name)
+            }
+            Self::Phone {
+                device,
+                play: Some(PhonePlay::Playing { session, place, paused, .. }),
+            } => format!(
+                "{}, {} {} on stream {}",
+                device.name,
+                if *paused { "paused" } else { "playing" },
+                place.name,
+                short(session)
+            ),
+        }
+    }
+
     pub fn allows_tv_playing(&self) -> bool {
         !matches!(self, Self::Phone { .. })
     }
@@ -292,13 +348,12 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
             Event::Report {
                 device,
                 session,
-                file,
-                position,
+                place: reported,
                 paused,
             },
-        ) if current == device && play.place().file == file => {
+        ) if current == device && play.place().file == reported.file => {
             let mut place = play.place().clone();
-            place.position = position;
+            place.position = reported.position;
             (
                 Phone {
                     device,
@@ -312,6 +367,29 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
                 vec![],
             )
         }
+        (
+            Phone {
+                device: current,
+                play: None,
+            },
+            Event::Report {
+                device,
+                session,
+                place,
+                paused,
+            },
+        ) if current == device => (
+            Phone {
+                device,
+                play: Some(PhonePlay::Playing {
+                    session,
+                    place,
+                    paused,
+                    seen: now,
+                }),
+            },
+            vec![],
+        ),
         (
             Phone {
                 device: current,
@@ -678,8 +756,7 @@ mod tests {
                 Event::Report {
                     device: first.clone(),
                     session: "s1".to_string(),
-                    file: place(0.0).file,
-                    position: 950.0,
+                    place: place(950.0),
                     paused: false
                 },
                 None,
@@ -763,8 +840,7 @@ mod tests {
             Event::Report {
                 device: iphone.clone(),
                 session: "s1".to_string(),
-                file: place(0.0).file,
-                position: 330.0,
+                place: place(330.0),
                 paused: true,
             },
             None,
@@ -817,8 +893,7 @@ mod tests {
             Event::Report {
                 device: iphone.clone(),
                 session: "s1".to_string(),
-                file: place(0.0).file,
-                position: 1285.0,
+                place: place(1285.0),
                 paused: false,
             },
             None,
@@ -833,8 +908,7 @@ mod tests {
             Event::Report {
                 device: iphone.clone(),
                 session: "s2".to_string(),
-                file: film(0.0).file,
-                position: 12.0,
+                place: film(12.0),
                 paused: true,
             },
             None,
@@ -844,6 +918,57 @@ mod tests {
             &screen,
             Screen::Phone { play: Some(PhonePlay::Playing { place, paused: true, .. }), .. } if *place == film(12.0)
         ));
+    }
+
+    #[test]
+    fn a_phone_the_tv_gave_up_on_takes_its_play_back_with_its_next_report() {
+        let now = Instant::now();
+        let iphone = phone("a");
+        let report = |device: &Device, position: f64| Event::Report {
+            device: device.clone(),
+            session: "s1".to_string(),
+            place: place(position),
+            paused: false,
+        };
+        let mut screen = playing(&iphone, "s1", 300.0, now);
+        screen.step(Event::Tick, None, now + LOST_AFTER);
+        assert_eq!(
+            screen,
+            Screen::Phone {
+                device: iphone.clone(),
+                play: None
+            }
+        );
+        let later = now + LOST_AFTER + Duration::from_secs(5);
+        assert_eq!(screen.step(report(&iphone, 352.0), None, later), vec![]);
+        assert_eq!(screen, playing(&iphone, "s1", 352.0, later));
+
+        let mut screen = Screen::Phone {
+            device: iphone.clone(),
+            play: None,
+        };
+        screen.step(report(&phone("b"), 352.0), None, later);
+        assert!(matches!(screen, Screen::Phone { play: None, .. }));
+
+        let mut screen = Screen::Tv;
+        screen.step(report(&iphone, 352.0), None, later);
+        assert_eq!(screen, Screen::Tv);
+    }
+
+    #[test]
+    fn the_log_says_what_happened_in_words() {
+        let now = Instant::now();
+        let iphone = phone("abc");
+        let screen = playing(&iphone, "286da8da9cf4", 600.0, now);
+        assert_eq!(screen.summary(), "abc phone, playing Outlander on stream 286da8da");
+        let report = Event::Report {
+            device: iphone,
+            session: "286da8da9cf4".to_string(),
+            place: place(612.4),
+            paused: true,
+        };
+        assert_eq!(report.describe(), "abc phone reported stream 286da8da paused at 612 s");
+        assert_eq!(Screen::Tv.summary(), "tv");
     }
 
     #[test]
@@ -958,8 +1083,7 @@ mod tests {
             Event::Report {
                 device: iphone.clone(),
                 session: "s1".to_string(),
-                file: place(0.0).file,
-                position: 9.0,
+                place: place(9.0),
                 paused: false,
             },
             Event::Play {

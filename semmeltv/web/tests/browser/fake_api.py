@@ -22,6 +22,9 @@ screen = {"kind": "tv", "device": None, "play": None, "notice": None}
 screen_answers = {"delay": 0.0, "refuse": False}
 tv = {"on": True}
 opens = []
+streams = {}
+progress_log = []
+ended = set()
 screen_log = []
 CONNECT_SECONDS = 1.5
 SERVICE = "fake-service-token"
@@ -391,6 +394,7 @@ async def stream_open(request):
     body = await request.json()
     opens.append(body)
     id = f"fake-session-{len(opens)}"
+    streams[id] = body
     common = {"id": id, "playlist": f"/api/stream/{id}/main.m3u8", "backdrop": "", "start": 0, "audio": [],
               "audio_index": None, "converted_audio": False, "subtitles": [], "subtitle_delay": 0, "credits": None,
               "bitrate": 4000000, "heavy": False}
@@ -410,12 +414,30 @@ async def stream_open(request):
 async def stream_progress(request):
     id = request.match_info["id"]
     state = (await request.json())["state"]
+    progress_log.append({"session": id, "state": state, "play": bool(screen["play"])})
+    if id in ended:
+        return web.json_response({"error": "this video closed; open it again"}, status=404)
+    if state in ("stopped", "ended"):
+        ended.add(id)
     play = screen["play"]
+    opened = streams.get(id, {})
+    holder = screen["kind"] == "phone" and screen["device"] and opened.get("device", {}).get("id") == screen["device"]["id"]
     if play and state == "start":
         play.update(state="playing", session=id)
     elif play and state in ("stopped", "ended") and play["session"] == id:
         screen.update(play=None)
+    elif not play and holder and state in ("playing", "paused"):
+        screen.update(play={**place_of(opened, "playing"), "session": id, "paused": state == "paused"})
     return web.json_response({"message": "Noted", "ok": True})
+
+
+async def fake_progress_log(request):
+    return web.json_response(progress_log[-12:])
+
+
+async def drop_play(request):
+    screen.update(play=None, notice={"id": 99, "text": "Simulator went quiet, so its place is kept", "tone": "quiet"})
+    return web.json_response({"ok": True})
 
 
 async def reset_screen(request):
@@ -470,6 +492,8 @@ app.router.add_post("/api/stream/open", stream_open)
 app.router.add_post("/api/stream/{id}/progress", stream_progress)
 app.router.add_get("/fake/opens", fake_opens)
 app.router.add_post("/fake/reset-screen", reset_screen)
+app.router.add_post("/fake/drop-play", drop_play)
+app.router.add_get("/fake/progress-log", fake_progress_log)
 app.router.add_get("/fake/screen-log", fake_screen_log)
 app.router.add_get("/api/stream/{tail:.*}", stream_slow)
 app.router.add_post("/api/subtitles/delay", subtitle_delay)

@@ -93,11 +93,48 @@
     const detail = event.detail || {};
     if (detail.tone === "error" && detail.text) report("error", `toast: ${detail.text}`);
   });
-  window.addEventListener("pagehide", () => flush(true));
+  const LEFT = "semmeltv.left";
+  let touch = null;
+  window.addEventListener("touchstart", (event) => {
+    const point = event.touches[0];
+    touch = { x: Math.round(point.clientX), y: Math.round(point.clientY), dy: 0, at: Date.now() };
+  }, { passive: true, capture: true });
+  window.addEventListener("touchmove", (event) => {
+    if (touch) touch.dy = Math.round(event.touches[0].clientY - touch.y);
+  }, { passive: true, capture: true });
+
+  function lastTouch() {
+    if (!touch) return "no touch";
+    return `last touch ${((Date.now() - touch.at) / 1000).toFixed(1)} s before, from ${touch.x},${touch.y} moving ${touch.dy} px down`;
+  }
+
+  window.addEventListener("pagehide", (event) => {
+    try {
+      sessionStorage.setItem(LEFT, JSON.stringify({ at: Date.now(), persisted: event.persisted, path: location.pathname, touch: lastTouch(), scroll: Math.round(scrollY) }));
+    } catch {}
+    report("info", "page hides", `${event.persisted ? "kept in the back-forward cache" : "unloading"}, ${lastTouch()}, scrollY ${Math.round(scrollY)}`);
+    flush(true);
+  });
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) report("info", "page shows again from the back-forward cache");
+  });
   document.addEventListener("visibilitychange", () => {
+    report("info", `page ${document.visibilityState}`);
     if (document.visibilityState === "hidden") flush(true);
   });
 
+  function arrival() {
+    const navigation = performance.getEntriesByType && performance.getEntriesByType("navigation")[0];
+    const kind = navigation ? navigation.type : "unknown";
+    let left = null;
+    try {
+      left = JSON.parse(sessionStorage.getItem(LEFT) || "null");
+      sessionStorage.removeItem(LEFT);
+    } catch {}
+    if (left) return `${kind}; the page before (${left.path}) hid ${((Date.now() - left.at) / 1000).toFixed(1)} s ago, ${left.touch}`;
+    return kind === "reload" ? "reload, and the page before never fired pagehide, so it was killed" : kind;
+  }
+
   window.semmeltvReport = report;
-  report("info", "page opened", `${innerWidth}x${innerHeight} @${devicePixelRatio}x`);
+  report("info", "page opened", `${innerWidth}x${innerHeight} @${devicePixelRatio}x, ${arrival()}`);
 })();

@@ -732,6 +732,12 @@ def laptop_player(p):
     page.mouse.click(320, 300)
     page.wait_for_timeout(300)
     check(engine, "a click on the picture plays again", page.evaluate("!playerPaused()"))
+    fake("/fake/drop-play")
+    page.evaluate('document.dispatchEvent(new Event("visibilitychange"))')
+    page.wait_for_timeout(1500)
+    check(engine, "a phone the TV gave up on while it played keeps playing",
+          page.evaluate('!playerPaused() && !document.querySelector(".pp-failed")'))
+    fake_until(page, engine, "and its report takes the play back", lambda: (fake_get("/api/screen")["play"] or {}).get("session") is not None)
     page.mouse.move(600, 600)
     page.mouse.move(610, 610)
     page.click(".pp-pill:has-text('Audio')")
@@ -764,7 +770,8 @@ def laptop_player(p):
     page.wait_for_timeout(500)
     page.click(".pp-mini-stop")
     until(page, engine, "the bar's stop button closes the player", '!document.querySelector(".pp")', 3000)
-    fake_until(page, engine, "and the TV hears that it stopped", lambda: fake_get("/api/screen")["play"] is None)
+    fake_until(page, engine, "and the TV hears that it stopped", lambda: fake_get("/api/screen")["play"] is None,
+               detail=lambda: (fake_get("/api/screen")["play"], fake_get("/fake/progress-log")))
     page.click(".bar-open")
     until(page, engine, "the remote opens on the laptop", 'document.documentElement.hasAttribute("data-sheet")', 3000)
     page.wait_for_timeout(800)

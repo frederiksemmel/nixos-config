@@ -87,6 +87,7 @@ struct Marks {
 }
 
 struct Live {
+    id: String,
     session: Arc<Session>,
     profile: ProfileId,
     device: Option<crate::screen::Device>,
@@ -174,12 +175,32 @@ async fn reap(streams: Streams) {
             (resting, gone)
         };
         for live in resting {
-            live.session.rest();
+            if live.session.rest() {
+                eprintln!(
+                    "stream {}: rested after {} s without a request from {}",
+                    short(&live.id),
+                    live.session.idle().as_secs(),
+                    device_name(live.device.as_ref())
+                );
+            }
         }
         for live in gone {
+            eprintln!("stream {}: forgotten", short(&live.id));
             live.session.close();
         }
     }
+}
+
+fn short(id: &str) -> &str {
+    id.get(..8).unwrap_or(id)
+}
+
+fn device_name(device: Option<&crate::screen::Device>) -> &str {
+    device.map_or("a browser", |device| device.name.as_str())
+}
+
+fn file_name(file: &std::path::Path) -> String {
+    file.file_name().map_or_else(|| file.display().to_string(), |name| name.to_string_lossy().into_owned())
 }
 
 fn new_id() -> String {
@@ -416,7 +437,10 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     };
     let (media, index) = match examine(&streams, &chosen.file).await {
         Ok(found) => found,
-        Err(error) => return problem(StatusCode::UNPROCESSABLE_ENTITY, error),
+        Err(error) => {
+            eprintln!("stream: {} can't open {}: {error}", device_name(body.device.as_ref()), file_name(&chosen.file));
+            return problem(StatusCode::UNPROCESSABLE_ENTITY, error);
+        }
     };
     let audio_index = body
         .audio
@@ -426,7 +450,10 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     let audio = audio_index.and_then(|index| media.audio.get(index));
     let (hevc, copy_audio) = match probe::verdict(&media, audio, body.client) {
         Verdict::Plays { hevc, copy_audio } => (hevc, copy_audio),
-        Verdict::Refused(reason) => return problem(StatusCode::UNPROCESSABLE_ENTITY, reason),
+        Verdict::Refused(reason) => {
+            eprintln!("stream: {} can't open {}: {reason}", device_name(body.device.as_ref()), file_name(&chosen.file));
+            return problem(StatusCode::UNPROCESSABLE_ENTITY, reason);
+        }
     };
     let screen = streams.bus.screen_state();
     let handed_here = screen.kind == "moving"
@@ -439,12 +466,14 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     {
         let mut live = streams.live.lock().unwrap();
         if let Some(replaced) = body.replaces.as_ref().and_then(|id| live.remove(id)) {
+            eprintln!("stream {}: ended, replaced by a new one", short(&replaced.id));
             replaced.session.close();
         }
         if let Some(device) = &body.device {
             live.retain(|_, other| {
                 let same = other.device.as_ref().is_some_and(|other| other.id == device.id);
                 if same {
+                    eprintln!("stream {}: ended, {} opened another", short(&other.id), device.name);
                     other.session.close();
                 }
                 !same
@@ -458,6 +487,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
             } else {
                 "Three phones are already watching"
             };
+            eprintln!("stream: {} can't open {}: {reason}", device_name(body.device.as_ref()), file_name(&chosen.file));
             return problem(StatusCode::TOO_MANY_REQUESTS, reason.to_string());
         }
     }
@@ -494,6 +524,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     let video = media.video.as_ref();
     let bitrate = media.bitrate;
     let live = Arc::new(Live {
+        id: id.clone(),
         session,
         profile,
         device: body.device.clone(),
@@ -514,6 +545,14 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         marks: OnceCell::new(),
     });
     let credits = live.credits();
+    eprintln!(
+        "stream {}: opened {} for {} at {start:.0} s, {}, audio {}",
+        short(&id),
+        file_name(&live.file),
+        device_name(live.device.as_ref()),
+        if hevc { "HEVC" } else { "H.264" },
+        if copy_audio { "copied" } else { "converted" }
+    );
     streams.live.lock().unwrap().insert(id.clone(), live);
     let art = format!("/api/{}s/{}", chosen.kind, chosen.key);
     Json(Opened {
@@ -542,14 +581,11 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     .into_response()
 }
 
-fn find(streams: &Streams, id: &str) -> Result<Arc<Live>, Response> {
-    streams
-        .live
-        .lock()
-        .unwrap()
-        .get(id)
-        .cloned()
-        .ok_or_else(|| problem(StatusCode::NOT_FOUND, "this video closed; open it again".to_string()))
+fn find(streams: &Streams, id: &str, asked: &str) -> Result<Arc<Live>, Response> {
+    streams.live.lock().unwrap().get(id).cloned().ok_or_else(|| {
+        eprintln!("stream {}: {asked} for a stream that has ended", short(id));
+        problem(StatusCode::NOT_FOUND, "this video closed; open it again".to_string())
+    })
 }
 
 fn body(kind: &'static str, cache: &'static str, bytes: impl Into<axum::body::Body>) -> Response {
@@ -562,6 +598,7 @@ fn body(kind: &'static str, cache: &'static str, bytes: impl Into<axum::body::Bo
 
 async fn close(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
     if let Some(live) = streams.live.lock().unwrap().remove(&id) {
+        eprintln!("stream {}: closed by {}", short(&id), device_name(live.device.as_ref()));
         live.session.close();
     }
     StatusCode::NO_CONTENT.into_response()
@@ -572,7 +609,7 @@ fn quoted(text: &str) -> String {
 }
 
 async fn master(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
-    let live = match find(&streams, &id) {
+    let live = match find(&streams, &id, "the playlist") {
         Ok(live) => live,
         Err(response) => return response,
     };
@@ -625,25 +662,28 @@ async fn master(State(streams): State<Streams>, Path(id): Path<String>) -> Respo
 }
 
 async fn media_playlist(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
-    match find(&streams, &id) {
+    match find(&streams, &id, "the video playlist") {
         Ok(live) => body(PLAYLIST, "no-store", live.session.plan.media_playlist(live.start)),
         Err(response) => response,
     }
 }
 
 async fn init(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
-    let live = match find(&streams, &id) {
+    let live = match find(&streams, &id, "the init segment") {
         Ok(live) => live,
         Err(response) => return response,
     };
     match live.session.init(live.start).await {
         Ok((bytes, _)) => body("video/mp4", "private, max-age=3600", bytes.as_ref().clone()),
-        Err(error) => problem(StatusCode::UNPROCESSABLE_ENTITY, error),
+        Err(error) => {
+            eprintln!("stream {}: the init segment failed: {error}", short(&id));
+            problem(StatusCode::UNPROCESSABLE_ENTITY, error)
+        }
     }
 }
 
 async fn segment(State(streams): State<Streams>, Path((id, name)): Path<(String, String)>) -> Response {
-    let live = match find(&streams, &id) {
+    let live = match find(&streams, &id, &format!("segment {name}")) {
         Ok(live) => live,
         Err(response) => return response,
     };
@@ -655,12 +695,15 @@ async fn segment(State(streams): State<Streams>, Path((id, name)): Path<(String,
     };
     match live.session.segment(number).await {
         Ok(bytes) => body("video/iso.segment", "private, max-age=3600", bytes),
-        Err(error) => problem(StatusCode::SERVICE_UNAVAILABLE, error),
+        Err(error) => {
+            eprintln!("stream {}: segment {number} failed: {error}", short(&id));
+            problem(StatusCode::SERVICE_UNAVAILABLE, error)
+        }
     }
 }
 
 async fn subtitles(State(streams): State<Streams>, Path((id, name)): Path<(String, String)>) -> Response {
-    let live = match find(&streams, &id) {
+    let live = match find(&streams, &id, &format!("subtitles {name}")) {
         Ok(live) => live,
         Err(response) => return response,
     };
@@ -729,7 +772,7 @@ async fn caption(streams: &Streams, source: Source, delay: f64) -> Result<Arc<St
 }
 
 async fn marks(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
-    let live = match find(&streams, &id) {
+    let live = match find(&streams, &id, "the marks") {
         Ok(live) => live,
         Err(response) => return response,
     };
@@ -782,7 +825,7 @@ async fn progress(
     Path(id): Path<String>,
     Json(report): Json<ProgressBody>,
 ) -> Response {
-    let live = match find(&streams, &id) {
+    let live = match find(&streams, &id, &format!("progress {:?}", report.state)) {
         Ok(live) => live,
         Err(response) => return response,
     };
@@ -807,6 +850,7 @@ async fn progress(
     });
     let answer = api::ask_app(&streams.app, request).await;
     if ends && let Some(live) = streams.live.lock().unwrap().remove(&id) {
+        eprintln!("stream {}: ended, {} reported {:?} at {:.0} s", short(&id), device_name(live.device.as_ref()), report.state, report.position);
         live.session.close();
     }
     answer

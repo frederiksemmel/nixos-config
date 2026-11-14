@@ -227,8 +227,19 @@ function reconcile() {
   const wanted = ours(view) && play && ["moving", "starting", "playing"].includes(play.state);
   if (!wanted) {
     if (player && !player.closed && !player.fresh()) {
-      if (ours(view) && view.kind === "phone" && !play) player.idle();
-      else player.close(false);
+      const why = `screen is ${view.kind}${view.device ? ` on ${view.device.name}` : ""}${play ? `, ${play.state}` : ", nothing playing"}${view.notice ? `; last notice: ${view.notice.text}` : ""}`;
+      if (ours(view) && view.kind === "phone" && !play) {
+        if (player.playing()) {
+          note(`the TV dropped this phone's play at ${clock(player.video.currentTime)}; it keeps playing and reports`, why);
+          player.report("playing");
+          return;
+        }
+        note(`player stops at ${clock(player.video.currentTime)}: the TV dropped this phone's play`, why);
+        player.idle();
+      } else {
+        note("player closes: the screen moved away", why);
+        player.close(false);
+      }
     }
     return;
   }
@@ -472,8 +483,19 @@ class Player {
       this.positionState();
     });
     video.addEventListener("seeking", () => { this.lastTime = null; });
-    video.addEventListener("waiting", () => this.root.classList.add("pp-loading"));
-    video.addEventListener("canplay", () => this.root.classList.remove("pp-loading"));
+    video.addEventListener("waiting", () => {
+      this.root.classList.add("pp-loading");
+      clearTimeout(this.waitingTimer);
+      const at = video.currentTime;
+      this.waitingTimer = setTimeout(() => {
+        const ranges = Array.from({ length: video.buffered.length }, (_, index) => `${clock(video.buffered.start(index))}-${clock(video.buffered.end(index))}`).join(" ");
+        note(`video has waited 8 s for data at ${clock(at)}`, `buffered ${ranges || "nothing"}, network state ${video.networkState}, ready state ${video.readyState}`);
+      }, 8000);
+    });
+    video.addEventListener("canplay", () => {
+      clearTimeout(this.waitingTimer);
+      this.root.classList.remove("pp-loading");
+    });
     video.addEventListener("playing", () => {
       this.root.classList.remove("pp-loading");
       for (const each of [this.playButton, this.miniPlay]) {
@@ -485,12 +507,14 @@ class Player {
       this.mediaState("playing");
     });
     video.addEventListener("pause", () => {
+      if (!this.pausing && this.started && !video.ended && !this.closed) note(`video paused by the browser at ${clock(video.currentTime)}`, `page ${document.visibilityState}`);
+      this.pausing = false;
       for (const each of [this.playButton, this.miniPlay]) {
         each.innerHTML = icons.play;
         each.setAttribute("aria-label", "Play");
       }
       this.show(true);
-      if (this.started && !video.ended) this.report("paused");
+      if (this.started && !video.ended && !this.closed) this.report("paused");
       this.mediaState("paused");
     });
     video.addEventListener("ended", () => this.ended());
@@ -733,7 +757,16 @@ class Player {
 
   toggle() {
     if (this.video.paused) this.video.play().catch(() => {});
-    else this.video.pause();
+    else this.pause();
+  }
+
+  playing() {
+    return Boolean(this.session && this.started && !this.idling && !this.video.paused && !this.video.ended);
+  }
+
+  pause() {
+    this.pausing = true;
+    this.video.pause();
   }
 
   jump(seconds, side = 0) {
@@ -761,7 +794,7 @@ class Player {
     if (this.idling) return;
     this.idling = true;
     this.started = false;
-    this.video.pause();
+    this.pause();
     this.root.classList.remove("pp-loading");
     this.root.classList.add("pp-failed");
     this.message.innerHTML = "";
@@ -996,7 +1029,7 @@ class Player {
     const finished = this.video.ended ? "ended" : "stopped";
     const next = { show: session.key, season: session.next.season, episode: session.next.episode };
     this.started = false;
-    this.video.pause();
+    this.pause();
     this.session = null;
     this.replacing = session.id;
     this.skip.hidden = true;
@@ -1026,6 +1059,7 @@ class Player {
 
   async blocked(session) {
     if (this.session !== session || this.closed) return;
+    note("autoplay was blocked, waiting for a tap", `at ${clock(this.video.currentTime)}`);
     this.show(true);
     await this.begin();
     if (this.session === session && this.video.paused) this.report("paused");
@@ -1048,7 +1082,7 @@ class Player {
   }
 
   continueOnTv() {
-    this.video.pause();
+    this.pause();
     command({ action: "flip", to: "tv", position: this.video.currentTime || undefined });
   }
 
@@ -1077,7 +1111,7 @@ class Player {
     });
     const handlers = {
       play: () => this.video.play(),
-      pause: () => this.video.pause(),
+      pause: () => this.pause(),
       seekbackward: (details) => this.jump(-(details.seekOffset || JUMP)),
       seekforward: (details) => this.jump(details.seekOffset || JUMP),
       seekto: (details) => { this.video.currentTime = details.seekTime; },
@@ -1165,7 +1199,7 @@ class Player {
     window.removeEventListener("pointerup", this.onDragEnd);
     window.removeEventListener("pointercancel", this.onDragEnd);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
-    this.video.pause();
+    this.pause();
     if (this.hls) this.hls.destroy();
     this.video.removeAttribute("src");
     this.video.load();
