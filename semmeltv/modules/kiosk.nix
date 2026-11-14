@@ -145,6 +145,11 @@ in
       };
     };
 
+    services.logind.settings.Login = {
+      KillUserProcesses = true;
+      KillOnlyUsers = [ "semmeltv" ];
+    };
+
     systemd.services."getty@tty1".enable = false;
     systemd.services."autovt@tty1".enable = false;
 
