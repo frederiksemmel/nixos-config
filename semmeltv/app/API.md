@@ -2,9 +2,11 @@
 
 The app serves this API when `SEMMELTV_API` (or `--api`) names an address,
 normally `127.0.0.1:8090`. It runs on its own thread, and the TV keeps working
-if the address cannot be bound. There is no authentication: bind it to
-localhost, and let `tailscale serve` expose it on the tailnet. On semmeltv5 it
-is at `https://semmeltv5.cuscus-exponential.ts.net/api/...`.
+if the address cannot be bound. Bind it to localhost and let `tailscale serve`
+and nginx expose it; on semmeltv5 it is at
+`https://semmeltv5.cuscus-exponential.ts.net/api/...` and, at home,
+`https://semmeltv5.semmeltv.ch/api/...`. Every request needs a signed-in
+session, see Sign-in.
 
 Requests that change something on the TV take the same path as voice. The app
 turns them into an action, resolves it against the library and progress, and
@@ -15,6 +17,79 @@ performs it on the UI thread. They answer with what happened:
 `ok` is false, with status 422, when the TV refused, for example "Nothing is
 playing". The status is 503 when the TV did not answer within 5 s. Other errors
 look like `{ "error": "..." }`, with 400 or 404.
+
+## Sign-in
+
+`SEMMELTV_ORIGINS` lists the addresses people sign in on, such as
+`https://semmeltv5.cuscus-exponential.ts.net,https://semmeltv5.semmeltv.ch`.
+With it set, every request passes one gate in the app before anything else:
+
+- It needs the `semmeltv_session` cookie of a live session, else 401
+  `{ "error": "Not signed in" }`. Open without one: the sign-in requests below,
+  `/api/log`, and a phone stream's playlist, segments, marks and progress,
+  which its random session id already guards. Opening a stream does need one.
+- A request that changes something (any method but GET, HEAD and OPTIONS) with
+  an `Origin` outside the list gets 403, whatever its cookie.
+- Storage, `/api/tv/pair`, `/api/auth/members/...` and downloads need an admin,
+  else 403 "Only an admin can do that".
+- `GET /api/events` also takes `Authorization: Bearer <token>`, the token in
+  `SEMMELTV_SERVICE_TOKEN_FILE`, which is how the web app's server follows the
+  TV. The token opens nothing else.
+- The `Tailscale-User-*` and `Tailscale-Funnel-Request` headers are never
+  read, so a route from the public internet can't claim an identity with them.
+
+The app then knows the profile behind each request and answers with that
+profile's state; see Profiles in the README. Without `SEMMELTV_ORIGINS` there
+is no gate and every request acts as profile 1, which is for development only.
+
+A session lasts 7 days from its last use: a request more than an hour after the
+previous one moves its end and sends the cookie again. The cookie is
+`HttpOnly; Secure; SameSite=Lax` and holds every session of the browser,
+separated by dots, the active one first, so a shared iPad switches between
+profiles without signing in again. Switching *to* an admin always asks for a
+passkey or password, and switching away from one ends the admin's session.
+Tokens and invite links are stored only as SHA-256 hashes; passwords as
+Argon2id.
+
+| Method | Path | Body | Answer |
+| --- | --- | --- | --- |
+| GET | `/api/auth/choices` | | `{ profiles }`: each person with `password`, `passkey` (one for this address), `active` and `signed_in` (on this browser) |
+| GET | `/api/auth/me` | | `{ person, others, passkeys, password }` |
+| POST | `/api/auth/password` | `{ profile, password }` | `{ ok, person }` and the cookie |
+| POST | `/api/auth/passkey/start` | `{ profile }` | `{ ceremony, options }` for `navigator.credentials.get` |
+| POST | `/api/auth/passkey/finish` | `{ ceremony, credential }` | `{ ok, person }` and the cookie |
+| POST | `/api/auth/switch` | `{ profile }` | `{ ok, person }`, or 401 with `sign_in: true` |
+| POST | `/api/auth/sign-out` | | `{ ok, person }`: the next profile on this browser, or null |
+| GET | `/api/auth/invite/{token}` | | `{ person }`, 404 for an unknown link, 410 for a used or expired one |
+| POST | `/api/auth/invite/{token}` | | `{ ok, person }` and the cookie; the link is used up |
+| POST | `/api/auth/account/password` | `{ password }` | `{ ok, message }` |
+| POST | `/api/auth/passkeys/start` | | `{ ceremony, options }` for `navigator.credentials.create` |
+| POST | `/api/auth/passkeys/finish` | `{ ceremony, credential }` | `{ ok, passkey }` |
+| DELETE | `/api/auth/passkeys/{id}` | | `{ ok, message }` |
+| GET | `/api/auth/members` | | admin: `{ members }`, each with `password`, `passkeys`, `sessions`, `last_seen_at`, `invite_expires_at` |
+| POST | `/api/auth/members` | `{ name, role }` | admin: `{ ok, person }` |
+| DELETE | `/api/auth/members/{id}` | | admin: the profile and all its state go |
+| POST | `/api/auth/members/{id}/invite` | | admin: `{ ok, link, expires_in_days }` |
+| POST | `/api/auth/members/{id}/sign-out` | | admin: ends all of that person's sessions |
+
+A person is `{ id, name, role, color }`, `role` being `admin` or `viewer`.
+Passkeys use WebAuthn with user verification (Face ID, Touch ID, a screen
+lock); a passkey belongs to the address it was made on, so the tailnet and the
+home address each need their own. `credential` is the browser's
+`PublicKeyCredential` with its binary fields as unpadded base64url. A ceremony
+lasts 5 minutes and is used up by any attempt. Five wrong passwords lock that
+profile's password for a minute, doubling up to an hour.
+
+An invite link is good for 7 days and one use. Opening it shows a button;
+only the POST signs in, so a messenger's link preview can't use it up. A new
+invite for the same person replaces the old one. `semmeltv invite NAME` makes
+one from the command line, with `SEMMELTV_DB` and `SEMMELTV_ORIGINS` set, for
+the first admin or one who is locked out.
+
+| Method | Path | Answer |
+| --- | --- | --- |
+| GET | `/api/tv-profile` | `{ profile, name, mine }`: whose state the TV's own screen shows |
+| POST | `/api/tv-profile` | makes it the caller's, `{ message, ok }` |
 
 ## Library
 

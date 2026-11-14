@@ -4,6 +4,11 @@ use serde_json::{Value, json};
 use std::time::Duration;
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
+
+fn downloads(cx: &Cx) -> Result<&Downloads> {
+    crate::auth::admin(cx)?;
+    Ok(app_context::<Downloads>(cx))
+}
 use topcoat::router::page;
 use topcoat::runtime::{Event, Signal, connected, procedure, shard, signal};
 use topcoat::view::{View, component, emit, live, view};
@@ -137,7 +142,7 @@ pub async fn find(cx: &Cx, text: String) -> Result<String> {
     if text.is_empty() {
         return Ok(String::new());
     }
-    let found = app_context::<Downloads>(cx)
+    let found = downloads(cx)?
         .search(json!({ "text": text, "from": "web" }))
         .await;
     Ok(found.map_or_else(|error| format!("!{error}"), |proposal| proposal.id))
@@ -151,27 +156,27 @@ pub async fn pick(cx: &Cx, kind: String, tmdb: u64, season: i64, episode: i64, a
         "from": "web",
         "pick": { "kind": kind, "tmdb": tmdb, "season": number(season), "episode": number(episode) },
     });
-    let found = app_context::<Downloads>(cx).search(body).await;
+    let found = downloads(cx)?.search(body).await;
     Ok(found.map_or_else(|error| format!("!{error}"), |proposal| proposal.id))
 }
 
 #[procedure]
 pub async fn confirm(cx: &Cx, proposal: String, choice: u32) -> Result<String> {
-    Ok(app_context::<Downloads>(cx)
+    Ok(downloads(cx)?
         .outcome("/api/downloads/confirm", json!({ "proposal": proposal, "choice": choice }))
         .await)
 }
 
 #[procedure]
 pub async fn dismiss(cx: &Cx, proposal: String) -> Result<String> {
-    Ok(app_context::<Downloads>(cx)
+    Ok(downloads(cx)?
         .outcome("/api/downloads/dismiss", json!({ "proposal": proposal }))
         .await)
 }
 
 #[procedure]
 pub async fn stop(cx: &Cx, job: String) -> Result<String> {
-    Ok(app_context::<Downloads>(cx)
+    Ok(downloads(cx)?
         .outcome(&format!("/api/downloads/jobs/{job}/stop"), json!({}))
         .await)
 }
@@ -239,7 +244,7 @@ async fn job_row(cx: &Cx, job: &Job) -> Result<impl View> {
 
 #[component]
 async fn job_list(cx: &Cx) -> Result<impl View> {
-    let downloads = app_context::<Downloads>(cx).clone();
+    let downloads = downloads(cx)?.clone();
     Ok(live! {
         loop {
             let overview = downloads.overview().await;
@@ -326,7 +331,7 @@ async fn proposal_view(cx: &Cx, id: String, shown: Signal<String>) -> Result<imp
         Some(error) => Err(error.to_string()),
         None if id.is_empty() => Ok(None),
         None => {
-            let overview = app_context::<Downloads>(cx).overview().await.unwrap_or_default();
+            let overview = downloads(cx)?.overview().await.unwrap_or_default();
             match overview.proposals.into_iter().find(|proposal| proposal.id == id) {
                 Some(found) => Ok(Some(found)),
                 None => Err("That search has expired. Search again.".to_string()),
@@ -369,7 +374,7 @@ async fn proposal_view(cx: &Cx, id: String, shown: Signal<String>) -> Result<imp
 
 #[component]
 async fn waiting(cx: &Cx, shown: Signal<String>) -> Result<impl View> {
-    let overview = app_context::<Downloads>(cx).overview().await.unwrap_or_default();
+    let overview = downloads(cx)?.overview().await.unwrap_or_default();
     let voice: Vec<Proposal> = overview
         .proposals
         .into_iter()

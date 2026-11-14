@@ -1,4 +1,5 @@
 mod api;
+mod auth;
 mod brand;
 mod downloads;
 mod layout;
@@ -24,6 +25,7 @@ Serves the SemmelTV web app on HOST:PORT (default 127.0.0.1:3000).
 SEMMELTV_API_URL is the TV's API (default http://127.0.0.1:8090).
 SEMMELTV_DOWNLOADS_URL is the downloads service (default http://127.0.0.1:8092).
 SEMMELTV_API_PUBLIC_URL is where browsers reach that API (default: this origin).
+SEMMELTV_SERVICE_TOKEN_FILE holds the token the server follows the TV's events with.
 SEMMELTV_WEB_ASSETS is the asset bundle; without it the app bundles itself.";
 const DEFAULT_API: &str = "http://127.0.0.1:8090";
 const DEFAULT_DOWNLOADS: &str = "http://127.0.0.1:8092";
@@ -58,6 +60,7 @@ fn router(
 ) -> Router {
     Router::builder()
         .discover()
+        .layer(auth::SignedIn)
         .app_context(api)
         .app_context(downloads)
         .app_context(live)
@@ -71,7 +74,16 @@ async fn serve() -> Result<(), String> {
     let assets = assets()?;
     let base = env::var("SEMMELTV_API_URL").unwrap_or_else(|_| DEFAULT_API.to_string());
     let api = api::Api::new(base);
-    let live = live::follow(api.events_url());
+    let service = match env::var_os("SEMMELTV_SERVICE_TOKEN_FILE").filter(|file| !file.is_empty()) {
+        Some(file) => Some(
+            std::fs::read_to_string(&file)
+                .map_err(|error| format!("{}: {error}", PathBuf::from(&file).display()))?
+                .trim()
+                .to_string(),
+        ),
+        None => None,
+    };
+    let live = live::follow(api.events_url(), service);
     let public = public::Public {
         api: env::var("SEMMELTV_API_PUBLIC_URL").unwrap_or_default(),
     };

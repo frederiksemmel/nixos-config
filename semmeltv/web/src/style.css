@@ -1884,3 +1884,95 @@ semmel-shell {
 .trouble h1 { margin: 0; }
 .trouble p { margin: 0; color: var(--muted); }
 .trouble .pill { display: inline-flex; align-items: center; margin-top: 8px; }
+
+/* Profiles and sign-in */
+
+.avatar {
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--avatar, var(--raised));
+  color: #fff;
+  font-weight: 700;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  flex: none;
+}
+
+.avatar.small { width: 34px; height: 34px; font-size: 16px; }
+.avatar.large { width: 84px; height: 84px; font-size: 38px; border-radius: 24px; }
+.top-link.profile-link { background: transparent; border: 0; }
+
+.sign-in { display: grid; justify-items: center; gap: 18px; padding-top: 12px; text-align: center; }
+.sign-in h1 { margin-top: 8px; }
+
+.profile-choices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 132px));
+  justify-content: center;
+  gap: 22px 28px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.profile-choice {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 0;
+  border-radius: 20px;
+  color: var(--text);
+}
+
+.profile-choice .avatar { transition: transform 0.15s var(--spring), box-shadow 0.15s; }
+.profile-choice:active .avatar { transform: scale(0.94); }
+.profile-choice.active .avatar, .profile-choice.chosen .avatar { box-shadow: 0 0 0 3px var(--bg), 0 0 0 5px var(--text); }
+.profile-choice[data-act="pending"] .avatar { opacity: 0.6; }
+.profile-name { font-size: 17px; font-weight: 600; }
+.profile-state { color: var(--muted); font-size: 12px; margin-top: -6px; }
+
+.password-form { display: grid; gap: 10px; width: min(100%, 340px); text-align: left; }
+.password-form[hidden] { display: none; }
+.password-label { color: var(--muted); font-size: 14px; }
+.password-label b { color: var(--text); }
+.password-actions { display: flex; gap: 10px; }
+
+.password-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 0 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--text);
+}
+
+.sign-in-note { min-height: 20px; max-width: 34ch; margin: 0; color: var(--refused); font-size: 15px; line-height: 1.4; }
+.sign-in-note:empty { visibility: hidden; }
+.sign-in-help { max-width: 34ch; margin: 0; color: var(--muted); font-size: 15px; line-height: 1.45; }
+.sign-in-links { display: flex; flex-wrap: wrap; justify-content: center; gap: 10px; margin-top: 8px; }
+
+.account-head { display: grid; justify-items: center; gap: 8px; margin: 4px 0 20px; text-align: center; }
+.account-head h1 { margin: 6px 0 0; }
+.password-set .setting input { margin-top: 2px; }
+
+.member {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 12px;
+  padding: 12px 14px;
+  background: var(--raised);
+  border-bottom: 1px solid var(--line);
+}
+
+.member:last-child { border-bottom: 0; }
+.member-text { display: grid; gap: 2px; min-width: 0; }
+.member-text small { color: var(--muted); font-size: 12px; }
+.member-actions { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px; }
+.member-actions .pill { min-height: 36px; font-size: 14px; }
+.pill.danger { color: var(--refused); }
+.invite-link { margin-top: 6px; padding: 8px 10px; border-radius: 10px; background: var(--bg); font-size: 13px; word-break: break-all; user-select: all; -webkit-user-select: all; }
+.invite-link[hidden] { display: none; }
+.add-member .setting-row { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
+.role-select { min-height: 44px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--raised); color: var(--text); }

@@ -27,6 +27,12 @@ tungstenite = "0.29"
 base64 = "0.22"
 axum = { version = "0.8", features = ["ws"] }
 tokio = { version = "1", features = ["rt-multi-thread", "net", "sync", "process", "io-util", "time", "macros", "fs"] }
+argon2 = "0.6"
+sha2 = "0.11"
+rand = "0.10"
+url = "2"
+uuid = "1"
+webauthn-rs = { version = "0.6.2", default-features = false }
 
 [build-dependencies]
 slint-build = "1.18"

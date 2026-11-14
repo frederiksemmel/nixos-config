@@ -2,7 +2,7 @@ use crate::api::{Api, Download, Storage, TitleKey};
 use crate::layout::back;
 use std::time::{SystemTime, UNIX_EPOCH};
 use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::Cx;
 use topcoat::router::page;
 use topcoat::runtime::{procedure, signal};
 use topcoat::view::{View, component, view};
@@ -11,7 +11,7 @@ const DAY: u64 = 86_400;
 
 #[procedure]
 pub async fn remove(cx: &Cx, kind: String, key: String) -> Result<(bool, String)> {
-    Ok(app_context::<Api>(cx).remove_download(&TitleKey { kind, key }).await)
+    Ok(Api::of(cx).remove_download(&TitleKey { kind, key }).await)
 }
 
 #[component]
@@ -192,7 +192,7 @@ async fn download_list(cx: &Cx, storage: &Storage, now: u64) -> Result<impl View
 
 #[page("/storage")]
 async fn storage_page(cx: &Cx) -> Result<impl View> {
-    let storage = app_context::<Api>(cx).storage().await.map_err(topcoat::Error::msg)?;
+    let storage = Api::of(cx).storage().await.map_err(topcoat::Error::msg)?;
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());

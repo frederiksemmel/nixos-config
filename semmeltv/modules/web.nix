@@ -13,6 +13,19 @@ let
   web = "http://127.0.0.1:${toString cfg.web.port}";
   serve = if cfg.web.funnel then "funnel" else "serve";
   lan = cfg.web.lan;
+  signIn = cfg.web.signIn;
+  tailnetOrigin = lib.optional (
+    cfg.web.tailscale && signIn.tailnet != null
+  ) "https://${config.networking.hostName}.${signIn.tailnet}";
+  lanOrigin = lib.optional (lan.domain != null) "https://${lan.domain}";
+  untrusted = [
+    "Tailscale-User-Login"
+    "Tailscale-User-Name"
+    "Tailscale-User-Profile-Pic"
+    "Tailscale-Funnel-Request"
+    "Tailscale-Headers-Info"
+  ];
+  stripUntrusted = lib.concatMapStrings (name: "proxy_set_header ${name} \"\";\n") untrusted;
   lanPort = 8443;
   subname = lib.removeSuffix ".${lan.zone}" lan.domain;
 
@@ -83,6 +96,35 @@ in
 
       funnel = lib.mkEnableOption "the web app and the API on the public internet, with `tailscale funnel` in place of `tailscale serve`";
 
+      signIn = {
+        tailnet = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "cuscus-exponential.ts.net";
+          description = "The tailnet's MagicDNS suffix, so the tailnet address of the web app is a sign-in origin.";
+        };
+
+        origins = lib.mkOption {
+          type = lib.types.listOf lib.types.str;
+          default = tailnetOrigin ++ lanOrigin;
+          defaultText = lib.literalMD "the tailnet address and the `lan.domain`, over HTTPS";
+          description = ''
+            Origins people sign in on. Each gets its own passkeys, since a passkey belongs to one domain,
+            and only these may change anything through the API.
+          '';
+        };
+
+        serviceTokenFile = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "/run/agenix/semmeltv_service_token";
+          description = ''
+            File with the token the web app's server follows the TV's event stream with.
+            Readable by the `semmeltv` user; the web app gets it as a systemd credential.
+          '';
+        };
+      };
+
       lan = {
         domain = lib.mkOption {
           type = lib.types.nullOr lib.types.str;
@@ -127,7 +169,16 @@ in
             assertion = cfg.api.enable;
             message = "services.semmeltv.web needs services.semmeltv.api.enable";
           }
+          {
+            assertion = signIn.origins != [ ] && signIn.serviceTokenFile != null;
+            message = "services.semmeltv.web needs sign-in: set web.signIn.serviceTokenFile and at least one origin";
+          }
         ];
+
+        services.cage.environment = {
+          SEMMELTV_ORIGINS = lib.concatStringsSep "," signIn.origins;
+          SEMMELTV_SERVICE_TOKEN_FILE = signIn.serviceTokenFile;
+        };
 
         systemd.services.semmeltv-web = {
           description = "SemmelTV web app";
@@ -137,9 +188,11 @@ in
             HOST = "127.0.0.1";
             PORT = toString cfg.web.port;
             SEMMELTV_API_URL = api;
+            SEMMELTV_SERVICE_TOKEN_FILE = "%d/service-token";
           };
           serviceConfig = {
             ExecStart = lib.getExe cfg.web.package;
+            LoadCredential = "service-token:${signIn.serviceTokenFile}";
             DynamicUser = true;
             Restart = "always";
             RestartSec = 2;
@@ -209,11 +262,14 @@ in
                 ssl = true;
               }
             ];
-            locations."/".proxyPass = web;
+            locations."/" = {
+              proxyPass = web;
+              extraConfig = stripUntrusted;
+            };
             locations."/api" = {
               proxyPass = api;
               proxyWebsockets = true;
-              extraConfig = ''
+              extraConfig = stripUntrusted + ''
                 proxy_read_timeout 1h;
                 proxy_send_timeout 1h;
                 proxy_buffering off;

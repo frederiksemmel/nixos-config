@@ -5,6 +5,8 @@ mod probe;
 mod session;
 mod vtt;
 
+use crate::auth::gate::Who;
+use crate::profile::ProfileId;
 use crate::api::{self, Ask, Request, Shared, problem};
 use crate::bus::Bus;
 use crate::progress::Watched;
@@ -47,6 +49,7 @@ pub enum Moment {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Report {
+    pub profile: ProfileId,
     pub device: Option<crate::screen::Device>,
     pub session: String,
     pub file: PathBuf,
@@ -85,6 +88,7 @@ struct Marks {
 
 struct Live {
     session: Arc<Session>,
+    profile: ProfileId,
     device: Option<crate::screen::Device>,
     file: PathBuf,
     start: f64,
@@ -253,9 +257,9 @@ struct Chosen {
     next: Option<Next>,
 }
 
-fn choose(streams: &Streams, body: &OpenBody) -> Result<Chosen, Response> {
+fn choose(streams: &Streams, body: &OpenBody, profile: ProfileId) -> Result<Chosen, Response> {
     let library = streams.shared.library();
-    let progress = streams.shared.progress();
+    let progress = streams.shared.progress(profile);
     let missing = |key: &str| problem(StatusCode::NOT_FOUND, format!("{key} is not in the library"));
     match (&body.movie, &body.show) {
         (Some(key), None) => {
@@ -338,8 +342,8 @@ async fn examine(streams: &Streams, file: &PathBuf) -> Result<(Media, Index), St
     Ok((media, index))
 }
 
-fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media) -> Vec<Subtitle> {
-    let settings = streams.shared.subtitles().settings();
+fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profile: ProfileId) -> Vec<Subtitle> {
+    let settings = streams.shared.subtitles().settings_of(profile);
     let mut found: Vec<Subtitle> = Vec::new();
     for sidecar in sidecar::find(file) {
         found.push(Subtitle {
@@ -405,8 +409,8 @@ fn resume_at(progress: &crate::progress::Progress, file: &PathBuf, duration: f64
     watched.stopped_at.filter(|at| *at < duration - 10.0).unwrap_or(0.0)
 }
 
-async fn open(State(streams): State<Streams>, Json(body): Json<OpenBody>) -> Response {
-    let chosen = match choose(&streams, &body) {
+async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Json<OpenBody>) -> Response {
+    let chosen = match choose(&streams, &body, profile) {
         Ok(chosen) => chosen,
         Err(response) => return response,
     };
@@ -462,7 +466,7 @@ async fn open(State(streams): State<Streams>, Json(body): Json<OpenBody>) -> Res
     let start = body
         .start
         .filter(|at| at.is_finite() && *at >= 0.0 && *at < duration)
-        .unwrap_or_else(|| resume_at(&streams.shared.progress(), &chosen.file, duration));
+        .unwrap_or_else(|| resume_at(&streams.shared.progress(profile), &chosen.file, duration));
     let id = new_id();
     let session = Session::new(
         plan,
@@ -475,7 +479,7 @@ async fn open(State(streams): State<Streams>, Json(body): Json<OpenBody>) -> Res
         },
     );
     session.start(start);
-    let subtitles = subtitle_list(&streams, &chosen.file, &media);
+    let subtitles = subtitle_list(&streams, &chosen.file, &media, profile);
     let delay = streams.shared.subtitles().file_delay(&chosen.file);
     if let Some(source) = subtitles
         .iter()
@@ -491,6 +495,7 @@ async fn open(State(streams): State<Streams>, Json(body): Json<OpenBody>) -> Res
     let bitrate = media.bitrate;
     let live = Arc::new(Live {
         session,
+        profile,
         device: body.device.clone(),
         file: chosen.file.clone(),
         start,
@@ -790,6 +795,7 @@ async fn progress(
     }
     let ends = matches!(report.state, Moment::Stopped | Moment::Ended);
     let request = Request::Phone(Report {
+        profile: live.profile,
         device: live.device.clone(),
         session: id.clone(),
         file: live.file.clone(),

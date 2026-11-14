@@ -344,7 +344,7 @@ starts. `src/db/` is the only code that touches it.
 | `settings` | one value per key, such as the Samsung pairing `tv_token` | TV |
 
 Paths are stored relative to the library root, as `library.toml` writes them.
-Until profiles reach the app, the TV reads and writes profile 1.
+The `tv_profile` setting is the profile the TV's own screen acts as.
 
 The first start with an empty database imports the files that came before it
 from the cache: `progress.json`, `subtitles.json`, `subtitle-files.json`,
@@ -353,6 +353,49 @@ from the cache: `progress.json`, `subtitles.json`, `subtitle-files.json`,
 running twice.
 
 Read it on the Pi with `sudo -u semmeltv sqlite3 /var/lib/semmeltv/semmeltv.db`.
+
+## Profiles
+
+Four people use the TV: Frederik, the admin, and Mami, Miriam and Ramu, who are
+viewers. Viewers browse, play, watch on their phone, use the remote, the
+microphone and the TV/phone switch, pair their own headphones and keep their
+own subtitle style. Only an admin downloads, removes titles from the TV's
+storage, pairs the TV for volume, and adds, invites, signs out or removes
+people. Everyone signs in, at home and on the tailnet alike; the API
+documents how ([Sign-in](API.md#sign-in)).
+
+Per profile: Currently Watching, Started and Forgotten and what was dismissed
+from it, every file's stopping point, last play, finish and chosen audio and
+subtitle tracks, each show's place, watched marks, the subtitle settings,
+and the headphones with the choice of TV or headphones.
+
+Shared, because there is one of each: what the library holds, the TV and what
+it plays, a file's real duration, its credits and its subtitle delay (these are
+facts about the file), the Samsung pairing token, which the TV gives to
+SemmelTV rather than to a person, the offline cache, downloads and the
+Bluetooth bonds themselves. The rules:
+
+- A video's progress always goes to the profile that started it, whoever
+  pauses, seeks or stops it, on the TV or a phone. A phone stream belongs to
+  the profile that opened it; a handoff keeps the owner.
+- The TV's own screen, remote and voice act as the TV profile: whoever last
+  started something on the TV from the web app or a phone, moved a video to
+  the TV, paired headphones or pressed Show mine in Settings. It survives a
+  restart, and its name shows at the top right of Home. Voice and the remote
+  work without signing in, because whoever holds the remote is in the room;
+  a PIN on the TV would only slow them down.
+- When B plays something on the TV while A's video plays, A's video stops
+  with its place saved to A, the TV becomes B's, and B's video plays. Pausing
+  or seeking A's video changes nothing about whose it is.
+- Everyone sees the same now-playing bar and can use the remote.
+- Subtitles on the TV use the style of the video's owner. Changing the style
+  restyles the playing video only for its owner; the others save theirs for
+  their next video.
+- The TV uses the headphones of whoever's video plays, or of the TV profile
+  while nothing plays. When a video starts, the sound leaves someone else's
+  headphones for the TV, and moves to the owner's if they chose headphones and
+  theirs are connected. Nobody's headphones change in the middle of their
+  video. Pairing never removes headphones another profile still uses.
 
 ## HTTP API
 

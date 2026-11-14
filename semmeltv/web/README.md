@@ -10,8 +10,19 @@ up subtitles. It is a [Topcoat](https://docs.rs/topcoat) app, pinned to
 
     SEMMELTV_API_URL=http://127.0.0.1:8090 PORT=3000 cargo run
 
+Everyone signs in. A layer in front of every page asks the TV's API who the
+browser's cookie belongs to and sends a stranger to `/profiles`, the "Who's
+watching?" picker, which signs in with a passkey or a password, or switches
+at once to a profile already signed in on this browser. The server forwards
+each visitor's cookie on every API call, so the API answers with that
+person's own state and refuses what their role doesn't allow; the web app
+also hides admin pages and controls from viewers. `/invite/{token}` greets a
+new person, `/account` adds passkeys and sets the password, and `/people` is
+the admin's list of people and invite links. The server follows the TV's
+event stream with the token in `SEMMELTV_SERVICE_TOKEN_FILE`.
+
 Before deploying a change to the page scripts or styles, run the browser test.
-It serves the app against a fake TV API with a film playing, then taps, scrolls,
+It serves the app against a fake TV API with a film playing, signs in, then taps, scrolls,
 opens titles, goes Back and opens the remote in WebKit (iPhone) and Chromium
 (Android), and fails if the page stops answering:
 

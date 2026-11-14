@@ -2,6 +2,7 @@ mod api;
 mod app;
 mod artwork;
 mod audio;
+mod auth;
 mod bus;
 mod cache;
 mod cec;
@@ -57,7 +58,7 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -133,6 +134,10 @@ fn parse_args() -> Result<Args, String> {
             }
             "hear" => {
                 args.recording = Some(value("hear")?.into());
+                args.mode = argument;
+            }
+            "invite" => {
+                args.transcript = value("invite")?;
                 args.mode = argument;
             }
             "--speech" => args.speech = Some(value("--speech")?),
@@ -234,6 +239,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     };
     let library = args.library.clone();
     let downloads = env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new);
+    let gate = if args.api.is_some() { sign_in_gate(&db)? } else { None };
     let setup = app::Setup {
         store: offline::Store::new(args.library.clone(), args.vfs_cache, capacity),
         storage,
@@ -257,6 +263,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
                 .ok()
                 .filter(|device| !device.is_empty()),
             stream: env_path("SEMMELTV_STREAM_DIR").unwrap_or_else(|| PathBuf::from("/dev/shm/semmeltv-stream")),
+            gate,
         }),
     };
     app::run(setup).map_err(|error| error.to_string())
@@ -325,6 +332,47 @@ fn run_artwork(args: &Args) -> Result<(), String> {
         );
     }
     Ok(())
+}
+
+fn invite(args: &Args) -> Result<(), String> {
+    let db = open_db(args)?;
+    let origins = env_text("SEMMELTV_ORIGINS").ok_or("invite needs SEMMELTV_ORIGINS, the addresses people sign in on")?;
+    let auth = auth::Auth::new(std::sync::Arc::new(db), &[])?;
+    let wanted = args.transcript.trim();
+    let person = auth
+        .people()
+        .map_err(|refusal| refusal.to_string())?
+        .into_iter()
+        .find(|person| person.name.eq_ignore_ascii_case(wanted))
+        .ok_or_else(|| format!("There is no profile called {wanted}"))?;
+    let token = auth.invite(None, person.id).map_err(|refusal| refusal.to_string())?;
+    println!("Invite for {} ({}), open once within {} days:", person.name, person.role.name(), auth::INVITE_LIFETIME / 86400);
+    for origin in origins.split(',').map(str::trim).filter(|origin| !origin.is_empty()) {
+        println!("  {}/invite/{token}", origin.trim_end_matches('/'));
+    }
+    Ok(())
+}
+
+fn sign_in_gate(db: &Db) -> Result<Option<auth::gate::Gate>, String> {
+    let Some(origins) = env_text("SEMMELTV_ORIGINS") else {
+        eprintln!("api: SEMMELTV_ORIGINS is unset, so nobody signs in and anyone who reaches the API may use it");
+        return Ok(None);
+    };
+    let origins = origins.split(',').map(|origin| origin.trim().to_string()).filter(|origin| !origin.is_empty());
+    let origins = origins.collect::<Vec<_>>();
+    let service = match env_path("SEMMELTV_SERVICE_TOKEN_FILE") {
+        Some(file) => Some(
+            fs::read_to_string(&file)
+                .map_err(|error| format!("{}: {error}", file.display()))?
+                .trim()
+                .to_string(),
+        )
+        .filter(|token| !token.is_empty()),
+        None => None,
+    };
+    let auth = auth::Auth::new(std::sync::Arc::new(db.clone()), &origins)?;
+    auth.forget_expired();
+    Ok(Some(auth::gate::Gate { auth, service }))
 }
 
 fn env_text(name: &str) -> Option<String> {
@@ -421,6 +469,7 @@ fn run() -> Result<(), String> {
         "import" => run_import(&args)?,
         "downloads" => run_downloads(&args)?,
         "hear" => hear(&args)?,
+        "invite" => invite(&args)?,
         _ => run_ui(args, cache)?,
     }
     Ok(())

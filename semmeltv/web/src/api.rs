@@ -6,7 +6,15 @@ use serde_json::{Value, json};
 pub struct Api {
     base: String,
     client: reqwest::Client,
+    forwarded: Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)>,
 }
+
+const FORWARDED: [reqwest::header::HeaderName; 4] = [
+    reqwest::header::COOKIE,
+    reqwest::header::ORIGIN,
+    reqwest::header::USER_AGENT,
+    reqwest::header::HOST,
+];
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Ratings {
@@ -481,7 +489,34 @@ impl Api {
         Self {
             base: base.trim_end_matches('/').to_string(),
             client: reqwest::Client::new(),
+            forwarded: Vec::new(),
         }
+    }
+
+    pub fn of(cx: &topcoat::context::Cx) -> Self {
+        let mut api = topcoat::context::app_context::<Api>(cx).clone();
+        let headers = topcoat::router::request::headers(cx);
+        api.forwarded = FORWARDED
+            .iter()
+            .filter_map(|name| {
+                let value = headers.get(name)?;
+                let name = if name == reqwest::header::HOST {
+                    reqwest::header::HeaderName::from_static("x-forwarded-host")
+                } else {
+                    name.clone()
+                };
+                Some((name, value.clone()))
+            })
+            .collect();
+        api
+    }
+
+    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
+        let mut request = self.client.request(method, format!("{}{path}", self.base));
+        for (name, value) in &self.forwarded {
+            request = request.header(name, value);
+        }
+        request
     }
 
     pub fn events_url(&self) -> String {
@@ -490,8 +525,7 @@ impl Api {
 
     async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<Found<T>, String> {
         let response = self
-            .client
-            .get(format!("{}{path}", self.base))
+            .request(reqwest::Method::GET, path)
             .send()
             .await
             .map_err(|error| format!("the TV is not answering: {error}"))?;
@@ -508,8 +542,7 @@ impl Api {
 
     async fn post(&self, path: &str, body: Value) -> String {
         let sent = self
-            .client
-            .post(format!("{}{path}", self.base))
+            .request(reqwest::Method::POST, path)
             .json(&body)
             .send()
             .await;
@@ -522,6 +555,63 @@ impl Api {
             .map(|outcome| outcome.message)
             .or_else(|_| serde_json::from_str::<Problem>(&text).map(|problem| problem.error))
             .unwrap_or(text)
+    }
+
+    pub async fn me(&self) -> Result<Option<Me>, String> {
+        let response = self
+            .request(reqwest::Method::GET, "/api/auth/me")
+            .send()
+            .await
+            .map_err(|error| format!("the TV is not answering: {error}"))?;
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Ok(None);
+        }
+        let response = response.error_for_status().map_err(|error| error.to_string())?;
+        response.json().await.map(Some).map_err(|error| error.to_string())
+    }
+
+    pub async fn choices(&self) -> Result<Vec<Choice>, String> {
+        match self.get::<Choices>("/api/auth/choices").await? {
+            Found::Here(choices) => Ok(choices.profiles),
+            Found::Missing => Err("the TV has no sign-in".to_string()),
+        }
+    }
+
+    pub async fn invitee(&self, token: &str) -> Result<Result<Person, String>, String> {
+        let response = self
+            .request(reqwest::Method::GET, &format!("/api/auth/invite/{}", encode(token)))
+            .send()
+            .await
+            .map_err(|error| format!("the TV is not answering: {error}"))?;
+        let ok = response.status().is_success();
+        let text = response.text().await.map_err(|error| error.to_string())?;
+        if ok {
+            #[derive(Deserialize)]
+            struct Invitee {
+                person: Person,
+            }
+            serde_json::from_str::<Invitee>(&text).map(|found| Ok(found.person)).map_err(|error| error.to_string())
+        } else {
+            Ok(Err(serde_json::from_str::<Problem>(&text).map_or(text, |problem| problem.error)))
+        }
+    }
+
+    pub async fn tv_profile(&self) -> Result<TvProfile, String> {
+        match self.get::<TvProfile>("/api/tv-profile").await? {
+            Found::Here(found) => Ok(found),
+            Found::Missing => Err("the TV has no profiles".to_string()),
+        }
+    }
+
+    pub async fn members(&self) -> Result<Vec<Member>, String> {
+        #[derive(Deserialize)]
+        struct Members {
+            members: Vec<Member>,
+        }
+        match self.get::<Members>("/api/auth/members").await? {
+            Found::Here(found) => Ok(found.members),
+            Found::Missing => Err("the TV has no sign-in".to_string()),
+        }
     }
 
     pub async fn library(&self) -> Result<Library, String> {
@@ -573,8 +663,7 @@ impl Api {
 
     pub async fn change_subtitles(&self, changes: Value) -> Result<Subtitles, String> {
         let response = self
-            .client
-            .put(format!("{}/api/subtitles", self.base))
+            .request(reqwest::Method::PUT, "/api/subtitles")
             .json(&changes)
             .send()
             .await
@@ -617,7 +706,7 @@ impl Api {
     }
 
     pub async fn mark_watched(&self, body: Value) -> Result<bool, String> {
-        let sent = self.client.post(format!("{}/api/watched", self.base)).json(&body).send().await;
+        let sent = self.request(reqwest::Method::POST, "/api/watched").json(&body).send().await;
         let response = sent.map_err(|error| format!("The TV is not answering: {error}"))?;
         let text = response.text().await.unwrap_or_default();
         match serde_json::from_str::<Marked>(&text) {
@@ -629,8 +718,7 @@ impl Api {
 
     async fn answer(&self, path: &str, body: Value) -> (bool, String) {
         let sent = self
-            .client
-            .post(format!("{}{path}", self.base))
+            .request(reqwest::Method::POST, path)
             .json(&body)
             .send()
             .await;
@@ -647,6 +735,80 @@ impl Api {
             ),
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    Admin,
+    Viewer,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Person {
+    pub id: i64,
+    pub name: String,
+    pub role: Role,
+    pub color: String,
+}
+
+impl Person {
+    pub fn admin(&self) -> bool {
+        self.role == Role::Admin
+    }
+
+    pub fn initial(&self) -> String {
+        self.name.chars().next().map(|first| first.to_uppercase().collect()).unwrap_or_default()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct PasskeyView {
+    pub id: String,
+    pub name: String,
+    pub here: bool,
+    pub created_at: u64,
+    pub last_used_at: Option<u64>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Me {
+    pub person: Person,
+    pub others: Vec<Person>,
+    pub passkeys: Vec<PasskeyView>,
+    pub password: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Choice {
+    #[serde(flatten)]
+    pub person: Person,
+    pub password: bool,
+    pub passkey: bool,
+    pub active: bool,
+    pub signed_in: bool,
+}
+
+#[derive(Deserialize)]
+struct Choices {
+    profiles: Vec<Choice>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct TvProfile {
+    pub name: Option<String>,
+    pub mine: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Member {
+    #[serde(flatten)]
+    pub person: Person,
+    pub password: bool,
+    pub passkeys: usize,
+    pub sessions: usize,
+    pub last_seen_at: Option<u64>,
+    pub invite_expires_at: Option<u64>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

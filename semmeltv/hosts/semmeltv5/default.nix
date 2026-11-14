@@ -30,6 +30,10 @@
     web = {
       enable = true;
       tailscale = true;
+      signIn = {
+        tailnet = "cuscus-exponential.ts.net";
+        serviceTokenFile = config.age.secrets.semmeltv_service_token.path;
+      };
       lan = {
         domain = "semmeltv5.semmeltv.ch";
         desecTokenFile = config.age.secrets.desec_token.path;
@@ -43,6 +47,10 @@
 
   age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard.age;
   age.secrets.desec_token.file = ../../../secrets/desec_token.age;
+  age.secrets.semmeltv_service_token = {
+    file = ../../../secrets/semmeltv_service_token.age;
+    owner = "semmeltv";
+  };
 
   hardware.hailo = {
     enable = true;

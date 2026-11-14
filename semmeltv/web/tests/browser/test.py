@@ -1,5 +1,6 @@
 import sys
 import time
+import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
@@ -182,6 +183,10 @@ def forward(route):
         pass
 
 
+def harness(path):
+    return urllib.request.Request(FAKE + path, headers={"x-fake-harness": "1"})
+
+
 def fake(path):
     urllib.request.urlopen(urllib.request.Request(FAKE + path, method="POST", data=b""))
 
@@ -271,7 +276,7 @@ def tv_plays(engine, step, wanted, timeout=5.0):
     import json
     deadline = time.time() + timeout
     while True:
-        with urllib.request.urlopen(FAKE + "/api/playback") as response:
+        with urllib.request.urlopen(harness("/api/playback")) as response:
             playing = json.load(response)["now_playing"] is not None
         if playing == wanted or time.time() > deadline:
             check(engine, step, playing == wanted)
@@ -291,7 +296,7 @@ HLS_STUB = (
 
 def fake_get(path):
     import json
-    with urllib.request.urlopen(FAKE + path) as response:
+    with urllib.request.urlopen(harness(path)) as response:
         return json.load(response)
 
 
@@ -427,10 +432,95 @@ def watches_on_the_phone(page, engine):
     page.wait_for_timeout(800)
 
 
+WATCHING = '[...document.querySelectorAll("main .shelf h2")].some((heading) => heading.textContent.includes("Currently Watching"))'
+
+
+def fake_status(path):
+    try:
+        return urllib.request.urlopen(FAKE + path).status
+    except urllib.error.HTTPError as error:
+        return error.code
+
+
+def sign_in(page, engine, name, password, step):
+    until(page, engine, f"{step}: the profile picker shows", 'location.pathname === "/profiles" && !!document.querySelector(".profile-choice")')
+    page.locator(".profile-choice", has_text=name).click()
+    until(page, engine, f"{step}: {name} is asked for a password", '!document.querySelector("#password-form").hidden', 5000)
+    page.fill("#password-input", password)
+    page.locator("#password-form button[type=submit]").click()
+
+
+def signs_in(page, engine):
+    fake("/fake/sign-out-all")
+    check(engine, "the API refuses a request without a session", fake_status("/api/library") == 401)
+    page.goto(BASE + "/movies/the-endless-summer-1966", wait_until="commit")
+    until(page, engine, "a signed-out visitor lands on the picker", 'location.pathname === "/profiles"')
+    check(engine, "with no player or remote", page.evaluate('!document.querySelector(".bar-open") && !document.querySelector("#microphone")'))
+    check(engine, "a profile nobody set up says so on its button",
+          page.evaluate('[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Ramu") && choice.textContent.includes("Not set up yet"))'))
+    page.locator(".profile-choice", has_text="Ramu").click()
+    until(page, engine, "and tapping it says how to set it up", 'document.querySelector("#sign-in-note").textContent.includes("invite link")', 5000)
+    sign_in(page, engine, "Frederik", "wrong-pass", "a wrong password")
+    until(page, engine, "a wrong password says so", 'document.querySelector("#sign-in-note").textContent.includes("wrong")', 5000)
+    page.fill("#password-input", "frederik-pass")
+    page.locator("#password-form button[type=submit]").click()
+    until(page, engine, "the right one goes back where the visitor was headed", 'location.pathname === "/movies/the-endless-summer-1966"', 8000)
+    page.goto(BASE + "/", wait_until="commit")
+
+
+def profiles(page, engine):
+    page.goto(BASE + "/", wait_until="commit")
+    until(page, engine, "Frederik's Home has his Currently Watching", WATCHING)
+    check(engine, "the avatar in the top bar is Frederik's", page.evaluate('document.querySelector(".profile-link .avatar").textContent.trim() === "F"'))
+    page.locator(".profile-link").tap()
+    until(page, engine, "the avatar opens the picker with Frederik watching", 'location.pathname === "/profiles" && document.querySelector(".profile-choice.active .profile-name").textContent === "Frederik"')
+    sign_in(page, engine, "Mami", "mami-pass", "switching to Mami")
+    until(page, engine, "Mami lands on Home", 'location.pathname === "/" && document.querySelector(".profile-link .avatar").textContent.trim() === "M"', 8000)
+    page.wait_for_timeout(800)
+    check(engine, "Mami's Home has her own (empty) Currently Watching", page.evaluate(f"!({WATCHING})"))
+    page.goto(BASE + "/settings", wait_until="commit")
+    until(page, engine, "a viewer's Settings open", '!!document.querySelector("main .settings")')
+    check(engine, "and have no Storage, Downloads or TV pairing", page.evaluate('!document.querySelector(\'main a[href="/storage"], main a[href="/downloads"], [data-post="/api/tv/pair"]\')'))
+    check(engine, "Mami can put her profile on the TV", page.evaluate('!!document.querySelector(\'[data-post="/api/tv-profile"]\')'))
+    page.goto(BASE + "/storage", wait_until="commit")
+    until(page, engine, "a viewer sent to Storage lands on Home", 'location.pathname === "/"')
+    page.goto(BASE + "/profiles", wait_until="commit")
+    sign_in(page, engine, "Frederik", "frederik-pass", "back to the admin, who always signs in again")
+    until(page, engine, "Frederik is back", 'location.pathname === "/" && document.querySelector(".profile-link .avatar").textContent.trim() === "F"', 8000)
+    until(page, engine, "with his Currently Watching", WATCHING)
+    page.goto(BASE + "/profiles", wait_until="commit")
+    until(page, engine, "Mami stays on this device", '[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("On this device"))')
+    page.locator(".profile-choice", has_text="Mami").tap()
+    until(page, engine, "and switching to her needs no password", 'location.pathname === "/" && document.querySelector(".profile-link .avatar").textContent.trim() === "M"', 8000)
+    page.goto(BASE + "/profiles", wait_until="commit")
+    sign_in(page, engine, "Frederik", "frederik-pass", "and back to Frederik")
+    until(page, engine, "Frederik again", 'location.pathname === "/" && document.querySelector(".profile-link .avatar").textContent.trim() === "F"', 8000)
+
+
+def invite(p):
+    engine = "invite"
+    browser = p.chromium.launch()
+    page = browser.new_context(**p.devices["Pixel 7"]).new_page()
+    page.set_default_timeout(8000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(f"{error} {getattr(error, 'stack', '')}"))
+    page.route("**/api/**", forward)
+    page.goto(BASE + "/invite/good-invite", wait_until="commit")
+    until(page, engine, "an invite greets the person it is for", '!!document.querySelector("#redeem") && document.querySelector("main h1").textContent.includes("Mami")')
+    page.locator("#redeem").tap()
+    until(page, engine, "continuing signs them in and offers a passkey and a password", 'location.pathname === "/account" && !!document.querySelector("#add-passkey") && !!document.querySelector("#password-set")', 8000)
+    page.goto(BASE + "/invite/made-up", wait_until="commit")
+    until(page, engine, "a bad invite link says so", '(document.querySelector("main")?.textContent || "").includes("not valid")')
+    if "not valid" not in (page.evaluate('document.body ? document.body.innerText : ""') or ""):
+        print("invite page shows:", page.evaluate('document.documentElement.outerHTML')[:3000])
+    check(engine, "no script errors", not errors, "; ".join(errors))
+    browser.close()
+
+
 def top_bar(page, engine):
     bar = page.evaluate("""() => {
       const box = (selector) => document.querySelector(selector).getBoundingClientRect();
-      const top = box("header.top"), brand = box(".brand"), talk = box(".microphone-talk"), settings = box(".top-link");
+      const top = box("header.top"), brand = box(".brand"), talk = box(".microphone-talk"), settings = [...document.querySelectorAll("header.top .top-link")].pop().getBoundingClientRect();
       const border = parseFloat(getComputedStyle(document.querySelector("header.top")).borderBottomWidth);
       return { above: talk.top - top.top, below: top.bottom - border - talk.bottom, left: brand.left, right: innerWidth - settings.right,
                brand: brand.top + brand.height / 2 - (talk.top + talk.height / 2) };
@@ -474,12 +564,12 @@ def run(p, engine, device):
     page = browser.new_context(**p.devices[device]).new_page()
     page.set_default_timeout(8000)
     errors = []
-    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.on("pageerror", lambda error: errors.append(f"{error} at {page.url} {getattr(error, 'stack', '')}"))
     page.route("**/api/**", forward)
     fake("/fake/forget-subtitles")
     fake("/fake/forget-marks")
     fake("/fake/reset-screen")
-    page.goto(BASE + "/", wait_until="commit")
+    signs_in(page, engine)
     page.wait_for_timeout(2500)
     if not answers(page, engine, "cold load"):
         browser.close()
@@ -539,16 +629,25 @@ def run(p, engine, device):
     marks_episodes(page, engine)
     next_episode(page, engine)
     missing(page, engine)
+    profiles(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
+
+
+def signed_in_page(browser, **options):
+    page = browser.new_page(**options)
+    page.set_default_timeout(8000)
+    page.route("**/api/**", forward)
+    page.goto(BASE + "/profiles", wait_until="commit")
+    sign_in(page, "setup", "Frederik", "frederik-pass", "signing in")
+    page.wait_for_function('location.pathname === "/"')
+    return page
 
 
 def desktop(p):
     engine = "desktop"
     browser = p.chromium.launch()
-    page = browser.new_page(viewport={"width": 760, "height": 800})
-    page.set_default_timeout(8000)
-    page.goto(BASE + "/", wait_until="commit")
+    page = signed_in_page(browser, viewport={"width": 760, "height": 800})
     page.wait_for_selector(".row.posters a[data-topcoat-link]")
     page.wait_for_timeout(1500)
     hidden = page.evaluate("""() => [document.documentElement, ...document.querySelectorAll('.row, .sheet-scroll')]
@@ -588,11 +687,9 @@ PLAYING = """() => {
 def laptop_player(p):
     engine = "laptop"
     browser = p.chromium.launch()
-    page = browser.new_page(viewport={"width": 1280, "height": 800})
-    page.set_default_timeout(8000)
+    page = signed_in_page(browser, viewport={"width": 1280, "height": 800})
     errors = []
     page.on("pageerror", lambda error: errors.append(str(error)))
-    page.route("**/api/**", forward)
     stub_hls(page)
     page.goto(BASE + "/movies/the-endless-summer-1966", wait_until="commit")
     until(page, engine, "a laptop gets the laptop player", 'document.documentElement.dataset.device === "laptop" && !!document.querySelector("main button.play[data-play-movie]")')
@@ -682,6 +779,7 @@ with sync_playwright() as p:
     run(p, "chromium", "Pixel 7")
     desktop(p)
     laptop_player(p)
+    invite(p)
 
 print("PASS" if not failures else "FAIL: " + ", ".join(failures))
 sys.exit(1 if failures else 0)

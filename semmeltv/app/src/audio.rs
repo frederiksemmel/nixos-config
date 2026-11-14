@@ -1,5 +1,6 @@
 use crate::bus::Bus;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -122,6 +123,7 @@ pub struct Route {
 
 pub trait Radio: Send + Sync {
     fn paired(&self) -> Option<Device>;
+    fn bonded(&self, address: &str) -> Option<Device>;
     fn connect(&self, address: &str) -> Result<(), String>;
     fn disconnect(&self, address: &str);
     fn start_scan(&self);
@@ -173,6 +175,7 @@ impl State {
 
 struct Inner {
     state: Mutex<State>,
+    kept: Mutex<HashSet<String>>,
     radio: Box<dyn Radio>,
     bus: Bus,
     mover: Mover,
@@ -208,6 +211,7 @@ impl Audio {
                     headphones,
                     ..State::default()
                 }),
+                kept: Mutex::new(HashSet::new()),
                 radio,
                 bus,
                 mover,
@@ -310,6 +314,58 @@ impl Audio {
         view_of(&state)
     }
 
+    pub fn set_kept(&self, addresses: impl IntoIterator<Item = String>) {
+        *self.inner.kept.lock().unwrap() = addresses.into_iter().collect();
+    }
+
+    fn kept(&self, address: &str) -> bool {
+        self.inner.kept.lock().unwrap().contains(address)
+    }
+
+    pub fn bonded(&self, address: &str) -> Option<Device> {
+        self.inner.radio.bonded(address)
+    }
+
+    pub fn headphones(&self) -> Option<Device> {
+        self.inner.state.lock().unwrap().headphones.clone()
+    }
+
+    pub fn select(&self, headphones: Option<Device>) {
+        let mut state = self.inner.state.lock().unwrap();
+        let same = state.headphones.as_ref().map(|known| &known.address) == headphones.as_ref().map(|new| &new.address);
+        if same {
+            return;
+        }
+        let old = state.headphones.clone();
+        let route = state.output == Output::Headphones;
+        let disconnect = old
+            .as_ref()
+            .filter(|_| state.link != Link::Disconnected)
+            .map(|old| old.address.clone());
+        state.headphones = headphones.clone();
+        state.output = Output::Tv;
+        state.link = Link::Disconnected;
+        state.take_sound = false;
+        state.attempt += 1;
+        state.volume = None;
+        state.audio_delay = None;
+        state.error = None;
+        self.publish(&state);
+        drop(state);
+        if route {
+            self.route(Output::Tv, old.as_ref());
+        }
+        if let Some(address) = disconnect {
+            let audio = self.clone();
+            thread::spawn(move || audio.inner.radio.disconnect(&address));
+        }
+        if let Some(headphones) = headphones
+            && self.inner.radio.sinks().contains(&headphones.address)
+        {
+            self.sink(&headphones.address, true);
+        }
+    }
+
     pub fn forget(&self) -> View {
         let mut state = self.inner.state.lock().unwrap();
         state.error = None;
@@ -331,7 +387,7 @@ impl Audio {
         if route {
             self.route(Output::Tv, forgotten.as_ref());
         }
-        if let Some(forgotten) = forgotten {
+        if let Some(forgotten) = forgotten.filter(|forgotten| !self.kept(&forgotten.address)) {
             self.inner.radio.forget(&forgotten.address);
         }
         view
@@ -392,7 +448,9 @@ impl Audio {
         if route {
             self.route(Output::Tv, replaced.as_ref());
         }
-        if let Some(replaced) = replaced.filter(|replaced| replaced.address != device.address) {
+        if let Some(replaced) =
+            replaced.filter(|replaced| replaced.address != device.address && !self.kept(&replaced.address))
+        {
             radio.forget(&replaced.address);
         }
         self.connect(connect, &device.address);
@@ -759,6 +817,11 @@ impl Bluetoothctl {
 }
 
 impl Radio for Bluetoothctl {
+    fn bonded(&self, address: &str) -> Option<Device> {
+        let (device, info) = Self::device(address);
+        (info.headphones && info.bonded).then_some(device)
+    }
+
     fn paired(&self) -> Option<Device> {
         parse_devices(&Self::run(&["devices", "Bonded"]))
             .iter()
@@ -929,6 +992,7 @@ mod tests {
     #[derive(Default)]
     struct World {
         paired: Option<Device>,
+        bonded: Vec<Device>,
         connects: bool,
         sinks: Vec<String>,
         in_range: Option<Device>,
@@ -951,6 +1015,11 @@ mod tests {
     impl Radio for FakeRadio {
         fn paired(&self) -> Option<Device> {
             self.world.lock().unwrap().paired.clone()
+        }
+
+        fn bonded(&self, address: &str) -> Option<Device> {
+            let world = self.world.lock().unwrap();
+            world.paired.iter().chain(&world.bonded).find(|device| device.address == address).cloned()
         }
 
         fn connect(&self, address: &str) -> Result<(), String> {
@@ -1133,6 +1202,41 @@ mod tests {
         assert_eq!((view.output, link(&view)), (Output::Headphones, Some(Link::Connected)));
         assert_eq!(rig.audio.device(), "alsa/bluealsa:DEV=34:0E:22:67:03:38,PROFILE=a2dp");
         assert_eq!(rig.bus.audio_state(), Some(view));
+    }
+
+    fn sony() -> Device {
+        Device {
+            address: OTHER.to_string(),
+            name: "WH-1000XM5".to_string(),
+        }
+    }
+
+    #[test]
+    fn selecting_another_profiles_headphones_brings_the_sound_back_to_the_tv() {
+        let rig = paired_rig();
+        rig.world.lock().unwrap().sinks = vec![AIRPODS.to_string()];
+        rig.audio.choose(Output::Headphones);
+        assert_eq!(route(&rig).said, "Sound on AirPods");
+        rig.audio.select(Some(sony()));
+        assert_eq!(route(&rig).device, TV_DEVICE);
+        let view = rig.audio.view();
+        assert_eq!(view.output, Output::Tv);
+        assert_eq!(view.headphones.unwrap().name, "WH-1000XM5");
+        assert!(calls_until(&rig, &format!("disconnect {AIRPODS}")).contains(&format!("disconnect {AIRPODS}")));
+        rig.audio.select(Some(sony()));
+        assert!(rig.routes.recv_timeout(Duration::from_millis(100)).is_err(), "the same headphones change nothing");
+    }
+
+    #[test]
+    fn headphones_another_profile_keeps_stay_bonded() {
+        let rig = paired_rig();
+        rig.audio.set_kept([AIRPODS.to_string()]);
+        rig.audio.forget();
+        assert!(rig.calls.recv_timeout(Duration::from_millis(100)).is_err());
+        assert_eq!(rig.audio.view().headphones, None);
+        let rig = paired_rig();
+        rig.audio.forget();
+        assert_eq!(call(&rig), format!("forget {AIRPODS}"));
     }
 
     #[test]

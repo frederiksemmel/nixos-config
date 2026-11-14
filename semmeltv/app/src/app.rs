@@ -19,6 +19,7 @@ use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence, Source, Store};
 use crate::player::{self, Finish, Player};
+use crate::auth::store::AuthStore;
 use crate::profile::ProfileId;
 use crate::progress::{self, Position, Progress};
 use crate::seek::Direction;
@@ -47,6 +48,7 @@ use std::sync::mpsc::{self, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
+const TV_PROFILE: &str = "tv_profile";
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
 const VOICE_RESULT_TIME: Duration = Duration::from_secs(6);
 const VOICE_WAITING_TIME: Duration = Duration::from_secs(20);
@@ -144,6 +146,7 @@ pub struct Setup {
 
 struct Playing {
     file: PathBuf,
+    owner: ProfileId,
 }
 
 struct App {
@@ -252,20 +255,30 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     };
     let saved = cache.saved_manifest();
     let library = library::load_saved(&root, &saved).unwrap_or_default();
-    let progress = db.progress(ProfileId::FIRST).unwrap_or_else(|error| {
+    let profile = db
+        .setting(TV_PROFILE)
+        .unwrap_or_else(|error| {
+            eprintln!("tv profile: {error}");
+            None
+        })
+        .and_then(|stored| stored.parse().ok())
+        .map(ProfileId)
+        .unwrap_or(ProfileId::FIRST);
+    let progress = db.progress(profile).unwrap_or_else(|error| {
         eprintln!("progress: {error}");
         Progress::default()
     });
     let bus = Bus::default();
-    let subtitles = Subtitles::load(&db, ProfileId::FIRST);
+    let subtitles = Subtitles::load(&db, profile);
     let television = Television::new(tv);
     let audio = headphones.then(|| {
         let keys = keys.clone();
         Audio::spawn(bus.clone(), Box::new(move |route| keys.move_audio(route)))
     });
-    let shared = Arc::new(Shared::new(subtitles.clone()));
+    let shared = Arc::new(Shared::new(subtitles.clone(), db.clone()));
     shared.set_library(&library);
-    shared.set_progress(&progress);
+    shared.set_progress(profile, &progress);
+    shared.set_tv_profile(profile);
     let art = meta.join(artwork::DIR);
     let app = Rc::new(RefCell::new(App {
         ui: ui.clone_strong(),
@@ -273,7 +286,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         nav: Nav::new(library),
         cache,
         db,
-        profile: ProfileId::FIRST,
+        profile,
         art: art.clone(),
         images,
         player: None,
@@ -313,6 +326,25 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         notice: None,
         stopping_tv: false,
     }));
+    if let Some(audio) = &app.borrow().audio {
+        let db = &app.borrow().db;
+        let claimed = api::claimed_headphones(db, None);
+        if claimed.is_empty()
+            && let Some(headphones) = audio.headphones()
+        {
+            let prefs = crate::db::AudioPrefs {
+                headphones: Some(headphones.address.clone()),
+                ..crate::db::AudioPrefs::default()
+            };
+            if let Err(error) = db.save_audio_prefs(ProfileId::FIRST, &prefs) {
+                eprintln!("headphones: {error}");
+            }
+        }
+        audio.set_kept(api::claimed_headphones(db, None));
+    }
+    let profile = app.borrow().profile;
+    app.borrow().apply_audio(profile);
+    app.borrow().present_profile();
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
     app.borrow_mut().tend_storage();
@@ -677,6 +709,8 @@ impl App {
             });
         };
         let keys = self.keys.clone();
+        self.subtitles.set_owner(self.profile);
+        self.apply_audio(self.profile);
         let tracks = match self.progress.files.get(path) {
             Some(watched) if start > 0.0 => watched.tracks,
             _ => progress::Tracks::default(),
@@ -766,6 +800,7 @@ impl App {
         });
         self.playing = Some(Playing {
             file: path.to_path_buf(),
+            owner: self.profile,
         });
         if let Some((key, position)) = show {
             self.progress.shows.insert(key, position);
@@ -775,6 +810,12 @@ impl App {
     }
 
     fn record_place(&mut self) {
+        if let Some(owner) = self.playing.as_ref().map(|playing| playing.owner) {
+            self.as_profile(owner, Self::record_owners_place);
+        }
+    }
+
+    fn record_owners_place(&mut self) {
         if let (Some(player), Some(playing)) = (&self.player, &self.playing) {
             self.progress.record(&playing.file, player.place());
             self.progress.keep_tracks(&playing.file, player.tracks());
@@ -801,14 +842,17 @@ impl App {
         self.now_playing = None;
         self.publish_playback();
         if let Some(playing) = self.playing.take() {
-            let library = self.nav.library();
-            if ended {
-                watching::complete(&mut self.progress, library, &playing.file);
-                self.save_progress();
-            } else if watching::stopped(&mut self.progress, library, &playing.file) {
-                self.save_progress();
-            }
+            self.as_profile(playing.owner, |app| {
+                let library = app.nav.library();
+                if ended {
+                    watching::complete(&mut app.progress, library, &playing.file);
+                    app.save_progress();
+                } else if watching::stopped(&mut app.progress, library, &playing.file) {
+                    app.save_progress();
+                }
+            });
         }
+        self.subtitles.set_owner(self.profile);
         if !success {
             self.show_message("This video could not be played".to_string());
         }
@@ -931,8 +975,20 @@ impl App {
 
     fn answer(&mut self, request: Request) -> Outcome {
         let action = match request {
-            Request::Understand(text) => intent::understand(&text, self.nav.library(), &self.progress),
-            Request::Play(pick) => intent::choose(&pick, self.nav.library(), &self.progress),
+            Request::Understand(text, by) => {
+                let action = self.as_profile(by, |app| intent::understand(&text, app.nav.library(), &app.progress));
+                if matches!(action, Action::Play(_)) {
+                    self.become_profile(by);
+                }
+                action
+            }
+            Request::Play(pick, by) => {
+                let action = self.as_profile(by, |app| intent::choose(&pick, app.nav.library(), &app.progress));
+                if matches!(action, Action::Play(_)) {
+                    self.become_profile(by);
+                }
+                action
+            }
             Request::Control(control) => Action::Control(control),
             Request::PlayPause => {
                 let paused = self.player.as_ref().is_some_and(|player| player.state().paused);
@@ -942,10 +998,18 @@ impl App {
             Request::Speed(speed) => return self.speed(speed),
             Request::Subtitles(change) => return self.change_subtitles(change),
             Request::Storage(change) => return self.change_storage(change),
-            Request::Dismiss(kind, key) => return self.dismiss(kind, &key),
-            Request::Mark(kind, key, episode, mark) => return self.mark(kind, &key, episode, mark),
-            Request::Phone(report) => return self.phone(report),
-            Request::Screen(command) => return self.screen_command(command),
+            Request::Dismiss(kind, key, by) => return self.as_profile(by, |app| app.dismiss(kind, &key)),
+            Request::Mark(kind, key, episode, mark, by) => {
+                return self.as_profile(by, |app| app.mark(kind, &key, episode, mark));
+            }
+            Request::Phone(report) => return self.as_profile(report.profile, |app| app.phone(report)),
+            Request::Screen(command, by) => {
+                if matches!(command, api::ScreenCommand::Flip { to: api::ScreenKind::Tv, .. }) {
+                    self.become_profile(by);
+                }
+                return self.as_profile(by, |app| app.screen_command(command));
+            }
+            Request::TvProfile(by) => return self.show_profile(by),
             Request::Listen => {
                 return match &self.voice {
                     Some(voice) => {
@@ -1724,8 +1788,87 @@ impl App {
         }
     }
 
+    fn load_progress(&self, profile: ProfileId) -> Progress {
+        (*self.shared.progress(profile)).clone()
+    }
+
+    fn as_profile<T>(&mut self, profile: ProfileId, work: impl FnOnce(&mut Self) -> T) -> T {
+        if profile == self.profile {
+            return work(self);
+        }
+        let theirs = self.load_progress(profile);
+        let tv = std::mem::replace(&mut self.progress, theirs);
+        let tv_profile = std::mem::replace(&mut self.profile, profile);
+        let result = work(self);
+        self.profile = tv_profile;
+        self.progress = tv;
+        self.present_home();
+        self.queue_downloads(false);
+        result
+    }
+
+    fn become_profile(&mut self, profile: ProfileId) {
+        if profile == self.profile {
+            return;
+        }
+        self.profile = profile;
+        self.progress = self.load_progress(profile);
+        if self.playing.is_none() {
+            self.subtitles.set_owner(profile);
+        }
+        self.shared.set_tv_profile(profile);
+        if let Err(error) = self.db.set_setting(TV_PROFILE, Some(&profile.0.to_string())) {
+            eprintln!("tv profile: {error}");
+        }
+        if self.playing.is_none() {
+            self.apply_audio(profile);
+        }
+        self.present_profile();
+        self.present_home();
+        self.queue_downloads(false);
+    }
+
+    fn apply_audio(&self, profile: ProfileId) {
+        let Some(audio) = &self.audio else {
+            return;
+        };
+        let prefs = self.db.audio_prefs(profile).unwrap_or_else(|error| {
+            eprintln!("headphones: {error}");
+            crate::db::AudioPrefs::default()
+        });
+        let headphones = prefs.headphones.as_deref().and_then(|address| audio.bonded(address));
+        let have = headphones.is_some();
+        audio.select(headphones);
+        let connected = audio
+            .view()
+            .headphones
+            .is_some_and(|headphones| headphones.state == audio::Link::Connected);
+        if prefs.output == crate::db::Output::Headphones && have && connected {
+            audio.choose(audio::Output::Headphones);
+        }
+    }
+
+    fn profile_name(&self, profile: ProfileId) -> String {
+        match AuthStore::profile(&self.db, profile) {
+            Ok(Some(found)) => found.name,
+            _ => format!("profile {}", profile.0),
+        }
+    }
+
+    fn present_profile(&self) {
+        self.ui.set_profile_name(self.profile_name(self.profile).into());
+    }
+
+    fn show_profile(&mut self, profile: ProfileId) -> Outcome {
+        self.become_profile(profile);
+        Outcome {
+            message: format!("The TV shows what {} is watching", self.profile_name(profile)),
+            ok: true,
+        }
+    }
+
     fn save_progress(&self) {
-        self.shared.set_progress(&self.progress);
+        self.shared.set_progress(self.profile, &self.progress);
         if let Err(error) = self.db.save_progress(self.profile, &self.progress) {
             eprintln!("progress: {error}");
         }

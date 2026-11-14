@@ -131,10 +131,12 @@ async fn download_icon() -> Result<impl View> {
 
 #[page("/settings")]
 async fn settings_page(cx: &Cx) -> Result<impl View> {
-    let api = app_context::<Api>(cx);
+    let api = Api::of(cx);
     let subtitles = api.subtitles().await;
     let abilities = api.tv_abilities().await.unwrap_or_default();
     let (paired, pair) = pairing(abilities.paired);
+    let admin = crate::auth::me(cx).is_some_and(|me| me.person.admin());
+    let shown = api.tv_profile().await.ok();
     Ok(view! {
         <article class="page">
             back(href: "/")
@@ -158,7 +160,17 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     <div class="setting">
                         <span class="setting-name">(tv_name(&abilities)) <small>(tv_detail(&abilities))</small></span>
                     </div>
-                    if abilities.pairing {
+                    if let Some(shown) = shown {
+                        <div class="setting setting-row">
+                            <span class="setting-name">"Profile on the TV"
+                                <small>(if shown.mine { "Yours: the TV's Home shows what you're watching".to_string() } else { format!("{}'s: the TV's Home shows what they're watching", shown.name.unwrap_or_default()) })</small>
+                            </span>
+                            if !shown.mine {
+                                <button type="button" class="pill quiet" data-post="/api/tv-profile" data-done="hide">"Show mine"</button>
+                            }
+                        </div>
+                    }
+                    if abilities.pairing && admin {
                         <div class="setting setting-row">
                             <span class="setting-name">"Pairing" <small>(paired)</small></span>
                             <button type="button" class=(if abilities.paired == Some(true) { "pill quiet" } else { "pill" }) data-post="/api/tv/pair" data-pending="Press Allow on the TV">(pair)</button>
@@ -167,6 +179,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                 </div>
             </section>
             headphones_settings()
+            if admin {
             <section class="settings">
                 <h2>"Library"</h2>
                 <div class="setting-group">
@@ -182,6 +195,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     )
                 </div>
             </section>
+            }
         </article>
     })
 }

@@ -1,3 +1,4 @@
+use crate::auth;
 use crate::brand;
 use crate::playing;
 use crate::public::Public;
@@ -17,10 +18,12 @@ const TOAST: Asset = asset!("./toast.js");
 const REPORT: Asset = asset!("./report.js");
 const ACT: Asset = asset!("./act.js");
 const PHONE_STYLE: Asset = asset!("./phone.css");
+const AUTH: Asset = asset!("./auth.js");
 
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let public = app_context::<Public>(cx);
+    let signed_in = auth::me(cx).is_some();
     Ok(view! {
         <!DOCTYPE html>
         <html lang="en" data-api=(public.api.as_str())>
@@ -42,12 +45,21 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <script src=(REPORT)></script>
                 <script src=(ACT)></script>
                 topcoat::runtime::script()
-                <script type="module" src=(MICROPHONE)></script>
                 <script type="module" src=(TOAST)></script>
-                <script type="module" src=(APP)></script>
-                <script type="module" src=(PHONE)></script>
+                <script type="module" src=(AUTH)></script>
+                if signed_in {
+                    <script type="module" src=(MICROPHONE)></script>
+                    <script type="module" src=(APP)></script>
+                    <script type="module" src=(PHONE)></script>
+                }
             </head>
             <body>
+                if !signed_in {
+                    <header class="top">
+                        <span class="brand"><img src=(brand::WORDMARK) alt="SemmelTV"></span>
+                    </header>
+                    <main>(slot)</main>
+                } else {
                 <header class="top">
                     link(href: "/", attrs: attributes! { cx => class="brand" }, <img src=(brand::WORDMARK) alt="SemmelTV">)
                     playing::mode_switch()
@@ -62,6 +74,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                         </button>
                     </div>
                     link(href: "/settings", attrs: attributes! { cx => class="top-link" aria-label="Settings" }, playing::settings_icon())
+                    auth::profile_button()
                 </header>
                 playing::voice_feedback()
                 playing::notices()
@@ -83,6 +96,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     )
                 </main>
                 playing::player()
+                }
             </body>
         </html>
     })

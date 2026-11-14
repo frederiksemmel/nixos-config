@@ -19,7 +19,7 @@ const SPEEDS: [(f64, &str); 5] = [(0.75, "0.75×"), (1.0, "1×"), (1.25, "1.25×
 
 #[procedure]
 pub async fn play_movie(cx: &Cx, key: String) -> Result<String> {
-    Ok(app_context::<Api>(cx).play(&Pick::Movie { movie: key }).await)
+    Ok(Api::of(cx).play(&Pick::Movie { movie: key }).await)
 }
 
 #[procedure]
@@ -29,7 +29,7 @@ pub async fn play_show(cx: &Cx, key: String) -> Result<String> {
         season: None,
         episode: None,
     };
-    Ok(app_context::<Api>(cx).play(&pick).await)
+    Ok(Api::of(cx).play(&pick).await)
 }
 
 #[procedure]
@@ -39,7 +39,7 @@ pub async fn play_episode(cx: &Cx, key: String, season: u32, episode: u32) -> Re
         season: Some(season),
         episode: Some(episode),
     };
-    Ok(app_context::<Api>(cx).play(&pick).await)
+    Ok(Api::of(cx).play(&pick).await)
 }
 
 #[procedure]
@@ -47,7 +47,7 @@ pub async fn control(cx: &Cx, name: String) -> Result<String> {
     if !ALLOWED_CONTROLS.contains(&name.as_str()) {
         return Ok(format!("No such control: {name}"));
     }
-    Ok(app_context::<Api>(cx).control(&name).await)
+    Ok(Api::of(cx).control(&name).await)
 }
 
 #[procedure]
@@ -55,13 +55,13 @@ pub async fn skip(cx: &Cx, direction: String) -> Result<String> {
     if !DIRECTIONS.contains(&direction.as_str()) {
         return Ok(format!("No such direction: {direction}"));
     }
-    Ok(app_context::<Api>(cx).skip(&direction).await)
+    Ok(Api::of(cx).skip(&direction).await)
 }
 
 #[procedure]
 pub async fn tell(cx: &Cx, text: String) -> Result<String> {
     let text: String = text.chars().take(LONGEST_COMMAND).collect();
-    Ok(app_context::<Api>(cx).command(&text).await)
+    Ok(Api::of(cx).command(&text).await)
 }
 
 pub fn clock(seconds: f64) -> String {
@@ -209,7 +209,7 @@ async fn play_pause() -> Result<impl View> {
 
 #[shard]
 pub async fn player(cx: &Cx) -> Result<impl View> {
-    let abilities = app_context::<Api>(cx).tv_abilities().await.unwrap_or_default();
+    let abilities = Api::of(cx).tv_abilities().await.unwrap_or_default();
     Ok(view! {
         <div class="player">
             <section class="bar" aria-label="Now playing">

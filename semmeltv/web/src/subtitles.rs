@@ -1,7 +1,7 @@
 use crate::api::{Api, SubtitleSettings, Subtitles};
 use serde_json::{Value, json};
 use topcoat::Result;
-use topcoat::context::{Cx, app_context};
+use topcoat::context::Cx;
 use topcoat::runtime::{Event, procedure, shard, signal};
 use topcoat::view::{View, component, view};
 
@@ -66,7 +66,7 @@ fn saved(result: std::result::Result<Subtitles, String>, applies: &str) -> Strin
 #[procedure]
 pub async fn set_number(cx: &Cx, name: String, value: String) -> Result<String> {
     Ok(match change(&name, &value) {
-        Some(changes) => saved(app_context::<Api>(cx).change_subtitles(changes).await, ""),
+        Some(changes) => saved(Api::of(cx).change_subtitles(changes).await, ""),
         None => format!("Can't set {name} to {value}"),
     })
 }
@@ -78,7 +78,7 @@ pub async fn set_flag(cx: &Cx, name: String, on: bool) -> Result<String> {
     }
     let applies = if name == "shown" { " for the next video" } else { "" };
     Ok(saved(
-        app_context::<Api>(cx).change_subtitles(json!({ name: on })).await,
+        Api::of(cx).change_subtitles(json!({ name: on })).await,
         applies,
     ))
 }
@@ -89,7 +89,7 @@ pub async fn set_color(cx: &Cx, name: String, value: String) -> Result<String> {
         return Ok(format!("No such setting: {name}"));
     }
     Ok(saved(
-        app_context::<Api>(cx).change_subtitles(json!({ name: value })).await,
+        Api::of(cx).change_subtitles(json!({ name: value })).await,
         "",
     ))
 }
@@ -113,7 +113,7 @@ fn reorder(current: &[String], slot: usize, code: &str) -> Vec<String> {
 
 #[procedure]
 pub async fn set_language(cx: &Cx, slot: u32, code: String) -> Result<String> {
-    let api = app_context::<Api>(cx);
+    let api = Api::of(cx);
     let current = match api.subtitles().await {
         Ok(subtitles) => subtitles.settings.languages,
         Err(error) => return Ok(error),

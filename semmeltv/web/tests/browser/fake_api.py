@@ -24,6 +24,15 @@ tv = {"on": True}
 opens = []
 screen_log = []
 CONNECT_SECONDS = 1.5
+SERVICE = "fake-service-token"
+PROFILES = {
+    1: {"id": 1, "name": "Frederik", "role": "admin", "color": "#E5484D", "password": "frederik-pass"},
+    2: {"id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "password": "mami-pass"},
+    3: {"id": 3, "name": "Ramu", "role": "viewer", "color": "#8E4EC6", "password": None},
+}
+sessions = {}
+invites = {"good-invite": 2}
+OPEN = ("/api/auth/choices", "/api/auth/password", "/api/auth/passkey/start", "/api/auth/invite/")
 SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
 
 
@@ -37,6 +46,126 @@ def now_playing():
         "muted": False, "speed": 1.0, "subtitle": playing["subtitle"], "audio": 1, "loading": False, "jump": None,
         "subtitle_delay": playing["delay"],
     }
+
+
+def person(profile):
+    return {key: profile[key] for key in ("id", "name", "role", "color")}
+
+
+def tokens(request):
+    return [token for token in request.cookies.get("semmeltv_session", "").split(".") if token in sessions]
+
+
+def caller(request):
+    found = tokens(request)
+    return PROFILES[sessions[found[0]]] if found else None
+
+
+def profile_of(request):
+    return (caller(request) or PROFILES[1])["id"]
+
+
+@web.middleware
+async def gate(request, handler):
+    path = request.path
+    if not path.startswith("/api/") or path.startswith(OPEN) or path.startswith("/api/stream/") and path != "/api/stream/open":
+        return await handler(request)
+    if request.headers.get("x-fake-harness") or path == "/api/events" and request.headers.get("authorization") == f"Bearer {SERVICE}":
+        return await handler(request)
+    who = caller(request)
+    if who is None:
+        return web.json_response({"error": "Not signed in"}, status=401)
+    if path.startswith(("/api/storage", "/api/auth/members", "/api/tv/pair")) and who["role"] != "admin":
+        return web.json_response({"error": "Only an admin can do that"}, status=403)
+    return await handler(request)
+
+
+def signed_in(request, profile):
+    token = f"t{len(sessions) + 1}x{profile['id']}"
+    sessions[token] = profile["id"]
+    rest = [old for old in tokens(request) if sessions[old] != profile["id"]]
+    response = web.json_response({"ok": True, "person": person(profile)})
+    response.set_cookie("semmeltv_session", ".".join([token, *rest]), path="/", httponly=True, samesite="Lax")
+    return response
+
+
+async def auth_choices(request):
+    found = tokens(request)
+    active = sessions[found[0]] if found else None
+    on_device = {sessions[token] for token in found}
+    return web.json_response({"profiles": [
+        {**person(profile), "password": profile["password"] is not None, "passkey": False, "active": profile["id"] == active,
+         "signed_in": profile["id"] in on_device}
+        for profile in PROFILES.values()]})
+
+
+async def auth_me(request):
+    who = caller(request)
+    others = [person(PROFILES[sessions[token]]) for token in tokens(request)[1:]]
+    return web.json_response({"person": person(who), "others": others, "passkeys": [], "password": True})
+
+
+async def auth_password(request):
+    body = await request.json()
+    profile = PROFILES.get(body.get("profile"))
+    if not profile:
+        return web.json_response({"error": "There is no such profile", "ok": False}, status=404)
+    if profile["password"] is None or body.get("password") != profile["password"]:
+        return web.json_response({"error": "That password is wrong", "ok": False}, status=401)
+    return signed_in(request, profile)
+
+
+async def auth_passkey_start(request):
+    profile = PROFILES[(await request.json())["profile"]]
+    return web.json_response({"error": f"{profile['name']} has no passkey for this address yet", "ok": False, "password": True}, status=422)
+
+
+async def auth_switch(request):
+    profile = (await request.json())["profile"]
+    found = tokens(request)
+    target = [token for token in found if sessions[token] == profile]
+    if not target or PROFILES[profile]["role"] == "admin":
+        return web.json_response({"error": f"Sign in as {PROFILES[profile]['name']}", "ok": False, "sign_in": True}, status=401)
+    response = web.json_response({"ok": True, "person": person(PROFILES[profile])})
+    response.set_cookie("semmeltv_session", ".".join([target[0], *[token for token in found if token != target[0]]]), path="/")
+    return response
+
+
+async def auth_sign_out(request):
+    found = tokens(request)
+    if found:
+        sessions.pop(found[0], None)
+    response = web.json_response({"ok": True, "person": None})
+    response.set_cookie("semmeltv_session", ".".join(found[1:]), path="/")
+    return response
+
+
+async def auth_invite(request):
+    profile = invites.get(request.match_info["token"])
+    if profile is None:
+        return web.json_response({"error": "This invite link is not valid", "ok": False}, status=404)
+    if request.method == "GET":
+        return web.json_response({"person": person(PROFILES[profile])})
+    return signed_in(request, PROFILES[profile])
+
+
+async def auth_members(request):
+    return web.json_response({"members": [
+        {**person(profile), "password": True, "passkeys": 0, "sessions": 1, "last_seen_at": None, "invite_expires_at": None}
+        for profile in PROFILES.values()]})
+
+
+async def auth_member_invite(request):
+    return web.json_response({"ok": True, "message": "Invite link", "link": "http://127.0.0.1:3000/invite/good-invite", "expires_in_days": 7})
+
+
+async def tv_profile(request):
+    return web.json_response({"profile": 1, "name": "Frederik", "mine": profile_of(request) == 1})
+
+
+async def fake_sign_out_all(request):
+    sessions.clear()
+    return web.json_response({"ok": True})
 
 
 async def events(request):
@@ -59,7 +188,9 @@ async def events(request):
 
 
 async def library(request):
-    return web.json_response(LIBRARY)
+    if profile_of(request) == 1:
+        return web.json_response(LIBRARY)
+    return web.json_response({**LIBRARY, "watching": [], "forgotten": []})
 
 
 async def movie(request):
@@ -67,11 +198,11 @@ async def movie(request):
     if not card or card["kind"] != "movie":
         return web.json_response({"error": "not found"}, status=404)
     return web.json_response({**MOVIE, **card, "subtitles": 1 if card["key"] in fetched else 0,
-                              "finished": marked.get(("movie", card["key"]), False)})
+                              "finished": marked.get((profile_of(request), "movie", card["key"]), False)})
 
 
 async def show(request):
-    seasons = [dict(season, episodes=[dict(episode, watched=marked.get(("show", episode["season"], episode["episode"]), episode["watched"]))
+    seasons = [dict(season, episodes=[dict(episode, watched=marked.get((profile_of(request), "show", episode["season"], episode["episode"]), episode["watched"]))
                                       for episode in season["episodes"]])
                for season in SHOW["seasons"]]
     return web.json_response({**SHOW, "seasons": seasons})
@@ -80,9 +211,9 @@ async def show(request):
 async def watched(request):
     body = await request.json()
     if body["kind"] == "movie":
-        marked[("movie", body["key"])] = body["watched"]
+        marked[(profile_of(request), "movie", body["key"])] = body["watched"]
     else:
-        marked[("show", body["season"], body["episode"])] = body["watched"]
+        marked[(profile_of(request), "show", body["season"], body["episode"])] = body["watched"]
     return web.json_response({"message": "Marked", "ok": True, "watched": body["watched"]})
 
 
@@ -311,7 +442,19 @@ async def accepted(request):
     return web.json_response({"ok": True})
 
 
-app = web.Application()
+app = web.Application(middlewares=[gate])
+app.router.add_get("/api/auth/choices", auth_choices)
+app.router.add_get("/api/auth/me", auth_me)
+app.router.add_post("/api/auth/password", auth_password)
+app.router.add_post("/api/auth/passkey/start", auth_passkey_start)
+app.router.add_post("/api/auth/switch", auth_switch)
+app.router.add_post("/api/auth/sign-out", auth_sign_out)
+app.router.add_get("/api/auth/invite/{token}", auth_invite)
+app.router.add_post("/api/auth/invite/{token}", auth_invite)
+app.router.add_get("/api/auth/members", auth_members)
+app.router.add_post("/api/auth/members/{id}/invite", auth_member_invite)
+app.router.add_post("/fake/sign-out-all", fake_sign_out_all)
+app.router.add_get("/api/tv-profile", tv_profile)
 app.router.add_get("/api/events", events)
 app.router.add_get("/api/library", library)
 app.router.add_get("/api/movies/{key}", movie)

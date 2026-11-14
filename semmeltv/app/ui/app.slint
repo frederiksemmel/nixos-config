@@ -748,6 +748,7 @@ export component AppWindow inherits Window {
     in property <bool> voice-busy;
     in property <string> empty-note;
     in property <bool> tmdb-notice;
+    in property <string> profile-name;
     in property <string> years;
     in property <string> details;
     in property <RatingsData> ratings;
@@ -789,6 +790,19 @@ export component AppWindow inherits Window {
             height: 52 * root.u;
             width: self.height * self.source.width / self.source.height;
             source: @image-url("../../assets/logo/semmeltv-dark.png");
+            opacity: root.show-open || root.home-row > 0 ? 0 : 1;
+            animate opacity { duration: 200ms; }
+        }
+
+        Text {
+            x: parent.width - 96 * root.u - self.width;
+            y: 40 * root.u;
+            height: 52 * root.u;
+            text: root.profile-name;
+            color: #c3c7d1;
+            font-size: 28 * root.u;
+            font-weight: 600;
+            vertical-alignment: center;
             opacity: root.show-open || root.home-row > 0 ? 0 : 1;
             animate opacity { duration: 200ms; }
         }

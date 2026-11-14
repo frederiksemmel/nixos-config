@@ -1,3 +1,4 @@
+mod auth;
 pub mod import;
 mod progress;
 pub mod schema;

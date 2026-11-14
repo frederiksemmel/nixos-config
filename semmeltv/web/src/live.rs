@@ -121,7 +121,7 @@ pub struct Live {
     pub screen: watch::Receiver<Option<Screen>>,
 }
 
-pub fn follow(url: String) -> Live {
+pub fn follow(url: String, service: Option<String>) -> Live {
     let (playback, playback_seen) = watch::channel(None);
     let (voice, voice_seen) = watch::channel(None);
     let (audio, audio_seen) = watch::channel(None);
@@ -131,7 +131,14 @@ pub fn follow(url: String) -> Live {
     let mut raise = Raise { boot, count: 0 };
     tokio::spawn(async move {
         loop {
-            match tokio_tungstenite::connect_async(&url).await {
+            let request = match handshake(&url, service.as_deref()) {
+                Ok(request) => request,
+                Err(error) => {
+                    eprintln!("events {url}: {error}");
+                    return;
+                }
+            };
+            match tokio_tungstenite::connect_async(request).await {
                 Ok((mut socket, _)) => {
                     while let Some(Ok(message)) = socket.next().await {
                         let Message::Text(text) = message else { continue };
@@ -174,6 +181,20 @@ pub fn follow(url: String) -> Live {
         notices: notices_seen,
         screen: screen_seen,
     }
+}
+
+fn handshake(
+    url: &str,
+    service: Option<&str>,
+) -> Result<tokio_tungstenite::tungstenite::handshake::client::Request, tokio_tungstenite::tungstenite::Error> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = url.into_client_request()?;
+    if let Some(token) = service
+        && let Ok(value) = format!("Bearer {token}").parse()
+    {
+        request.headers_mut().insert("authorization", value);
+    }
+    Ok(request)
 }
 
 fn replace<T: PartialEq>(current: &mut T, new: T) -> bool {

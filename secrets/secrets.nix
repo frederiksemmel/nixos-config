@@ -46,4 +46,8 @@ in
     frederik
     semmeltv5
   ];
+  "semmeltv_service_token.age".publicKeys = [
+    frederik
+    semmeltv5
+  ];
 }

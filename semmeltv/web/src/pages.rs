@@ -116,7 +116,7 @@ async fn forget(cx: &Cx, kind: String, key: String) -> Result<(bool, String)> {
         "show" => Kind::Show,
         _ => return Ok((false, format!("No such kind: {kind}"))),
     };
-    Ok(app_context::<Api>(cx).dismiss_forgotten(kind, &key).await)
+    Ok(Api::of(cx).dismiss_forgotten(kind, &key).await)
 }
 
 #[procedure]
@@ -126,7 +126,7 @@ async fn mark(cx: &Cx, kind: String, key: String, watched: bool, season: Option<
         body["season"] = season.into();
         body["episode"] = episode.into();
     }
-    Ok(match app_context::<Api>(cx).mark_watched(body).await {
+    Ok(match Api::of(cx).mark_watched(body).await {
         Ok(now) => (now, String::new()),
         Err(error) => (!watched, error),
     })
@@ -340,7 +340,7 @@ async fn home(cx: &Cx) -> Result<impl View> {
 
 #[shard]
 async fn browse(cx: &Cx, query: String, section: String, rating: String, year: String) -> Result<impl View> {
-    let api = app_context::<Api>(cx);
+    let api = Api::of(cx);
     let public = app_context::<Public>(cx).clone();
     let query: String = query.trim().chars().take(LONGEST_QUERY).collect();
     let results = if query.is_empty() {
@@ -771,7 +771,7 @@ async fn last_played(played: &Played) -> Result<impl View> {
 async fn movie(cx: &Cx) -> Result<impl View> {
     let key = path_param::<Key>(cx).to_string();
     let public = app_context::<Public>(cx).clone();
-    let movie = match app_context::<Api>(cx).movie(&key).await.map_err(failed)? {
+    let movie = match Api::of(cx).movie(&key).await.map_err(failed)? {
         Found::Here(movie) => movie,
         Found::Missing => return Err(not_found().into()),
     };
@@ -873,7 +873,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
 async fn show(cx: &Cx) -> Result<impl View> {
     let key = path_param::<Key>(cx).to_string();
     let public = app_context::<Public>(cx).clone();
-    let show = match app_context::<Api>(cx).show(&key).await.map_err(failed)? {
+    let show = match Api::of(cx).show(&key).await.map_err(failed)? {
         Found::Here(show) => show,
         Found::Missing => return Err(not_found().into()),
     };
