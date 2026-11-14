@@ -1,0 +1,251 @@
+- generic [active] [ref=e1]:
+  - banner [ref=e2]:
+    - link [ref=e3] [cursor=pointer]:
+      - /url: /
+      - img "SemmelTV" [ref=e4]
+    - button "Watching on the TV. Switch to this phone" [ref=e5] [cursor=pointer]
+    - button "Talk to the TV" [ref=e13] [cursor=pointer]
+    - link "Settings" [ref=e17] [cursor=pointer]:
+      - /url: /settings
+  - main [ref=e22]:
+    - searchbox "Search the library" [ref=e27]
+    - navigation [ref=e29]:
+      - button "Home" [ref=e30] [cursor=pointer]
+      - button "Series" [ref=e31] [cursor=pointer]
+      - button "Movies" [ref=e32] [cursor=pointer]
+    - generic [ref=e33]:
+      - heading "Currently Watching" [level=2] [ref=e34]
+      - generic [ref=e35]:
+        - generic [ref=e36]:
+          - link "The White Lotus The White Lotus S2 E7 · 6m left" [ref=e37] [cursor=pointer]:
+            - /url: /shows/the-white-lotus
+            - generic [ref=e38]: The White Lotus
+            - generic [ref=e42]: The White Lotus
+            - generic [ref=e43]: S2 E7 · 6m left
+          - button "Play The White Lotus" [ref=e44] [cursor=pointer]
+        - generic [ref=e47]:
+          - link "Brooklyn Nine-Nine Brooklyn Nine-Nine S8 E3 · 1m left" [ref=e48] [cursor=pointer]:
+            - /url: /shows/brooklyn-nine-nine
+            - generic [ref=e49]: Brooklyn Nine-Nine
+            - generic [ref=e53]: Brooklyn Nine-Nine
+            - generic [ref=e54]: S8 E3 · 1m left
+          - button "Play Brooklyn Nine-Nine" [ref=e55] [cursor=pointer]
+        - generic [ref=e58]:
+          - 'link "Star Wars: Maul - Shadow Lord Star Wars: Maul - Shadow Lord S1 E6 · 15m left" [ref=e59] [cursor=pointer]':
+            - /url: /shows/star-wars-maul-shadow-lord
+            - generic [ref=e60]: "Star Wars: Maul - Shadow Lord"
+            - generic [ref=e64]: "Star Wars: Maul - Shadow Lord"
+            - generic [ref=e65]: S1 E6 · 15m left
+          - 'button "Play Star Wars: Maul - Shadow Lord" [ref=e66] [cursor=pointer]'
+        - generic [ref=e69]:
+          - link "Isle of Dogs Isle of Dogs 1h 20m left" [ref=e70] [cursor=pointer]:
+            - /url: /movies/isle-of-dogs-2018
+            - generic [ref=e71]: Isle of Dogs
+            - generic [ref=e75]: Isle of Dogs
+            - generic [ref=e76]: 1h 20m left
+          - button "Play Isle of Dogs" [ref=e77] [cursor=pointer]
+    - generic [ref=e80]:
+      - heading "Newly Added" [level=2] [ref=e81]
+      - generic [ref=e82]:
+        - link "The Matrix The Matrix 1999 83% 85% IMDb 8.7" [ref=e83] [cursor=pointer]:
+          - /url: /movies/the-matrix-1999
+          - generic [ref=e84]: The Matrix
+          - generic [ref=e86]: The Matrix
+          - generic [ref=e87]:
+            - text: "1999"
+            - generic [ref=e88]:
+              - generic "Tomatometer" [ref=e89]: 83%
+              - generic "Popcornmeter" [ref=e91]: 85%
+              - generic [ref=e93]:
+                - generic [ref=e94]: IMDb
+                - text: "8.7"
+        - link "Outlander Outlander 10 episodes 91% 82% IMDb 8.3" [ref=e95] [cursor=pointer]:
+          - /url: /shows/outlander
+          - generic [ref=e96]: Outlander
+          - generic [ref=e98]: Outlander
+          - generic [ref=e99]:
+            - text: 10 episodes
+            - generic [ref=e100]:
+              - generic "Tomatometer" [ref=e101]: 91%
+              - generic "Popcornmeter" [ref=e103]: 82%
+              - generic [ref=e105]:
+                - generic [ref=e106]: IMDb
+                - text: "8.3"
+        - 'link "Star Trek: Picard Star Trek: Picard 10 episodes 89% 57% IMDb 7.5" [ref=e107] [cursor=pointer]':
+          - /url: /shows/star-trek-picard
+          - generic [ref=e108]: "Star Trek: Picard"
+          - generic [ref=e110]: "Star Trek: Picard"
+          - generic [ref=e111]:
+            - text: 10 episodes
+            - generic [ref=e112]:
+              - generic "Tomatometer" [ref=e113]: 89%
+              - generic "Popcornmeter" [ref=e115]: 57%
+              - generic [ref=e117]:
+                - generic [ref=e118]: IMDb
+                - text: "7.5"
+        - link "Bridgerton Bridgerton 8 episodes 83% 73% IMDb 7.5" [ref=e119] [cursor=pointer]:
+          - /url: /shows/bridgerton
+          - generic [ref=e120]: Bridgerton
+          - generic [ref=e122]: Bridgerton
+          - generic [ref=e123]:
+            - text: 8 episodes
+            - generic [ref=e124]:
+              - generic "Tomatometer" [ref=e125]: 83%
+              - generic "Popcornmeter" [ref=e127]: 73%
+              - generic [ref=e129]:
+                - generic [ref=e130]: IMDb
+                - text: "7.5"
+        - 'link "Star Wars: Maul - Shadow Lord Star Wars: Maul - Shadow Lord 10 episodes 98% 92% IMDb 8.5" [ref=e131] [cursor=pointer]':
+          - /url: /shows/star-wars-maul-shadow-lord
+          - generic [ref=e132]: "Star Wars: Maul - Shadow Lord"
+          - generic [ref=e134]: "Star Wars: Maul - Shadow Lord"
+          - generic [ref=e135]:
+            - text: 10 episodes
+            - generic [ref=e136]:
+              - generic "Tomatometer" [ref=e137]: 98%
+              - generic "Popcornmeter" [ref=e139]: 92%
+              - generic [ref=e141]:
+                - generic [ref=e142]: IMDb
+                - text: "8.5"
+        - link "The White Lotus The White Lotus 2 seasons · 13 episodes 90% 78% IMDb 8.0" [ref=e143] [cursor=pointer]:
+          - /url: /shows/the-white-lotus
+          - generic [ref=e144]: The White Lotus
+          - generic [ref=e146]: The White Lotus
+          - generic [ref=e147]:
+            - text: 2 seasons · 13 episodes
+            - generic [ref=e148]:
+              - generic "Tomatometer" [ref=e149]: 90%
+              - generic "Popcornmeter" [ref=e151]: 78%
+              - generic [ref=e153]:
+                - generic [ref=e154]: IMDb
+                - text: "8.0"
+        - link "House of the Dragon House of the Dragon 3 seasons · 26 episodes 88% 73% IMDb 8.2" [ref=e155] [cursor=pointer]:
+          - /url: /shows/house-of-the-dragon
+          - generic [ref=e156]: House of the Dragon
+          - generic [ref=e158]: House of the Dragon
+          - generic [ref=e159]:
+            - text: 3 seasons · 26 episodes
+            - generic [ref=e160]:
+              - generic "Tomatometer" [ref=e161]: 88%
+              - generic "Popcornmeter" [ref=e163]: 73%
+              - generic [ref=e165]:
+                - generic [ref=e166]: IMDb
+                - text: "8.2"
+        - link "Foundation Foundation 2 seasons · 20 episodes 87% 73% IMDb 7.6" [ref=e167] [cursor=pointer]:
+          - /url: /shows/foundation
+          - generic [ref=e168]: Foundation
+          - generic [ref=e170]: Foundation
+          - generic [ref=e171]:
+            - text: 2 seasons · 20 episodes
+            - generic [ref=e172]:
+              - generic "Tomatometer" [ref=e173]: 87%
+              - generic "Popcornmeter" [ref=e175]: 73%
+              - generic [ref=e177]:
+                - generic [ref=e178]: IMDb
+                - text: "7.6"
+        - link "Project Hail Mary Project Hail Mary 2026 95% 95% IMDb 8.2" [ref=e179] [cursor=pointer]:
+          - /url: /movies/project-hail-mary-2026
+          - generic [ref=e180]: Project Hail Mary
+          - generic [ref=e182]: Project Hail Mary
+          - generic [ref=e183]:
+            - text: "2026"
+            - generic [ref=e184]:
+              - generic "Tomatometer" [ref=e185]: 95%
+              - generic "Popcornmeter" [ref=e187]: 95%
+              - generic [ref=e189]:
+                - generic [ref=e190]: IMDb
+                - text: "8.2"
+        - link "The King's Speech The King's Speech 2010 94% 92% IMDb 8.0" [ref=e191] [cursor=pointer]:
+          - /url: /movies/the-kings-speech-2010
+          - generic [ref=e192]: The King's Speech
+          - generic [ref=e194]: The King's Speech
+          - generic [ref=e195]:
+            - text: "2010"
+            - generic [ref=e196]:
+              - generic "Tomatometer" [ref=e197]: 94%
+              - generic "Popcornmeter" [ref=e199]: 92%
+              - generic [ref=e201]:
+                - generic [ref=e202]: IMDb
+                - text: "8.0"
+        - link "Chernobyl Chernobyl 5 episodes 95% 97% IMDb 9.3" [ref=e203] [cursor=pointer]:
+          - /url: /shows/chernobyl
+          - generic [ref=e204]: Chernobyl
+          - generic [ref=e206]: Chernobyl
+          - generic [ref=e207]:
+            - text: 5 episodes
+            - generic [ref=e208]:
+              - generic "Tomatometer" [ref=e209]: 95%
+              - generic "Popcornmeter" [ref=e211]: 97%
+              - generic [ref=e213]:
+                - generic [ref=e214]: IMDb
+                - text: "9.3"
+        - link "The Endless Summer The Endless Summer 1966 100% 91% IMDb 7.6" [ref=e215] [cursor=pointer]:
+          - /url: /movies/the-endless-summer-1966
+          - generic [ref=e216]: The Endless Summer
+          - generic [ref=e218]: The Endless Summer
+          - generic [ref=e219]:
+            - text: "1966"
+            - generic [ref=e220]:
+              - generic "Tomatometer" [ref=e221]: 100%
+              - generic "Popcornmeter" [ref=e223]: 91%
+              - generic [ref=e225]:
+                - generic [ref=e226]: IMDb
+                - text: "7.6"
+    - generic [ref=e227]:
+      - heading "Started and Forgotten" [level=2] [ref=e228]
+      - generic [ref=e229]:
+        - generic [ref=e230]:
+          - link "House of the Dragon House of the Dragon S2 E4 · 53m left" [ref=e231] [cursor=pointer]:
+            - /url: /shows/house-of-the-dragon
+            - generic [ref=e232]: House of the Dragon
+            - generic [ref=e236]: House of the Dragon
+            - generic [ref=e237]: S2 E4 · 53m left
+          - button "Play House of the Dragon" [ref=e238] [cursor=pointer]
+          - button "Remove House of the Dragon from Started and Forgotten" [ref=e241] [cursor=pointer]
+        - generic [ref=e244]:
+          - link "Star Wars Star Wars 1h 58m left" [ref=e245] [cursor=pointer]:
+            - /url: /movies/star-wars-1977
+            - generic [ref=e246]: Star Wars
+            - generic [ref=e250]: Star Wars
+            - generic [ref=e251]: 1h 58m left
+          - button "Play Star Wars" [ref=e252] [cursor=pointer]
+          - button "Remove Star Wars from Started and Forgotten" [ref=e255] [cursor=pointer]
+        - generic [ref=e258]:
+          - link "The Order The Order 1h 54m left" [ref=e259] [cursor=pointer]:
+            - /url: /movies/the-order-2024
+            - generic [ref=e260]: The Order
+            - generic [ref=e264]: The Order
+            - generic [ref=e265]: 1h 54m left
+          - button "Play The Order" [ref=e266] [cursor=pointer]
+          - button "Remove The Order from Started and Forgotten" [ref=e269] [cursor=pointer]
+        - generic [ref=e272]:
+          - link "Conclave Conclave 1h 59m left" [ref=e273] [cursor=pointer]:
+            - /url: /movies/conclave-2024
+            - generic [ref=e274]: Conclave
+            - generic [ref=e278]: Conclave
+            - generic [ref=e279]: 1h 59m left
+          - button "Play Conclave" [ref=e280] [cursor=pointer]
+          - button "Remove Conclave from Started and Forgotten" [ref=e283] [cursor=pointer]
+        - generic [ref=e286]:
+          - link "The Matrix The Matrix 2h 15m left" [ref=e287] [cursor=pointer]:
+            - /url: /movies/the-matrix-1999
+            - generic [ref=e288]: The Matrix
+            - generic [ref=e292]: The Matrix
+            - generic [ref=e293]: 2h 15m left
+          - button "Play The Matrix" [ref=e294] [cursor=pointer]
+          - button "Remove The Matrix from Started and Forgotten" [ref=e297] [cursor=pointer]
+        - generic [ref=e300]:
+          - link "Outlander Outlander S8 E1 · 1h 00m left" [ref=e301] [cursor=pointer]:
+            - /url: /shows/outlander
+            - generic [ref=e302]: Outlander
+            - generic [ref=e306]: Outlander
+            - generic [ref=e307]: S8 E1 · 1h 00m left
+          - button "Play Outlander" [ref=e308] [cursor=pointer]
+          - button "Remove Outlander from Started and Forgotten" [ref=e311] [cursor=pointer]
+  - region "Now playing" [ref=e314]:
+    - button "The White Lotus Loading…" [ref=e316] [cursor=pointer]:
+      - generic [ref=e318]:
+        - strong [ref=e319]: The White Lotus
+        - generic [ref=e320]: Loading…
+    - button "Play or pause" [ref=e323] [cursor=pointer]
+  - status

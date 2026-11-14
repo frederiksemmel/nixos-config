@@ -14,6 +14,8 @@ const MICROPHONE: Asset = asset!("./microphone.js");
 const APP: Asset = asset!("./app.js");
 const PHONE: Asset = asset!("./phone.js");
 const TOAST: Asset = asset!("./toast.js");
+const REPORT: Asset = asset!("./report.js");
+const ACT: Asset = asset!("./act.js");
 const PHONE_STYLE: Asset = asset!("./phone.css");
 
 #[layout("/")]
@@ -37,6 +39,8 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <link rel="manifest" href="/manifest.webmanifest">
                 <link rel="stylesheet" href=(STYLE)>
                 <link rel="stylesheet" href=(PHONE_STYLE)>
+                <script src=(REPORT)></script>
+                <script src=(ACT)></script>
                 topcoat::runtime::script()
                 <script type="module" src=(MICROPHONE)></script>
                 <script type="module" src=(TOAST)></script>

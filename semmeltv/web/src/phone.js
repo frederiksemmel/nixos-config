@@ -216,19 +216,46 @@ function listen() {
   });
 }
 
-async function command(body) {
+function note(message, detail) {
+  if (window.semmeltvReport) window.semmeltvReport("info", message, detail);
+}
+
+async function tell(body) {
+  const asked = `screen ${body.action}${body.to ? ` to ${body.to}` : ""}`;
+  note(asked, `screen was ${screen.kind}`);
   try {
     await request("POST", "/api/screen", { ...body, device });
     const view = await request("GET", "/api/screen");
+    note(`${asked}: TV agreed`, `screen is ${view.kind}${view.play ? `, ${view.play.state}` : ""}`);
     pending = null;
     adopt(view);
   } catch (error) {
     pending = null;
     paintSwitch();
-    toast(error.message, "error");
     if (player && player.waiting) player.close(false);
     request("GET", "/api/screen").then(adopt).catch(() => {});
+    throw error;
   }
+}
+
+async function command(body) {
+  try {
+    await tell(body);
+  } catch (error) {
+    toast(error.message, "error");
+  }
+}
+
+function switchTo(target, body) {
+  window.semmeltvAct({
+    key: "screen",
+    mark: "#mode",
+    optimistic: () => {
+      pending = target;
+      paintSwitch();
+    },
+    send: () => tell(body),
+  });
 }
 
 function canWatchHere() {
@@ -244,14 +271,10 @@ function flip() {
     if (!canWatchHere()) return;
     const pick = pickOfPlaying(tvPlaying);
     if (pick) openPlayer(pick, { waiting: true });
-    pending = "phone";
-    paintSwitch();
-    command({ action: "flip", to: "phone" });
+    switchTo("phone", { action: "flip", to: "phone" });
   } else {
     const position = player && !player.closed && ours(screen) && player.video.currentTime > 0 ? player.video.currentTime : undefined;
-    pending = "tv";
-    paintSwitch();
-    command({ action: "flip", to: "tv", position });
+    switchTo("tv", { action: "flip", to: "tv", position });
   }
 }
 
@@ -864,6 +887,7 @@ class Player {
   }
 
   failed(text) {
+    if (window.semmeltvReport) window.semmeltvReport("error", "player failed", text || "no reason");
     this.root.classList.remove("pp-loading");
     this.root.classList.add("pp-failed");
     this.message.innerHTML = "";

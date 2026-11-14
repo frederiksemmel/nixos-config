@@ -682,13 +682,17 @@ async fn links(about: &About) -> Result<impl View> {
 async fn movie_mark(cx: &Cx, key: &str, finished: bool, said: Signal<String>) -> Result<impl View> {
     let key = key.to_string();
     let seen = signal(cx, move || finished);
+    let act = signal(cx, String::new);
     Ok(view! {
         <button type="button" class="pill quiet mark-film" :aria-pressed=$(if seen.get() { "true" } else { "false" })
+            :data-act=$(act.get())
             @click=$(async |_e| {
                 let wanted = !seen.get();
                 seen.set(wanted);
+                act.set("pending".to_owned());
                 let answer = mark("movie".to_owned(), key.to_owned(), wanted, None, None).await;
                 seen.set(answer.0);
+                act.set(if answer.0 == wanted { "".to_owned() } else { "failed".to_owned() });
                 said.set(answer.1);
             })>
             check_icon()
@@ -704,6 +708,7 @@ async fn episode_row(cx: &Cx, public: &Public, series: &str, episode: &Episode, 
     let still = episode.still.as_deref().map(|path| public.url(path));
     let watched = episode.watched;
     let seen = signal(cx, move || watched);
+    let act = signal(cx, String::new);
     let label = episode.short_label.clone();
     Ok(view! {
         <li class="episode-row">
@@ -727,11 +732,14 @@ async fn episode_row(cx: &Cx, public: &Public, series: &str, episode: &Episode, 
             </button>
             <button type="button" class="mark-seen" aria-label=(format!("Watched {label}"))
                 :aria-pressed=$(if seen.get() { "true" } else { "false" })
+                :data-act=$(act.get())
                 @click=$(async |_e| {
                     let wanted = !seen.get();
                     seen.set(wanted);
+                    act.set("pending".to_owned());
                     let answer = mark("show".to_owned(), show_key.to_owned(), wanted, Some(season_number), Some(episode_number)).await;
                     seen.set(answer.0);
+                    act.set(if answer.0 == wanted { "".to_owned() } else { "failed".to_owned() });
                     said.set(answer.1);
                 })>
                 check_icon()

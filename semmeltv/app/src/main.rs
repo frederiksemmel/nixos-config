@@ -5,6 +5,7 @@ mod audio;
 mod bus;
 mod cache;
 mod cec;
+mod client_log;
 mod command;
 mod details;
 mod display;

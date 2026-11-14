@@ -12,7 +12,7 @@ use crate::progress::Watched;
 use crate::segments::{self, Kind as SegmentKind, Title};
 use crate::sidecar;
 use axum::extract::{Path, State};
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};

@@ -165,10 +165,11 @@ html[data-device="laptop"] .as-laptop { display: revert; }
 .mode svg { width: 20px; height: 20px; }
 .mode[data-mode="tv"] .mode-tv, .mode:is([data-mode="phone"], [data-mode="moving"]) .mode-phone { color: var(--text); }
 .mode:is([data-mode="phone"], [data-mode="moving"])::before { transform: translateX(36px); }
-.mode[data-mode="moving"]::before { animation: pulse 0.8s infinite alternate; }
+.mode:is([data-mode="moving"], [data-act="pending"])::before { animation: pulse 0.8s infinite alternate; }
+.mode[data-act="pending"] { animation: none; }
 
 @media (prefers-reduced-motion: reduce) {
-  .mode[data-mode="moving"]::before { animation: none; opacity: 0.6; }
+  .mode:is([data-mode="moving"], [data-act="pending"])::before { animation: none; opacity: 0.6; }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -293,6 +294,19 @@ html[data-device="laptop"] .as-laptop { display: revert; }
 
 @keyframes arrive { from { opacity: 0; transform: translateY(-6px); } }
 @keyframes pulse { to { opacity: 0.5; } }
+
+/* A tap the TV hasn't confirmed yet pulses; one it refused shakes once and shows the state it is really in. */
+[data-act="pending"] { animation: pulse 0.8s infinite alternate; }
+[data-act="failed"] { animation: refused 0.36s ease-out; }
+@keyframes refused {
+  20%, 60% { translate: -4px 0; }
+  40%, 80% { translate: 4px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-act="pending"] { animation: none; opacity: 0.6; }
+  [data-act="failed"] { animation: none; }
+}
 
 /* Layout */
 
@@ -1031,11 +1045,7 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
 }
 
 .choice[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #1a1406; }
-.choice.pending { border-color: var(--accent); color: var(--accent); animation: pulse 0.8s infinite alternate; }
-
-@media (prefers-reduced-motion: reduce) {
-  .choice.pending { animation: none; }
-}
+.choice[data-act="pending"] { border-color: var(--accent); color: var(--accent); }
 .choice:active { transform: scale(0.96); }
 .sheet-playback > .answer { margin: -8px 0 0; }
 
@@ -1116,7 +1126,6 @@ html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
 .volume-level { display: block; height: 4px; margin: 0 4px; border-radius: 2px; background: rgba(255, 255, 255, 0.08); overflow: hidden; }
 .volume-level i { display: block; height: 100%; background: var(--accent); transition: width 0.2s ease-out; }
 .key:active { background: #30303b; transform: scale(0.97); }
-.key[aria-busy="true"], .choice[aria-busy="true"] { opacity: 0.6; }
 .remote .answer { margin: 2px 4px 0; }
 
 .pair { display: grid; gap: 10px; padding: 6px 4px 0; }
@@ -1215,7 +1224,6 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .pill.quiet { background: transparent; border: 1px solid var(--line); color: var(--text); }
 .pill:has(svg) { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; }
 .pill svg { width: 18px; height: 18px; }
-.pill[aria-busy="true"] { opacity: 0.6; }
 .setting-row .answer { grid-column: 1 / -1; margin: 0; }
 
 .answer { margin: 10px 0 0; color: var(--listening); font-size: 14px; }

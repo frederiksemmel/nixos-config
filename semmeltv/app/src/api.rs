@@ -291,6 +291,7 @@ fn router(api: Api) -> Router {
         .route("/api/subtitles/fetch", post(fetch_subtitles))
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
         .merge(tv::routes(api.television.clone()))
+        .merge(crate::client_log::routes())
         .merge(storage::routes(api.shared.storage.clone(), api.app.clone()))
         .merge(stream::routes(
             api.shared.clone(),

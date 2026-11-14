@@ -224,6 +224,18 @@ in
       "--headless"
       "--isolated"
     ];
+    # Safari's engine on an emulated iPhone, beside the Chromium one above.
+    mcp-servers.settings.servers.playwright-iphone = {
+      command = lib.getExe pkgs.playwright-mcp;
+      args = [
+        "--headless"
+        "--isolated"
+        "--browser"
+        "webkit"
+        "--device"
+        "iPhone 15"
+      ];
+    };
     mcp-servers.settings.servers.rerun = {
       command = lib.getExe pkgs.rerun;
       args = [ "viewer-mcp" ];

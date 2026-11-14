@@ -66,41 +66,41 @@ function notify(detail) {
   window.dispatchEvent(new CustomEvent("semmeltv:toast", { detail }));
 }
 
-async function post(button) {
+async function send(button) {
   const id = `post-${(posts += 1)}`;
   if (button.dataset.pending) notify({ text: button.dataset.pending, tone: "pending", id });
-  button.setAttribute("aria-busy", "true");
-  let ok = false;
+  let response;
   try {
-    const response = await fetch(`${api}${button.dataset.post}`, {
+    response = await fetch(`${api}${button.dataset.post}`, {
       method: button.dataset.method || "POST",
       headers: { "content-type": "application/json" },
       body: button.dataset.body || "{}",
     });
-    const answer = await response.json().catch(() => ({}));
-    ok = response.ok && answer.ok !== false;
-    const text = answer.message || answer.error || (response.ok ? "" : `The TV answered ${response.status}`);
-    if (text) notify({ text, detail: answer.matched === "title" ? OFF_BY_TITLE : "", tone: ok ? "ok" : "error", id });
-    else if (button.dataset.pending) notify({ id, dismiss: true });
-    if (ok && button.dataset.done === "hide") button.hidden = true;
-    if (ok && button.dataset.refresh === "tracks") {
+  } catch {
+    if (button.dataset.pending) notify({ id, dismiss: true });
+    throw new Error("The TV is not answering");
+  }
+  const answer = await response.json().catch(() => ({}));
+  const ok = response.ok && answer.ok !== false;
+  if (button.dataset.pending) notify({ id, dismiss: true });
+  if (!ok) throw new Error(answer.message || answer.error || `The TV answered ${response.status}`);
+  if (answer.message) notify({ text: answer.message, detail: answer.matched === "title" ? OFF_BY_TITLE : "", tone: "ok", id });
+  if (button.dataset.done === "hide") button.hidden = true;
+  if (button.dataset.refresh === "tracks") {
     refreshTracks();
     setTimeout(refreshTracks, TRACKS_SETTLE);
   }
-  } catch {
-    notify({ text: "The TV is not answering", tone: "error", id });
-  } finally {
-    button.removeAttribute("aria-busy");
-  }
-  if (!ok) button.classList.remove("pending");
 }
 
-function choose(button) {
-  const list = button.closest(".choices");
-  if (!list) return;
-  for (const other of list.querySelectorAll(".choice")) other.classList.toggle("pending", other === button);
-  setTimeout(() => button.classList.remove("pending"), UNCONFIRMED);
-  markChoices();
+function post(button) {
+  const list = button.classList.contains("choice") ? button.closest(".choices[data-state]") : null;
+  window.semmeltvAct({
+    key: list ? `choice:${list.dataset.state}` : `post:${button.dataset.post}`,
+    mark: button,
+    send: () => send(button),
+    confirmed: list ? () => document.querySelector(".now-state")?.dataset[list.dataset.state] === button.dataset.value : undefined,
+    timeout: UNCONFIRMED,
+  });
 }
 
 document.addEventListener("click", (event) => {
@@ -120,7 +120,7 @@ document.addEventListener("click", (event) => {
     } else if (target.dataset.playing) {
       const state = document.querySelector(".now-state");
       target.dataset.body = (state && state.dataset.fetch) || "{}";
-    } else if (target.classList.contains("choice")) choose(target);
+    }
     post(target);
   }
 });
@@ -238,13 +238,9 @@ function markChoices() {
     for (const button of list.querySelectorAll(".choice")) {
       const chosen = button.dataset.value === value;
       if (button.getAttribute("aria-pressed") !== String(chosen)) button.setAttribute("aria-pressed", String(chosen));
-      if (chosen && button.classList.contains("pending")) button.classList.remove("pending");
     }
   }
 }
-
-let flipFrom = null;
-let flipTimer = 0;
 
 function pausedNow() {
   const state = document.querySelector(".now-state");
@@ -252,19 +248,26 @@ function pausedNow() {
 }
 
 function unflip() {
-  flipFrom = null;
-  clearTimeout(flipTimer);
   root.removeAttribute("data-flip");
 }
 
 document.addEventListener("click", (event) => {
   if (!event.target.closest?.(".bar-toggle, .transport-toggle")) return;
-  if (root.hasAttribute("data-flip")) return unflip();
+  const act = window.semmeltvAct;
+  if (act.pending("toggle")) {
+    act({ key: "toggle", settled: unflip });
+    return;
+  }
   const paused = pausedNow();
   if (paused === null) return;
-  flipFrom = paused;
-  root.setAttribute("data-flip", "");
-  flipTimer = setTimeout(unflip, UNCONFIRMED);
+  act({
+    key: "toggle",
+    mark: ".bar-toggle, .transport-toggle",
+    optimistic: () => root.setAttribute("data-flip", ""),
+    confirmed: () => pausedNow() !== paused,
+    settled: unflip,
+    timeout: UNCONFIRMED,
+  });
 }, true);
 
 new MutationObserver((records) => {
@@ -275,7 +278,6 @@ new MutationObserver((records) => {
     shownKey = key;
     if (isOpen()) refreshTracks();
   }
-  if (flipFrom !== null && pausedNow() !== flipFrom) unflip();
   markChoices();
   markDelay();
 }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
