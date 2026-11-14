@@ -546,7 +546,7 @@ class Player {
       session = await request("POST", "/api/stream/open", body);
     } catch (error) {
       command({ action: "failed", reason: error.message });
-      this.failed(error.message, error.status);
+      this.failed(error.message);
       return;
     }
     if (this.closed) {
@@ -834,11 +834,11 @@ class Player {
     setTimeout(() => node.remove(), 6000);
   }
 
-  failed(text, status) {
+  failed(text) {
     this.root.classList.remove("pp-loading");
     this.root.classList.add("pp-failed");
     this.message.innerHTML = "";
-    const words = status === 403 ? "Watching on this phone needs Tailscale on" : (text || "This video didn't play");
+    const words = text || "This video didn't play";
     this.message.append(element("p", "", { text: words }));
     const row = element("div", "pp-row");
     if (this.pick) {

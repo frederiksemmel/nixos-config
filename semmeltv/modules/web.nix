@@ -217,8 +217,6 @@ in
                 proxy_read_timeout 1h;
                 proxy_send_timeout 1h;
                 proxy_buffering off;
-                proxy_set_header Tailscale-User-Login "";
-                proxy_set_header Tailscale-Funnel-Request "";
               '';
             };
           };

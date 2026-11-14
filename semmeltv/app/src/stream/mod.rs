@@ -11,9 +11,8 @@ use crate::bus::Bus;
 use crate::progress::Watched;
 use crate::segments::{self, Kind as SegmentKind, Title};
 use crate::sidecar;
-use axum::extract::{Path, Request as HttpRequest, State};
+use axum::extract::{Path, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
-use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
@@ -31,29 +30,11 @@ use std::time::Duration;
 use tokio::sync::{OnceCell, watch};
 use vtt::Source;
 
-const NEEDS_TAILSCALE: &str = "Watching on this phone needs Tailscale on";
-const FUNNEL: &str = "tailscale-funnel-request";
-const LOGIN: &str = "tailscale-user-login";
 const REST: Duration = Duration::from_secs(180);
 const FORGET: Duration = Duration::from_secs(12 * 3600);
 const MOST_SESSIONS: usize = 3;
 const CELLULAR_WARNING: u64 = 8_000_000;
 const PLAYLIST: &str = "application/vnd.apple.mpegurl";
-
-pub fn tailnet_user(headers: &HeaderMap) -> Option<String> {
-    if headers.contains_key(FUNNEL) {
-        return None;
-    }
-    let login = headers.get(LOGIN)?.to_str().ok()?.trim();
-    (!login.is_empty()).then(|| login.to_string())
-}
-
-async fn tailnet_only(request: HttpRequest, next: middleware::Next) -> Response {
-    match tailnet_user(request.headers()) {
-        Some(_) => next.run(request).await,
-        None => problem(StatusCode::FORBIDDEN, NEEDS_TAILSCALE.to_string()),
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -159,7 +140,6 @@ pub fn routes<S: Clone + Send + Sync + 'static>(shared: Arc<Shared>, bus: Bus, a
     };
     tokio::spawn(reap(streams.clone()));
     Router::new()
-        .route("/api/stream/access", get(access))
         .route("/api/stream/open", post(open))
         .route("/api/stream/{id}", delete(close))
         .route("/api/stream/{id}/main.m3u8", get(master))
@@ -169,7 +149,6 @@ pub fn routes<S: Clone + Send + Sync + 'static>(shared: Arc<Shared>, bus: Bus, a
         .route("/api/stream/{id}/subtitles/{name}", get(subtitles))
         .route("/api/stream/{id}/marks", get(marks))
         .route("/api/stream/{id}/progress", post(progress))
-        .route_layer(middleware::from_fn(tailnet_only))
         .with_state(streams)
 }
 
@@ -198,10 +177,6 @@ async fn reap(streams: Streams) {
             live.session.close();
         }
     }
-}
-
-async fn access(headers: HeaderMap) -> Response {
-    Json(serde_json::json!({ "ok": true, "user": tailnet_user(&headers) })).into_response()
 }
 
 fn new_id() -> String {
@@ -809,78 +784,4 @@ async fn progress(
         moment: report.state,
     });
     api::ask_app(&streams.app, request).await
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::subtitles::Subtitles;
-
-    #[test]
-    fn only_tailnet_requests_without_the_funnel_header_pass() {
-        let mut headers = HeaderMap::new();
-        assert_eq!(tailnet_user(&headers), None);
-        headers.insert(LOGIN, HeaderValue::from_static("frederik@example.com"));
-        assert_eq!(tailnet_user(&headers).as_deref(), Some("frederik@example.com"));
-        headers.insert(FUNNEL, HeaderValue::from_static("?1"));
-        assert_eq!(tailnet_user(&headers), None);
-    }
-
-    #[tokio::test]
-    async fn every_stream_route_refuses_funnel_requests() {
-        let shared = Arc::new(Shared::new(Subtitles::default()));
-        let ask: Ask = Arc::new(|_| {});
-        let root = std::env::temp_dir().join(format!("semmeltv-stream-test-{}", std::process::id()));
-        let router: Router = routes(shared, Bus::default(), ask, root);
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
-        let id = "0123456789abcdef0123456789abcdef";
-        let routes = [
-            ("GET", "/api/stream/access".to_string()),
-            ("POST", "/api/stream/open".to_string()),
-            ("DELETE", format!("/api/stream/{id}")),
-            ("GET", format!("/api/stream/{id}/main.m3u8")),
-            ("GET", format!("/api/stream/{id}/video.m3u8")),
-            ("GET", format!("/api/stream/{id}/init.mp4")),
-            ("GET", format!("/api/stream/{id}/segment/0.m4s")),
-            ("GET", format!("/api/stream/{id}/subtitles/0.m3u8")),
-            ("GET", format!("/api/stream/{id}/subtitles/0.vtt")),
-            ("GET", format!("/api/stream/{id}/marks")),
-            ("POST", format!("/api/stream/{id}/progress")),
-        ];
-        let statuses = tokio::task::spawn_blocking(move || {
-            let agent: ureq::Agent = ureq::Agent::config_builder().http_status_as_error(false).build().into();
-            let send = |method: &str, path: &str, headers: &[(&str, &str)]| {
-                let url = format!("http://{address}{path}");
-                let mut request = ureq::http::Request::builder().method(method).uri(&url);
-                for (name, value) in headers {
-                    request = request.header(*name, *value);
-                }
-                let request = request
-                    .header("content-type", "application/json")
-                    .body("{}".to_string())
-                    .unwrap();
-                agent.run(request).unwrap().status().as_u16()
-            };
-            routes
-                .iter()
-                .map(|(method, path)| {
-                    (
-                        path.clone(),
-                        send(method, path, &[(FUNNEL, "?1"), (LOGIN, "frederik@example.com")]),
-                        send(method, path, &[]),
-                        send(method, path, &[(LOGIN, "frederik@example.com")]),
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-        .await
-        .unwrap();
-        for (path, funnel, anonymous, tailnet) in statuses {
-            assert_eq!(funnel, 403, "{path} over Funnel");
-            assert_eq!(anonymous, 403, "{path} without a tailnet login");
-            assert_ne!(tailnet, 403, "{path} on the tailnet");
-        }
-    }
 }

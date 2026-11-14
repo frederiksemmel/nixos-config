@@ -541,14 +541,10 @@ connects and whenever the screen changes.
 ## Watching on a phone
 
 These stream a film or episode to the browser that asks, as HLS with fMP4
-segments, instead of playing it on the TV. They answer only requests that came
-over the tailnet: `tailscale serve` adds `Tailscale-User-Login` to those, and
-adds `Tailscale-Funnel-Request` to requests from the internet. Anything else
-gets 403 with `{ "error": "Watching on this phone needs Tailscale on" }`.
+segments, instead of playing it on the TV.
 
 | Method | Path | Answer |
 | --- | --- | --- |
-| GET | `/api/stream/access` | `{ ok, user }`: 200 on the tailnet, 403 otherwise |
 | POST | `/api/stream/open` | `{ movie }` or `{ show, season?, episode? }`, plus `client`, `device?`, `audio?`, `start?`, `replaces?` → a session |
 | GET | `/api/stream/{id}/main.m3u8` | the master playlist, to give the `<video>` or hls.js |
 | GET | `/api/stream/{id}/marks` | `{ segments, credits }`: TheIntroDB's recap and intro, and where the credits start |
