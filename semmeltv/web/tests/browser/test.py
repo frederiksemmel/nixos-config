@@ -313,6 +313,14 @@ def stub_hls(page):
     page.route("https://cdn.jsdelivr.net/**", lambda route: route.fulfill(body=HLS_STUB, content_type="text/javascript"))
 
 
+def stop_player(page, engine, step):
+    if not page.evaluate('!!document.querySelector(".pp.pp-mini")'):
+        page.locator(".pp-close").tap()
+    until(page, engine, f"{step}: the chevron folds the player into the bar", '!!document.querySelector(".pp.pp-mini")', 3000)
+    page.locator(".pp-mini-stop").tap()
+    until(page, engine, f"{step}: and its stop button closes it", '!document.querySelector(".pp")', 3000)
+
+
 def next_episode(page, engine):
     stub_hls(page)
     page.goto(BASE + "/shows/brooklyn-nine-nine", wait_until="commit")
@@ -323,34 +331,53 @@ def next_episode(page, engine):
         until(page, engine, "the switch moves to the phone", 'document.querySelector("#mode").dataset.mode === "phone"', 5000)
         page.wait_for_timeout(800)
         if page.evaluate('!!document.querySelector(".pp")'):
-            page.locator(".pp-close").tap()
-            until(page, engine, "closing the handed-over film closes the player", '!document.querySelector(".pp")', 3000)
+            stop_player(page, engine, "the handed-over film")
     fake_until(page, engine, "closing the player tells the TV it stopped", lambda: fake_get("/api/screen")["play"] is None)
     before = len(fake_get("/fake/opens"))
-    episode = page.locator('main button.episode[data-episode="3"]')
+    episode = page.locator('main button.episode[data-episode="1"]')
     episode.scroll_into_view_if_needed()
     episode.tap()
-    until(page, engine, "tapping an episode opens it on the phone", 'document.querySelector(".pp-title")?.textContent.includes("3. Episode 3")', 5000)
-    fake_until(page, engine, "and streams it", lambda: [o.get("episode") for o in fake_get("/fake/opens")[before:]] == [3])
+    until(page, engine, "tapping an episode opens it on the phone", 'document.querySelector(".pp-title")?.textContent.includes("1. Episode 1")', 5000)
+    fake_until(page, engine, "and streams it", lambda: [o.get("episode") for o in fake_get("/fake/opens")[before:]] == [1])
     page.wait_for_timeout(300)
     page.locator('.pp-pill[aria-label="Next episode"]').tap()
     fake_until(page, engine, "Next streams the next episode in place of this one",
-               lambda: opened_since(before) == [(3, None), (4, f"fake-session-{before + 1}")], detail=lambda: opened_since(before))
-    until(page, engine, "and the player shows it", 'document.querySelector(".pp-title")?.textContent.includes("4. Episode 4")', 5000)
+               lambda: opened_since(before) == [(1, None), (2, f"fake-session-{before + 1}")], detail=lambda: opened_since(before))
+    until(page, engine, "and the player shows it", 'document.querySelector(".pp-title")?.textContent.includes("2. Episode 2")', 5000)
     page.wait_for_timeout(500)
     page.evaluate('document.querySelector(".pp-video").dispatchEvent(new Event("ended"))')
     fake_until(page, engine, "an episode that ends plays the next one",
-               lambda: opened_since(before)[2:] == [(5, f"fake-session-{before + 2}")], detail=lambda: opened_since(before))
-    until(page, engine, "and the player shows that one", 'document.querySelector(".pp-title")?.textContent.includes("5. Episode 5") && !document.querySelector(".pp-failed")', 5000)
+               lambda: opened_since(before)[2:] == [(3, f"fake-session-{before + 2}")], detail=lambda: opened_since(before))
+    until(page, engine, "and the player shows that one", 'document.querySelector(".pp-title")?.textContent.includes("3. Episode 3") && !document.querySelector(".pp-failed")', 5000)
     page.wait_for_timeout(500)
-    check(engine, "the TV keeps the screen on the phone through it", fake_get("/api/screen")["play"]["episode"] == 5)
+    check(engine, "the TV keeps the screen on the phone through it", fake_get("/api/screen")["play"]["episode"] == 3)
     page.go_back()
-    until(page, engine, "Back closes the player and stays on the show",
-          '!document.querySelector(".pp") && location.pathname === "/shows/brooklyn-nine-nine" && !document.documentElement.classList.contains("pp-open")', 3000)
+    until(page, engine, "Back folds the player into the bar and stays on the show",
+          '!!document.querySelector(".pp.pp-mini") && location.pathname === "/shows/brooklyn-nine-nine" && !document.documentElement.classList.contains("pp-open")', 3000)
+    check(engine, "the bar shows what plays", page.evaluate('document.querySelector(".pp-mini-text").textContent.includes("3. Episode 3")'))
+    page.wait_for_timeout(800)
+    check(engine, "and it keeps playing there", (fake_get("/api/screen")["play"] or {}).get("episode") == 3)
+    scrolls(page, engine, "with the player in the bar")
+    page.locator(".pp-mini-text").tap()
+    until(page, engine, "tapping the bar opens the player again",
+          '!document.querySelector(".pp-mini") && document.documentElement.classList.contains("pp-open") && history.state?.player', 3000)
+    page.wait_for_timeout(500)
+    page.locator(".pp-close").tap()
+    until(page, engine, "the chevron folds it again", '!!document.querySelector(".pp.pp-mini")', 3000)
+    page.wait_for_timeout(500)
+    streams = len(fake_get("/fake/opens"))
+    playing = page.locator('main button.episode[data-episode="3"]')
+    playing.scroll_into_view_if_needed()
+    playing.tap()
+    until(page, engine, "tapping the episode that plays opens its player",
+          '!document.querySelector(".pp-mini") && document.querySelector(".pp-title").textContent.includes("3. Episode 3")', 3000)
+    page.wait_for_timeout(800)
+    check(engine, "without streaming it again", len(fake_get("/fake/opens")) == streams)
+    stop_player(page, engine, "after the bar")
     fake_until(page, engine, "and the TV hears that it stopped", lambda: fake_get("/api/screen")["play"] is None)
     page.wait_for_timeout(800)
     check(engine, "and the player stays closed", page.evaluate('!document.querySelector(".pp")'))
-    scrolls(page, engine, "after Back from the player")
+    check(engine, "and the bar is the TV remote again", page.evaluate('getComputedStyle(document.querySelector(".bar")).visibility !== "hidden" && !document.elementFromPoint(innerWidth / 2, innerHeight - 30).closest(".pp")'))
 
 
 def screen_answers(**answers):
@@ -576,7 +603,9 @@ def laptop_player(p):
         page.wait_for_timeout(800)
         if page.evaluate('!!document.querySelector(".pp")'):
             page.click(".pp-close")
-            until(page, engine, "closing the handed-over film closes the player", '!document.querySelector(".pp")', 3000)
+            until(page, engine, "the chevron folds the handed-over film into the bar", '!!document.querySelector(".pp.pp-mini")', 3000)
+            page.click(".pp-mini-stop")
+            until(page, engine, "and stop closes it", '!document.querySelector(".pp")', 3000)
     page.click("main button.play[data-play-movie]")
     until(page, engine, "Play opens the player on the laptop", '!!document.querySelector(".pp") && !document.querySelector(".pp-loading")', 5000)
     page.wait_for_timeout(500)
@@ -616,7 +645,28 @@ def laptop_player(p):
     check(engine, "a click beside the sheet closes it and leaves playback alone",
           page.evaluate('document.querySelector(".pp-sheet").hidden && !playerPaused()'))
     page.keyboard.press("Escape")
-    until(page, engine, "Escape closes the player", '!document.querySelector(".pp")', 3000)
+    until(page, engine, "Escape folds the player into the bar", '!!document.querySelector(".pp.pp-mini")', 3000)
+    check(engine, "and it keeps playing", page.evaluate("!playerPaused()") and fake_get("/api/screen")["play"] is not None)
+    page.wait_for_timeout(600)
+    bar = page.locator(".pp-minibar").bounding_box()
+    x, y = bar["x"] + bar["width"] / 2, bar["y"] + bar["height"] / 2
+    page.mouse.move(x, y)
+    page.mouse.down()
+    for step in range(1, 13):
+        page.mouse.move(x, y - 40 * step)
+    page.mouse.up()
+    until(page, engine, "dragging the bar up opens the player", '!document.querySelector(".pp-mini") && document.documentElement.classList.contains("pp-open")', 3000)
+    page.wait_for_timeout(500)
+    page.mouse.move(320, 200)
+    page.mouse.down()
+    for step in range(1, 13):
+        page.mouse.move(320, 200 + 40 * step)
+    page.mouse.up()
+    until(page, engine, "dragging the player down folds it into the bar", '!!document.querySelector(".pp.pp-mini")', 3000)
+    check(engine, "without pausing it", page.evaluate("!playerPaused()"))
+    page.wait_for_timeout(500)
+    page.click(".pp-mini-stop")
+    until(page, engine, "the bar's stop button closes the player", '!document.querySelector(".pp")', 3000)
     fake_until(page, engine, "and the TV hears that it stopped", lambda: fake_get("/api/screen")["play"] is None)
     page.click(".bar-open")
     until(page, engine, "the remote opens on the laptop", 'document.documentElement.hasAttribute("data-sheet")', 3000)

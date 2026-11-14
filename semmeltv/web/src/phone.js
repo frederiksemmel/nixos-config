@@ -7,7 +7,9 @@ const RESUME_KEY = "semmeltv.resume";
 const RESUME_WITHIN = 15000;
 const COUNTDOWN = 10;
 const JUMP = 10;
-const SWIPE_CLOSE = 110;
+const FLICK = 0.5;
+const START_DRAG = 8;
+const SETTLE_MS = 320;
 
 const HOVER_KEEPS = ".pp-top, .pp-middle button, .pp-bottom, .pp-skip, .pp-upnext, .pp-sheet";
 
@@ -22,6 +24,7 @@ const icons = {
   tv: '<svg viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="12.5" rx="2"/><path d="M8.5 20h7"/></svg>',
   full: '<svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>',
   pip: '<svg viewBox="0 0 24 24"><rect x="2.5" y="4.5" width="19" height="15" rx="2"/><rect class="fill" x="12" y="12" width="7" height="5" rx="1"/></svg>',
+  stop: '<svg viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></svg>',
   airplay: '<svg viewBox="0 0 24 24"><path d="M6 17H4.5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h15a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H18"/><path class="fill" d="m12 14 5 6H7z"/></svg>',
 };
 
@@ -40,7 +43,7 @@ function takeResume() {
   try {
     const saved = JSON.parse(sessionStorage.getItem(RESUME_KEY) || "null");
     sessionStorage.removeItem(RESUME_KEY);
-    return saved && Date.now() - saved.at < RESUME_WITHIN ? saved.pick : null;
+    return saved && Date.now() - saved.at < RESUME_WITHIN ? saved : null;
   } catch {
     return null;
   }
@@ -156,6 +159,11 @@ function samePick(a, b) {
   return a.show === b.show && a.season === b.season && a.episode === b.episode;
 }
 
+function pickOf(pick) {
+  if (pick.movie || pick.season) return pick;
+  return player && player.session && player.session.key === pick.show ? player.pickOf(player.session) : pick;
+}
+
 function pickOfPlay(play) {
   return play.kind === "movie" ? { movie: play.movie } : { show: play.show, season: play.season, episode: play.episode };
 }
@@ -177,7 +185,7 @@ function render() {
   if (!html.hasAttribute("data-phone-ready")) html.dataset.phoneReady = "";
   if (player && !player.closed) {
     if (!player.root.isConnected) document.body.append(player.root);
-    if (!html.classList.contains("pp-open")) html.classList.add("pp-open");
+    if (!player.mini && !html.classList.contains("pp-open")) html.classList.add("pp-open");
   }
   paintSwitch();
 }
@@ -208,10 +216,11 @@ function reconcile() {
   const view = screen;
   const play = view.play;
   if (reloaded) {
-    const pick = reloaded;
+    const saved = reloaded;
     reloaded = null;
     if (ours(view) && view.kind === "phone" && !play) {
-      playHere(pick);
+      playHere(saved.pick);
+      if (saved.mini && player) player.minimize();
       return;
     }
   }
@@ -311,6 +320,10 @@ function flip() {
 
 function playHere(pick) {
   if (!canWatchHere()) return;
+  if (player && !player.closed && player.session && !player.idling && samePick(player.pick, pickOf(pick))) {
+    player.expand();
+    return;
+  }
   openPlayer(pick, { waiting: true });
   command({ action: "play", ...pick });
 }
@@ -325,8 +338,9 @@ class Player {
     this.build();
     document.body.append(this.root);
     this.root.focus({ preventScroll: true });
+    this.mini = false;
     history.pushState({ ...(history.state || {}), player: true }, "");
-    this.onPop = () => { if (!history.state?.player) this.close(); };
+    this.onPop = () => { if (!history.state?.player) this.minimize(); };
     window.addEventListener("popstate", this.onPop);
     html.classList.add("pp-open");
     this.session = null;
@@ -348,7 +362,7 @@ class Player {
   }
 
   build() {
-    this.closeButton = button("pp-icon pp-close", "Close", icons.close);
+    this.closeButton = button("pp-icon pp-close", "Minimize", icons.close);
     this.titleText = element("div", "pp-title");
     this.airplay = button("pp-icon pp-airplay", "AirPlay", icons.airplay);
     this.pip = button("pp-icon pp-pip", "Picture in Picture", icons.pip);
@@ -393,12 +407,23 @@ class Player {
     this.message = element("div", "pp-message");
     this.spinner = element("div", "pp-spinner");
     this.ripple = element("div", "pp-ripple");
-    this.root.append(this.video, this.spinner, this.ripple, this.layer, this.skip, this.upNext, this.sheet, this.message);
+    this.miniText = element("div", "pp-mini-text");
+    this.miniPlay = button("pp-icon pp-mini-play", "Play", icons.play);
+    this.miniStop = button("pp-icon pp-mini-stop", "Stop", icons.stop);
+    this.miniBar = element("div", "pp-minibar", { role: "button", "aria-label": "Open the player" });
+    this.miniBar.append(this.miniText, this.miniPlay, this.miniStop);
+    this.root.append(this.video, this.spinner, this.ripple, this.layer, this.skip, this.upNext, this.sheet, this.message, this.miniBar);
   }
 
   bind() {
     const video = this.video;
-    this.closeButton.addEventListener("click", () => this.close());
+    this.closeButton.addEventListener("click", () => this.minimize());
+    this.miniPlay.addEventListener("click", () => this.toggle());
+    this.miniStop.addEventListener("click", () => this.close());
+    this.miniBar.addEventListener("click", (event) => {
+      if (this.dragged || event.target.closest("button")) return;
+      this.expand();
+    });
     this.playButton.addEventListener("click", () => this.toggle());
     this.backButton.addEventListener("click", () => this.jump(-JUMP));
     this.aheadButton.addEventListener("click", () => this.jump(JUMP));
@@ -451,15 +476,19 @@ class Player {
     video.addEventListener("canplay", () => this.root.classList.remove("pp-loading"));
     video.addEventListener("playing", () => {
       this.root.classList.remove("pp-loading");
-      this.playButton.innerHTML = icons.pause;
-      this.playButton.setAttribute("aria-label", "Pause");
+      for (const each of [this.playButton, this.miniPlay]) {
+        each.innerHTML = icons.pause;
+        each.setAttribute("aria-label", "Pause");
+      }
       this.begin();
       this.show();
       this.mediaState("playing");
     });
     video.addEventListener("pause", () => {
-      this.playButton.innerHTML = icons.play;
-      this.playButton.setAttribute("aria-label", "Play");
+      for (const each of [this.playButton, this.miniPlay]) {
+        each.innerHTML = icons.play;
+        each.setAttribute("aria-label", "Play");
+      }
       this.show(true);
       if (this.started && !video.ended) this.report("paused");
       this.mediaState("paused");
@@ -477,34 +506,26 @@ class Player {
     this.onLeave = () => {
       if (!this.started) return;
       this.report("stopped", true);
-      try { sessionStorage.setItem(RESUME_KEY, JSON.stringify({ pick: this.pick, at: Date.now() })); } catch {}
+      try { sessionStorage.setItem(RESUME_KEY, JSON.stringify({ pick: this.pick, mini: this.mini, at: Date.now() })); } catch {}
     };
     window.addEventListener("pagehide", this.onLeave);
 
     let taps = [];
-    let touchStart = null;
-    this.layer.addEventListener("touchstart", (event) => {
-      if (event.target.closest("button, input")) return;
-      const touch = event.touches[0];
-      touchStart = { x: touch.clientX, y: touch.clientY, time: Date.now() };
-    }, { passive: true });
-    this.layer.addEventListener("touchmove", (event) => {
-      if (!touchStart) return;
-      const dy = event.touches[0].clientY - touchStart.y;
-      if (dy > 0) this.root.style.transform = `translateY(${dy * 0.6}px)`;
-    }, { passive: true });
-    this.layer.addEventListener("touchend", (event) => {
-      if (!touchStart) return;
-      const touch = event.changedTouches[0];
-      const dy = touch.clientY - touchStart.y;
-      const dx = touch.clientX - touchStart.x;
-      touchStart = null;
-      this.root.style.transform = "";
-      if (dy > SWIPE_CLOSE && Math.abs(dx) < dy) {
-        event.preventDefault();
-        this.close();
-      }
+    this.root.addEventListener("pointerdown", (event) => {
+      if (this.drag || (event.pointerType === "mouse" && event.button !== 0)) return;
+      if (event.target.closest("input, .pp-sheet, .pp-message, .pp-upnext, .pp-skip")) return;
+      if (this.mini ? event.target.closest(".pp-minibar button") : !event.target.closest(".pp-layer") || event.target.closest("button")) return;
+      this.drag = { pointer: event.pointerId, start: event.clientY, moved: 0, live: false, opening: this.mini, samples: [{ y: event.clientY, t: performance.now() }] };
     });
+    this.onDragMove = (event) => {
+      if (this.drag && this.drag.pointer === event.pointerId) this.dragTo(event.clientY);
+    };
+    this.onDragEnd = (event) => {
+      if (this.drag && this.drag.pointer === event.pointerId) this.dragEnd();
+    };
+    window.addEventListener("pointermove", this.onDragMove);
+    window.addEventListener("pointerup", this.onDragEnd);
+    window.addEventListener("pointercancel", this.onDragEnd);
     let pointer = "touch";
     this.root.addEventListener("pointerdown", (event) => { pointer = event.pointerType; }, true);
     this.root.addEventListener("pointermove", (event) => {
@@ -525,7 +546,7 @@ class Player {
       this.fullscreen();
     });
     this.layer.addEventListener("click", (event) => {
-      if (event.target.closest("button, input")) return;
+      if (this.dragged || event.target.closest("button, input")) return;
       if (!this.sheet.hidden) {
         this.closeSheet();
         return;
@@ -547,7 +568,7 @@ class Player {
       this.tapTimer = setTimeout(() => (this.root.classList.contains("pp-controls") ? this.hide() : this.show()), 260);
     });
     this.onKey = (event) => {
-      if (event.ctrlKey || event.metaKey || event.altKey || this.closed) return;
+      if (event.ctrlKey || event.metaKey || event.altKey || this.closed || this.mini) return;
       const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
       const keys = {
         " ": () => this.toggle(),
@@ -558,7 +579,7 @@ class Player {
         ArrowUp: () => this.jump(60),
         f: () => this.fullscreen(),
         m: () => { video.muted = !video.muted; this.show(); },
-        Escape: () => (this.sheet.hidden ? this.close() : this.closeSheet()),
+        Escape: () => (this.sheet.hidden ? this.minimize() : this.closeSheet()),
       };
       const act = keys[key];
       if (!act || (key === " " && ownsSpace(event.target))) return;
@@ -567,14 +588,112 @@ class Player {
       if (!event.repeat || key.startsWith("Arrow")) act();
     };
     this.onKeyUp = (event) => {
-      if (event.key === " " && !this.closed && !ownsSpace(event.target)) event.preventDefault();
+      if (event.key === " " && !this.closed && !this.mini && !ownsSpace(event.target)) event.preventDefault();
     };
     document.addEventListener("keydown", this.onKey, true);
     document.addEventListener("keyup", this.onKeyUp, true);
   }
 
+  title(name, caption) {
+    for (const place of [this.titleText, this.miniText]) {
+      place.innerHTML = "";
+      place.append(element("strong", "", { text: name }));
+      if (caption) place.append(element("span", "", { text: caption }));
+    }
+  }
+
   closeSheet() {
     this.sheet.hidden = true;
+    this.show();
+  }
+
+  dragTo(y) {
+    const drag = this.drag;
+    const now = performance.now();
+    drag.moved = y - drag.start;
+    drag.samples.push({ y, t: now });
+    while (drag.samples.length > 2 && now - drag.samples[0].t > 100) drag.samples.shift();
+    if (!drag.live) {
+      if (Math.abs(drag.moved) < START_DRAG) return;
+      if (drag.opening ? drag.moved > 0 : drag.moved < 0) {
+        this.drag = null;
+        return;
+      }
+      drag.live = true;
+      drag.height = window.innerHeight;
+      try { this.root.setPointerCapture(drag.pointer); } catch {}
+      clearTimeout(this.settleTimer);
+      this.root.classList.add("pp-dragging");
+      if (drag.opening) this.layout(false);
+    }
+    const base = drag.opening ? drag.height : 0;
+    const at = Math.min(Math.max(base + drag.moved, 0), drag.height);
+    this.root.style.transform = `translateY(${at}px)`;
+  }
+
+  dragEnd() {
+    const drag = this.drag;
+    this.drag = null;
+    if (!drag.live) return;
+    this.dragged = true;
+    setTimeout(() => { this.dragged = false; }, 0);
+    const first = drag.samples[0];
+    const last = drag.samples[drag.samples.length - 1];
+    const held = performance.now() - last.t > 100;
+    const speed = !held && last.t > first.t ? (last.y - first.y) / (last.t - first.t) : 0;
+    const travelled = Math.abs(drag.moved) / drag.height;
+    const open = drag.opening
+      ? speed < -FLICK || (travelled > 0.25 && speed <= FLICK)
+      : !(speed > FLICK || (travelled > 0.25 && speed >= -FLICK));
+    this.root.classList.remove("pp-dragging");
+    if (open) this.expand(true);
+    else this.minimize(true);
+  }
+
+  layout(mini) {
+    this.mini = mini;
+    this.root.classList.toggle("pp-mini", mini);
+    this.root.setAttribute("aria-modal", String(!mini));
+    html.classList.toggle("pp-open", !mini);
+  }
+
+  minimize(dragged = false) {
+    if (this.closed || (this.mini && !dragged) || this.leaving) return;
+    this.leaving = true;
+    clearTimeout(this.settleTimer);
+    if (history.state?.player) history.back();
+    this.closeSheet();
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    if (!dragged) this.root.style.transform = "translateY(0px)";
+    void this.root.offsetWidth;
+    this.root.style.transform = "translateY(100%)";
+    this.settleTimer = setTimeout(() => {
+      this.leaving = false;
+      if (this.closed) return;
+      this.layout(true);
+      this.root.style.transform = "";
+      this.root.classList.remove("pp-mini-in");
+      void this.root.offsetWidth;
+      this.root.classList.add("pp-mini-in");
+      if (this.root.contains(document.activeElement)) document.activeElement.blur();
+    }, SETTLE_MS);
+  }
+
+  expand(dragged = false) {
+    if (this.closed || (!this.mini && !dragged)) return;
+    clearTimeout(this.settleTimer);
+    this.leaving = false;
+    if (this.mini) {
+      this.layout(false);
+      if (!dragged) {
+        this.root.style.transform = "translateY(100%)";
+        void this.root.offsetWidth;
+      }
+    }
+    if (!history.state?.player) history.pushState({ ...(history.state || {}), player: true }, "");
+    this.root.style.transform = "";
+    this.root.classList.remove("pp-mini-in");
+    this.root.focus({ preventScroll: true });
     this.show();
   }
 
@@ -600,7 +719,9 @@ class Player {
     const at = this.video.currentTime || 0;
     this.scrub.max = String(duration || 1);
     this.scrub.value = String(at);
-    this.scrub.style.setProperty("--done", `${duration ? (at / duration) * 100 : 0}%`);
+    const done = `${duration ? (at / duration) * 100 : 0}%`;
+    this.scrub.style.setProperty("--done", done);
+    this.miniBar.style.setProperty("--done", done);
     this.elapsed.textContent = clock(at);
     this.remaining.textContent = duration ? `-${clock(duration - at)}` : "–:––";
   }
@@ -701,9 +822,7 @@ class Player {
     this.lastTime = null;
     this.marks = { segments: [], credits: session.credits };
     this.cancelCountdown();
-    this.titleText.innerHTML = "";
-    this.titleText.append(element("strong", "", { text: session.title }));
-    if (session.kind === "show") this.titleText.append(element("span", "", { text: session.caption }));
+    this.title(session.title, session.kind === "show" ? session.caption : "");
     this.nextButton.hidden = !session.next;
     this.media(session);
     this.load(session);
@@ -881,8 +1000,7 @@ class Player {
     this.session = null;
     this.replacing = session.id;
     this.skip.hidden = true;
-    this.titleText.innerHTML = "";
-    this.titleText.append(element("strong", "", { text: session.title }), element("span", "", { text: session.next.title ? `${session.next.label} · ${session.next.title}` : session.next.label }));
+    this.title(session.title, session.next.title ? `${session.next.label} · ${session.next.title}` : session.next.label);
     this.wait(next);
     await this.reportFor(session, finished);
     if (!this.closed) await command({ action: "play", ...next });
@@ -1043,6 +1161,9 @@ class Player {
     if (history.state?.player) history.back();
     document.removeEventListener("keydown", this.onKey, true);
     document.removeEventListener("keyup", this.onKeyUp, true);
+    window.removeEventListener("pointermove", this.onDragMove);
+    window.removeEventListener("pointerup", this.onDragEnd);
+    window.removeEventListener("pointercancel", this.onDragEnd);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     this.video.pause();
     if (this.hls) this.hls.destroy();
@@ -1073,6 +1194,7 @@ function loadHls() {
 
 function openPlayer(pick, options = {}) {
   if (!player || player.closed) player = new Player();
+  else if (player.mini) player.expand();
   if (options.waiting) player.wait(pick);
   else player.open(pick, options);
 }

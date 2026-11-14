@@ -325,6 +325,7 @@ function velocity() {
   const first = drag.samples[0];
   const last = drag.samples[drag.samples.length - 1];
   const time = last.t - first.t;
+  if (performance.now() - last.t > 100) return 0;
   return time > 0 ? (last.y - first.y) / time : 0;
 }
 
