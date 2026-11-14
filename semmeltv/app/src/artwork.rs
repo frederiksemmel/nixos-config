@@ -5,7 +5,7 @@ use crate::tmdb::{Client, Face, Found, Kind, Season};
 use image::ImageReader;
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, BufWriter, Cursor};
 use std::path::{Path, PathBuf};
@@ -61,6 +61,7 @@ pub trait Source {
     fn details(&self, kind: Kind, id: u64) -> Result<Found, String>;
     fn season(&self, id: u64, season: u32) -> Result<Season, String>;
     fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, String>;
+    fn person_imdb(&self, person: u64) -> Result<Option<String>, String>;
 }
 
 pub trait Ratings {
@@ -89,6 +90,10 @@ impl Source for Client {
 
     fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, String> {
         Client::image(self, size, path).map_err(|error| error.to_string())
+    }
+
+    fn person_imdb(&self, person: u64) -> Result<Option<String>, String> {
+        Client::person_imdb(self, person).map_err(|error| error.to_string())
     }
 }
 
@@ -229,10 +234,28 @@ impl<S: Source> Run<'_, S> {
     }
 
     fn describe(&mut self, about: &mut About, imdb: &mut Option<String>, found: &Found, label: &str) {
+        let known: BTreeMap<u64, String> = about
+            .cast
+            .iter()
+            .filter_map(|member| Some((member.person?, member.imdb.clone()?)))
+            .collect();
         *about = About {
             described: Some(self.today),
             ..found.about.clone()
         };
+        for member in &mut about.cast {
+            let Some(person) = member.person else { continue };
+            member.imdb = match known.get(&person) {
+                Some(imdb) => Some(imdb.clone()),
+                None => match self.source.person_imdb(person) {
+                    Ok(imdb) => imdb,
+                    Err(error) => {
+                        self.summary.problems.push(format!("{label}: IMDb id of {} failed: {error}", member.name));
+                        None
+                    }
+                },
+            };
+        }
         if imdb.is_none() {
             imdb.clone_from(&found.imdb);
         }
@@ -564,6 +587,11 @@ added = 2024-05-01
                 {"episode_number":1,"name":"Secrets","still_path":"/s1.jpg","runtime":51},
                 {"episode_number":2,"name":"Wrong","still_path":null,"runtime":44}]}"#;
             Ok(serde_json::from_str(json).unwrap())
+        }
+
+        fn person_imdb(&self, person: u64) -> Result<Option<String>, String> {
+            self.calls.borrow_mut().push(format!("person {person}"));
+            Ok(Some(format!("nm{person}")))
         }
 
         fn image(&self, size: &str, path: &str) -> Result<Vec<u8>, String> {

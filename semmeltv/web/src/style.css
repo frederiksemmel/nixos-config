@@ -1701,6 +1701,7 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .detail-face img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 
 .detail-cast b { font-size: 13px; line-height: 1.25; }
+.detail-person { display: contents; color: inherit; text-decoration: none; }
 
 .detail-role { color: var(--muted); font-size: 12px; line-height: 1.25; }
 

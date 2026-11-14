@@ -181,6 +181,8 @@ pub struct Member {
     pub name: String,
     pub character: Option<String>,
     pub person: Option<u64>,
+    #[serde(default)]
+    pub imdb: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
@@ -256,7 +258,11 @@ impl About {
                 let person = member
                     .person
                     .map_or(String::new(), |person| format!(", person = {person}"));
-                let _ = writeln!(text, "  {{ name = {}{character}{person} }},", quoted(&member.name));
+                let imdb = member
+                    .imdb
+                    .as_ref()
+                    .map_or(String::new(), |imdb| format!(", imdb = {}", quoted(imdb)));
+                let _ = writeln!(text, "  {{ name = {}{character}{person}{imdb} }},", quoted(&member.name));
             }
             let _ = writeln!(text, "]");
         }

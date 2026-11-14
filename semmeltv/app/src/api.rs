@@ -658,6 +658,25 @@ struct CastView {
     name: String,
     character: Option<String>,
     photo: Option<String>,
+    imdb: String,
+}
+
+fn person_link(member: &crate::manifest::Member) -> String {
+    match &member.imdb {
+        Some(id) => format!("https://www.imdb.com/name/{id}/"),
+        None => {
+            let query: String = member
+                .name
+                .bytes()
+                .map(|byte| match byte {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => (byte as char).to_string(),
+                    b' ' => "+".to_string(),
+                    _ => format!("%{byte:02X}"),
+                })
+                .collect();
+            format!("https://www.imdb.com/find/?q={query}&s=nm")
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -744,6 +763,7 @@ fn about_view(
                     .person
                     .filter(|person| artwork::face(art, *person).is_file())
                     .map(|person| format!("/api/people/{person}/photo")),
+                imdb: person_link(member),
             })
             .collect(),
         scores: MoreScores {
@@ -1669,6 +1689,7 @@ mod tests {
                 name: "Timothée Chalamet".to_string(),
                 character: Some("Paul Atreides".to_string()),
                 person: Some(1_190_668),
+                imdb: None,
             }],
             ..About::default()
         };
@@ -1927,7 +1948,8 @@ mod tests {
         assert_eq!(about["scores"]["letterboxd"], 4.1);
         assert_eq!(
             about["cast"],
-            json!([{ "name": "Timothée Chalamet", "character": "Paul Atreides", "photo": null }])
+            json!([{ "name": "Timothée Chalamet", "character": "Paul Atreides", "photo": null,
+                     "imdb": "https://www.imdb.com/find/?q=Timoth%C3%A9e+Chalamet&s=nm" }])
         );
     }
 

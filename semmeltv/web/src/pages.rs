@@ -641,16 +641,18 @@ async fn cast(public: &Public, members: &[CastMember]) -> Result<impl View> {
                     for member in members {
                         let photo = member.photo.as_deref().map(|path| public.url(path));
                         <li>
-                            <span class="detail-face" style=(tint(&member.name))>
-                                <span>(initials(&member.name))</span>
-                                if let Some(photo) = photo {
-                                    <img src=(photo) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                            <a class="detail-person" href=(member.imdb.as_deref().unwrap_or("#")) target="_blank" rel="noopener">
+                                <span class="detail-face" style=(tint(&member.name))>
+                                    <span>(initials(&member.name))</span>
+                                    if let Some(photo) = photo {
+                                        <img src=(photo) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                                    }
+                                </span>
+                                <b>(member.name.as_str())</b>
+                                if let Some(character) = &member.character {
+                                    <span class="detail-role">(character.as_str())</span>
                                 }
-                            </span>
-                            <b>(member.name.as_str())</b>
-                            if let Some(character) = &member.character {
-                                <span class="detail-role">(character.as_str())</span>
-                            }
+                            </a>
                         </li>
                     }
                 </ul>

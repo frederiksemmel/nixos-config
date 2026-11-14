@@ -103,6 +103,8 @@ pub struct CastMember {
     pub name: String,
     pub character: Option<String>,
     pub photo: Option<String>,
+    #[serde(default)]
+    pub imdb: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

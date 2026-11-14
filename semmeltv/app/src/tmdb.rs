@@ -363,6 +363,7 @@ fn about(record: &Record) -> About {
                 name: member.name.trim().to_string(),
                 character: character(member),
                 person: Some(member.id),
+                imdb: None,
             })
             .collect(),
         described: None,
@@ -517,6 +518,11 @@ impl Client {
 
     pub fn imdb(&self, kind: Kind, id: u64) -> Result<Option<String>, ureq::Error> {
         let ids: ExternalIds = self.get(&format!("{API}/{}/{id}/external_ids", kind.path()), &[])?;
+        Ok(ids.imdb_id.filter(|imdb| !imdb.is_empty()))
+    }
+
+    pub fn person_imdb(&self, person: u64) -> Result<Option<String>, ureq::Error> {
+        let ids: ExternalIds = self.get(&format!("{API}/person/{person}/external_ids"), &[])?;
         Ok(ids.imdb_id.filter(|imdb| !imdb.is_empty()))
     }
 
