@@ -68,6 +68,17 @@ impl Layer for SignedIn {
                     if for_admins(&path) && !me.person.admin() {
                         return Err(redirect("/").into());
                     }
+                    if let Some(token) = path.strip_prefix("/invite/") {
+                        let invitee = Api::of(cx).invitee(token).await;
+                        let spent = match &invitee {
+                            Ok(Ok(person)) => person.id == me.person.id,
+                            Ok(Err(_)) => true,
+                            Err(_) => false,
+                        };
+                        if spent {
+                            return Err(redirect("/").into());
+                        }
+                    }
                     let cx = cx.with(me);
                     next.run(&cx, body).await
                 }

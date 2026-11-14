@@ -81,7 +81,10 @@ lasts 5 minutes and is used up by any attempt. Five wrong passwords lock that
 profile's password for a minute, doubling up to an hour.
 
 An invite link is good for 7 days and one use. Opening it shows a button;
-only the POST signs in, so a messenger's link preview can't use it up. A new
+only the POST signs in, so a messenger's link preview can't use it up. The web
+app then replaces the invite in the browser's history with Home, so Back never
+returns to a used link, and sends someone already signed in Home when they open
+a used, expired or their own invite again. A new
 invite for the same person replaces the old one. `semmeltv invite NAME` makes
 one from the command line, with `SEMMELTV_DB` and `SEMMELTV_ORIGINS` set, for
 the first admin or one who is locked out.

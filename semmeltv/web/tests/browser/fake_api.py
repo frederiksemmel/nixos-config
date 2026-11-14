@@ -35,6 +35,7 @@ PROFILES = {
 }
 sessions = {}
 invites = {"good-invite": 2}
+used_invites = set()
 OPEN = ("/api/auth/choices", "/api/auth/password", "/api/auth/passkey/start", "/api/auth/invite/")
 SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
 
@@ -144,11 +145,15 @@ async def auth_sign_out(request):
 
 
 async def auth_invite(request):
-    profile = invites.get(request.match_info["token"])
+    token = request.match_info["token"]
+    profile = invites.get(token)
     if profile is None:
         return web.json_response({"error": "This invite link is not valid", "ok": False}, status=404)
+    if token in used_invites:
+        return web.json_response({"error": "This invite link was already used", "ok": False}, status=410)
     if request.method == "GET":
         return web.json_response({"person": person(PROFILES[profile])})
+    used_invites.add(token)
     return signed_in(request, PROFILES[profile])
 
 

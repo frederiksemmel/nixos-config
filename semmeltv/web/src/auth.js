@@ -218,6 +218,7 @@ document.addEventListener("click", (event) => {
       mark: redeem,
       send: async () => {
         await call(`/api/auth/invite/${encodeURIComponent(redeem.dataset.token)}`, {});
+        history.replaceState(null, "", "/");
         location.assign("/account?welcome=1");
       },
     });

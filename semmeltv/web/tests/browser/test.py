@@ -456,8 +456,10 @@ def signs_in(page, engine):
     page.goto(BASE + "/movies/the-endless-summer-1966", wait_until="commit")
     until(page, engine, "a signed-out visitor lands on the picker", 'location.pathname === "/profiles"')
     check(engine, "with no player or remote", page.evaluate('!document.querySelector(".bar-open") && !document.querySelector("#microphone")'))
-    check(engine, "a profile nobody set up says so on its button",
-          page.evaluate('[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Ramu") && choice.textContent.includes("Not set up yet"))'))
+    until(page, engine, "a profile nobody set up says so on its button",
+          '[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Ramu") && choice.textContent.includes("Not set up yet"))', 5000)
+    if "Not set up yet" not in page.evaluate('document.body.innerText'):
+        print("picker shows:", page.evaluate('document.querySelector("main")?.innerText'))
     page.locator(".profile-choice", has_text="Ramu").click()
     until(page, engine, "and tapping it says how to set it up", 'document.querySelector("#sign-in-note").textContent.includes("invite link")', 5000)
     sign_in(page, engine, "Frederik", "wrong-pass", "a wrong password")
@@ -505,14 +507,16 @@ def invite(p):
     errors = []
     page.on("pageerror", lambda error: errors.append(f"{error} {getattr(error, 'stack', '')}"))
     page.route("**/api/**", forward)
+    page.goto(BASE + "/invite/made-up", wait_until="commit")
+    until(page, engine, "a bad invite link says so", '(document.querySelector("main")?.textContent || "").includes("not valid")')
     page.goto(BASE + "/invite/good-invite", wait_until="commit")
     until(page, engine, "an invite greets the person it is for", '!!document.querySelector("#redeem") && document.querySelector("main h1").textContent.includes("Mami")')
     page.locator("#redeem").tap()
     until(page, engine, "continuing signs them in and offers a passkey and a password", 'location.pathname === "/account" && !!document.querySelector("#add-passkey") && !!document.querySelector("#password-set")', 8000)
-    page.goto(BASE + "/invite/made-up", wait_until="commit")
-    until(page, engine, "a bad invite link says so", '(document.querySelector("main")?.textContent || "").includes("not valid")')
-    if "not valid" not in (page.evaluate('document.body ? document.body.innerText : ""') or ""):
-        print("invite page shows:", page.evaluate('document.documentElement.outerHTML')[:3000])
+    page.go_back(wait_until="commit")
+    until(page, engine, "Back from there goes Home, not to the used invite", 'location.pathname === "/" && !!document.querySelector(".profile-link")', 8000)
+    page.goto(BASE + "/invite/good-invite", wait_until="commit")
+    until(page, engine, "the used invite opened again sends the signed-in person Home", 'location.pathname === "/"', 8000)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
 
