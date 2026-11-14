@@ -53,7 +53,7 @@ let
       curl --fail-with-body --silent --show-error --request PATCH \
         --header "Authorization: Token $DESEC_TOKEN" \
         --header "Content-Type: application/json" \
-        --data '[{"subname": "${subname}", "type": "A", "ttl": ${if lan.public then "300" else "3600"}, "records": ["'"$address"'"]}]' \
+        --data '[{"subname": "${subname}", "type": "A", "ttl": ${if lan.public then "900" else "3600"}, "records": ["'"$address"'"]}]' \
         "https://desec.io/api/v1/domains/${lan.zone}/rrsets/"
       echo
       printf '%s\n' "$address" >"$published"
