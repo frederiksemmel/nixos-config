@@ -278,8 +278,9 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                                 <div class="choices" data-state="audio"></div>
                             </div>
                             <button type="button" class="pill handoff" data-handoff="phone">
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"></rect><path d="M11 18.5h2"></path></svg>
-                                "Continue on phone"
+                                phone_icon()
+                                <span class="as-phone">"Continue on phone"</span>
+                                <span class="as-laptop">"Continue on laptop"</span>
                             </button>
                             <button type="button" class="stop" data-post="/api/playback/stop">
                                 <svg viewBox="0 0 24 24" aria-hidden="true"><path class="solid" d="M7 7h10v10H7z"></path></svg>
@@ -497,7 +498,8 @@ async fn bar_progress(cx: &Cx) -> Result<impl View> {
 #[component]
 async fn phone_icon() -> Result<impl View> {
     Ok(view! {
-        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"></rect><path d="M11 18.5h2"></path></svg>
+        <svg class="as-phone" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2.2"></rect><path d="M11 18.5h2"></path></svg>
+        <svg class="as-laptop" viewBox="0 0 24 24" aria-hidden="true"><rect x="4.5" y="5" width="15" height="10.5" rx="1.5"></rect><path d="M2 19h20"></path></svg>
     })
 }
 
@@ -505,7 +507,7 @@ fn mode_of(screen: Option<&Screen>) -> (&'static str, String) {
     match screen {
         Some(Screen::Phone { device, .. }) => ("phone", format!("Watching on {}. Switch to the TV", device.name)),
         Some(Screen::Moving { device }) => ("moving", format!("Moving to {}", device.name)),
-        _ => ("tv", "Watching on the TV. Switch to this phone".to_string()),
+        _ => ("tv", "Watching on the TV. Switch to this device".to_string()),
     }
 }
 

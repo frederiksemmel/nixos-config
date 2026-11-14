@@ -100,6 +100,11 @@ function capabilities() {
   };
 }
 
+function isLaptop() {
+  const pointer = matchMedia("(hover: hover) and (pointer: fine)").matches;
+  return pointer && Math.min(window.screen.width, window.screen.height) >= 600;
+}
+
 function deviceName() {
   const agent = navigator.userAgent;
   if (/iPhone/.test(agent)) return "iPhone";
@@ -107,7 +112,7 @@ function deviceName() {
   if (/Android/.test(agent)) return "Android phone";
   if (/Macintosh/.test(agent)) return "Mac";
   if (/Windows/.test(agent)) return "Windows PC";
-  return "browser";
+  return isLaptop() ? "laptop" : "phone";
 }
 
 function thisDevice() {
@@ -144,6 +149,8 @@ function ours(view) {
 }
 
 function render() {
+  const kind = isLaptop() ? "laptop" : "phone";
+  if (html.dataset.device !== kind) html.dataset.device = kind;
   const mode = screen.kind === "tv" ? "tv" : "phone";
   if (html.dataset.mode !== mode) html.dataset.mode = mode;
   if (!html.hasAttribute("data-phone-ready")) html.dataset.phoneReady = "";

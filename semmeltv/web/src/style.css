@@ -159,6 +159,8 @@ svg .solid { fill: currentColor; stroke: none; }
 }
 
 html[data-phone-ready] .mode { display: grid; }
+.as-laptop, html[data-device="laptop"] .as-phone { display: none; }
+html[data-device="laptop"] .as-laptop { display: revert; }
 .mode span { position: relative; display: grid; place-items: center; height: 100%; transition: color 0.2s; }
 .mode svg { width: 20px; height: 20px; }
 .mode[data-mode="tv"] .mode-tv, .mode:is([data-mode="phone"], [data-mode="moving"]) .mode-phone { color: var(--text); }

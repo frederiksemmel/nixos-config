@@ -320,7 +320,7 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
             vec![
                 Effect::ResumeTv,
                 notice(
-                    format!("It didn't start on {}: {reason}. Still on the TV", device.name),
+                    format!("It didn't start on {}: {}. Still on the TV", device.name, reason.trim_end_matches('.')),
                     Tone::Error,
                 ),
             ],

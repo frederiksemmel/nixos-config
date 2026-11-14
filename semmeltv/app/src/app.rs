@@ -182,6 +182,7 @@ struct App {
     offer: Option<Offer>,
     waking_tv: Arc<AtomicBool>,
     paused_for_tv: Cell<bool>,
+    paused_for_handoff: bool,
     screen: screen::Screen,
     notice: Option<screen::Said>,
     stopping_tv: bool,
@@ -296,6 +297,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         offer: None,
         waking_tv: Arc::new(AtomicBool::new(false)),
         paused_for_tv: Cell::new(false),
+        paused_for_handoff: false,
         screen: screen::Screen::Tv,
         notice: None,
         stopping_tv: false,
@@ -1135,8 +1137,15 @@ impl App {
         let effects = self.screen.step(event, tv.as_ref(), Instant::now());
         for effect in effects {
             match effect {
-                screen::Effect::PauseTv => self.control(Control::Pause),
-                screen::Effect::ResumeTv => self.control(Control::Resume),
+                screen::Effect::PauseTv => {
+                    self.paused_for_handoff = self.player.as_ref().is_some_and(|player| !player.state().paused);
+                    self.control(Control::Pause);
+                }
+                screen::Effect::ResumeTv => {
+                    if std::mem::take(&mut self.paused_for_handoff) {
+                        self.control(Control::Resume);
+                    }
+                }
                 screen::Effect::StopTv => {
                     self.stopping_tv = self.player.is_some();
                     self.control(Control::Stop);
