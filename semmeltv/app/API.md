@@ -202,7 +202,7 @@ CEC by a playback device, which is why volume goes over the network.
 Samsung shows a prompt and accepts volume changes only from clients someone
 allowed there. The request stays open until someone presses Allow on the TV,
 up to 40 seconds, and answers "Paired with the TV". The TV's token is kept in
-`tv-token` in the cache directory and sent along when pairing again. Pairing is
+the database's `tv_token` setting and sent along when pairing again. Pairing is
 needed once per TV.
 
 Failures answer 422 with `ok` false and a message that states the fact:
@@ -232,8 +232,8 @@ The TV's own error code goes to the app's log.
 | POST | `/api/audio/track` | `{ "track": id }`: play that audio track |
 
 GET and PUT answer `{ settings, playing }`. The TV keeps the settings in
-`subtitles.json` in its cache directory (`/var/lib/semmeltv/cache` on a Pi),
-and every video starts with them. A PUT also restyles what is playing at once.
+its database (`/var/lib/semmeltv/semmeltv.db` on a Pi), and every video starts
+with them. A PUT also restyles what is playing at once.
 It answers 400 when a value is malformed or a field is unknown, and clamps
 numbers into their range.
 
@@ -288,8 +288,7 @@ preferred language among all tracks is chosen once the files are loaded.
 `POST /api/subtitles/delay` sets the delay of what plays, rounded to 0.1 s
 and clamped to ±60 s, and answers like the track request, for example
 "Subtitle delay +0.5 s". The TV remembers it per video file, in
-`subtitle-files.json` beside `subtitles.json`, and starts the file with it
-next time. A delay of 0 forgets it.
+its database, and starts the file with it next time. A delay of 0 forgets it.
 
 ### Finding subtitles
 

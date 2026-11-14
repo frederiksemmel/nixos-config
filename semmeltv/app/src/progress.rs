@@ -15,6 +15,13 @@ pub struct Position {
     pub finished: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Tracks {
+    pub audio: Option<i64>,
+    pub subtitle: Option<i64>,
+    pub subtitles_shown: Option<bool>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Watched {
     pub stopped_at: Option<f64>,
@@ -24,6 +31,8 @@ pub struct Watched {
     pub finished: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits: Option<f64>,
+    #[serde(default)]
+    pub tracks: Tracks,
 }
 
 impl Watched {
@@ -73,6 +82,10 @@ impl Progress {
         }
     }
 
+    pub fn keep_tracks(&mut self, file: &Path, tracks: Tracks) {
+        self.files.entry(file.to_path_buf()).or_default().tracks = tracks;
+    }
+
     pub fn played(&mut self, file: &Path, now: u64) {
         self.files.entry(file.to_path_buf()).or_default().last_played = Some(now);
     }
@@ -80,12 +93,14 @@ impl Progress {
     pub fn finish(&mut self, file: &Path) {
         let watched = self.files.entry(file.to_path_buf()).or_default();
         watched.stopped_at = None;
+        watched.tracks = Tracks::default();
         watched.finished = true;
     }
 
     pub fn unfinish(&mut self, file: &Path) {
         if let Some(watched) = self.files.get_mut(file) {
             watched.stopped_at = None;
+            watched.tracks = Tracks::default();
             watched.finished = false;
         }
     }
@@ -180,6 +195,7 @@ mod tests {
                 last_played: None,
                 finished: false,
                 credits: None,
+                tracks: Tracks::default(),
             }
         );
     }
@@ -203,6 +219,22 @@ mod tests {
         assert_eq!(progress.files[file].stopped_at, None);
         assert_eq!(progress.files[file].duration, Some(7860.0));
         assert!(progress.files[file].finished);
+    }
+
+    #[test]
+    fn a_finished_file_forgets_its_tracks_and_starts_over_with_the_defaults() {
+        let mut progress = Progress::default();
+        let file = Path::new("/lib/Up.mkv");
+        let tracks = Tracks {
+            audio: Some(2),
+            subtitle: Some(3),
+            subtitles_shown: Some(true),
+        };
+        progress.record(file, FILM);
+        progress.keep_tracks(file, tracks);
+        assert_eq!(progress.files[file].tracks, tracks);
+        progress.finish(file);
+        assert_eq!(progress.files[file].tracks, Tracks::default());
     }
 
     #[test]

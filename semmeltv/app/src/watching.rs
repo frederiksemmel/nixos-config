@@ -70,6 +70,14 @@ impl Current {
 }
 
 impl Watching {
+    pub fn from_entries(entries: Vec<Entry>) -> Self {
+        Self { entries }
+    }
+
+    pub fn entries(&self) -> &[Entry] {
+        &self.entries
+    }
+
     pub fn played(&mut self, kind: Kind, key: &str, now: u64) -> bool {
         let before: Vec<_> = self.order();
         self.entries.retain(|entry| !(entry.kind == kind && entry.key == key));

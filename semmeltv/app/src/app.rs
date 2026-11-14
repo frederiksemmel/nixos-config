@@ -5,6 +5,7 @@ use crate::bus::{Bus, NowPlaying, Voice as VoiceEvent};
 use crate::cache::Cache;
 use crate::cec;
 use crate::command::Command;
+use crate::db::Db;
 use crate::details::{self, Details, Ratings};
 use crate::display;
 use crate::downloads::remote::Downloads;
@@ -18,6 +19,7 @@ use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence, Source, Store};
 use crate::player::{self, Finish, Player};
+use crate::profile::ProfileId;
 use crate::progress::{self, Position, Progress};
 use crate::seek::Direction;
 use crate::segments::Title;
@@ -129,6 +131,7 @@ pub struct Setup {
     pub store: Store,
     pub storage: Option<storage::Cache>,
     pub cache: Cache,
+    pub db: Db,
     pub speech: Option<String>,
     pub wake_word: Option<voice::WakeWord>,
     pub microphone: Option<String>,
@@ -147,6 +150,8 @@ struct App {
     ui: AppWindow,
     nav: Nav,
     cache: Cache,
+    db: Db,
+    profile: ProfileId,
     art: PathBuf,
     images: Sender<Job<Target>>,
     player: Option<Player>,
@@ -196,6 +201,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         store,
         storage,
         cache,
+        db,
         speech,
         wake_word,
         microphone,
@@ -246,9 +252,12 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     };
     let saved = cache.saved_manifest();
     let library = library::load_saved(&root, &saved).unwrap_or_default();
-    let progress = cache.load_progress();
+    let progress = db.progress(ProfileId::FIRST).unwrap_or_else(|error| {
+        eprintln!("progress: {error}");
+        Progress::default()
+    });
     let bus = Bus::default();
-    let subtitles = Subtitles::load(cache.subtitles_path());
+    let subtitles = Subtitles::load(&db, ProfileId::FIRST);
     let television = Television::new(tv);
     let audio = headphones.then(|| {
         let keys = keys.clone();
@@ -263,6 +272,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         downloaded: store.downloaded(library.paths()),
         nav: Nav::new(library),
         cache,
+        db,
+        profile: ProfileId::FIRST,
         art: art.clone(),
         images,
         player: None,
@@ -639,6 +650,10 @@ impl App {
     }
 
     fn play(&mut self, path: &Path) {
+        self.play_from(path, self.resume_point(path));
+    }
+
+    fn play_from(&mut self, path: &Path, start: f64) {
         self.stopping_tv = false;
         if self.screen != screen::Screen::Tv {
             self.screen_step(screen::Event::TvPlays);
@@ -662,10 +677,14 @@ impl App {
             });
         };
         let keys = self.keys.clone();
-        let watch_later_dir = self.cache.watch_later_dir(path);
+        let tracks = match self.progress.files.get(path) {
+            Some(watched) if start > 0.0 => watched.tracks,
+            _ => progress::Tracks::default(),
+        };
         match Player::start(
             &source,
-            &watch_later_dir,
+            start,
+            tracks,
             self.caption(path),
             self.title(path),
             self.subtitles.clone(),
@@ -758,6 +777,7 @@ impl App {
     fn record_place(&mut self) {
         if let (Some(player), Some(playing)) = (&self.player, &self.playing) {
             self.progress.record(&playing.file, player.place());
+            self.progress.keep_tracks(&playing.file, player.tracks());
             self.progress.played(&playing.file, watching::now());
             let library = self.nav.library();
             let joined = watching::record(
@@ -786,7 +806,6 @@ impl App {
                 watching::complete(&mut self.progress, library, &playing.file);
                 self.save_progress();
             } else if watching::stopped(&mut self.progress, library, &playing.file) {
-                self.forget_place(&playing.file);
                 self.save_progress();
             }
         }
@@ -1046,12 +1065,12 @@ impl App {
 
     fn mark(&mut self, kind: watching::Kind, key: &str, episode: Option<(u32, u32)>, mark: watching::Mark) -> Outcome {
         let library = self.nav.library();
-        let Some(files) = watching::mark(&mut self.progress, library, kind, key, episode, mark) else {
+        if watching::mark(&mut self.progress, library, kind, key, episode, mark).is_none() {
             return Outcome {
                 message: format!("There is no {key} in the library"),
                 ok: false,
             };
-        };
+        }
         let name = match (kind, episode) {
             (watching::Kind::Movie, _) => library
                 .movies
@@ -1074,9 +1093,6 @@ impl App {
             }
         }
         .unwrap_or_else(|| key.to_string());
-        for file in &files {
-            self.forget_place(file);
-        }
         self.save_progress();
         self.present_home();
         self.queue_downloads(false);
@@ -1151,13 +1167,12 @@ impl App {
                     self.control(Control::Stop);
                 }
                 screen::Effect::PlayTv(place) => {
-                    if place.position > 1.0
-                        && let Err(error) =
-                            stream::resume::write(&self.cache.watch_later_dir(&place.file), &place.file, place.position)
-                    {
-                        eprintln!("screen: could not keep where {} stopped: {error}", place.file.display());
-                    }
-                    self.play(&place.file);
+                    let start = if place.position > 1.0 {
+                        place.position
+                    } else {
+                        self.resume_point(&place.file)
+                    };
+                    self.play_from(&place.file, start);
                 }
                 screen::Effect::ShowOnTv(text) => self.show_message(text),
                 screen::Effect::Tell(notice) => {
@@ -1293,20 +1308,12 @@ impl App {
         self.progress.record(file, place);
         self.progress.played(file, now);
         let joined = watching::record(&mut self.progress, library, file, report.played, now);
-        let remember = match report.moment {
-            stream::Moment::Ended => {
-                watching::complete(&mut self.progress, library, file);
-                false
+        match report.moment {
+            stream::Moment::Ended => watching::complete(&mut self.progress, library, file),
+            stream::Moment::Stopped => {
+                watching::stopped(&mut self.progress, library, file);
             }
-            stream::Moment::Stopped => !watching::stopped(&mut self.progress, library, file),
-            _ => true,
-        };
-        if remember && report.position > 0.0 {
-            if let Err(error) = stream::resume::write(&self.cache.watch_later_dir(file), file, report.position) {
-                eprintln!("progress: could not keep where {} stopped: {error}", file.display());
-            }
-        } else if !remember {
-            self.forget_place(file);
+            _ => {}
         }
         self.save_progress();
         if joined || report.moment != stream::Moment::Playing && report.moment != stream::Moment::Paused {
@@ -1316,15 +1323,6 @@ impl App {
         Outcome {
             message: "Kept the place".to_string(),
             ok: true,
-        }
-    }
-
-    fn forget_place(&self, file: &Path) {
-        match std::fs::remove_dir_all(self.cache.watch_later_dir(file)) {
-            Err(error) if error.kind() != std::io::ErrorKind::NotFound => {
-                eprintln!("progress: could not forget where {} stopped: {error}", file.display());
-            }
-            _ => {}
         }
     }
 
@@ -1728,7 +1726,7 @@ impl App {
 
     fn save_progress(&self) {
         self.shared.set_progress(&self.progress);
-        if let Err(error) = self.cache.save_progress(&self.progress) {
+        if let Err(error) = self.db.save_progress(self.profile, &self.progress) {
             eprintln!("progress: {error}");
         }
     }

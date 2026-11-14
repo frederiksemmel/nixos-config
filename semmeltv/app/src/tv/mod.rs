@@ -3,6 +3,7 @@ mod upnp;
 
 use crate::api::Outcome;
 use crate::cec::{self, Screen};
+use crate::db::Setting;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -10,7 +11,6 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Serialize;
 use std::fmt;
-use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -46,7 +46,7 @@ impl Kind {
 pub struct Settings {
     pub kind: Option<Kind>,
     pub renderer: Option<String>,
-    pub token: PathBuf,
+    pub token: Setting,
 }
 
 #[derive(Debug, PartialEq)]
@@ -120,12 +120,12 @@ struct Backends {
     pairing: Option<Box<dyn Pairing>>,
 }
 
-fn backends(kind: Kind, renderer: Option<&upnp::Renderer>, token: &Path) -> Backends {
+fn backends(kind: Kind, renderer: Option<&upnp::Renderer>, token: &Setting) -> Backends {
     let volume = renderer.map(|renderer| Box::new(renderer.clone()) as Box<dyn Volume>);
     let pairing = match kind {
         Kind::Generic => None,
         Kind::Samsung => renderer
-            .map(|renderer| Box::new(samsung::Remote::new(renderer.host(), token.to_path_buf())) as Box<dyn Pairing>),
+            .map(|renderer| Box::new(samsung::Remote::new(renderer.host(), token.clone())) as Box<dyn Pairing>),
     };
     Backends { kind, volume, pairing }
 }
@@ -139,7 +139,7 @@ struct Inner {
     power: Box<dyn Power>,
     kind: Option<Kind>,
     renderer: Option<upnp::Renderer>,
-    token: PathBuf,
+    token: Setting,
     chosen: Mutex<Option<Arc<Backends>>>,
 }
 
@@ -197,7 +197,7 @@ impl Television {
     }
 
     fn paired(&self) -> bool {
-        std::fs::read_to_string(&self.inner.token).is_ok_and(|token| !token.trim().is_empty())
+        self.inner.token.get().is_some()
     }
 
     pub fn show_semmeltv(&self) -> Result<(), Failure> {
@@ -330,6 +330,7 @@ async fn act(
 mod tests {
     use super::*;
     use serde_json::Value;
+    use std::path::Path;
     use tokio::net::TcpListener;
 
     struct NoPower;
@@ -362,7 +363,7 @@ mod tests {
                 power: Box::new(NoPower),
                 kind,
                 renderer,
-                token: std::env::temp_dir().join("semmeltv-tv-token-never-written"),
+                token: crate::db::Db::memory(Path::new("/lib")).tv_token(),
                 chosen: Mutex::new(None),
             }),
         }
@@ -398,7 +399,7 @@ mod tests {
                 power: Box::new(screen.clone()),
                 kind: None,
                 renderer: None,
-                token: std::env::temp_dir().join("semmeltv-tv-token-never-written"),
+                token: crate::db::Db::memory(Path::new("/lib")).tv_token(),
                 chosen: Mutex::new(None),
             }),
         };
@@ -445,12 +446,12 @@ mod tests {
     #[test]
     fn only_a_samsung_with_a_renderer_pairs() {
         let renderer = upnp::Renderer::new("http://192.168.1.148:9197/dmr".to_string());
-        let token = Path::new("/tmp/token");
-        let samsung = backends(Kind::Samsung, Some(&renderer), token);
+        let token = crate::db::Db::memory(Path::new("/lib")).tv_token();
+        let samsung = backends(Kind::Samsung, Some(&renderer), &token);
         assert!(samsung.volume.is_some() && samsung.pairing.is_some());
-        let generic = backends(Kind::Generic, Some(&renderer), token);
+        let generic = backends(Kind::Generic, Some(&renderer), &token);
         assert!(generic.volume.is_some() && generic.pairing.is_none());
-        let bare = backends(Kind::Samsung, None, token);
+        let bare = backends(Kind::Samsung, None, &token);
         assert!(bare.volume.is_none() && bare.pairing.is_none());
     }
 

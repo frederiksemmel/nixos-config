@@ -4,12 +4,10 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::crypto::{self, CryptoProvider};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
+use crate::db::Setting;
 use serde_json::Value;
-use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::net::{TcpStream, ToSocketAddrs};
-use std::os::unix::fs::OpenOptionsExt;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tungstenite::Message;
@@ -21,11 +19,11 @@ const ANSWER_TIME: Duration = Duration::from_secs(40);
 
 pub struct Remote {
     host: String,
-    token: PathBuf,
+    token: Setting,
 }
 
 impl Remote {
-    pub fn new(host: &str, token: PathBuf) -> Self {
+    pub fn new(host: &str, token: Setting) -> Self {
         Self {
             host: host.to_string(),
             token,
@@ -91,13 +89,10 @@ impl Remote {
 
 impl Pairing for Remote {
     fn pair(&self) -> Result<(), Failure> {
-        let saved = fs::read_to_string(&self.token)
-            .ok()
-            .map(|token| token.trim().to_string())
-            .filter(|token| !token.is_empty());
+        let saved = self.token.get();
         match self.connect(saved.as_deref())? {
             Some(token) if saved.as_ref() != Some(&token) => {
-                save(&self.token, &token).map_err(|error| Failure::Unsaved(error.to_string()))
+                self.token.set(&token).map_err(|error| Failure::Unsaved(error.to_string()))
             }
             _ => Ok(()),
         }
@@ -114,18 +109,6 @@ fn answer(text: &str) -> Option<Result<Option<String>, Failure>> {
         "ms.channel.timeOut" => Some(Err(Failure::NoAnswer)),
         _ => None,
     }
-}
-
-fn save(path: &PathBuf, token: &str) -> io::Result<()> {
-    let partial = path.with_extension("partial");
-    fs::OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .mode(0o600)
-        .open(&partial)?
-        .write_all(token.as_bytes())?;
-    fs::rename(partial, path)
 }
 
 fn encode(value: &str) -> String {
@@ -192,7 +175,8 @@ mod tests {
 
     #[test]
     fn the_url_names_semmeltv_and_carries_the_saved_token() {
-        let remote = Remote::new("192.168.1.148", PathBuf::new());
+        let db = crate::db::Db::memory(std::path::Path::new("/lib"));
+        let remote = Remote::new("192.168.1.148", db.tv_token());
         assert_eq!(
             remote.url(None),
             "wss://192.168.1.148:8002/api/v2/channels/samsung.remote.control?name=U2VtbWVsVFY%3D"

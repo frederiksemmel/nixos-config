@@ -6,6 +6,9 @@ license = "GPL-3.0-only"
 publish = false
 
 [dependencies]
+diesel = { version = "2.4", default-features = false, features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
+diesel_migrations = { version = "2.4", features = ["sqlite"] }
+libsqlite3-sys = { version = "0.40", features = ["bundled"] }
 cec_linux = { version = "0.2", features = ["poll"] }
 deunicode = "1"
 flate2 = "1"

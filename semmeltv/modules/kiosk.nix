@@ -39,7 +39,7 @@ in
     stateDir = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/semmeltv";
-      description = "Home of the `semmeltv` user, holding `library` and `cache`.";
+      description = "Home of the `semmeltv` user, holding `library`, `cache` and the database `semmeltv.db`.";
     };
 
     adminUser = lib.mkOption {
@@ -120,6 +120,7 @@ in
       environment = {
         SEMMELTV_LIBRARY = "${cfg.stateDir}/library";
         SEMMELTV_CACHE = "${cfg.stateDir}/cache";
+        SEMMELTV_DB = "${cfg.stateDir}/semmeltv.db";
         FONTCONFIG_FILE = "${pkgs.makeFontsConf {
           fontDirectories = [
             pkgs.dejavu_fonts

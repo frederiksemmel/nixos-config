@@ -1,4 +1,7 @@
 use crate::api::{self, Ask, Pending, Request};
+use crate::db::{self, Db};
+use crate::profile::ProfileId;
+use crate::progress::Tracks;
 use crate::sidecar::Sidecar;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -8,8 +11,6 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
@@ -64,11 +65,9 @@ const ALIASES: &[(&str, &str)] = &[
     ("brazilian", "pt"),
 ];
 const MOST_LANGUAGES: usize = 8;
-const PER_FILE_STYLE: [&str; 3] = ["sub-pos", "sub-scale", "sub-ass-override"];
 const NO_SUBTITLES: &str = "No subtitles in this file";
 const OFF: &str = "Subtitles off";
 const MOST_DELAY: f64 = 60.0;
-const FILES: &str = "subtitle-files.json";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -166,11 +165,7 @@ impl Settings {
             format!("--slang={}", self.languages.join(",")),
             format!("--sub-visibility={}", if self.shown { "yes" } else { "no" }),
             "--sub-auto=no".to_string(),
-            "--watch-later-options-remove=sub-delay".to_string(),
         ];
-        for name in PER_FILE_STYLE {
-            args.push(format!("--watch-later-options-remove={name}"));
-        }
         for (name, value) in self.style() {
             let value = match value {
                 Value::String(text) => text,
@@ -431,13 +426,13 @@ pub enum Change {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
-struct Remembered {
-    delay: f64,
-    embedded: Option<usize>,
+pub struct Remembered {
+    pub delay: f64,
+    pub embedded: Option<usize>,
 }
 
 impl Remembered {
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         self.delay == 0.0 && self.embedded.is_none()
     }
 }
@@ -453,18 +448,16 @@ struct Inner {
 }
 
 impl Inner {
-    fn remember(&mut self, change: impl FnOnce(&mut Remembered)) -> bool {
-        let Some(file) = self.file.clone() else {
-            return false;
-        };
+    fn remember(&mut self, change: impl FnOnce(&mut Remembered)) -> Option<(PathBuf, Remembered)> {
+        let file = self.file.clone()?;
         let remembered = self.files.entry(file.clone()).or_default();
         let before = *remembered;
         change(remembered);
-        let changed = *remembered != before;
-        if remembered.is_empty() {
+        let after = *remembered;
+        if after.is_empty() {
             self.files.remove(&file);
         }
-        changed
+        (after != before).then_some((file, after))
     }
 }
 
@@ -478,23 +471,26 @@ fn delay_label(delay: f64) -> String {
 
 #[derive(Clone, Default)]
 pub struct Subtitles {
-    path: Option<PathBuf>,
+    store: Option<(Db, ProfileId)>,
     state: Arc<Mutex<Inner>>,
 }
 
 impl Subtitles {
-    pub fn load(path: PathBuf) -> Self {
-        let settings = fs::read(&path)
-            .ok()
-            .and_then(|bytes| serde_json::from_slice::<Settings>(&bytes).ok())
+    pub fn load(db: &Db, profile: ProfileId) -> Self {
+        let settings = db
+            .subtitle_settings(profile)
+            .unwrap_or_else(|error| {
+                eprintln!("subtitles: the stored settings: {error}");
+                None
+            })
             .and_then(|settings| settings.checked().ok())
             .unwrap_or_default();
-        let files = fs::read(path.with_file_name(FILES))
-            .ok()
-            .and_then(|bytes| serde_json::from_slice(&bytes).ok())
-            .unwrap_or_default();
+        let files = db.subtitle_files().unwrap_or_else(|error| {
+            eprintln!("subtitles: the stored delays: {error}");
+            BTreeMap::new()
+        });
         Self {
-            path: Some(path),
+            store: Some((db.clone(), profile)),
             state: Arc::new(Mutex::new(Inner {
                 settings,
                 files,
@@ -554,21 +550,28 @@ impl Subtitles {
         self.playing().map_or(0.0, |playing| playing.delay)
     }
 
-    fn save(&self, settings: Settings) -> io::Result<()> {
-        if let Some(path) = &self.path {
-            write(path, &settings)?;
+    fn save(&self, settings: Settings) -> db::Result<()> {
+        if let Some((db, profile)) = &self.store {
+            db.save_subtitle_settings(*profile, &settings)?;
         }
         self.state.lock().unwrap().settings = settings;
         Ok(())
     }
 
-    fn save_files(&self, files: &BTreeMap<PathBuf, Remembered>) {
-        if let Some(path) = &self.path {
-            let path = path.with_file_name(FILES);
-            if let Err(error) = write(&path, files) {
-                eprintln!("subtitles: {}: {error}", path.display());
-            }
+    fn save_file(&self, (file, remembered): (PathBuf, Remembered)) {
+        if let Some((db, _)) = &self.store
+            && let Err(error) = db.save_subtitle_file(&file, remembered)
+        {
+            eprintln!("subtitles: {}: {error}", file.display());
         }
+    }
+
+    pub fn tracks(&self) -> Option<Tracks> {
+        self.playing().map(|playing| Tracks {
+            audio: playing.audio,
+            subtitle: playing.track,
+            subtitles_shown: Some(playing.visible),
+        })
     }
 
     pub fn started(&self, file: &Path, sidecars: Vec<Sidecar>) {
@@ -608,7 +611,7 @@ impl Subtitles {
     pub fn observe(&self, observed: Observed) -> Vec<Value> {
         let mut state = self.state.lock().unwrap();
         let mut commands = Vec::new();
-        let mut remembered = false;
+        let mut remembered = None;
         let shown = state.settings.shown;
         let languages = state.settings.languages.clone();
         let awaited = state.awaited;
@@ -639,10 +642,9 @@ impl Subtitles {
             Observed::Visible(visible) => playing.visible = visible,
             Observed::Delay(delay) => playing.delay = delay,
         }
-        if remembered {
-            let files = state.files.clone();
-            drop(state);
-            self.save_files(&files);
+        drop(state);
+        if let Some(remembered) = remembered {
+            self.save_file(remembered);
         }
         commands
     }
@@ -671,10 +673,9 @@ impl Subtitles {
                     return Answer::refused("The delay must be a number of seconds".to_string());
                 }
                 let delay = ((delay * 10.0).round() / 10.0).clamp(-MOST_DELAY, MOST_DELAY);
-                if state.remember(|remembered| remembered.delay = delay) {
-                    let files = state.files.clone();
+                if let Some(remembered) = state.remember(|remembered| remembered.delay = delay) {
                     drop(state);
-                    self.save_files(&files);
+                    self.save_file(remembered);
                 }
                 Answer::done((vec![json!(["set_property", "sub-delay", delay])], delay_label(delay)))
             }
@@ -697,15 +698,6 @@ impl Subtitles {
             }
         }
     }
-}
-
-fn write(path: &Path, value: &impl Serialize) -> io::Result<()> {
-    let temporary = path.with_extension("json.tmp");
-    if let Some(dir) = path.parent() {
-        fs::create_dir_all(dir)?;
-    }
-    fs::write(&temporary, serde_json::to_vec_pretty(value)?)?;
-    fs::rename(temporary, path)
 }
 
 #[derive(Serialize)]
@@ -955,7 +947,6 @@ mod tests {
             "--sub-border-style=background-box",
             "--sub-back-color=#80000000",
             "--sub-ass-override=force",
-            "--watch-later-options-remove=sub-scale",
         ] {
             assert!(args.iter().any(|arg| arg == expected), "{expected} in {args:?}");
         }
@@ -985,20 +976,17 @@ mod tests {
     }
 
     #[test]
-    fn settings_survive_a_restart_and_a_broken_file_falls_back_to_defaults() {
-        let dir = std::env::temp_dir().join(format!("semmeltv-subtitles-{}", std::process::id()));
-        let path = dir.join("subtitles.json");
-        let subtitles = Subtitles::load(path.clone());
+    fn settings_survive_a_restart_and_belong_to_one_profile() {
+        let db = Db::memory(Path::new("/lib"));
+        let subtitles = Subtitles::load(&db, ProfileId::FIRST);
         assert_eq!(subtitles.settings(), Settings::default());
         let bigger = Settings {
             size: 1.5,
             ..Settings::default()
         };
         subtitles.save(bigger.clone()).unwrap();
-        assert_eq!(Subtitles::load(path.clone()).settings(), bigger);
-        fs::write(&path, "{ not json").unwrap();
-        assert_eq!(Subtitles::load(path).settings(), Settings::default());
-        fs::remove_dir_all(dir).unwrap();
+        assert_eq!(Subtitles::load(&db, ProfileId::FIRST).settings(), bigger);
+        assert_eq!(Subtitles::load(&db, ProfileId(2)).settings(), Settings::default());
     }
 
     #[test]
@@ -1030,18 +1018,12 @@ mod tests {
         base: String,
         asked: mpsc::Receiver<String>,
         _runtime: tokio::runtime::Runtime,
-        dir: PathBuf,
+        db: Db,
     }
 
-    impl Drop for Server {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.dir);
-        }
-    }
-
-    fn serve(name: &str) -> Server {
-        let dir = std::env::temp_dir().join(format!("semmeltv-subtitles-api-{name}-{}", std::process::id()));
-        let subtitles = Subtitles::load(dir.join("subtitles.json"));
+    fn serve() -> Server {
+        let db = Db::memory(Path::new("/lib"));
+        let subtitles = Subtitles::load(&db, ProfileId::FIRST);
         subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
         subtitles.observe(Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap());
         let (asked, received) = mpsc::channel();
@@ -1061,7 +1043,7 @@ mod tests {
             base,
             asked: received,
             _runtime: runtime,
-            dir,
+            db,
         }
     }
 
@@ -1083,7 +1065,7 @@ mod tests {
 
     #[test]
     fn the_api_shows_settings_and_the_tracks_of_what_plays() {
-        let server = serve("show");
+        let server = serve();
         let (status, body) = send(&server, "GET", "/api/subtitles", Value::Null);
         assert_eq!(status, 200);
         assert_eq!(body["settings"]["languages"], json!(["en", "de"]));
@@ -1098,14 +1080,14 @@ mod tests {
 
     #[test]
     fn a_put_saves_the_change_and_restyles_what_plays() {
-        let server = serve("put");
+        let server = serve();
         let (status, body) = send(&server, "PUT", "/api/subtitles", json!({ "size": 1.4, "shown": true }));
         assert_eq!(status, 200);
         assert_eq!(body["settings"]["size"], 1.4);
         assert_eq!(body["settings"]["shown"], true);
         assert_eq!(body["settings"]["color"], "#FFFFFF");
         assert_eq!(server.asked.recv().unwrap(), "Subtitles(Restyle)");
-        let saved: Settings = serde_json::from_slice(&fs::read(server.dir.join("subtitles.json")).unwrap()).unwrap();
+        let saved = server.db.subtitle_settings(ProfileId::FIRST).unwrap().unwrap();
         assert_eq!(saved.size, 1.4);
         let (status, body) = send(&server, "PUT", "/api/subtitles", json!({ "color": "pink" }));
         assert_eq!(status, 400);
@@ -1115,7 +1097,7 @@ mod tests {
 
     #[test]
     fn tracks_and_the_toggle_go_to_the_tv() {
-        let server = serve("track");
+        let server = serve();
         let (status, body) = send(&server, "POST", "/api/subtitles/track", json!({ "track": 2 }));
         assert_eq!((status, body["ok"].clone()), (200, json!(true)));
         assert_eq!(server.asked.recv().unwrap(), "Subtitles(Track(Some(2)))");
@@ -1202,10 +1184,9 @@ mod tests {
 
     #[test]
     fn the_delay_applies_live_and_is_remembered_for_the_file() {
-        let dir = std::env::temp_dir().join(format!("semmeltv-delay-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&dir);
+        let db = Db::memory(Path::new("/lib"));
         let film = Path::new("/lib/Movies/Up/Up.mkv");
-        let subtitles = Subtitles::load(dir.join("subtitles.json"));
+        let subtitles = Subtitles::load(&db, ProfileId::FIRST);
         assert!(!subtitles.change(Change::Delay(0.5)).ok);
         subtitles.started(film, Vec::new());
         let answer = subtitles.change(Change::Delay(-1.04));
@@ -1214,7 +1195,7 @@ mod tests {
         subtitles.observe(Observed::Delay(-1.0));
         assert_eq!(subtitles.delay(), -1.0);
         subtitles.stopped();
-        let again = Subtitles::load(dir.join("subtitles.json"));
+        let again = Subtitles::load(&db, ProfileId::FIRST);
         assert!(again.mpv_args(film).contains(&"--sub-delay=-1".to_string()));
         assert!(
             again
@@ -1223,12 +1204,11 @@ mod tests {
         );
         again.started(film, Vec::new());
         assert_eq!(again.change(Change::Delay(0.0)).message, "Subtitle delay off");
-        assert!(!fs::read_to_string(dir.join(FILES)).unwrap().contains("Up.mkv"));
+        assert!(!db.subtitle_files().unwrap().contains_key(film));
         assert_eq!(
             again.change(Change::Delay(500.0)).commands,
             [json!(["set_property", "sub-delay", 60.0])]
         );
-        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

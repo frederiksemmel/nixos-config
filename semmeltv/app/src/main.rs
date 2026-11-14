@@ -7,6 +7,7 @@ mod cache;
 mod cec;
 mod client_log;
 mod command;
+mod db;
 mod details;
 mod display;
 mod downloads;
@@ -25,6 +26,7 @@ mod offline;
 mod overlay;
 mod parse;
 mod player;
+mod profile;
 mod progress;
 mod seek;
 mod screen;
@@ -43,6 +45,8 @@ mod watching;
 mod wyoming;
 
 use cache::Cache;
+use db::Db;
+use profile::ProfileId;
 use std::env;
 use std::fs;
 use std::path::{self, Path, PathBuf};
@@ -53,7 +57,7 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV] [--library DIR] [--meta DIR] [--cache DIR]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -65,6 +69,7 @@ struct Args {
     library: PathBuf,
     meta: Option<PathBuf>,
     cache: PathBuf,
+    db: PathBuf,
     vfs_cache: Option<PathBuf>,
     token_file: Option<PathBuf>,
     mdblist_key_file: Option<PathBuf>,
@@ -98,6 +103,9 @@ fn parse_args() -> Result<Args, String> {
         cache: env_path("SEMMELTV_CACHE")
             .or_else(|| env_path("XDG_CACHE_HOME").map(|dir| dir.join("semmeltv")))
             .unwrap_or_else(|| home.join(".cache/semmeltv")),
+        db: env_path("SEMMELTV_DB")
+            .or_else(|| env_path("XDG_STATE_HOME").map(|dir| dir.join("semmeltv/semmeltv.db")))
+            .unwrap_or_else(|| home.join(".local/state/semmeltv/semmeltv.db")),
         vfs_cache: env_path("SEMMELTV_VFS_CACHE"),
         token_file: env_path("TMDB_TOKEN_FILE"),
         mdblist_key_file: env_path("MDBLIST_API_KEY_FILE"),
@@ -134,6 +142,7 @@ fn parse_args() -> Result<Args, String> {
             "--library" => args.library = value("--library")?.into(),
             "--meta" => args.meta = Some(value("--meta")?.into()),
             "--cache" => args.cache = value("--cache")?.into(),
+            "--db" => args.db = value("--db")?.into(),
             "--vfs-cache" => args.vfs_cache = Some(value("--vfs-cache")?.into()),
             "--tmdb-token-file" => args.token_file = Some(value("--tmdb-token-file")?.into()),
             "--mdblist-key-file" => args.mdblist_key_file = Some(value("--mdblist-key-file")?.into()),
@@ -185,7 +194,23 @@ fn wake_word(args: &Args) -> Option<voice::WakeWord> {
     })
 }
 
+fn open_db(args: &Args) -> Result<Db, String> {
+    Db::open(&args.db, &args.library).map_err(|error| format!("{}: {error}", args.db.display()))
+}
+
+fn stored_progress(args: &Args) -> progress::Progress {
+    open_db(args)
+        .and_then(|db| db.progress(ProfileId::FIRST).map_err(|error| error.to_string()))
+        .unwrap_or_else(|error| {
+            eprintln!("progress: {error}");
+            progress::Progress::default()
+        })
+}
+
 fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
+    let db = open_db(&args)?;
+    db::import::from_cache(&db, cache.root(), ProfileId::FIRST, watching::now())
+        .map_err(|error| format!("importing {}: {error}", cache.root().display()))?;
     let capacity: Option<u64> = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
         .and_then(|bytes| bytes.parse().ok());
@@ -205,7 +230,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     let tv = tv::Settings {
         kind: kind.as_deref().map(tv::Kind::parse).transpose()?,
         renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
-        token: cache.tv_token_path(),
+        token: db.tv_token(),
     };
     let library = args.library.clone();
     let downloads = env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new);
@@ -216,6 +241,7 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         root: args.library,
         remote: env::var("SEMMELTV_REMOTE").ok().filter(|remote| !remote.is_empty()),
         cache,
+        db,
         tv,
         wake_word,
         speech: args.speech,
@@ -334,7 +360,7 @@ fn run_downloads(args: &Args) -> Result<(), String> {
     })
 }
 
-fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
+fn hear(args: &Args) -> Result<(), String> {
     let path = args.recording.as_ref().ok_or("hear needs a WAV file")?;
     let speech = args
         .speech
@@ -374,7 +400,7 @@ fn hear(args: &Args, cache: &Cache) -> Result<(), String> {
         }
     };
     let library = library::load(&args.library, args.meta())?;
-    println!("{:?}", intent::understand(&text, &library, &cache.load_progress()));
+    println!("{:?}", intent::understand(&text, &library, &stored_progress(args)));
     Ok(())
 }
 
@@ -388,13 +414,13 @@ fn run() -> Result<(), String> {
             intent::understand(
                 &args.transcript,
                 &library::load(&args.library, args.meta())?,
-                &cache.load_progress()
+                &stored_progress(&args)
             )
         ),
         "artwork" => run_artwork(&args)?,
         "import" => run_import(&args)?,
         "downloads" => run_downloads(&args)?,
-        "hear" => hear(&args, &cache)?,
+        "hear" => hear(&args)?,
         _ => run_ui(args, cache)?,
     }
     Ok(())

@@ -1578,7 +1578,7 @@ mod tests {
             television: Television::new(tv::Settings {
                 kind: None,
                 renderer: None,
-                token: std::env::temp_dir().join("semmeltv-api-tv-token"),
+                token: crate::db::Db::memory(FsPath::new("/lib")).tv_token(),
             }),
             audio: None,
             library: PathBuf::from("/lib"),

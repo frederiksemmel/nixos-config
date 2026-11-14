@@ -1,0 +1,12 @@
+DROP TABLE settings;
+DROP TABLE audio_prefs;
+DROP TABLE subtitle_settings;
+DROP TABLE dismissed;
+DROP TABLE watching;
+DROP TABLE show_places;
+DROP TABLE file_places;
+DROP TABLE files;
+DROP TABLE invites;
+DROP TABLE sessions;
+DROP TABLE passkeys;
+DROP TABLE profiles;

@@ -4,7 +4,7 @@ Apple TV style interface for a personal video library. It reads `library.toml`
 at the root of a library folder, draws menus with Slint, and plays video in a
 separate mpv window.
 
-    semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--meta DIR] [--cache DIR]
+    semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
              [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
              [--manifest FILE] [--listing FILE] [--refresh]
 
@@ -13,6 +13,7 @@ The library is `pcloud:SemmelTV`: `library.toml`, `Movies/`, `Series/` and
 `--meta` is where `library.toml` and `Artwork/` are read from, when they live apart
 from the videos; it defaults to `$SEMMELTV_META`, then the library.
 `--cache` defaults to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`.
+`--db` defaults to `$SEMMELTV_DB`, then `$XDG_STATE_HOME/semmeltv/semmeltv.db`.
 `--vfs-cache` defaults to `$SEMMELTV_VFS_CACHE`. Nothing in the app writes to the
 library: import and artwork work on a local copy of `library.toml`, which the
 `/semmeltv-incoming` skill uploads.
@@ -85,7 +86,7 @@ A quiet line at the bottom of Home and of a show describes the focused card:
 
 Encoding and audio come from `library.toml`. The duration is the one mpv reported
 once a file has played, and until then the `runtime` in `library.toml`. The stopping
-point comes from `progress.json`, and a finished title has none, nor does one left
+point comes from the database, and a finished title has none, nor does one left
 in its first minute. A show on Home describes its resume episode, named first, as
 in `S2 E3`. Anything unknown is left out. No video file is read for any of this.
 
@@ -233,12 +234,14 @@ own for commands sent over its IPC socket, which is how the remote reaches it.
 
 Stopping a video saves its position and playing it again resumes there. So does
 a restart, and a crash or power cut loses at most the last 30 seconds. A video
-that played to its end starts over. `progress.json` in the cache keeps the last
-episode started per show under `shows`, and each file's stopping point and real
-duration under `files`. mpv's own saved positions live in `watch-later/` in the
-cache, one folder per library file, so a position saved while streaming also
-applies to the same file played from the rclone cache, and two files with the
-same name stay apart.
+that played to its end starts over. The database keeps, per profile, the last
+episode started per show, and each file's stopping point with the audio track,
+subtitle track and whether subtitles showed. mpv keeps nothing of its own: it
+starts with `--start`, `--aid`, `--sid` and `--sub-visibility` from the
+database and `--no-resume-playback`. A file's real duration and where its
+credits start are kept once for everyone. Files are keyed by their path in the
+library, so a position saved while streaming also applies to the same file
+played from the rclone cache.
 
 ## Subtitles
 
@@ -248,13 +251,12 @@ subtitles in this file". Showing them with no track selected picks the first
 preferred language that has a full track, ahead of its hearing-impaired one.
 Subtitle files next to the video with a similar name load too.
 
-`subtitles.json` in the cache holds the settings: whether subtitles show when a
+The database holds each profile's settings: whether subtitles show when a
 video starts, the preferred languages in order, and the size, position, colours,
 outline, shadow and background box. Every video starts with them. The web app
 changes them through the [HTTP API](API.md#subtitles), and a change restyles the
 playing video at once. A resumed video keeps its own track and whether its
-subtitles showed, but always takes the current style: mpv's watch-later files
-leave out `sub-pos`, `sub-scale` and `sub-ass-override`.
+subtitles showed, but always takes the current style.
 
 ## Skipping intros and recaps
 
@@ -318,6 +320,39 @@ to write its `brightness`.
 
 What the app hears and does goes out on the API's event stream; see
 [API.md](API.md).
+
+## Database
+
+Everything the app learns while running lives in one SQLite database,
+`/var/lib/semmeltv/semmeltv.db` on a Pi, owned by the `semmeltv` user, through
+Diesel ([why](../docs/adr/0001-database.md)). `library.toml` stays the only
+source of truth for the library, and `library.last-good.toml` stays in the
+cache. The schema is in `migrations/`; the app applies new migrations when it
+starts. `src/db/` is the only code that touches it.
+
+| Table | Holds | Per |
+| --- | --- | --- |
+| `profiles` | Frederik (admin), Mami, Miriam, Ramu (viewers): name, role, password hash, colour | |
+| `passkeys`, `sessions`, `invites` | sign-in, kept by the auth code | profile |
+| `file_places` | a file's stopping point, when it was last played, finished, audio and subtitle track, subtitles shown | profile |
+| `show_places` | the last episode started per show, and whether it finished | profile |
+| `watching` | Currently watching, newest first | profile |
+| `dismissed` | files taken off Started and Forgotten | profile |
+| `subtitle_settings` | the subtitle settings, as JSON | profile |
+| `audio_prefs` | TV or headphones, and which headphones | profile |
+| `files` | a file's real duration, where its credits start, its subtitle delay and how many subtitle tracks it carries | file |
+| `settings` | one value per key, such as the Samsung pairing `tv_token` | TV |
+
+Paths are stored relative to the library root, as `library.toml` writes them.
+Until profiles reach the app, the TV reads and writes profile 1.
+
+The first start with an empty database imports the files that came before it
+from the cache: `progress.json`, `subtitles.json`, `subtitle-files.json`,
+`tv-token` and mpv's `watch-later/` folder, into profile 1, and moves them to
+`before-database/` in the cache. An `imported_cache` setting keeps it from
+running twice.
+
+Read it on the Pi with `sudo -u semmeltv sqlite3 /var/lib/semmeltv/semmeltv.db`.
 
 ## HTTP API
 

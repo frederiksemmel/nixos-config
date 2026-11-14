@@ -1,7 +1,7 @@
 use crate::command::Command;
 use crate::display::{self, Video};
 use crate::overlay::{self, View};
-use crate::progress::Place;
+use crate::progress::{Place, Tracks};
 use crate::seek::{self, Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
 use crate::sidecar;
@@ -171,6 +171,7 @@ struct Playback {
     drawn: String,
     toast_until: Option<Instant>,
     subtitles: Subtitles,
+    tracks: Tracks,
     on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
 }
@@ -184,7 +185,7 @@ impl Playback {
 
     fn command(&mut self, command: Command, now: Instant) {
         match command {
-            Command::Back => self.send(json!(["quit-watch-later", STOPPED_EXIT_CODE])),
+            Command::Back => self.send(json!(["quit", STOPPED_EXIT_CODE])),
             Command::Select => {
                 self.scrub.cancel();
                 let message = self.select();
@@ -340,7 +341,6 @@ impl Playback {
     fn save_position(&mut self) {
         if !self.ended && save_due(self.saved, self.position) {
             self.saved = self.position;
-            self.send(json!(["write-watch-later-config"]));
             if let Some(on_save) = &self.on_save {
                 on_save();
             }
@@ -349,8 +349,6 @@ impl Playback {
 
     fn end(&mut self) {
         self.ended = true;
-        self.send(json!(["set_property", "save-position-on-quit", false]));
-        self.send(json!(["delete-watch-later-config"]));
         self.send(json!(["quit", ENDED_EXIT_CODE]));
     }
 }
@@ -366,6 +364,23 @@ pub fn speed_within(speed: f64) -> f64 {
 pub fn speed_label(speed: f64) -> String {
     let text = format!("{speed:.2}");
     format!("{}×", text.trim_end_matches('0').trim_end_matches('.'))
+}
+
+fn resume_args(start: f64, tracks: Tracks) -> Vec<String> {
+    let mut args = Vec::new();
+    if start > 0.0 {
+        args.push(format!("--start={start:.3}"));
+    }
+    if let Some(audio) = tracks.audio {
+        args.push(format!("--aid={audio}"));
+    }
+    if let Some(subtitle) = tracks.subtitle {
+        args.push(format!("--sid={subtitle}"));
+    }
+    if let Some(shown) = tracks.subtitles_shown {
+        args.push(format!("--sub-visibility={}", if shown { "yes" } else { "no" }));
+    }
+    args
 }
 
 fn save_due(saved: f64, position: f64) -> bool {
@@ -470,7 +485,8 @@ pub struct State {
 impl Player {
     pub fn start(
         path: &Path,
-        watch_later_dir: &Path,
+        start: f64,
+        tracks: Tracks,
         name: String,
         title: Option<Title>,
         subtitles: Subtitles,
@@ -486,9 +502,8 @@ impl Player {
             .arg("--pause")
             .arg("--force-window=immediate")
             .arg("--really-quiet")
-            .arg("--save-position-on-quit")
-            .arg("--ignore-path-in-watch-later-config")
-            .arg(format!("--watch-later-dir={}", watch_later_dir.display()))
+            .arg("--no-resume-playback")
+            .arg("--no-save-position-on-quit")
             .arg("--keep-open")
             .arg("--hwdec=drm")
             .arg(format!("--audio-device={audio_device}"))
@@ -500,6 +515,7 @@ impl Player {
             .arg(format!("--osd-fonts-dir={OSD_FONTS}"))
             .arg(format!("--input-ipc-server={}", socket_path.display()))
             .args(subtitles.mpv_args(path))
+            .args(resume_args(start, tracks))
             .arg("--")
             .arg(path)
             .stdin(Stdio::null())
@@ -508,6 +524,7 @@ impl Player {
         let playback = Shared::new(Mutex::new(Playback {
             name,
             subtitles,
+            tracks,
             speed: 1.0,
             on_save: Some(Box::new(on_save)),
             on_key: Some(Box::new(on_key)),
@@ -534,6 +551,10 @@ impl Player {
             duration: playback.duration,
             credits: playback.chapter_credits.or(playback.credits),
         }
+    }
+
+    pub fn tracks(&self) -> Tracks {
+        self.playback.lock().unwrap().tracks
     }
 
     pub fn played(&self) -> f64 {
@@ -720,6 +741,9 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 for command in playback.subtitles.observe(observed) {
                     playback.send(command);
                 }
+                if let Some(tracks) = playback.subtitles.tracks() {
+                    playback.tracks = tracks;
+                }
             }
             Some(Event::Chapters(credits)) => shared.lock().unwrap().chapter_credits = credits,
             None => {}
@@ -877,6 +901,20 @@ mod tests {
     }
 
     #[test]
+    fn mpv_starts_where_the_file_stopped_with_the_tracks_it_had() {
+        let tracks = Tracks {
+            audio: Some(2),
+            subtitle: Some(3),
+            subtitles_shown: Some(false),
+        };
+        assert_eq!(
+            resume_args(1234.5, tracks),
+            ["--start=1234.500", "--aid=2", "--sid=3", "--sub-visibility=no"]
+        );
+        assert!(resume_args(0.0, Tracks::default()).is_empty());
+    }
+
+    #[test]
     fn a_resumed_video_saves_its_position_at_once() {
         assert!(save_due(Playback::default().saved, 1200.0));
     }
@@ -910,7 +948,7 @@ mod tests {
     }
 
     #[test]
-    fn the_end_forgets_the_position_before_quitting() {
+    fn the_end_quits_as_ended() {
         let (stream, mut mpv) = UnixStream::pair().unwrap();
         let mut playback = Playback {
             stream: Some(stream),
@@ -924,14 +962,7 @@ mod tests {
             .lines()
             .map(|line| serde_json::from_str::<Value>(line).unwrap()["command"].clone())
             .collect();
-        assert_eq!(
-            commands,
-            [
-                json!(["set_property", "save-position-on-quit", false]),
-                json!(["delete-watch-later-config"]),
-                json!(["quit", ENDED_EXIT_CODE]),
-            ]
-        );
+        assert_eq!(commands, [json!(["quit", ENDED_EXIT_CODE])]);
     }
 
     #[test]
@@ -957,13 +988,13 @@ mod tests {
             },
             playback,
         );
-        assert!(sent.iter().all(|command| command[0] != "quit-watch-later"));
+        assert!(sent.iter().all(|command| command[0] != "quit"));
         assert_eq!(
             received.try_iter().collect::<Vec<_>>(),
             [Command::Back, Command::Listen]
         );
         let sent = sent_by(|playback| playback.command(Command::Back, Instant::now()), playing());
-        assert_eq!(sent[0], json!(["quit-watch-later", STOPPED_EXIT_CODE]));
+        assert_eq!(sent[0], json!(["quit", STOPPED_EXIT_CODE]));
     }
 
     fn sent_by(act: impl FnOnce(&mut Playback), mut playback: Playback) -> Vec<Value> {

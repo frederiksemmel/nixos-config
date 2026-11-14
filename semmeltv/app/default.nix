@@ -29,6 +29,7 @@ let
         ./Cargo.lock
         ./Cargo.toml
         ./build.rs
+        ./migrations
         ./src
         ./ui
       ];

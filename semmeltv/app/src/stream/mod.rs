@@ -2,7 +2,6 @@ mod fmp4;
 mod index;
 mod plan;
 mod probe;
-pub mod resume;
 mod session;
 mod vtt;
 
