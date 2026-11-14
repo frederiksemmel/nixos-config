@@ -542,7 +542,7 @@ fn phone_line(screen: Option<&Screen>) -> Option<(String, String)> {
     } else {
         "Playing on"
     };
-    Some((play.title.clone(), format!("{doing} {}", device.name)))
+    Some((play.name.clone(), format!("{doing} {}", device.name)))
 }
 
 #[component]
@@ -614,9 +614,11 @@ async fn sheet_now(cx: &Cx) -> Result<impl View> {
     let public = app_context::<Public>(cx).clone();
     Ok(live! {
         let mut playback = app_context::<Live>(cx).playback.clone();
+        let mut screen = app_context::<Live>(cx).screen.clone();
         'shown: loop {
             let now = playback.borrow_and_update().clone();
-            let shown = look(now.as_ref());
+            let elsewhere = phone_line(screen.borrow_and_update().as_ref());
+            let shown = (look(now.as_ref()), elsewhere.clone());
             let token = match now {
                 Some(now) => {
                     let art = picture(&now).map(|path| public.url(&path));
@@ -636,18 +638,36 @@ async fn sheet_now(cx: &Cx) -> Result<impl View> {
                         </div>
                     }?
                 }
-                None => emit! {
-                    <div class="now idle">
-                        <h2>"TV remote"</h2>
-                        <span>"Nothing is playing. Pick something from the library, or use the TV keys below."</span>
-                    </div>
-                }?,
+                None => match elsewhere {
+                    Some((title, line)) => {
+                        let line = format!("{line}. The TV keys below still work.");
+                        emit! {
+                            <div class="now idle">
+                                <h2>(title.as_str())</h2>
+                                <span>(line.as_str())</span>
+                            </div>
+                        }?
+                    }
+                    None => emit! {
+                        <div class="now idle">
+                            <h2>"TV remote"</h2>
+                            <span>"Nothing is playing. Pick something from the library, or use the TV keys below."</span>
+                        </div>
+                    }?,
+                },
             };
             loop {
-                if !connected(cx) || playback.changed().await.is_err() {
+                if !connected(cx) {
                     break 'shown Ok(token);
                 }
-                if look(playback.borrow().as_ref()) != shown {
+                let changed = tokio::select! {
+                    changed = playback.changed() => changed,
+                    changed = screen.changed() => changed,
+                };
+                if changed.is_err() {
+                    break 'shown Ok(token);
+                }
+                if (look(playback.borrow().as_ref()), phone_line(screen.borrow().as_ref())) != shown {
                     break;
                 }
             }
@@ -754,6 +774,18 @@ pub async fn notices(cx: &Cx) -> Result<impl View> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_bar_names_what_a_phone_plays() {
+        let screen: Screen = serde_json::from_str(
+            r#"{"kind":"phone","device":{"id":"76ecfdaf","name":"laptop"},"play":{"state":"playing","kind":"episode","show":"brooklyn-nine-nine","season":8,"episode":3,"name":"Brooklyn Nine-Nine","caption":"3. Blue Flu","position":8.9,"session":"85cc2170","paused":false},"notice":null}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            phone_line(Some(&screen)),
+            Some(("Brooklyn Nine-Nine".to_string(), "Playing on laptop".to_string()))
+        );
+    }
 
     #[test]
     fn times_read_like_a_player() {

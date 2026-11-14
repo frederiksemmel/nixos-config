@@ -528,9 +528,13 @@ Commands carry `action` and the sending `device`:
   "season"?, "episode"? }`: this phone plays it, from where it last stopped.
   A TV that plays stops. Any other phone loses the screen.
 - `{ "action": "failed", "reason": text }`: this phone could not play.
+- `{ "action": "stop" }`: this phone's player closed. What it was starting or
+  playing stops; during a handoff to it the TV carries on at once.
 
 A phone that starts, plays or stops reports it through the stream's
-`progress`, which moves the screen too. A phone that hasn't reported for 45 s
+`progress`, which moves the screen too. A `playing` or `paused` report counts
+only for the title the screen has the phone on, so a late report from the
+episode before doesn't take the place of the next one. A phone that hasn't reported for 45 s
 (asleep, gone) stops being played on, keeping its place; one that doesn't
 start within 30 s likewise. Anything the TV itself plays, from the remote,
 voice or `/api/play`, takes the screen back to the TV.
@@ -561,10 +565,13 @@ in the answer, else the file's default track plays. A show without `season`
 and `episode` plays where it carries on. `start` is in seconds; without it,
 the video starts where the TV or a phone last stopped it, or at the beginning
 once it was finished or stopped in its credits. `replaces` ends that session
-first, for the next episode or another audio track.
+first, for the next episode or another audio track. Opening a session also
+ends the other sessions of the same `device`, such as the one a reloaded page
+left behind.
 
 At most three sessions play at once, and only one while the TV plays; the
-others get 429. Three minutes after its last request a session stops its
+others get 429. A handoff doesn't count as the TV playing for the phone it
+moves to. Three minutes after its last request a session stops its
 ffmpeg and drops its segments, and no longer counts towards that limit; it
 picks up again on the next request, and is forgotten after 12 hours.
 
@@ -596,7 +603,7 @@ index is refused.
 and the show's place, finishes the file when it stops in the credits or ends,
 and otherwise writes the position into the file's mpv resume entry, so the TV
 carries on from there. While the TV plays the same file, `ok` is false and
-nothing changes.
+nothing changes. A `stopped` or `ended` report also ends the session.
 
 ## Phone microphone
 

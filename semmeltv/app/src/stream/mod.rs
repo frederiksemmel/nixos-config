@@ -425,11 +425,27 @@ async fn open(State(streams): State<Streams>, Json(body): Json<OpenBody>) -> Res
         Verdict::Plays { hevc, copy_audio } => (hevc, copy_audio),
         Verdict::Refused(reason) => return problem(StatusCode::UNPROCESSABLE_ENTITY, reason),
     };
-    let tv_playing = streams.bus.now_playing().is_some();
+    let screen = streams.bus.screen_state();
+    let handed_here = screen.kind == "moving"
+        && screen
+            .device
+            .as_ref()
+            .zip(body.device.as_ref())
+            .is_some_and(|(to, asking)| to.id == asking.id);
+    let tv_playing = streams.bus.now_playing().is_some() && !handed_here;
     {
         let mut live = streams.live.lock().unwrap();
         if let Some(replaced) = body.replaces.as_ref().and_then(|id| live.remove(id)) {
             replaced.session.close();
+        }
+        if let Some(device) = &body.device {
+            live.retain(|_, other| {
+                let same = other.device.as_ref().is_some_and(|other| other.id == device.id);
+                if same {
+                    other.session.close();
+                }
+                !same
+            });
         }
         let limit = if tv_playing { 1 } else { MOST_SESSIONS };
         let watching = live.values().filter(|live| live.session.idle() < REST).count();
@@ -773,9 +789,10 @@ async fn progress(
             "position and played must be numbers".to_string(),
         );
     }
+    let ends = matches!(report.state, Moment::Stopped | Moment::Ended);
     let request = Request::Phone(Report {
         device: live.device.clone(),
-        session: id,
+        session: id.clone(),
         file: live.file.clone(),
         position: report.position.clamp(0.0, live.duration),
         duration: live.duration,
@@ -783,5 +800,9 @@ async fn progress(
         played: report.played.max(0.0),
         moment: report.state,
     });
-    api::ask_app(&streams.app, request).await
+    let answer = api::ask_app(&streams.app, request).await;
+    if ends && let Some(live) = streams.live.lock().unwrap().remove(&id) {
+        live.session.close();
+    }
+    answer
 }

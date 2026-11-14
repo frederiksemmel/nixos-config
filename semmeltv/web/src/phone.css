@@ -14,6 +14,8 @@ html.pp-open, html.pp-open body { overflow: hidden; overscroll-behavior: none; }
 }
 
 .pp.pp-in { transform: none; }
+.pp:focus { outline: none; }
+.pp:not(.pp-controls) { cursor: none; }
 
 .pp-video {
   position: absolute;
@@ -235,6 +237,10 @@ html.pp-open, html.pp-open body { overflow: hidden; overscroll-behavior: none; }
 }
 
 .pp-sheet[hidden] { display: none; }
+
+@media (min-width: 760px) {
+  .pp-sheet { left: 50%; right: auto; width: 640px; transform: translateX(-50%); }
+}
 .pp-grab { width: 38px; height: 5px; margin: 0 auto 10px; border-radius: 3px; background: rgba(255, 255, 255, 0.28); }
 .pp-columns { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 18px; }
 .pp-sheet h3 { margin: 4px 0 8px; font-size: 13px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase; color: rgba(255, 255, 255, 0.6); }

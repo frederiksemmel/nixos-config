@@ -338,7 +338,7 @@ pub struct Device {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct PhonePlay {
     pub state: String,
-    pub title: String,
+    pub name: String,
     #[serde(default)]
     pub caption: String,
     #[serde(default)]

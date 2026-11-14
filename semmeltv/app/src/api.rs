@@ -82,6 +82,9 @@ pub enum ScreenCommand {
         season: Option<u32>,
         episode: Option<u32>,
     },
+    Stop {
+        device: screen::Device,
+    },
     Failed {
         device: screen::Device,
         reason: String,

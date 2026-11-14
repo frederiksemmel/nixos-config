@@ -21,6 +21,8 @@ sound = {"changed": 0, "fail_next": False}
 screen = {"kind": "tv", "device": None, "play": None, "notice": None}
 screen_answers = {"delay": 0.0, "refuse": False}
 tv = {"on": True}
+opens = []
+screen_log = []
 CONNECT_SECONDS = 1.5
 SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
 
@@ -212,6 +214,15 @@ def film_place(position, state, session=None):
             "caption": "1966", "position": position, "session": session, "paused": False}
 
 
+def place_of(body, state):
+    if body.get("movie"):
+        return film_place(0.0, state)
+    season, episode = body.get("season") or 8, body.get("episode") or 1
+    return {"state": state, "kind": "episode", "show": body["show"], "season": season, "episode": episode,
+            "name": "Brooklyn Nine-Nine", "caption": f"{episode}. Episode {episode}", "position": 0.0,
+            "session": None, "paused": False}
+
+
 async def screen_view(request):
     return web.json_response(screen)
 
@@ -219,6 +230,7 @@ async def screen_view(request):
 async def screen_command(request):
     body = await request.json()
     action = body["action"]
+    screen_log.append(body)
     await asyncio.sleep(screen_answers["delay"])
     if screen_answers["refuse"]:
         return web.json_response({"message": "The TV said no", "ok": False}, status=422)
@@ -233,8 +245,8 @@ async def screen_command(request):
         screen.update(kind="tv", device=None, play=None)
     elif action == "play":
         tv["on"] = False
-        screen.update(kind="phone", device=body["device"], play=film_place(0.0, "starting"))
-    elif action == "failed":
+        screen.update(kind="phone", device=body["device"], play=place_of(body, "starting"))
+    elif action in ("failed", "stop"):
         screen.update(play=None)
     return web.json_response({"message": "done", "ok": True})
 
@@ -245,12 +257,49 @@ async def set_screen_answers(request):
 
 
 async def stream_open(request):
-    return web.json_response({"id": "fake-session", "playlist": "/api/stream/fake-session/main.m3u8", "kind": "movie",
-                              "key": "the-endless-summer-1966", "title": "The Endless Summer", "caption": "1966",
-                              "season": None, "episode": None, "poster": "/api/movies/the-endless-summer-1966/poster",
-                              "backdrop": "", "start": 0, "duration": 5498.56, "audio": [], "audio_index": None,
-                              "converted_audio": False, "subtitles": [], "subtitle_delay": 0, "credits": None,
-                              "next": None, "bitrate": 4000000, "heavy": False})
+    body = await request.json()
+    opens.append(body)
+    id = f"fake-session-{len(opens)}"
+    common = {"id": id, "playlist": f"/api/stream/{id}/main.m3u8", "backdrop": "", "start": 0, "audio": [],
+              "audio_index": None, "converted_audio": False, "subtitles": [], "subtitle_delay": 0, "credits": None,
+              "bitrate": 4000000, "heavy": False}
+    if body.get("show"):
+        season, episode = body.get("season") or 8, body.get("episode") or 1
+        following = {"season": season, "episode": episode + 1, "label": f"S{season} E{episode + 1}",
+                     "title": f"Episode {episode + 1}", "still": f"/api/shows/{body['show']}/episodes/{season}/{episode + 1}/still"}
+        return web.json_response({**common, "kind": "show", "key": body["show"], "title": "Brooklyn Nine-Nine",
+                                  "caption": f"{episode}. Episode {episode}", "season": season, "episode": episode,
+                                  "poster": f"/api/shows/{body['show']}/poster", "duration": 1300.0,
+                                  "next": following if episode < 10 else None})
+    return web.json_response({**common, "kind": "movie", "key": "the-endless-summer-1966", "title": "The Endless Summer",
+                              "caption": "1966", "season": None, "episode": None,
+                              "poster": "/api/movies/the-endless-summer-1966/poster", "duration": 5498.56, "next": None})
+
+
+async def stream_progress(request):
+    id = request.match_info["id"]
+    state = (await request.json())["state"]
+    play = screen["play"]
+    if play and state == "start":
+        play.update(state="playing", session=id)
+    elif play and state in ("stopped", "ended") and play["session"] == id:
+        screen.update(play=None)
+    return web.json_response({"message": "Noted", "ok": True})
+
+
+async def reset_screen(request):
+    screen.update(kind="tv", device=None, play=None, notice=None)
+    tv["on"] = True
+    screen_answers.update(delay=0.0, refuse=False)
+    return web.json_response({"ok": True})
+
+
+async def fake_opens(request):
+    return web.json_response(opens)
+
+
+async def fake_screen_log(request):
+    return web.json_response(screen_log)
 
 
 async def stream_slow(request):
@@ -275,6 +324,10 @@ app.router.add_get("/api/screen", screen_view)
 app.router.add_post("/api/screen", screen_command)
 app.router.add_post("/fake/screen-answers", set_screen_answers)
 app.router.add_post("/api/stream/open", stream_open)
+app.router.add_post("/api/stream/{id}/progress", stream_progress)
+app.router.add_get("/fake/opens", fake_opens)
+app.router.add_post("/fake/reset-screen", reset_screen)
+app.router.add_get("/fake/screen-log", fake_screen_log)
 app.router.add_get("/api/stream/{tail:.*}", stream_slow)
 app.router.add_post("/api/subtitles/delay", subtitle_delay)
 app.router.add_post("/api/subtitles/fetch", fetch_subtitles)

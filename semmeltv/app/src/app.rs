@@ -1235,6 +1235,10 @@ impl App {
                 self.screen_step(screen::Event::Play { device, place });
                 done(message)
             }
+            api::ScreenCommand::Stop { device } => {
+                self.screen_step(screen::Event::Stop { device });
+                done("Stopped".to_string())
+            }
             api::ScreenCommand::Failed { device, reason } => {
                 self.screen_step(screen::Event::Failed { device, reason });
                 done("Noted".to_string())
@@ -1254,6 +1258,7 @@ impl App {
                 stream::Moment::Playing | stream::Moment::Paused => screen::Event::Report {
                     device,
                     session,
+                    file: report.file.clone(),
                     position: report.position,
                     paused: report.moment == stream::Moment::Paused,
                 },

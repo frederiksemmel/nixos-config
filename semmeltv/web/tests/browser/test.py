@@ -281,9 +281,76 @@ def tv_plays(engine, step, wanted, timeout=5.0):
 
 HLS_STUB = (
     "window.Hls = class { static isSupported() { return true; } "
-    "on() {} loadSource() {} attachMedia() {} destroy() {} };"
+    "constructor() { this.handlers = {}; this.subtitleTracks = []; } "
+    "on(name, handler) { this.handlers[name] = handler; } loadSource() {} "
+    "attachMedia(media) { setTimeout(() => { this.handlers.m?.(); media.dispatchEvent(new Event('playing')); }, 50); } "
+    "destroy() {} };"
     "window.Hls.Events = { ERROR: 'e', MANIFEST_PARSED: 'm', SUBTITLE_TRACKS_UPDATED: 's' };"
 )
+
+
+def fake_get(path):
+    import json
+    with urllib.request.urlopen(FAKE + path) as response:
+        return json.load(response)
+
+
+def fake_until(page, engine, step, condition, timeout=6.0, detail=lambda: ""):
+    deadline = time.time() + timeout
+    while True:
+        ok = condition()
+        if ok or time.time() > deadline:
+            check(engine, step, bool(ok), "" if ok else str(detail()))
+            return
+        page.wait_for_timeout(200)
+
+
+def opened_since(before):
+    return [(o.get("episode"), o.get("replaces")) for o in fake_get("/fake/opens")[before:]]
+
+
+def stub_hls(page):
+    page.route("https://cdn.jsdelivr.net/**", lambda route: route.fulfill(body=HLS_STUB, content_type="text/javascript"))
+
+
+def next_episode(page, engine):
+    stub_hls(page)
+    page.goto(BASE + "/shows/brooklyn-nine-nine", wait_until="commit")
+    until(page, engine, "the show page lists its episodes", 'document.querySelectorAll("main button.episode[data-play-show]").length >= 3', 8000)
+    page.wait_for_timeout(800)
+    if page.evaluate('document.querySelector("#mode").dataset.mode') == "tv":
+        page.locator("#mode").tap()
+        until(page, engine, "the switch moves to the phone", 'document.querySelector("#mode").dataset.mode === "phone"', 5000)
+        page.wait_for_timeout(800)
+        if page.evaluate('!!document.querySelector(".pp")'):
+            page.locator(".pp-close").tap()
+            until(page, engine, "closing the handed-over film closes the player", '!document.querySelector(".pp")', 3000)
+    fake_until(page, engine, "closing the player tells the TV it stopped", lambda: fake_get("/api/screen")["play"] is None)
+    before = len(fake_get("/fake/opens"))
+    episode = page.locator('main button.episode[data-episode="3"]')
+    episode.scroll_into_view_if_needed()
+    episode.tap()
+    until(page, engine, "tapping an episode opens it on the phone", 'document.querySelector(".pp-title")?.textContent.includes("3. Episode 3")', 5000)
+    fake_until(page, engine, "and streams it", lambda: [o.get("episode") for o in fake_get("/fake/opens")[before:]] == [3])
+    page.wait_for_timeout(300)
+    page.locator('.pp-pill[aria-label="Next episode"]').tap()
+    fake_until(page, engine, "Next streams the next episode in place of this one",
+               lambda: opened_since(before) == [(3, None), (4, f"fake-session-{before + 1}")], detail=lambda: opened_since(before))
+    until(page, engine, "and the player shows it", 'document.querySelector(".pp-title")?.textContent.includes("4. Episode 4")', 5000)
+    page.wait_for_timeout(500)
+    page.evaluate('document.querySelector(".pp-video").dispatchEvent(new Event("ended"))')
+    fake_until(page, engine, "an episode that ends plays the next one",
+               lambda: opened_since(before)[2:] == [(5, f"fake-session-{before + 2}")], detail=lambda: opened_since(before))
+    until(page, engine, "and the player shows that one", 'document.querySelector(".pp-title")?.textContent.includes("5. Episode 5") && !document.querySelector(".pp-failed")', 5000)
+    page.wait_for_timeout(500)
+    check(engine, "the TV keeps the screen on the phone through it", fake_get("/api/screen")["play"]["episode"] == 5)
+    page.go_back()
+    until(page, engine, "Back closes the player and stays on the show",
+          '!document.querySelector(".pp") && location.pathname === "/shows/brooklyn-nine-nine" && !document.documentElement.classList.contains("pp-open")', 3000)
+    fake_until(page, engine, "and the TV hears that it stopped", lambda: fake_get("/api/screen")["play"] is None)
+    page.wait_for_timeout(800)
+    check(engine, "and the player stays closed", page.evaluate('!document.querySelector(".pp")'))
+    scrolls(page, engine, "after Back from the player")
 
 
 def screen_answers(**answers):
@@ -314,14 +381,14 @@ def switch_answers_at_once(page, engine):
 
 
 def watches_on_the_phone(page, engine):
-    page.route("https://cdn.jsdelivr.net/**", lambda route: route.fulfill(body=HLS_STUB, content_type="text/javascript"))
+    stub_hls(page)
     page.locator("#mode").tap()
     until(page, engine, "flipping to the phone opens the player", 'document.documentElement.dataset.mode === "phone" && !!document.querySelector(".pp")', 5000)
     tv_plays(engine, "flipping to the phone stops the TV", False)
     page.wait_for_timeout(600)
     page.reload(wait_until="commit")
     until(page, engine, "after a reload the player matches the backend", 'document.documentElement.dataset.mode === "phone" && !!document.querySelector(".pp")', 8000)
-    page.evaluate('document.querySelector(".pp-tv").click()')
+    page.evaluate('document.querySelector(".pp-tv")?.click()')
     until(page, engine, "Continue on TV closes the player", '!document.querySelector(".pp") && document.documentElement.dataset.mode === "tv"', 5000)
     tv_plays(engine, "Continue on TV plays on the TV again", True)
     page.locator("#mode").tap()
@@ -384,6 +451,7 @@ def run(p, engine, device):
     page.route("**/api/**", forward)
     fake("/fake/forget-subtitles")
     fake("/fake/forget-marks")
+    fake("/fake/reset-screen")
     page.goto(BASE + "/", wait_until="commit")
     page.wait_for_timeout(2500)
     if not answers(page, engine, "cold load"):
@@ -442,6 +510,7 @@ def run(p, engine, device):
     answers(page, engine, "after play/pause")
     opens_title(page, engine, "after play/pause")
     marks_episodes(page, engine)
+    next_episode(page, engine)
     missing(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
@@ -478,10 +547,91 @@ def desktop(p):
     browser.close()
 
 
+PLAYING = """() => {
+  const video = document.querySelector(".pp-video");
+  let paused = false;
+  Object.defineProperty(video, "paused", { get: () => paused, configurable: true });
+  video.play = () => { paused = false; video.dispatchEvent(new Event("playing")); return Promise.resolve(); };
+  video.pause = () => { paused = true; video.dispatchEvent(new Event("pause")); };
+  window.playerPaused = () => paused;
+  video.dispatchEvent(new Event("playing"));
+}"""
+
+
+def laptop_player(p):
+    engine = "laptop"
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.set_default_timeout(8000)
+    errors = []
+    page.on("pageerror", lambda error: errors.append(str(error)))
+    page.route("**/api/**", forward)
+    stub_hls(page)
+    page.goto(BASE + "/movies/the-endless-summer-1966", wait_until="commit")
+    until(page, engine, "a laptop gets the laptop player", 'document.documentElement.dataset.device === "laptop" && !!document.querySelector("main button.play[data-play-movie]")')
+    page.wait_for_timeout(1000)
+    if page.evaluate('document.querySelector("#mode").dataset.mode') == "tv":
+        page.click("#mode")
+        until(page, engine, "the switch moves to the laptop", 'document.querySelector("#mode").dataset.mode === "phone"', 5000)
+        page.wait_for_timeout(800)
+        if page.evaluate('!!document.querySelector(".pp")'):
+            page.click(".pp-close")
+            until(page, engine, "closing the handed-over film closes the player", '!document.querySelector(".pp")', 3000)
+    page.click("main button.play[data-play-movie]")
+    until(page, engine, "Play opens the player on the laptop", '!!document.querySelector(".pp") && !document.querySelector(".pp-loading")', 5000)
+    page.wait_for_timeout(500)
+    page.evaluate(PLAYING)
+    shown = 'document.querySelector(".pp").classList.contains("pp-controls")'
+    page.mouse.move(320, 300)
+    page.mouse.move(330, 310)
+    until(page, engine, "moving the mouse shows the controls", shown, 500)
+    page.wait_for_timeout(2200)
+    check(engine, "they hide again after a short idle", page.evaluate(f"!{shown}"))
+    check(engine, "and so does the cursor", page.evaluate('getComputedStyle(document.querySelector(".pp")).cursor === "none"'))
+    page.mouse.move(340, 320)
+    until(page, engine, "moving it again brings them back", shown, 500)
+    scrub = page.locator(".pp-scrub").bounding_box()
+    page.mouse.move(scrub["x"] + scrub["width"] / 3, scrub["y"] + scrub["height"] / 2)
+    page.wait_for_timeout(2500)
+    check(engine, "they stay up while the pointer is on them", page.evaluate(shown))
+    page.mouse.move(320, 300)
+    page.wait_for_timeout(2200)
+    check(engine, "and hide once it leaves them", page.evaluate(f"!{shown}"))
+    plays = len([command for command in fake_get("/fake/screen-log") if command["action"] == "play"])
+    page.keyboard.press(" ")
+    page.wait_for_timeout(500)
+    check(engine, "Space pauses, though the Play button keeps the focus behind the player", page.evaluate("playerPaused()"))
+    check(engine, "and does not press that button again",
+          len([command for command in fake_get("/fake/screen-log") if command["action"] == "play"]) == plays)
+    page.mouse.click(320, 300)
+    page.wait_for_timeout(300)
+    check(engine, "a click on the picture plays again", page.evaluate("!playerPaused()"))
+    page.mouse.move(600, 600)
+    page.mouse.move(610, 610)
+    page.click(".pp-pill:has-text('Audio')")
+    until(page, engine, "Audio & subtitles opens its sheet", '!document.querySelector(".pp-sheet").hidden', 2000)
+    check(engine, "the sheet keeps a readable width on a wide screen", page.evaluate('document.querySelector(".pp-sheet").getBoundingClientRect().width <= 640'))
+    page.mouse.click(320, 160)
+    page.wait_for_timeout(300)
+    check(engine, "a click beside the sheet closes it and leaves playback alone",
+          page.evaluate('document.querySelector(".pp-sheet").hidden && !playerPaused()'))
+    page.keyboard.press("Escape")
+    until(page, engine, "Escape closes the player", '!document.querySelector(".pp")', 3000)
+    fake_until(page, engine, "and the TV hears that it stopped", lambda: fake_get("/api/screen")["play"] is None)
+    page.click(".bar-open")
+    until(page, engine, "the remote opens on the laptop", 'document.documentElement.hasAttribute("data-sheet")', 3000)
+    page.wait_for_timeout(800)
+    check(engine, "and is a card, not the full width",
+          page.evaluate('(() => { const box = document.querySelector(".sheet").getBoundingClientRect(); return box.width <= 640 && Math.abs(box.left - (innerWidth - box.right)) < 2; })()'))
+    check(engine, "no script errors", not errors, "; ".join(errors))
+    browser.close()
+
+
 with sync_playwright() as p:
     run(p, "webkit", "iPhone 15")
     run(p, "chromium", "Pixel 7")
     desktop(p)
+    laptop_player(p)
 
 print("PASS" if not failures else "FAIL: " + ", ".join(failures))
 sys.exit(1 if failures else 0)

@@ -2,9 +2,14 @@ const api = document.documentElement.dataset.api || "";
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const REPORT_EVERY = 10000;
 const HIDE_AFTER = 3200;
+const HIDE_AFTER_MOUSE = 1500;
+const RESUME_KEY = "semmeltv.resume";
+const RESUME_WITHIN = 15000;
 const COUNTDOWN = 10;
 const JUMP = 10;
 const SWIPE_CLOSE = 110;
+
+const HOVER_KEEPS = ".pp-top, .pp-middle button, .pp-bottom, .pp-skip, .pp-upnext, .pp-sheet";
 
 const icons = {
   close: '<svg viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></svg>',
@@ -29,6 +34,17 @@ let tvPlaying = null;
 let seenNotice = undefined;
 let socket = null;
 let pending = null;
+let reloaded = takeResume();
+
+function takeResume() {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(RESUME_KEY) || "null");
+    sessionStorage.removeItem(RESUME_KEY);
+    return saved && Date.now() - saved.at < RESUME_WITHIN ? saved.pick : null;
+  } catch {
+    return null;
+  }
+}
 
 function stored(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -130,6 +146,10 @@ function thisDevice() {
 
 const device = thisDevice();
 
+function ownsSpace(target) {
+  return Boolean(target.closest?.(".pp button") && !target.closest(".pp-layer"));
+}
+
 function samePick(a, b) {
   if (!a || !b) return false;
   if (a.movie || b.movie) return a.movie === b.movie;
@@ -155,7 +175,10 @@ function render() {
   const mode = screen.kind === "tv" ? "tv" : "phone";
   if (html.dataset.mode !== mode) html.dataset.mode = mode;
   if (!html.hasAttribute("data-phone-ready")) html.dataset.phoneReady = "";
-  if (player && !player.closed && !html.classList.contains("pp-open")) html.classList.add("pp-open");
+  if (player && !player.closed) {
+    if (!player.root.isConnected) document.body.append(player.root);
+    if (!html.classList.contains("pp-open")) html.classList.add("pp-open");
+  }
   paintSwitch();
 }
 
@@ -184,6 +207,14 @@ function adopt(view) {
 function reconcile() {
   const view = screen;
   const play = view.play;
+  if (reloaded) {
+    const pick = reloaded;
+    reloaded = null;
+    if (ours(view) && view.kind === "phone" && !play) {
+      playHere(pick);
+      return;
+    }
+  }
   const wanted = ours(view) && play && ["moving", "starting", "playing"].includes(play.state);
   if (!wanted) {
     if (player && !player.closed && !player.fresh()) {
@@ -287,12 +318,16 @@ function playHere(pick) {
 class Player {
   constructor() {
     this.capabilities = capabilities();
-    this.root = element("div", "pp", { role: "dialog", "aria-label": "Player" });
+    this.root = element("div", "pp", { role: "dialog", "aria-modal": "true", "aria-label": "Player", tabindex: "-1" });
     this.video = element("video", "pp-video", { playsinline: "", "webkit-playsinline": "", "x-webkit-airplay": "allow", preload: "auto" });
     this.video.disablePictureInPicture = false;
     this.layer = element("div", "pp-layer");
     this.build();
     document.body.append(this.root);
+    this.root.focus({ preventScroll: true });
+    history.pushState({ ...(history.state || {}), player: true }, "");
+    this.onPop = () => { if (!history.state?.player) this.close(); };
+    window.addEventListener("popstate", this.onPop);
     html.classList.add("pp-open");
     this.session = null;
     this.hls = null;
@@ -384,9 +419,8 @@ class Player {
       });
     }
 
-    let scrubbing = false;
     this.scrub.addEventListener("input", () => {
-      scrubbing = true;
+      this.scrubbing = true;
       const at = Number(this.scrub.value);
       this.bubble.textContent = clock(at);
       this.bubble.style.left = `${(at / (Number(this.scrub.max) || 1)) * 100}%`;
@@ -395,7 +429,7 @@ class Player {
       this.show(true);
     });
     this.scrub.addEventListener("change", () => {
-      scrubbing = false;
+      this.scrubbing = false;
       this.bubble.classList.remove("pp-shown");
       video.currentTime = Number(this.scrub.value);
       this.show();
@@ -408,7 +442,7 @@ class Player {
         if (step > 0 && step < 2) this.played += step;
       }
       this.lastTime = now;
-      if (!scrubbing) this.paint();
+      if (!this.scrubbing) this.paint();
       this.marksAt(now);
       this.positionState();
     });
@@ -419,10 +453,7 @@ class Player {
       this.root.classList.remove("pp-loading");
       this.playButton.innerHTML = icons.pause;
       this.playButton.setAttribute("aria-label", "Pause");
-      if (!this.started) {
-        this.started = true;
-        this.report("start");
-      }
+      this.begin();
       this.show();
       this.mediaState("playing");
     });
@@ -443,7 +474,11 @@ class Player {
       if (document.visibilityState === "hidden" && this.started) this.report(video.paused ? "paused" : "playing", true);
     };
     document.addEventListener("visibilitychange", this.onHide);
-    this.onLeave = () => { if (this.started) this.report("stopped", true); };
+    this.onLeave = () => {
+      if (!this.started) return;
+      this.report("stopped", true);
+      try { sessionStorage.setItem(RESUME_KEY, JSON.stringify({ pick: this.pick, at: Date.now() })); } catch {}
+    };
     window.addEventListener("pagehide", this.onLeave);
 
     let taps = [];
@@ -470,8 +505,35 @@ class Player {
         this.close();
       }
     });
+    let pointer = "touch";
+    this.root.addEventListener("pointerdown", (event) => { pointer = event.pointerType; }, true);
+    this.root.addEventListener("pointermove", (event) => {
+      if (event.pointerType !== "mouse") return;
+      pointer = "mouse";
+      if (event.movementX === 0 && event.movementY === 0) return;
+      this.show();
+    });
+    this.root.addEventListener("pointerover", (event) => {
+      if (event.pointerType === "mouse") this.hovering = Boolean(event.target.closest(HOVER_KEEPS));
+    });
+    this.root.addEventListener("mouseleave", () => {
+      this.hovering = false;
+      this.hide();
+    });
+    this.layer.addEventListener("dblclick", (event) => {
+      if (pointer !== "mouse" || !this.sheet.hidden || event.target.closest("button, input")) return;
+      this.fullscreen();
+    });
     this.layer.addEventListener("click", (event) => {
       if (event.target.closest("button, input")) return;
+      if (!this.sheet.hidden) {
+        this.closeSheet();
+        return;
+      }
+      if (pointer === "mouse") {
+        this.toggle();
+        return;
+      }
       const now = Date.now();
       taps = taps.filter((tap) => now - tap < 320);
       taps.push(now);
@@ -484,26 +546,53 @@ class Player {
       clearTimeout(this.tapTimer);
       this.tapTimer = setTimeout(() => (this.root.classList.contains("pp-controls") ? this.hide() : this.show()), 260);
     });
-    this.root.addEventListener("keydown", (event) => {
-      if (event.key === " ") { event.preventDefault(); this.toggle(); }
-      if (event.key === "ArrowLeft") this.jump(-JUMP);
-      if (event.key === "ArrowRight") this.jump(JUMP);
-      if (event.key === "Escape") this.close();
-    });
+    this.onKey = (event) => {
+      if (event.ctrlKey || event.metaKey || event.altKey || this.closed) return;
+      const key = event.key.length === 1 ? event.key.toLowerCase() : event.key;
+      const keys = {
+        " ": () => this.toggle(),
+        k: () => this.toggle(),
+        ArrowLeft: () => this.jump(-JUMP),
+        ArrowRight: () => this.jump(JUMP),
+        ArrowDown: () => this.jump(-60),
+        ArrowUp: () => this.jump(60),
+        f: () => this.fullscreen(),
+        m: () => { video.muted = !video.muted; this.show(); },
+        Escape: () => (this.sheet.hidden ? this.close() : this.closeSheet()),
+      };
+      const act = keys[key];
+      if (!act || (key === " " && ownsSpace(event.target))) return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (!event.repeat || key.startsWith("Arrow")) act();
+    };
+    this.onKeyUp = (event) => {
+      if (event.key === " " && !this.closed && !ownsSpace(event.target)) event.preventDefault();
+    };
+    document.addEventListener("keydown", this.onKey, true);
+    document.addEventListener("keyup", this.onKeyUp, true);
+  }
+
+  closeSheet() {
+    this.sheet.hidden = true;
+    this.show();
   }
 
   show(stay = false) {
     this.root.classList.add("pp-controls");
     clearTimeout(this.hideTimer);
     if (stay || this.video.paused) return;
-    this.hideTimer = setTimeout(() => {
-      if (this.sheet.hidden) this.root.classList.remove("pp-controls");
-    }, HIDE_AFTER);
+    const after = html.dataset.device === "laptop" ? HIDE_AFTER_MOUSE : HIDE_AFTER;
+    const later = () => {
+      if (this.hovering) this.hideTimer = setTimeout(later, after);
+      else this.hide();
+    };
+    this.hideTimer = setTimeout(later, after);
   }
 
   hide() {
     clearTimeout(this.hideTimer);
-    if (!this.video.paused && this.sheet.hidden) this.root.classList.remove("pp-controls");
+    if (!this.video.paused && this.sheet.hidden && !this.scrubbing) this.root.classList.remove("pp-controls");
   }
 
   paint() {
@@ -588,11 +677,12 @@ class Player {
     this.root.classList.add("pp-loading");
     this.message.textContent = "";
     this.root.classList.remove("pp-failed");
-    const previous = this.session;
+    const replaces = this.session ? this.session.id : this.replacing;
+    this.replacing = null;
     const body = { ...pick, client: this.capabilities.client, device };
     if (options.start !== undefined) body.start = options.start;
     if (options.audio !== undefined) body.audio = options.audio;
-    if (previous) body.replaces = previous.id;
+    if (replaces) body.replaces = replaces;
     let session;
     try {
       session = await request("POST", "/api/stream/open", body);
@@ -630,7 +720,7 @@ class Player {
     const begin = () => {
       if (session.start > 1 && Math.abs(video.currentTime - session.start) > 2) video.currentTime = session.start;
       this.applyDefaultSubtitles(session);
-      video.play().catch(() => this.show(true));
+      video.play().catch(() => this.blocked(session));
     };
     if (this.hls) { this.hls.destroy(); this.hls = null; }
     if (this.capabilities.native) {
@@ -644,7 +734,7 @@ class Player {
       const hls = new Hls({ startPosition: session.start, maxBufferLength: 30, backBufferLength: 30 });
       this.hls = hls;
       hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal && !this.recover()) this.failed(data.details); });
-      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => this.show(true)));
+      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => this.blocked(session)));
       hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => this.applyDefaultSubtitles(session));
       hls.loadSource(source);
       hls.attachMedia(video);
@@ -711,7 +801,7 @@ class Player {
     if (session.subtitle_delay) subtitles.append(element("p", "pp-quiet", { text: `Shifted ${session.subtitle_delay > 0 ? "later" : "earlier"} by ${Math.abs(session.subtitle_delay).toFixed(1)} s, as on the TV` }));
     columns.append(audio, subtitles);
     const done = element("button", "pp-pill pp-strong pp-done", { type: "button", text: "Done" });
-    done.addEventListener("click", () => { this.sheet.hidden = true; this.show(); });
+    done.addEventListener("click", () => this.closeSheet());
     this.sheet.append(grab, columns, done);
     this.sheet.hidden = false;
     this.show(true);
@@ -786,9 +876,16 @@ class Player {
     this.cancelCountdown();
     const finished = this.video.ended ? "ended" : "stopped";
     const next = { show: session.key, season: session.next.season, episode: session.next.episode };
+    this.started = false;
+    this.video.pause();
+    this.session = null;
+    this.replacing = session.id;
+    this.skip.hidden = true;
+    this.titleText.innerHTML = "";
+    this.titleText.append(element("strong", "", { text: session.title }), element("span", "", { text: session.next.title ? `${session.next.label} · ${session.next.title}` : session.next.label }));
     this.wait(next);
-    await command({ action: "play", ...next });
-    this.reportFor(session, finished);
+    await this.reportFor(session, finished);
+    if (!this.closed) await command({ action: "play", ...next });
   }
 
   ended() {
@@ -803,12 +900,30 @@ class Player {
     }
   }
 
+  begin() {
+    if (this.started || !this.session) return Promise.resolve();
+    this.started = true;
+    return this.report("start");
+  }
+
+  async blocked(session) {
+    if (this.session !== session || this.closed) return;
+    this.show(true);
+    await this.begin();
+    if (this.session === session && this.video.paused) this.report("paused");
+  }
+
+  position(session) {
+    const at = this.video.currentTime || 0;
+    return at < 0.5 && session.start > at ? session.start : at;
+  }
+
   async report(state, keepalive = false) {
     if (this.session) await this.reportFor(this.session, state, keepalive);
   }
 
   async reportFor(session, state, keepalive = false) {
-    const body = { position: this.video.currentTime || 0, played: this.played, state };
+    const body = { position: this.position(session), played: this.played, state };
     try {
       await request("POST", `/api/stream/${session.id}/progress`, body, { keepalive });
     } catch {}
@@ -914,12 +1029,20 @@ class Player {
     if (this.closed) return;
     this.closed = true;
     const session = this.session;
-    if (session && reportStop && this.started) this.report(this.video.ended ? "ended" : "stopped", true);
-    if (session) request("DELETE", `/api/stream/${session.id}`, undefined, { keepalive: true }).catch(() => {});
+    const reported = session && reportStop && this.started ? this.report(this.video.ended ? "ended" : "stopped", true) : Promise.resolve();
+    const ending = session ? session.id : this.replacing;
+    reported.finally(() => {
+      if (reportStop) request("POST", "/api/screen", { action: "stop", device }, { keepalive: true }).catch(() => {});
+      if (ending) request("DELETE", `/api/stream/${ending}`, undefined, { keepalive: true }).catch(() => {});
+    });
     clearInterval(this.reportTimer);
     this.cancelCountdown();
     document.removeEventListener("visibilitychange", this.onHide);
     window.removeEventListener("pagehide", this.onLeave);
+    window.removeEventListener("popstate", this.onPop);
+    if (history.state?.player) history.back();
+    document.removeEventListener("keydown", this.onKey, true);
+    document.removeEventListener("keyup", this.onKeyUp, true);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     this.video.pause();
     if (this.hls) this.hls.destroy();
@@ -990,8 +1113,8 @@ document.addEventListener("visibilitychange", () => {
   request("GET", "/api/screen").then(adopt).catch(() => {});
 });
 
-new MutationObserver(render).observe(html, { attributes: true });
-new MutationObserver(paintSwitch).observe(document.body, { childList: true, subtree: true });
+new MutationObserver(render).observe(html, { attributes: true, childList: true });
+new MutationObserver(render).observe(document.body, { childList: true, subtree: true });
 render();
 listen();
 request("GET", "/api/screen").then(adopt).catch(() => {});

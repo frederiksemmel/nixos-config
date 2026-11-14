@@ -92,8 +92,12 @@ pub enum Event {
     Report {
         device: Device,
         session: String,
+        file: PathBuf,
         position: f64,
         paused: bool,
+    },
+    Stop {
+        device: Device,
     },
     Stopped {
         device: Device,
@@ -288,10 +292,11 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
             Event::Report {
                 device,
                 session,
+                file,
                 position,
                 paused,
             },
-        ) if current == device => {
+        ) if current == device && play.place().file == file => {
             let mut place = play.place().clone();
             place.position = position;
             (
@@ -314,6 +319,15 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
             },
             Event::Stopped { device, session },
         ) if current == device && playing == session => (Phone { device, play: None }, vec![]),
+
+        (Moving { to, .. }, Event::Stop { device }) if to == device => (Tv, vec![Effect::ResumeTv]),
+        (
+            Phone {
+                device: current,
+                play: Some(_),
+            },
+            Event::Stop { device },
+        ) if current == device => (Phone { device, play: None }, vec![]),
 
         (Moving { to, .. }, Event::Failed { device, reason }) if to == device => (
             Tv,
@@ -664,6 +678,7 @@ mod tests {
                 Event::Report {
                     device: first.clone(),
                     session: "s1".to_string(),
+                    file: place(0.0).file,
                     position: 950.0,
                     paused: false
                 },
@@ -748,6 +763,7 @@ mod tests {
             Event::Report {
                 device: iphone.clone(),
                 session: "s1".to_string(),
+                file: place(0.0).file,
                 position: 330.0,
                 paused: true,
             },
@@ -782,6 +798,84 @@ mod tests {
                 play: None
             }
         );
+    }
+
+    #[test]
+    fn a_report_from_the_episode_before_does_not_start_the_next_one() {
+        let now = Instant::now();
+        let iphone = phone("a");
+        let mut screen = playing(&iphone, "s1", 1280.0, now);
+        screen.step(
+            Event::Play {
+                device: iphone.clone(),
+                place: film(0.0),
+            },
+            None,
+            now,
+        );
+        screen.step(
+            Event::Report {
+                device: iphone.clone(),
+                session: "s1".to_string(),
+                file: place(0.0).file,
+                position: 1285.0,
+                paused: false,
+            },
+            None,
+            now,
+        );
+        assert!(matches!(
+            &screen,
+            Screen::Phone { play: Some(PhonePlay::Starting { place, .. }), .. } if *place == film(0.0)
+        ));
+        screen.step(started(&iphone, "s2", 0.0), None, now);
+        screen.step(
+            Event::Report {
+                device: iphone.clone(),
+                session: "s2".to_string(),
+                file: film(0.0).file,
+                position: 12.0,
+                paused: true,
+            },
+            None,
+            now,
+        );
+        assert!(matches!(
+            &screen,
+            Screen::Phone { play: Some(PhonePlay::Playing { place, paused: true, .. }), .. } if *place == film(12.0)
+        ));
+    }
+
+    #[test]
+    fn closing_the_player_stops_what_it_was_starting() {
+        let now = Instant::now();
+        let iphone = phone("a");
+        let mut screen = Screen::Phone {
+            device: iphone.clone(),
+            play: Some(PhonePlay::Starting {
+                place: place(0.0),
+                since: now,
+            }),
+        };
+        assert_eq!(screen.step(Event::Stop { device: phone("b") }, None, now), vec![]);
+        assert!(matches!(&screen, Screen::Phone { play: Some(_), .. }));
+        assert_eq!(screen.step(Event::Stop { device: iphone.clone() }, None, now), vec![]);
+        assert_eq!(
+            screen,
+            Screen::Phone {
+                device: iphone.clone(),
+                play: None
+            }
+        );
+
+        let tv = place(600.0);
+        let mut screen = Screen::Tv;
+        screen.step(flip_to(&iphone), Some(&tv), now);
+        assert_eq!(
+            screen.step(Event::Stop { device: iphone }, Some(&tv), now),
+            vec![Effect::ResumeTv]
+        );
+        assert_eq!(screen, Screen::Tv);
     }
 
     #[test]
@@ -864,6 +958,7 @@ mod tests {
             Event::Report {
                 device: iphone.clone(),
                 session: "s1".to_string(),
+                file: place(0.0).file,
                 position: 9.0,
                 paused: false,
             },

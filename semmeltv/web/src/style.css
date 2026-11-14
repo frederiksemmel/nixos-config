@@ -909,6 +909,10 @@ html[data-sheet-drag] .sheet {
 
 html[data-sheet] .sheet { transform: none; }
 
+@media (min-width: 760px) {
+  .sheet { width: min(640px, calc(100% - 2 * var(--gutter))); margin: 0 auto; }
+}
+
 @supports (transition-timing-function: linear(0, 1)) {
   :root {
     --spring: linear(0, 0.022, 0.079, 0.156, 0.246, 0.339, 0.431, 0.519, 0.6, 0.673, 0.737, 0.792, 0.839, 0.879, 0.911, 0.937, 0.958, 0.974, 0.986, 0.995, 1.002, 1.006, 1.009, 1.01, 1.011, 1.011, 1.011, 1.01, 1.009, 1.008, 1.007, 1.006, 1.005, 1.004, 1.003, 1.003, 1.002, 1.002, 1.001, 1.001, 1);
