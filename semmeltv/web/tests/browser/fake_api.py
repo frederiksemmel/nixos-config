@@ -19,6 +19,7 @@ marked = {}
 audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
 screen = {"kind": "tv", "device": None, "play": None, "notice": None}
+screen_answers = {"delay": 0.0, "refuse": False}
 tv = {"on": True}
 CONNECT_SECONDS = 1.5
 SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
@@ -218,6 +219,9 @@ async def screen_view(request):
 async def screen_command(request):
     body = await request.json()
     action = body["action"]
+    await asyncio.sleep(screen_answers["delay"])
+    if screen_answers["refuse"]:
+        return web.json_response({"message": "The TV said no", "ok": False}, status=422)
     if action == "flip" and body["to"] == "phone":
         play = film_place(playing["position"], "playing", "fake-session") if tv["on"] else None
         tv["on"] = False
@@ -233,6 +237,11 @@ async def screen_command(request):
     elif action == "failed":
         screen.update(play=None)
     return web.json_response({"message": "done", "ok": True})
+
+
+async def set_screen_answers(request):
+    screen_answers.update(await request.json())
+    return web.json_response(screen_answers)
 
 
 async def stream_open(request):
@@ -264,6 +273,7 @@ app.router.add_get("/api/downloads", downloads)
 app.router.add_get("/api/playback", playback)
 app.router.add_get("/api/screen", screen_view)
 app.router.add_post("/api/screen", screen_command)
+app.router.add_post("/fake/screen-answers", set_screen_answers)
 app.router.add_post("/api/stream/open", stream_open)
 app.router.add_get("/api/stream/{tail:.*}", stream_slow)
 app.router.add_post("/api/subtitles/delay", subtitle_delay)

@@ -286,6 +286,33 @@ HLS_STUB = (
 )
 
 
+def screen_answers(**answers):
+    import json
+    request = urllib.request.Request(FAKE + "/fake/screen-answers", data=json.dumps(answers).encode(),
+                                     headers={"content-type": "application/json"}, method="POST")
+    urllib.request.urlopen(request).close()
+
+
+def switch_answers_at_once(page, engine):
+    page.route("https://cdn.jsdelivr.net/**", lambda route: route.fulfill(body=HLS_STUB, content_type="text/javascript"))
+    mode = 'document.querySelector("#mode").dataset.mode'
+    screen_answers(delay=1.5, refuse=False)
+    page.locator("#mode").tap()
+    until(page, engine, "the switch moves at the tap, before the TV answers", f'{mode} === "moving"', 400)
+    until(page, engine, "and settles once the TV agrees", f'{mode} === "phone"', 4000)
+    page.evaluate('document.querySelector("#mode").click()')
+    until(page, engine, "switching back moves at once too", f'{mode} === "tv"', 400)
+    page.wait_for_timeout(1800)
+    check(engine, "and stays on the TV once it agrees", page.evaluate(f'{mode} === "tv"'))
+    screen_answers(delay=0.5, refuse=True)
+    page.locator("#mode").tap()
+    until(page, engine, "a refused switch first moves", f'{mode} === "moving"', 400)
+    until(page, engine, "then snaps back and says why",
+          f'{mode} === "tv" && [...document.querySelectorAll(".toast")].some((t) => t.textContent.includes("The TV said no"))', 4000)
+    screen_answers(delay=0.0, refuse=False)
+    page.wait_for_timeout(800)
+
+
 def watches_on_the_phone(page, engine):
     page.route("https://cdn.jsdelivr.net/**", lambda route: route.fulfill(body=HLS_STUB, content_type="text/javascript"))
     page.locator("#mode").tap()
@@ -409,6 +436,7 @@ def run(p, engine, device):
     toasts(page, engine)
     settings_subpages(page, engine)
     headphones(page, engine)
+    switch_answers_at_once(page, engine)
     watches_on_the_phone(page, engine)
     page.locator(".bar-toggle").tap()
     answers(page, engine, "after play/pause")

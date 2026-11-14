@@ -28,6 +28,7 @@ let screen = { kind: "tv", device: null, play: null, notice: null };
 let tvPlaying = null;
 let seenNotice = undefined;
 let socket = null;
+let pending = null;
 
 function stored(key) {
   try { return localStorage.getItem(key); } catch { return null; }
@@ -155,6 +156,16 @@ function render() {
   if (html.dataset.mode !== mode) html.dataset.mode = mode;
   if (!html.hasAttribute("data-phone-ready")) html.dataset.phoneReady = "";
   if (player && !player.closed && !html.classList.contains("pp-open")) html.classList.add("pp-open");
+  paintSwitch();
+}
+
+function paintSwitch() {
+  const button = document.getElementById("mode");
+  if (!button) return;
+  const mode = pending === "phone" ? "moving" : pending === "tv" ? "tv" : screen.kind === "tv" ? "tv" : screen.kind;
+  if (button.dataset.mode !== mode) button.dataset.mode = mode;
+  const pressed = String(mode !== "tv");
+  if (button.getAttribute("aria-pressed") !== pressed) button.setAttribute("aria-pressed", pressed);
 }
 
 function adopt(view) {
@@ -190,6 +201,9 @@ function listen() {
   if (socket && socket.readyState <= 1) return;
   const base = api ? api.replace(/^http/, "ws") : location.origin.replace(/^http/, "ws");
   socket = new WebSocket(`${base}/api/events`);
+  socket.addEventListener("open", () => {
+    request("GET", "/api/screen").then(adopt).catch(() => {});
+  });
   socket.addEventListener("message", (message) => {
     let event;
     try { event = JSON.parse(message.data); } catch { return; }
@@ -205,8 +219,12 @@ function listen() {
 async function command(body) {
   try {
     await request("POST", "/api/screen", { ...body, device });
-    adopt(await request("GET", "/api/screen"));
+    const view = await request("GET", "/api/screen");
+    pending = null;
+    adopt(view);
   } catch (error) {
+    pending = null;
+    paintSwitch();
     toast(error.message, "error");
     if (player && player.waiting) player.close(false);
     request("GET", "/api/screen").then(adopt).catch(() => {});
@@ -226,9 +244,13 @@ function flip() {
     if (!canWatchHere()) return;
     const pick = pickOfPlaying(tvPlaying);
     if (pick) openPlayer(pick, { waiting: true });
+    pending = "phone";
+    paintSwitch();
     command({ action: "flip", to: "phone" });
   } else {
     const position = player && !player.closed && ours(screen) && player.video.currentTime > 0 ? player.video.currentTime : undefined;
+    pending = "tv";
+    paintSwitch();
     command({ action: "flip", to: "tv", position });
   }
 }
@@ -945,6 +967,7 @@ document.addEventListener("visibilitychange", () => {
 });
 
 new MutationObserver(render).observe(html, { attributes: true });
+new MutationObserver(paintSwitch).observe(document.body, { childList: true, subtree: true });
 render();
 listen();
 request("GET", "/api/screen").then(adopt).catch(() => {});
