@@ -503,7 +503,7 @@ Toasty can carry a real service today if you treat it like a young dependency:
 
 - **Pin and test.** Pin a release or a commit, and keep a test suite over
   your store layer that runs against the real driver: the in-memory SQLite
-  is fast. Here, all of the store's behaviour is tested (533 tests app-wide),
+  is fast. Here, all of the store's behaviour is tested,
   including the Diesel conversion, and each Toasty bump is a rebuild that
   tells you what changed.
 - **Wrap it.** Keep Toasty behind your own store interface, as `crate::db::Db`
