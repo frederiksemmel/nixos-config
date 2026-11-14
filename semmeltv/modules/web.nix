@@ -37,7 +37,11 @@ let
       pkgs.gnused
     ];
     text = ''
-      address=$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+      ${if lan.public then ''
+        address=$(curl --silent --fail --max-time 20 https://checkipv4.dedyn.io/ || true)
+      '' else ''
+        address=$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+      ''}
       if [[ -z $address ]]; then
         echo "no IPv4 address yet"
         exit 0
@@ -49,7 +53,7 @@ let
       curl --fail-with-body --silent --show-error --request PATCH \
         --header "Authorization: Token $DESEC_TOKEN" \
         --header "Content-Type: application/json" \
-        --data '[{"subname": "${subname}", "type": "A", "ttl": 3600, "records": ["'"$address"'"]}]' \
+        --data '[{"subname": "${subname}", "type": "A", "ttl": ${if lan.public then "300" else "3600"}, "records": ["'"$address"'"]}]' \
         "https://desec.io/api/v1/domains/${lan.zone}/rrsets/"
       echo
       printf '%s\n' "$address" >"$published"
@@ -131,11 +135,17 @@ in
           default = null;
           example = "semmeltv5.semmeltv.ch";
           description = ''
-            Name the web app and the API answer on over HTTPS in the local network, or null for none.
-            Its A record at deSEC follows the TV's local IPv4 address, so the name only works at home;
+            Name the web app and the API answer on over HTTPS outside the tailnet, or null for none.
+            Its A record at deSEC follows the TV's local IPv4 address, or its public one with `public`;
             its Let's Encrypt certificate comes from a DNS challenge at deSEC.
           '';
         };
+
+        public = lib.mkEnableOption ''
+          pointing `domain` at the home's public IPv4 address instead of the TV's local one. The router
+          must forward TCP port 443 to the TV, and the name then only works at home if the router
+          loops connections to its own public address back in
+        '';
 
         zone = lib.mkOption {
           type = lib.types.str;
@@ -294,7 +304,7 @@ in
         };
 
         systemd.services.semmeltv-publish-address = {
-          description = "Point ${lan.domain} at the TV's local IPv4 address";
+          description = "Point ${lan.domain} at the ${if lan.public then "home's public" else "TV's local"} IPv4 address";
           wants = [ "network-online.target" ];
           after = [ "network-online.target" ];
           serviceConfig = {
