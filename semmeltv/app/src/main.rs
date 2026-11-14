@@ -58,7 +58,7 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|toasty ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -78,6 +78,7 @@ struct Args {
     listing: Option<PathBuf>,
     refresh: bool,
     transcript: String,
+    toasty: Vec<String>,
     recording: Option<PathBuf>,
     speech: Option<String>,
     wake: Option<String>,
@@ -114,6 +115,7 @@ fn parse_args() -> Result<Args, String> {
         listing: None,
         refresh: false,
         transcript: String::new(),
+        toasty: Vec::new(),
         recording: None,
         speech: env::var("SEMMELTV_SPEECH").ok().filter(|address| !address.is_empty()),
         wake: env::var("SEMMELTV_WAKE").ok().filter(|address| !address.is_empty()),
@@ -128,6 +130,10 @@ fn parse_args() -> Result<Args, String> {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
             "ui" | "list" | "artwork" | "import" | "downloads" => args.mode = argument,
+            "toasty" => {
+                args.toasty = raw.by_ref().collect();
+                args.mode = argument;
+            }
             "understand" => {
                 args.transcript = value("understand")?;
                 args.mode = argument;
@@ -468,6 +474,7 @@ fn run() -> Result<(), String> {
         "artwork" => run_artwork(&args)?,
         "import" => run_import(&args)?,
         "downloads" => run_downloads(&args)?,
+        "toasty" => db::toasty_cli(&args.db, args.toasty.clone()).map_err(|error| error.to_string())?,
         "hear" => hear(&args)?,
         "invite" => invite(&args)?,
         _ => run_ui(args, cache)?,

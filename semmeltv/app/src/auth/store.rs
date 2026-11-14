@@ -16,14 +16,6 @@ impl Role {
             Role::Viewer => "viewer",
         }
     }
-
-    pub fn parse(name: &str) -> Option<Self> {
-        match name {
-            "admin" => Some(Role::Admin),
-            "viewer" => Some(Role::Viewer),
-            _ => None,
-        }
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

@@ -6,9 +6,11 @@ license = "GPL-3.0-only"
 publish = false
 
 [dependencies]
-diesel = { version = "2.4", default-features = false, features = ["sqlite", "returning_clauses_for_sqlite_3_35"] }
-diesel_migrations = { version = "2.4", features = ["sqlite"] }
-libsqlite3-sys = { version = "0.40", features = ["bundled"] }
+toasty = { git = "https://github.com/tokio-rs/toasty", rev = "45ac82a0ba9af5efb9086ca0638b0103c9566e08", default-features = false, features = ["sqlite", "serde", "migration"] }
+toasty-cli = { git = "https://github.com/tokio-rs/toasty", rev = "45ac82a0ba9af5efb9086ca0638b0103c9566e08" }
+toasty-core = { git = "https://github.com/tokio-rs/toasty", rev = "45ac82a0ba9af5efb9086ca0638b0103c9566e08" }
+toasty-driver-sqlite = { git = "https://github.com/tokio-rs/toasty", rev = "45ac82a0ba9af5efb9086ca0638b0103c9566e08" }
+rusqlite = "0.40"
 cec_linux = { version = "0.2", features = ["poll"] }
 deunicode = "1"
 flate2 = "1"

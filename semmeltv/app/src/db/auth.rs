@@ -1,20 +1,31 @@
 use super::Db;
-use super::schema::{invites, passkeys, profiles, sessions};
+use super::models::{self, Invite as StoredInvite, Passkey, Profile as StoredProfile, Session as StoredSession};
 use crate::auth::store::{AuthStore, Invite, NewProfile, Profile, Role, Session, StoreError, Stored, StoredPasskey};
 use crate::profile::ProfileId;
-use diesel::prelude::*;
-use diesel::result::{DatabaseErrorKind, Error as DieselError};
-
-type ProfileRow = (i64, String, String, Option<String>, Option<String>, i64);
-type PasskeyRow = (i64, Vec<u8>, String, String, String, i64, Option<i64>);
-type SessionRow = (Vec<u8>, i64, i64, i64, i64, Option<String>);
-type InviteRow = (Vec<u8>, i64, Option<i64>, i64, i64, Option<i64>);
+use toasty_core::driver::operation::TransactionMode;
 
 fn stored<T>(result: super::Result<T>) -> Stored<T> {
-    result.map_err(|error| match error.downcast_ref::<DieselError>() {
-        Some(DieselError::DatabaseError(DatabaseErrorKind::UniqueViolation, _)) => StoreError::Taken,
-        _ => StoreError::Failed(error.to_string()),
+    result.map_err(|error| {
+        if unique_violation(error.as_ref()) {
+            StoreError::Taken
+        } else {
+            StoreError::Failed(error.to_string())
+        }
     })
+}
+
+fn unique_violation(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current = Some(error);
+    while let Some(error) = current {
+        if let Some(rusqlite::Error::SqliteFailure(failure, _)) = error.downcast_ref::<rusqlite::Error>() {
+            return matches!(
+                failure.extended_code,
+                rusqlite::ffi::SQLITE_CONSTRAINT_UNIQUE | rusqlite::ffi::SQLITE_CONSTRAINT_PRIMARYKEY
+            );
+        }
+        current = error.source();
+    }
+    false
 }
 
 fn seconds(value: u64) -> i64 {
@@ -25,128 +36,75 @@ fn unsigned(value: i64) -> u64 {
     u64::try_from(value).unwrap_or(0)
 }
 
-fn profile((id, name, role, password_hash, color, created_at): ProfileRow) -> Profile {
+fn role(role: Role) -> models::Role {
+    match role {
+        Role::Admin => models::Role::Admin,
+        Role::Viewer => models::Role::Viewer,
+    }
+}
+
+fn profile(stored: StoredProfile) -> Profile {
     Profile {
-        id: ProfileId(id),
-        name,
-        role: Role::parse(&role).unwrap_or(Role::Viewer),
-        color,
-        password_hash,
-        created_at: unsigned(created_at),
+        id: ProfileId(stored.id),
+        name: stored.name,
+        role: match stored.role {
+            models::Role::Admin => Role::Admin,
+            models::Role::Viewer => Role::Viewer,
+        },
+        color: stored.color,
+        password_hash: stored.password_hash,
+        created_at: unsigned(stored.created_at),
     }
 }
 
-fn passkey((profile_id, credential_id, rp_id, name, passkey, created_at, last_used_at): PasskeyRow) -> StoredPasskey {
+fn passkey(stored: Passkey) -> StoredPasskey {
     StoredPasskey {
-        profile: ProfileId(profile_id),
-        credential_id,
-        rp_id,
-        name,
-        passkey,
-        created_at: unsigned(created_at),
-        last_used_at: last_used_at.map(unsigned),
+        profile: ProfileId(stored.profile_id),
+        credential_id: stored.credential_id,
+        rp_id: stored.rp_id,
+        name: stored.name,
+        passkey: stored.passkey,
+        created_at: unsigned(stored.created_at),
+        last_used_at: stored.last_used_at.map(unsigned),
     }
 }
 
-fn session((token_hash, profile_id, created_at, last_seen_at, expires_at, label): SessionRow) -> Session {
+fn session(stored: StoredSession) -> Session {
     Session {
-        token_hash,
-        profile: ProfileId(profile_id),
-        created_at: unsigned(created_at),
-        last_seen_at: unsigned(last_seen_at),
-        expires_at: unsigned(expires_at),
-        label: label.unwrap_or_default(),
+        token_hash: stored.token_hash,
+        profile: ProfileId(stored.profile_id),
+        created_at: unsigned(stored.created_at),
+        last_seen_at: unsigned(stored.last_seen_at),
+        expires_at: unsigned(stored.expires_at),
+        label: stored.label,
     }
 }
 
-fn invite((token_hash, profile_id, created_by, created_at, expires_at, used_at): InviteRow) -> Invite {
+fn invite(stored: StoredInvite) -> Invite {
     Invite {
-        token_hash,
-        profile: ProfileId(profile_id),
-        created_by: created_by.map(ProfileId),
-        created_at: unsigned(created_at),
-        expires_at: unsigned(expires_at),
-        used_at: used_at.map(unsigned),
+        token_hash: stored.token_hash,
+        profile: ProfileId(stored.profile_id),
+        created_by: stored.created_by.map(ProfileId),
+        created_at: unsigned(stored.created_at),
+        expires_at: unsigned(stored.expires_at),
+        used_at: stored.used_at.map(unsigned),
     }
 }
-
-const PROFILE: (
-    profiles::id,
-    profiles::name,
-    profiles::role,
-    profiles::password_hash,
-    profiles::color,
-    profiles::created_at,
-) = (
-    profiles::id,
-    profiles::name,
-    profiles::role,
-    profiles::password_hash,
-    profiles::color,
-    profiles::created_at,
-);
-
-const PASSKEY: (
-    passkeys::profile_id,
-    passkeys::credential_id,
-    passkeys::rp_id,
-    passkeys::name,
-    passkeys::passkey,
-    passkeys::created_at,
-    passkeys::last_used_at,
-) = (
-    passkeys::profile_id,
-    passkeys::credential_id,
-    passkeys::rp_id,
-    passkeys::name,
-    passkeys::passkey,
-    passkeys::created_at,
-    passkeys::last_used_at,
-);
-
-const SESSION: (
-    sessions::token_hash,
-    sessions::profile_id,
-    sessions::created_at,
-    sessions::last_seen_at,
-    sessions::expires_at,
-    sessions::label,
-) = (
-    sessions::token_hash,
-    sessions::profile_id,
-    sessions::created_at,
-    sessions::last_seen_at,
-    sessions::expires_at,
-    sessions::label,
-);
-
-const INVITE: (
-    invites::token_hash,
-    invites::profile_id,
-    invites::created_by,
-    invites::created_at,
-    invites::expires_at,
-    invites::used_at,
-) = (
-    invites::token_hash,
-    invites::profile_id,
-    invites::created_by,
-    invites::created_at,
-    invites::expires_at,
-    invites::used_at,
-);
 
 impl AuthStore for Db {
     fn profiles(&self) -> Stored<Vec<Profile>> {
-        let rows = stored(self.run(|connection| {
-            profiles::table.select(PROFILE).order(profiles::id).load::<ProfileRow>(connection)
+        let rows = stored(self.wait(|mut db| async move {
+            StoredProfile::all()
+                .order_by(StoredProfile::fields().id().asc())
+                .exec(&mut db)
+                .await
         }))?;
         Ok(rows.into_iter().map(profile).collect())
     }
 
     fn profile(&self, id: ProfileId) -> Stored<Option<Profile>> {
-        let row = stored(self.run(|connection| {
-            profiles::table.find(id.0).select(PROFILE).first::<ProfileRow>(connection).optional()
+        let row = stored(self.wait(move |mut db| async move {
+            StoredProfile::filter_by_id(id.0).first().exec(&mut db).await
         }))?;
         Ok(row.map(profile))
     }
@@ -155,212 +113,230 @@ impl AuthStore for Db {
         if self.profiles()?.iter().any(|known| known.name.to_lowercase() == new.name.to_lowercase()) {
             return Err(StoreError::Taken);
         }
-        let row = stored(self.run(|connection| {
-            diesel::insert_into(profiles::table)
-                .values((
-                    profiles::name.eq(&new.name),
-                    profiles::role.eq(new.role.name()),
-                    profiles::color.eq(&new.color),
-                    profiles::created_at.eq(seconds(at)),
-                ))
-                .returning(PROFILE)
-                .get_result::<ProfileRow>(connection)
+        let row = stored(self.wait(move |mut db| async move {
+            toasty::create!(StoredProfile {
+                name: new.name,
+                role: role(new.role),
+                color: new.color,
+                created_at: seconds(at),
+            })
+            .exec(&mut db)
+            .await
         }))?;
         Ok(profile(row))
     }
 
     fn delete_profile(&self, id: ProfileId) -> Stored<bool> {
-        let deleted = stored(self.run(|connection| diesel::delete(profiles::table.find(id.0)).execute(connection)))?;
-        Ok(deleted > 0)
+        stored(self.wait(move |mut db| async move {
+            let mut transaction = db.transaction().await?;
+            let Some(found) = StoredProfile::filter_by_id(id.0).first().exec(&mut transaction).await? else {
+                return Ok(false);
+            };
+            found.delete().exec(&mut transaction).await?;
+            transaction.commit().await?;
+            Ok(true)
+        }))
     }
 
     fn set_password_hash(&self, id: ProfileId, hash: Option<&str>) -> Stored<()> {
-        let changed = stored(self.run(|connection| {
-            diesel::update(profiles::table.find(id.0))
-                .set(profiles::password_hash.eq(hash))
-                .execute(connection)
+        let hash = hash.map(str::to_string);
+        let found = stored(self.wait(move |mut db| async move {
+            let mut transaction = db.transaction().await?;
+            let Some(mut found) = StoredProfile::filter_by_id(id.0).first().exec(&mut transaction).await? else {
+                return Ok(false);
+            };
+            toasty::update!(found { password_hash: hash }).exec(&mut transaction).await?;
+            transaction.commit().await?;
+            Ok(true)
         }))?;
-        if changed == 0 {
+        if !found {
             return Err(StoreError::Failed(format!("no profile {}", id.0)));
         }
         Ok(())
     }
 
     fn passkeys(&self, profile: ProfileId) -> Stored<Vec<StoredPasskey>> {
-        let rows = stored(self.run(|connection| {
-            passkeys::table
-                .filter(passkeys::profile_id.eq(profile.0))
-                .order(passkeys::id)
-                .select(PASSKEY)
-                .load::<PasskeyRow>(connection)
+        let rows = stored(self.wait(move |mut db| async move {
+            Passkey::filter_by_profile_id(profile.0)
+                .order_by(Passkey::fields().id().asc())
+                .exec(&mut db)
+                .await
         }))?;
         Ok(rows.into_iter().map(passkey).collect())
     }
 
     fn passkey(&self, credential_id: &[u8]) -> Stored<Option<StoredPasskey>> {
-        let row = stored(self.run(|connection| {
-            passkeys::table
-                .filter(passkeys::credential_id.eq(credential_id))
-                .select(PASSKEY)
-                .first::<PasskeyRow>(connection)
-                .optional()
+        let credential_id = credential_id.to_vec();
+        let row = stored(self.wait(move |mut db| async move {
+            Passkey::filter_by_credential_id(credential_id).first().exec(&mut db).await
         }))?;
         Ok(row.map(passkey))
     }
 
-    fn add_passkey(&self, passkey: &StoredPasskey) -> Stored<()> {
-        stored(self.run(|connection| {
-            diesel::insert_into(passkeys::table)
-                .values((
-                    passkeys::profile_id.eq(passkey.profile.0),
-                    passkeys::credential_id.eq(&passkey.credential_id),
-                    passkeys::rp_id.eq(&passkey.rp_id),
-                    passkeys::name.eq(&passkey.name),
-                    passkeys::passkey.eq(&passkey.passkey),
-                    passkeys::created_at.eq(seconds(passkey.created_at)),
-                    passkeys::last_used_at.eq(passkey.last_used_at.map(seconds)),
-                ))
-                .execute(connection)
-                .map(drop)
+    fn add_passkey(&self, new: &StoredPasskey) -> Stored<()> {
+        let new = new.clone();
+        stored(self.wait(move |mut db| async move {
+            toasty::create!(Passkey {
+                profile_id: new.profile.0,
+                credential_id: new.credential_id,
+                rp_id: new.rp_id,
+                name: new.name,
+                passkey: new.passkey,
+                created_at: seconds(new.created_at),
+                last_used_at: new.last_used_at.map(seconds),
+            })
+            .exec(&mut db)
+            .await?;
+            Ok(())
         }))
     }
 
-    fn update_passkey(&self, credential_id: &[u8], passkey: &str, used_at: u64) -> Stored<()> {
-        stored(self.run(|connection| {
-            diesel::update(passkeys::table.filter(passkeys::credential_id.eq(credential_id)))
-                .set((passkeys::passkey.eq(passkey), passkeys::last_used_at.eq(seconds(used_at))))
-                .execute(connection)
-                .map(drop)
+    fn update_passkey(&self, credential_id: &[u8], json: &str, used_at: u64) -> Stored<()> {
+        let (credential_id, json) = (credential_id.to_vec(), json.to_string());
+        stored(self.wait(move |mut db| async move {
+            toasty::update!(Passkey::filter_by_credential_id(credential_id) {
+                passkey: json,
+                last_used_at: Some(seconds(used_at)),
+            })
+            .exec(&mut db)
+            .await?;
+            Ok(())
         }))
     }
 
     fn remove_passkey(&self, profile: ProfileId, credential_id: &[u8]) -> Stored<bool> {
-        let deleted = stored(self.run(|connection| {
-            diesel::delete(
-                passkeys::table
-                    .filter(passkeys::profile_id.eq(profile.0))
-                    .filter(passkeys::credential_id.eq(credential_id)),
-            )
-            .execute(connection)
-        }))?;
-        Ok(deleted > 0)
+        let credential_id = credential_id.to_vec();
+        stored(self.wait(move |mut db| async move {
+            let fields = Passkey::fields();
+            let mine = fields.profile_id().eq(profile.0).and(fields.credential_id().eq(credential_id));
+            let mut transaction = db.transaction().await?;
+            let found = Passkey::filter(mine.clone()).first().exec(&mut transaction).await?;
+            if found.is_some() {
+                Passkey::filter(mine).delete().exec(&mut transaction).await?;
+            }
+            transaction.commit().await?;
+            Ok(found.is_some())
+        }))
     }
 
-    fn create_session(&self, session: &Session) -> Stored<()> {
-        stored(self.run(|connection| {
-            diesel::insert_into(sessions::table)
-                .values((
-                    sessions::token_hash.eq(&session.token_hash),
-                    sessions::profile_id.eq(session.profile.0),
-                    sessions::created_at.eq(seconds(session.created_at)),
-                    sessions::last_seen_at.eq(seconds(session.last_seen_at)),
-                    sessions::expires_at.eq(seconds(session.expires_at)),
-                    sessions::label.eq(&session.label),
-                ))
-                .execute(connection)
-                .map(drop)
+    fn create_session(&self, new: &Session) -> Stored<()> {
+        let new = new.clone();
+        stored(self.wait(move |mut db| async move {
+            toasty::create!(StoredSession {
+                token_hash: new.token_hash,
+                profile_id: new.profile.0,
+                created_at: seconds(new.created_at),
+                last_seen_at: seconds(new.last_seen_at),
+                expires_at: seconds(new.expires_at),
+                label: new.label,
+            })
+            .exec(&mut db)
+            .await?;
+            Ok(())
         }))
     }
 
     fn session(&self, token_hash: &[u8]) -> Stored<Option<Session>> {
-        let row = stored(self.run(|connection| {
-            sessions::table
-                .find(token_hash)
-                .select(SESSION)
-                .first::<SessionRow>(connection)
-                .optional()
+        let token_hash = token_hash.to_vec();
+        let row = stored(self.wait(move |mut db| async move {
+            StoredSession::filter_by_token_hash(token_hash).first().exec(&mut db).await
         }))?;
         Ok(row.map(session))
     }
 
     fn sessions(&self, profile: ProfileId) -> Stored<Vec<Session>> {
-        let rows = stored(self.run(|connection| {
-            sessions::table
-                .filter(sessions::profile_id.eq(profile.0))
-                .select(SESSION)
-                .load::<SessionRow>(connection)
+        let rows = stored(self.wait(move |mut db| async move {
+            StoredSession::filter_by_profile_id(profile.0).exec(&mut db).await
         }))?;
         Ok(rows.into_iter().map(session).collect())
     }
 
     fn touch_session(&self, token_hash: &[u8], last_seen_at: u64, expires_at: u64) -> Stored<()> {
-        stored(self.run(|connection| {
-            diesel::update(sessions::table.find(token_hash))
-                .set((
-                    sessions::last_seen_at.eq(seconds(last_seen_at)),
-                    sessions::expires_at.eq(seconds(expires_at)),
-                ))
-                .execute(connection)
-                .map(drop)
+        let token_hash = token_hash.to_vec();
+        stored(self.wait(move |mut db| async move {
+            toasty::update!(StoredSession::filter_by_token_hash(token_hash) {
+                last_seen_at: seconds(last_seen_at),
+                expires_at: seconds(expires_at),
+            })
+            .exec(&mut db)
+            .await?;
+            Ok(())
         }))
     }
 
     fn delete_session(&self, token_hash: &[u8]) -> Stored<()> {
-        stored(self.run(|connection| diesel::delete(sessions::table.find(token_hash)).execute(connection).map(drop)))
+        let token_hash = token_hash.to_vec();
+        stored(self.wait(move |mut db| async move {
+            StoredSession::filter_by_token_hash(token_hash).delete().exec(&mut db).await
+        }))
     }
 
     fn delete_sessions(&self, profile: ProfileId) -> Stored<()> {
-        stored(self.run(|connection| {
-            diesel::delete(sessions::table.filter(sessions::profile_id.eq(profile.0)))
-                .execute(connection)
-                .map(drop)
+        stored(self.wait(move |mut db| async move {
+            StoredSession::filter_by_profile_id(profile.0).delete().exec(&mut db).await
         }))
     }
 
     fn delete_expired_sessions(&self, now: u64) -> Stored<()> {
-        stored(self.run(|connection| {
-            diesel::delete(sessions::table.filter(sessions::expires_at.le(seconds(now))))
-                .execute(connection)
-                .map(drop)
+        stored(self.wait(move |mut db| async move {
+            StoredSession::filter(StoredSession::fields().expires_at().le(seconds(now)))
+                .delete()
+                .exec(&mut db)
+                .await
         }))
     }
 
-    fn create_invite(&self, invite: &Invite) -> Stored<()> {
-        stored(self.run(|connection| {
-            diesel::insert_into(invites::table)
-                .values((
-                    invites::token_hash.eq(&invite.token_hash),
-                    invites::profile_id.eq(invite.profile.0),
-                    invites::created_by.eq(invite.created_by.map(|by| by.0)),
-                    invites::created_at.eq(seconds(invite.created_at)),
-                    invites::expires_at.eq(seconds(invite.expires_at)),
-                    invites::used_at.eq(invite.used_at.map(seconds)),
-                ))
-                .execute(connection)
-                .map(drop)
+    fn create_invite(&self, new: &Invite) -> Stored<()> {
+        let new = new.clone();
+        stored(self.wait(move |mut db| async move {
+            toasty::create!(StoredInvite {
+                token_hash: new.token_hash,
+                profile_id: new.profile.0,
+                created_by: new.created_by.map(|by| by.0),
+                created_at: seconds(new.created_at),
+                expires_at: seconds(new.expires_at),
+                used_at: new.used_at.map(seconds),
+            })
+            .exec(&mut db)
+            .await?;
+            Ok(())
         }))
     }
 
     fn invite(&self, token_hash: &[u8]) -> Stored<Option<Invite>> {
-        let row = stored(self.run(|connection| {
-            invites::table
-                .find(token_hash)
-                .select(INVITE)
-                .first::<InviteRow>(connection)
-                .optional()
+        let token_hash = token_hash.to_vec();
+        let row = stored(self.wait(move |mut db| async move {
+            StoredInvite::filter_by_token_hash(token_hash).first().exec(&mut db).await
         }))?;
         Ok(row.map(invite))
     }
 
     fn invites(&self) -> Stored<Vec<Invite>> {
-        let rows = stored(self.run(|connection| invites::table.select(INVITE).load::<InviteRow>(connection)))?;
+        let rows = stored(self.wait(|mut db| async move { StoredInvite::all().exec(&mut db).await }))?;
         Ok(rows.into_iter().map(invite).collect())
     }
 
     fn use_invite(&self, token_hash: &[u8], at: u64) -> Stored<bool> {
-        let used = stored(self.run(|connection| {
-            diesel::update(invites::table.find(token_hash).filter(invites::used_at.is_null()))
-                .set(invites::used_at.eq(seconds(at)))
-                .execute(connection)
-        }))?;
-        Ok(used > 0)
+        let token_hash = token_hash.to_vec();
+        stored(self.wait(move |mut db| async move {
+            let mut transaction = db.transaction_builder().mode(TransactionMode::Immediate).begin().await?;
+            let fields = StoredInvite::fields();
+            let unused = StoredInvite::filter(fields.token_hash().eq(token_hash).and(fields.used_at().is_none()))
+                .first()
+                .exec(&mut transaction)
+                .await?;
+            let Some(mut unused) = unused else {
+                return Ok(false);
+            };
+            toasty::update!(unused { used_at: Some(seconds(at)) }).exec(&mut transaction).await?;
+            transaction.commit().await?;
+            Ok(true)
+        }))
     }
 
     fn delete_invites(&self, profile: ProfileId) -> Stored<()> {
-        stored(self.run(|connection| {
-            diesel::delete(invites::table.filter(invites::profile_id.eq(profile.0)))
-                .execute(connection)
-                .map(drop)
+        stored(self.wait(move |mut db| async move {
+            StoredInvite::filter_by_profile_id(profile.0).delete().exec(&mut db).await
         }))
     }
 }

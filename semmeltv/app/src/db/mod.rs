@@ -1,22 +1,23 @@
 mod auth;
+mod diesel;
 pub mod import;
+mod models;
 mod progress;
-pub mod schema;
 
 use crate::profile::ProfileId;
 use crate::subtitles::{self, Remembered};
-use diesel::connection::SimpleConnection;
-use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
-use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
-use schema::{audio_prefs, files, settings, subtitle_settings};
+use models::{AudioPrefs as StoredAudioPrefs, File, Setting as StoredSetting, SubtitleSettings};
 use std::collections::BTreeMap;
 use std::fs;
+use std::future::Future;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, mpsc};
+use std::time::Duration;
+use tokio::runtime::Runtime;
+use toasty_driver_sqlite::{JournalMode, Sqlite, Synchronous};
 
-const MIGRATIONS: EmbeddedMigrations = embed_migrations!("migrations");
+static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!("toasty");
 const TV_TOKEN: &str = "tv_token";
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
@@ -28,8 +29,17 @@ pub struct Db {
 }
 
 struct Inner {
-    connection: Mutex<SqliteConnection>,
+    db: toasty::Db,
+    runtime: Option<Runtime>,
     library: PathBuf,
+}
+
+impl Drop for Inner {
+    fn drop(&mut self) {
+        if let Some(runtime) = self.runtime.take() {
+            runtime.shutdown_background();
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -45,44 +55,84 @@ pub struct AudioPrefs {
     pub headphones: Option<String>,
 }
 
+fn runtime() -> Result<Runtime> {
+    Ok(tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(1)
+        .thread_name("semmeltv-db")
+        .enable_all()
+        .build()?)
+}
+
+fn wait<T: Send + 'static>(
+    runtime: &Runtime,
+    work: impl Future<Output = toasty::Result<T>> + Send + 'static,
+) -> Result<T> {
+    let (done, result) = mpsc::sync_channel(1);
+    runtime.spawn(async move {
+        let _ = done.send(work.await);
+    });
+    Ok(result.recv().map_err(|_| "the database task stopped")??)
+}
+
+fn private(file: &Path) -> Result<()> {
+    for suffix in ["", "-wal", "-shm"] {
+        let mut name = file.as_os_str().to_owned();
+        name.push(suffix);
+        let path = PathBuf::from(name);
+        if path.exists() {
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    Ok(())
+}
+
 impl Db {
     pub fn open(file: &Path, library: &Path) -> Result<Self> {
         if let Some(dir) = file.parent() {
             fs::create_dir_all(dir)?;
         }
-        let url = file.to_str().ok_or("the database path is not UTF-8")?;
+        let earlier = diesel::set_aside(file)?;
+        let runtime = runtime()?;
         fs::OpenOptions::new().create(true).append(true).mode(0o600).open(file)?;
-        let mut connection = SqliteConnection::establish(url)?;
-        connection.batch_execute("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
-        for suffix in ["", "-wal", "-shm"] {
-            let path = PathBuf::from(format!("{url}{suffix}"));
-            if path.exists() {
-                fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-            }
+        let driver = Sqlite::open(file)
+            .journal_mode(JournalMode::Wal)
+            .synchronous(Synchronous::Normal)
+            .busy_timeout(Duration::from_secs(5));
+        let db = Self::ready(runtime, driver, library)?;
+        private(file)?;
+        if let Some(earlier) = earlier {
+            db.wait(move |db| diesel::copy(db, earlier))?;
         }
-        Self::ready(connection, library)
+        Ok(db)
     }
 
     #[cfg(test)]
     pub fn memory(library: &Path) -> Self {
-        let connection = SqliteConnection::establish(":memory:").unwrap();
-        Self::ready(connection, library).unwrap()
+        Self::ready(runtime().unwrap(), Sqlite::in_memory(), library).unwrap()
     }
 
-    fn ready(mut connection: SqliteConnection, library: &Path) -> Result<Self> {
-        connection.batch_execute("PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;")?;
-        connection.run_pending_migrations(MIGRATIONS)?;
+    fn ready(runtime: Runtime, driver: Sqlite, library: &Path) -> Result<Self> {
+        let db = wait(&runtime, async move {
+            let db = toasty::Db::builder().models(models::all()).build(driver).await?;
+            MIGRATIONS.apply(&db).await?;
+            Ok(db)
+        })?;
         Ok(Self {
             inner: Arc::new(Inner {
-                connection: Mutex::new(connection),
+                db,
+                runtime: Some(runtime),
                 library: library.to_path_buf(),
             }),
         })
     }
 
-    fn run<T>(&self, work: impl FnOnce(&mut SqliteConnection) -> QueryResult<T>) -> Result<T> {
-        let mut connection = self.inner.connection.lock().unwrap_or_else(PoisonError::into_inner);
-        Ok(work(&mut connection)?)
+    fn wait<T, F>(&self, work: impl FnOnce(toasty::Db) -> F) -> Result<T>
+    where
+        T: Send + 'static,
+        F: Future<Output = toasty::Result<T>> + Send + 'static,
+    {
+        let runtime = self.inner.runtime.as_ref().ok_or("the database is closed")?;
+        wait(runtime, work(self.inner.db.clone()))
     }
 
     fn key(&self, file: &Path) -> String {
@@ -97,26 +147,22 @@ impl Db {
     }
 
     pub fn setting(&self, name: &str) -> Result<Option<String>> {
-        self.run(|connection| {
-            settings::table
-                .find(name)
-                .select(settings::value)
-                .first(connection)
-                .optional()
+        let name = name.to_string();
+        self.wait(|mut db| async move {
+            let found = StoredSetting::filter_by_name(name).first().exec(&mut db).await?;
+            Ok(found.map(|setting| setting.value))
         })
     }
 
     pub fn set_setting(&self, name: &str, value: Option<&str>) -> Result<()> {
-        self.run(|connection| {
+        let (name, value) = (name.to_string(), value.map(str::to_string));
+        self.wait(|mut db| async move {
             match value {
-                Some(value) => diesel::insert_into(settings::table)
-                    .values((settings::key.eq(name), settings::value.eq(value)))
-                    .on_conflict(settings::key)
-                    .do_update()
-                    .set(settings::value.eq(value))
-                    .execute(connection)?,
-                None => diesel::delete(settings::table.find(name)).execute(connection)?,
-            };
+                Some(value) => {
+                    StoredSetting::upsert_by_name(name).value(value).exec(&mut db).await?;
+                }
+                None => StoredSetting::filter_by_name(name).delete().exec(&mut db).await?,
+            }
             Ok(())
         })
     }
@@ -129,47 +175,41 @@ impl Db {
     }
 
     pub fn subtitle_settings(&self, profile: ProfileId) -> Result<Option<subtitles::Settings>> {
-        let stored: Option<String> = self.run(|connection| {
-            subtitle_settings::table
-                .find(profile.0)
-                .select(subtitle_settings::settings)
-                .first(connection)
-                .optional()
-        })?;
-        Ok(stored.map(|text| serde_json::from_str(&text)).transpose()?)
+        self.wait(move |mut db| async move {
+            let stored = SubtitleSettings::filter_by_profile_id(profile.0)
+                .first()
+                .exec(&mut db)
+                .await?;
+            Ok(stored.map(|stored| stored.settings.0))
+        })
     }
 
     pub fn save_subtitle_settings(&self, profile: ProfileId, value: &subtitles::Settings) -> Result<()> {
-        let text = serde_json::to_string(value)?;
-        self.run(|connection| {
-            diesel::insert_into(subtitle_settings::table)
-                .values((
-                    subtitle_settings::profile_id.eq(profile.0),
-                    subtitle_settings::settings.eq(&text),
-                ))
-                .on_conflict(subtitle_settings::profile_id)
-                .do_update()
-                .set(subtitle_settings::settings.eq(&text))
-                .execute(connection)
-                .map(drop)
+        let value = value.clone();
+        self.wait(move |mut db| async move {
+            SubtitleSettings::upsert_by_profile_id(profile.0)
+                .settings(value)
+                .exec(&mut db)
+                .await?;
+            Ok(())
         })
     }
 
     pub fn subtitle_files(&self) -> Result<BTreeMap<PathBuf, Remembered>> {
-        let rows: Vec<(String, f64, Option<i64>)> = self.run(|connection| {
-            files::table
-                .filter(files::subtitle_delay.ne(0.0).or(files::embedded_subtitles.is_not_null()))
-                .select((files::path, files::subtitle_delay, files::embedded_subtitles))
-                .load(connection)
+        let rows = self.wait(|mut db| async move {
+            let fields = File::fields();
+            File::filter(fields.subtitle_delay().ne(0.0).or(fields.embedded_subtitles().is_some()))
+                .exec(&mut db)
+                .await
         })?;
         Ok(rows
             .into_iter()
-            .map(|(key, delay, embedded)| {
+            .map(|file| {
                 let remembered = Remembered {
-                    delay,
-                    embedded: embedded.and_then(|count| usize::try_from(count).ok()),
+                    delay: file.subtitle_delay,
+                    embedded: file.embedded_subtitles.and_then(|count| usize::try_from(count).ok()),
                 };
-                (self.path(&key), remembered)
+                (self.path(&file.path), remembered)
             })
             .collect())
     }
@@ -177,64 +217,60 @@ impl Db {
     pub fn save_subtitle_file(&self, file: &Path, remembered: Remembered) -> Result<()> {
         let key = self.key(file);
         let embedded = remembered.embedded.map(|count| count as i64);
-        self.run(|connection| {
-            diesel::insert_into(files::table)
-                .values((
-                    files::path.eq(&key),
-                    files::subtitle_delay.eq(remembered.delay),
-                    files::embedded_subtitles.eq(embedded),
-                ))
-                .on_conflict(files::path)
-                .do_update()
-                .set((
-                    files::subtitle_delay.eq(remembered.delay),
-                    files::embedded_subtitles.eq(embedded),
-                ))
-                .execute(connection)
-                .map(drop)
+        self.wait(move |mut db| async move {
+            File::upsert_by_path(key)
+                .subtitle_delay(remembered.delay)
+                .embedded_subtitles(embedded)
+                .exec(&mut db)
+                .await?;
+            Ok(())
         })
     }
 
     pub fn audio_prefs(&self, profile: ProfileId) -> Result<AudioPrefs> {
-        let stored: Option<(String, Option<String>)> = self.run(|connection| {
-            audio_prefs::table
-                .find(profile.0)
-                .select((audio_prefs::output, audio_prefs::headphones_address))
-                .first(connection)
-                .optional()
+        let stored = self.wait(move |mut db| async move {
+            StoredAudioPrefs::filter_by_profile_id(profile.0).first().exec(&mut db).await
         })?;
-        Ok(stored.map_or_else(AudioPrefs::default, |(output, headphones)| AudioPrefs {
-            output: if output == "headphones" {
-                Output::Headphones
-            } else {
-                Output::Tv
+        Ok(stored.map_or_else(AudioPrefs::default, |stored| AudioPrefs {
+            output: match stored.output {
+                models::Output::Tv => Output::Tv,
+                models::Output::Headphones => Output::Headphones,
             },
-            headphones,
+            headphones: stored.headphones_address,
         }))
     }
 
     pub fn save_audio_prefs(&self, profile: ProfileId, prefs: &AudioPrefs) -> Result<()> {
         let output = match prefs.output {
-            Output::Tv => "tv",
-            Output::Headphones => "headphones",
+            Output::Tv => models::Output::Tv,
+            Output::Headphones => models::Output::Headphones,
         };
-        self.run(|connection| {
-            diesel::insert_into(audio_prefs::table)
-                .values((
-                    audio_prefs::profile_id.eq(profile.0),
-                    audio_prefs::output.eq(output),
-                    audio_prefs::headphones_address.eq(prefs.headphones.as_deref()),
-                ))
-                .on_conflict(audio_prefs::profile_id)
-                .do_update()
-                .set((
-                    audio_prefs::output.eq(output),
-                    audio_prefs::headphones_address.eq(prefs.headphones.as_deref()),
-                ))
-                .execute(connection)
-                .map(drop)
+        let headphones = prefs.headphones.clone();
+        self.wait(move |mut db| async move {
+            if models::Profile::filter_by_id(profile.0).first().exec(&mut db).await?.is_none() {
+                return Err(toasty::Error::record_not_found(format!("profile {}", profile.0)));
+            }
+            StoredAudioPrefs::upsert_by_profile_id(profile.0)
+                .output(output)
+                .headphones_address(headphones)
+                .exec(&mut db)
+                .await?;
+            Ok(())
         })
     }
+}
+
+pub fn toasty_cli(file: &Path, arguments: Vec<String>) -> Result<()> {
+    let runtime = runtime()?;
+    let file = file.to_path_buf();
+    wait(&runtime, async move {
+        let db = toasty::Db::builder().models(models::all()).build(Sqlite::open(file)).await?;
+        let config = toasty_cli::Config::load().map_err(|error| toasty::Error::from_args(format_args!("{error:#}")))?;
+        toasty_cli::ToastyCli::with_config(db, config)
+            .parse_from(std::iter::once("toasty".to_string()).chain(arguments))
+            .await
+            .map_err(|error| toasty::Error::from_args(format_args!("{error:#}")))
+    })
 }
 
 #[derive(Clone)]
@@ -269,28 +305,87 @@ mod tests {
 
     #[test]
     fn a_new_database_has_the_four_profiles_and_no_passwords() {
-        let names: Vec<(i64, String, String, Option<String>)> = db()
-            .run(|connection| {
-                schema::profiles::table
-                    .order(schema::profiles::id)
-                    .select((
-                        schema::profiles::id,
-                        schema::profiles::name,
-                        schema::profiles::role,
-                        schema::profiles::password_hash,
-                    ))
-                    .load(connection)
+        let profiles = db()
+            .wait(|mut db| async move {
+                models::Profile::all()
+                    .order_by(models::Profile::fields().id().asc())
+                    .exec(&mut db)
+                    .await
             })
             .unwrap();
+        let seen: Vec<_> = profiles
+            .iter()
+            .map(|profile| (profile.id, profile.name.as_str(), profile.role, profile.password_hash.is_none()))
+            .collect();
         assert_eq!(
-            names,
+            seen,
             [
-                (1, "Frederik".to_string(), "admin".to_string(), None),
-                (2, "Mami".to_string(), "viewer".to_string(), None),
-                (3, "Miriam".to_string(), "viewer".to_string(), None),
-                (4, "Ramu".to_string(), "viewer".to_string(), None),
+                (1, "Frederik", models::Role::Admin, true),
+                (2, "Mami", models::Role::Viewer, true),
+                (3, "Miriam", models::Role::Viewer, true),
+                (4, "Ramu", models::Role::Viewer, true),
             ]
         );
+    }
+
+    #[test]
+    fn deleting_a_profile_takes_its_state_along_and_leaves_the_others() {
+        use crate::auth::store::{AuthStore, Invite};
+        use crate::progress::{Place, Progress};
+        let db = db();
+        let watched = |db: &Db, profile| {
+            let mut progress = Progress::default();
+            let file = Path::new("/lib/Movies/Up/Up.mkv");
+            progress.record(file, Place { position: 60.0, duration: 5760.0, credits: None });
+            progress.watching.played(crate::watching::Kind::Movie, "up", 1);
+            progress.shows.insert("dark".to_string(), crate::progress::Position { season: 1, episode: 1, finished: false });
+            db.save_progress(profile, &progress).unwrap();
+            db.save_subtitle_settings(profile, &subtitles::Settings::default()).unwrap();
+            db.save_audio_prefs(profile, &AudioPrefs { output: Output::Headphones, headphones: None }).unwrap();
+        };
+        watched(&db, ProfileId(3));
+        watched(&db, ProfileId(4));
+        let invite = Invite {
+            token_hash: vec![9],
+            profile: ProfileId(2),
+            created_by: Some(ProfileId(4)),
+            created_at: 1,
+            expires_at: 2,
+            used_at: None,
+        };
+        db.create_invite(&invite).unwrap();
+
+        assert!(db.delete_profile(ProfileId(4)).unwrap());
+
+        let gone = db.progress(ProfileId(4)).unwrap();
+        assert!(gone.shows.is_empty() && gone.watching.entries().is_empty());
+        assert_eq!(gone.files[Path::new("/lib/Movies/Up/Up.mkv")].stopped_at, None);
+        assert_eq!(gone.files[Path::new("/lib/Movies/Up/Up.mkv")].duration, Some(5760.0));
+        assert_eq!(db.subtitle_settings(ProfileId(4)).unwrap(), None);
+        assert_eq!(db.audio_prefs(ProfileId(4)).unwrap(), AudioPrefs::default());
+        assert_eq!(db.invite(&[9]).unwrap().unwrap().created_by, None);
+        let kept = db.progress(ProfileId(3)).unwrap();
+        assert_eq!(kept.files[Path::new("/lib/Movies/Up/Up.mkv")].stopped_at, Some(60.0));
+        assert_eq!(db.audio_prefs(ProfileId(3)).unwrap().output, Output::Headphones);
+        assert!(!db.delete_profile(ProfileId(4)).unwrap());
+    }
+
+    #[test]
+    fn prefs_for_a_profile_that_does_not_exist_are_refused() {
+        let db = db();
+        let orphan = db.save_audio_prefs(ProfileId(99), &AudioPrefs::default());
+        assert!(orphan.is_err());
+    }
+
+    #[test]
+    fn a_setting_is_kept_replaced_and_forgotten() {
+        let db = db();
+        assert_eq!(db.setting("x").unwrap(), None);
+        db.set_setting("x", Some("1")).unwrap();
+        db.set_setting("x", Some("2")).unwrap();
+        assert_eq!(db.setting("x").unwrap().as_deref(), Some("2"));
+        db.set_setting("x", None).unwrap();
+        assert_eq!(db.setting("x").unwrap(), None);
     }
 
     #[test]
@@ -306,24 +401,6 @@ mod tests {
         let again = Db::open(&file, Path::new("/lib")).unwrap();
         assert_eq!(again.setting("x").unwrap().as_deref(), Some("1"));
         fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn foreign_keys_hold() {
-        let db = db();
-        let orphan = db.save_audio_prefs(ProfileId(99), &AudioPrefs::default());
-        assert!(orphan.is_err());
-    }
-
-    #[test]
-    fn a_setting_is_kept_replaced_and_forgotten() {
-        let db = db();
-        assert_eq!(db.setting("x").unwrap(), None);
-        db.set_setting("x", Some("1")).unwrap();
-        db.set_setting("x", Some("2")).unwrap();
-        assert_eq!(db.setting("x").unwrap().as_deref(), Some("2"));
-        db.set_setting("x", None).unwrap();
-        assert_eq!(db.setting("x").unwrap(), None);
     }
 
     #[test]
@@ -356,8 +433,10 @@ mod tests {
         };
         db.save_subtitle_file(file, remembered).unwrap();
         assert_eq!(db.subtitle_files().unwrap(), BTreeMap::from([(file.to_path_buf(), remembered)]));
-        let stored: String = db.run(|connection| files::table.select(files::path).first(connection)).unwrap();
-        assert_eq!(stored, "Movies/Up/Up.mkv");
+        let stored = db
+            .wait(|mut db| async move { File::all().exec(&mut db).await })
+            .unwrap();
+        assert_eq!(stored[0].path, "Movies/Up/Up.mkv");
         db.save_subtitle_file(file, Remembered::default()).unwrap();
         assert!(db.subtitle_files().unwrap().is_empty());
     }

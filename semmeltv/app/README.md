@@ -325,10 +325,12 @@ What the app hears and does goes out on the API's event stream; see
 
 Everything the app learns while running lives in one SQLite database,
 `/var/lib/semmeltv/semmeltv.db` on a Pi, owned by the `semmeltv` user, through
-Diesel ([why](../docs/adr/0001-database.md)). `library.toml` stays the only
-source of truth for the library, and `library.last-good.toml` stays in the
-cache. The schema is in `migrations/`; the app applies new migrations when it
-starts. `src/db/` is the only code that touches it.
+the [Toasty](https://github.com/tokio-rs/toasty) ORM
+([why](../docs/adr/0002-toasty.md), [how](../docs/toasty.md)). `library.toml`
+stays the only source of truth for the library, and `library.last-good.toml`
+stays in the cache. The models are in `src/db/models.rs`, the migrations Toasty
+generated from them in `toasty/`; the app applies new ones when it starts.
+`src/db/` is the only code that touches the database.
 
 | Table | Holds | Per |
 | --- | --- | --- |
@@ -353,6 +355,19 @@ from the cache: `progress.json`, `subtitles.json`, `subtitle-files.json`,
 running twice.
 
 Read it on the Pi with `sudo -u semmeltv sqlite3 /var/lib/semmeltv/semmeltv.db`.
+
+A database from the Diesel days (it has `__diesel_schema_migrations`) is moved
+over on the first start: the app renames it to `semmeltv.diesel.db`, creates
+the Toasty schema in its place and copies every row across in one transaction.
+
+After changing a model, generate the next migration from `semmeltv/app`, with a
+scratch database since generating only compares the models with the last
+snapshot in `toasty/snapshots/`:
+
+    cargo run -- --db /tmp/scratch.db toasty migration generate --name what-changed
+
+`semmeltv toasty …` is Toasty's own migration CLI, built into the app because
+it needs the app's models. Review the SQL it writes before committing it.
 
 ## Profiles
 

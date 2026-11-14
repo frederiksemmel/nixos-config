@@ -1,6 +1,6 @@
 # 1. SQLite through Diesel, not Toasty
 
-Date: 2026-11-14. Status: accepted.
+Date: 2026-11-14. Status: superseded the same day by [2. Toasty after all](0002-toasty.md).
 
 ## Context
 

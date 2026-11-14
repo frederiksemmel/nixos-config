@@ -1,24 +1,21 @@
-use super::schema::{dismissed, file_places, files, show_places, watching};
+use super::models::{self, Dismissal as StoredDismissal, File, FilePlace, ShowPlace, Watching as StoredWatching};
 use super::{Db, Result};
 use crate::profile::ProfileId;
 use crate::progress::{Position, Progress, Tracks, Watched};
 use crate::watching::{Dismissal, Entry, Kind, Watching};
-use diesel::prelude::*;
-use diesel::sqlite::SqliteConnection;
 use std::collections::BTreeMap;
+use toasty::Executor;
+use toasty_core::driver::operation::TransactionMode;
 
-#[derive(Clone, Debug, PartialEq, Queryable, Selectable, Insertable)]
-#[diesel(table_name = files, check_for_backend(diesel::sqlite::Sqlite))]
-struct FileFacts {
+#[derive(Clone, Debug, PartialEq)]
+struct Facts {
     path: String,
     duration: Option<f64>,
     credits: Option<f64>,
 }
 
-#[derive(Clone, Debug, PartialEq, Queryable, Selectable, Insertable)]
-#[diesel(table_name = file_places, check_for_backend(diesel::sqlite::Sqlite))]
-struct FilePlace {
-    profile_id: i64,
+#[derive(Clone, Debug, PartialEq)]
+struct Spot {
     path: String,
     stopped_at: Option<f64>,
     last_played: Option<i64>,
@@ -28,67 +25,188 @@ struct FilePlace {
     subtitles_shown: Option<bool>,
 }
 
-#[derive(Clone, Debug, PartialEq, Queryable, Selectable, Insertable)]
-#[diesel(table_name = show_places, check_for_backend(diesel::sqlite::Sqlite))]
-struct ShowPlace {
-    profile_id: i64,
-    show_key: String,
+#[derive(Clone, Debug, PartialEq)]
+struct Show {
+    key: String,
     season: i64,
     episode: i64,
     finished: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Queryable, Selectable, Insertable)]
-#[diesel(table_name = watching, check_for_backend(diesel::sqlite::Sqlite))]
-struct WatchingEntry {
-    profile_id: i64,
-    kind: String,
+#[derive(Clone, Debug, PartialEq)]
+struct Started {
+    kind: models::Kind,
     key: String,
     last_played: i64,
 }
 
-#[derive(Clone, Debug, PartialEq, Queryable, Selectable, Insertable)]
-#[diesel(table_name = dismissed, check_for_backend(diesel::sqlite::Sqlite))]
-struct DismissedFile {
-    profile_id: i64,
+#[derive(Clone, Debug, PartialEq)]
+struct Dismissed {
     path: String,
     at: i64,
 }
 
 #[derive(Debug, Default, PartialEq)]
 struct Rows {
-    facts: Vec<FileFacts>,
-    places: Vec<FilePlace>,
-    shows: Vec<ShowPlace>,
-    watching: Vec<WatchingEntry>,
-    dismissed: Vec<DismissedFile>,
+    facts: Vec<Facts>,
+    spots: Vec<Spot>,
+    shows: Vec<Show>,
+    watching: Vec<Started>,
+    dismissed: Vec<Dismissed>,
 }
 
-fn load(connection: &mut SqliteConnection, profile: ProfileId) -> QueryResult<Rows> {
+async fn load(executor: &mut dyn Executor, profile: i64) -> toasty::Result<Rows> {
+    let file = File::fields();
+    let facts = File::filter(file.duration().is_some().or(file.credits().is_some()))
+        .exec(executor)
+        .await?;
+    let spots = FilePlace::filter(FilePlace::fields().profile_id().eq(profile))
+        .exec(executor)
+        .await?;
+    let shows = ShowPlace::filter(ShowPlace::fields().profile_id().eq(profile))
+        .exec(executor)
+        .await?;
+    let watching = StoredWatching::filter(StoredWatching::fields().profile_id().eq(profile))
+        .order_by((
+            StoredWatching::fields().last_played().desc(),
+            StoredWatching::fields().title_key().asc(),
+        ))
+        .exec(executor)
+        .await?;
+    let dismissed = StoredDismissal::filter(StoredDismissal::fields().profile_id().eq(profile))
+        .order_by((StoredDismissal::fields().at().asc(), StoredDismissal::fields().path().asc()))
+        .exec(executor)
+        .await?;
     Ok(Rows {
-        facts: files::table
-            .filter(files::duration.is_not_null().or(files::credits.is_not_null()))
-            .select(FileFacts::as_select())
-            .load(connection)?,
-        places: file_places::table
-            .filter(file_places::profile_id.eq(profile.0))
-            .select(FilePlace::as_select())
-            .load(connection)?,
-        shows: show_places::table
-            .filter(show_places::profile_id.eq(profile.0))
-            .select(ShowPlace::as_select())
-            .load(connection)?,
-        watching: watching::table
-            .filter(watching::profile_id.eq(profile.0))
-            .order((watching::last_played.desc(), watching::kind, watching::key))
-            .select(WatchingEntry::as_select())
-            .load(connection)?,
-        dismissed: dismissed::table
-            .filter(dismissed::profile_id.eq(profile.0))
-            .order((dismissed::at, dismissed::path))
-            .select(DismissedFile::as_select())
-            .load(connection)?,
+        facts: facts
+            .into_iter()
+            .map(|file| Facts {
+                path: file.path,
+                duration: file.duration,
+                credits: file.credits,
+            })
+            .collect(),
+        spots: spots
+            .into_iter()
+            .map(|place| Spot {
+                path: place.path,
+                stopped_at: place.stopped_at,
+                last_played: place.last_played,
+                finished: place.finished,
+                audio_track: place.audio_track,
+                subtitle_track: place.subtitle_track,
+                subtitles_shown: place.subtitles_shown,
+            })
+            .collect(),
+        shows: shows
+            .into_iter()
+            .map(|show| Show {
+                key: show.show_key,
+                season: show.season,
+                episode: show.episode,
+                finished: show.finished,
+            })
+            .collect(),
+        watching: watching
+            .into_iter()
+            .map(|entry| Started {
+                kind: entry.kind,
+                key: entry.title_key,
+                last_played: entry.last_played,
+            })
+            .collect(),
+        dismissed: dismissed
+            .into_iter()
+            .map(|dismissal| Dismissed {
+                path: dismissal.path,
+                at: dismissal.at,
+            })
+            .collect(),
     })
+}
+
+async fn store(executor: &mut dyn Executor, profile: i64, wanted: Rows) -> toasty::Result<()> {
+    let stored = load(executor, profile).await?;
+    let (facts, _) = changed(stored.facts, wanted.facts, |row| row.path.clone());
+    for row in facts {
+        File::upsert_by_path(row.path)
+            .duration(row.duration)
+            .credits(row.credits)
+            .exec(executor)
+            .await?;
+    }
+    let (spots, gone) = changed(stored.spots, wanted.spots, |row| row.path.clone());
+    for row in spots {
+        FilePlace::upsert_by_profile_id_and_path(profile, row.path)
+            .stopped_at(row.stopped_at)
+            .last_played(row.last_played)
+            .finished(row.finished)
+            .audio_track(row.audio_track)
+            .subtitle_track(row.subtitle_track)
+            .subtitles_shown(row.subtitles_shown)
+            .exec(executor)
+            .await?;
+    }
+    if !gone.is_empty() {
+        let fields = FilePlace::fields();
+        FilePlace::filter(fields.profile_id().eq(profile).and(fields.path().in_list(gone)))
+            .delete()
+            .exec(executor)
+            .await?;
+    }
+    let (shows, gone) = changed(stored.shows, wanted.shows, |row| row.key.clone());
+    for row in shows {
+        ShowPlace::upsert_by_profile_id_and_show_key(profile, row.key)
+            .season(row.season)
+            .episode(row.episode)
+            .finished(row.finished)
+            .exec(executor)
+            .await?;
+    }
+    if !gone.is_empty() {
+        let fields = ShowPlace::fields();
+        ShowPlace::filter(fields.profile_id().eq(profile).and(fields.show_key().in_list(gone)))
+            .delete()
+            .exec(executor)
+            .await?;
+    }
+    let (entries, gone) = changed(stored.watching, wanted.watching, |row| {
+        (kind_name(row.kind), row.key.clone())
+    });
+    for row in entries {
+        StoredWatching::upsert_by_profile_id_and_kind_and_title_key(profile, row.kind, row.key)
+            .last_played(row.last_played)
+            .exec(executor)
+            .await?;
+    }
+    for (kind, key) in gone {
+        let fields = StoredWatching::fields();
+        StoredWatching::filter(
+            fields
+                .profile_id()
+                .eq(profile)
+                .and(fields.kind().eq(kind_of(kind)))
+                .and(fields.title_key().eq(key)),
+        )
+        .delete()
+        .exec(executor)
+        .await?;
+    }
+    let (dismissals, gone) = changed(stored.dismissed, wanted.dismissed, |row| row.path.clone());
+    for row in dismissals {
+        StoredDismissal::upsert_by_profile_id_and_path(profile, row.path)
+            .at(row.at)
+            .exec(executor)
+            .await?;
+    }
+    if !gone.is_empty() {
+        let fields = StoredDismissal::fields();
+        StoredDismissal::filter(fields.profile_id().eq(profile).and(fields.path().in_list(gone)))
+            .delete()
+            .exec(executor)
+            .await?;
+    }
+    Ok(())
 }
 
 fn changed<K: Ord, R: PartialEq>(stored: Vec<R>, wanted: Vec<R>, key: impl Fn(&R) -> K) -> (Vec<R>, Vec<K>) {
@@ -102,104 +220,52 @@ fn changed<K: Ord, R: PartialEq>(stored: Vec<R>, wanted: Vec<R>, key: impl Fn(&R
     (write, gone.into_keys().collect())
 }
 
-fn kind_name(kind: Kind) -> &'static str {
+fn kind_name(kind: models::Kind) -> &'static str {
     match kind {
-        Kind::Series => "series",
-        Kind::Movie => "movie",
+        models::Kind::Series => "series",
+        models::Kind::Movie => "movie",
     }
 }
 
-fn kind_of(name: &str) -> Option<Kind> {
-    match name {
-        "series" => Some(Kind::Series),
-        "movie" => Some(Kind::Movie),
-        _ => None,
+fn kind_of(name: &str) -> models::Kind {
+    if name == "series" {
+        models::Kind::Series
+    } else {
+        models::Kind::Movie
     }
 }
 
 impl Db {
     pub fn progress(&self, profile: ProfileId) -> Result<Progress> {
-        let rows = self.run(|connection| load(connection, profile))?;
+        let rows = self.wait(move |mut db| async move { load(&mut db, profile.0).await })?;
         Ok(self.assemble(rows))
     }
 
     pub fn save_progress(&self, profile: ProfileId, progress: &Progress) -> Result<()> {
-        let wanted = self.rows(profile, progress);
-        self.run(|connection| {
-            connection.immediate_transaction(|connection| {
-                let stored = load(connection, profile)?;
-                let (facts, _) = changed(stored.facts, wanted.facts, |row| row.path.clone());
-                for row in &facts {
-                    diesel::insert_into(files::table)
-                        .values(row)
-                        .on_conflict(files::path)
-                        .do_update()
-                        .set((files::duration.eq(row.duration), files::credits.eq(row.credits)))
-                        .execute(connection)?;
-                }
-                let (places, gone) = changed(stored.places, wanted.places, |row| row.path.clone());
-                for row in &places {
-                    diesel::replace_into(file_places::table).values(row).execute(connection)?;
-                }
-                diesel::delete(
-                    file_places::table
-                        .filter(file_places::profile_id.eq(profile.0))
-                        .filter(file_places::path.eq_any(gone)),
-                )
-                .execute(connection)?;
-                let (shows, gone) = changed(stored.shows, wanted.shows, |row| row.show_key.clone());
-                for row in &shows {
-                    diesel::replace_into(show_places::table).values(row).execute(connection)?;
-                }
-                diesel::delete(
-                    show_places::table
-                        .filter(show_places::profile_id.eq(profile.0))
-                        .filter(show_places::show_key.eq_any(gone)),
-                )
-                .execute(connection)?;
-                let (entries, gone) = changed(stored.watching, wanted.watching, |row| {
-                    (row.kind.clone(), row.key.clone())
-                });
-                for row in &entries {
-                    diesel::replace_into(watching::table).values(row).execute(connection)?;
-                }
-                for (kind, key) in gone {
-                    diesel::delete(
-                        watching::table
-                            .filter(watching::profile_id.eq(profile.0))
-                            .filter(watching::kind.eq(kind))
-                            .filter(watching::key.eq(key)),
-                    )
-                    .execute(connection)?;
-                }
-                let (dismissals, gone) = changed(stored.dismissed, wanted.dismissed, |row| row.path.clone());
-                for row in &dismissals {
-                    diesel::replace_into(dismissed::table).values(row).execute(connection)?;
-                }
-                diesel::delete(
-                    dismissed::table
-                        .filter(dismissed::profile_id.eq(profile.0))
-                        .filter(dismissed::path.eq_any(gone)),
-                )
-                .execute(connection)?;
-                Ok(())
-            })
+        let wanted = self.rows(progress);
+        self.wait(move |mut db| async move {
+            let mut transaction = db
+                .transaction_builder()
+                .mode(TransactionMode::Immediate)
+                .begin()
+                .await?;
+            store(&mut transaction, profile.0, wanted).await?;
+            transaction.commit().await
         })
     }
 
-    fn rows(&self, profile: ProfileId, progress: &Progress) -> Rows {
+    fn rows(&self, progress: &Progress) -> Rows {
         let mut rows = Rows::default();
         for (file, watched) in &progress.files {
             let path = self.key(file);
             if watched.duration.is_some() || watched.credits.is_some() {
-                rows.facts.push(FileFacts {
+                rows.facts.push(Facts {
                     path: path.clone(),
                     duration: watched.duration,
                     credits: watched.credits,
                 });
             }
-            let place = FilePlace {
-                profile_id: profile.0,
+            let spot = Spot {
                 path,
                 stopped_at: watched.stopped_at,
                 last_played: watched.last_played.map(|at| at as i64),
@@ -208,20 +274,19 @@ impl Db {
                 subtitle_track: watched.tracks.subtitle,
                 subtitles_shown: watched.tracks.subtitles_shown,
             };
-            let empty = FilePlace {
-                path: place.path.clone(),
-                ..FilePlace::empty(profile)
-            };
-            if place != empty {
-                rows.places.push(place);
+            let untouched = spot.stopped_at.is_none()
+                && spot.last_played.is_none()
+                && !spot.finished
+                && watched.tracks == Tracks::default();
+            if !untouched {
+                rows.spots.push(spot);
             }
         }
         rows.shows = progress
             .shows
             .iter()
-            .map(|(key, position)| ShowPlace {
-                profile_id: profile.0,
-                show_key: key.clone(),
+            .map(|(key, position)| Show {
+                key: key.clone(),
                 season: position.season.into(),
                 episode: position.episode.into(),
                 finished: position.finished,
@@ -231,9 +296,11 @@ impl Db {
             .watching
             .entries()
             .iter()
-            .map(|entry| WatchingEntry {
-                profile_id: profile.0,
-                kind: kind_name(entry.kind).to_string(),
+            .map(|entry| Started {
+                kind: match entry.kind {
+                    Kind::Series => models::Kind::Series,
+                    Kind::Movie => models::Kind::Movie,
+                },
                 key: entry.key.clone(),
                 last_played: entry.last_played as i64,
             })
@@ -242,14 +309,7 @@ impl Db {
         for dismissal in &progress.dismissed {
             dismissed.insert(self.key(&dismissal.file), dismissal.at as i64);
         }
-        rows.dismissed = dismissed
-            .into_iter()
-            .map(|(path, at)| DismissedFile {
-                profile_id: profile.0,
-                path,
-                at,
-            })
-            .collect();
+        rows.dismissed = dismissed.into_iter().map(|(path, at)| Dismissed { path, at }).collect();
         rows
     }
 
@@ -260,15 +320,15 @@ impl Db {
             watched.duration = facts.duration;
             watched.credits = facts.credits;
         }
-        for place in rows.places {
-            let watched: &mut Watched = progress.files.entry(self.path(&place.path)).or_default();
-            watched.stopped_at = place.stopped_at;
-            watched.last_played = place.last_played.and_then(|at| u64::try_from(at).ok());
-            watched.finished = place.finished;
+        for spot in rows.spots {
+            let watched: &mut Watched = progress.files.entry(self.path(&spot.path)).or_default();
+            watched.stopped_at = spot.stopped_at;
+            watched.last_played = spot.last_played.and_then(|at| u64::try_from(at).ok());
+            watched.finished = spot.finished;
             watched.tracks = Tracks {
-                audio: place.audio_track,
-                subtitle: place.subtitle_track,
-                subtitles_shown: place.subtitles_shown,
+                audio: spot.audio_track,
+                subtitle: spot.subtitle_track,
+                subtitles_shown: spot.subtitles_shown,
             };
         }
         for show in rows.shows {
@@ -280,14 +340,17 @@ impl Db {
                 episode,
                 finished: show.finished,
             };
-            progress.shows.insert(show.show_key, position);
+            progress.shows.insert(show.key, position);
         }
         progress.watching = Watching::from_entries(
             rows.watching
                 .into_iter()
                 .filter_map(|entry| {
                     Some(Entry {
-                        kind: kind_of(&entry.kind)?,
+                        kind: match entry.kind {
+                            models::Kind::Series => Kind::Series,
+                            models::Kind::Movie => Kind::Movie,
+                        },
                         key: entry.key,
                         last_played: u64::try_from(entry.last_played).ok()?,
                     })
@@ -303,21 +366,6 @@ impl Db {
             })
             .collect();
         progress
-    }
-}
-
-impl FilePlace {
-    fn empty(profile: ProfileId) -> Self {
-        Self {
-            profile_id: profile.0,
-            path: String::new(),
-            stopped_at: None,
-            last_played: None,
-            finished: false,
-            audio_track: None,
-            subtitle_track: None,
-            subtitles_shown: None,
-        }
     }
 }
 
@@ -443,7 +491,13 @@ mod tests {
         let db = db();
         db.save_progress(ProfileId::FIRST, &sample()).unwrap();
         let stored: Vec<String> = db
-            .run(|connection| file_places::table.select(file_places::path).order(file_places::path).load(connection))
+            .wait(|mut db| async move {
+                let places = FilePlace::all()
+                    .order_by(FilePlace::fields().path().asc())
+                    .exec(&mut db)
+                    .await?;
+                Ok(places.into_iter().map(|place| place.path).collect())
+            })
             .unwrap();
         assert_eq!(stored, ["Movies/Up/Up.mkv", "Series/Dark/S01/Dark.S01E02.mkv"]);
     }
