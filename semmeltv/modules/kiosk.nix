@@ -134,6 +134,8 @@ in
       // lib.optionalAttrs (cfg.tv.renderer != null) { SEMMELTV_TV_RENDERER = cfg.tv.renderer; };
     };
 
+    environment.systemPackages = [ pkgs.sqlite ];
+
     systemd.services.cage-tty1 = {
       after = [ "systemd-tmpfiles-setup.service" ];
       restartIfChanged = lib.mkForce true;

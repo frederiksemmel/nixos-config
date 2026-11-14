@@ -11,6 +11,7 @@ use diesel_migrations::{EmbeddedMigrations, MigrationHarness, embed_migrations};
 use schema::{audio_prefs, files, settings, subtitle_settings};
 use std::collections::BTreeMap;
 use std::fs;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -49,8 +50,15 @@ impl Db {
             fs::create_dir_all(dir)?;
         }
         let url = file.to_str().ok_or("the database path is not UTF-8")?;
+        fs::OpenOptions::new().create(true).append(true).mode(0o600).open(file)?;
         let mut connection = SqliteConnection::establish(url)?;
         connection.batch_execute("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+        for suffix in ["", "-wal", "-shm"] {
+            let path = PathBuf::from(format!("{url}{suffix}"));
+            if path.exists() {
+                fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+            }
+        }
         Self::ready(connection, library)
     }
 
@@ -282,6 +290,21 @@ mod tests {
                 (4, "Ramu".to_string(), "viewer".to_string(), None),
             ]
         );
+    }
+
+    #[test]
+    fn the_file_is_the_apps_alone_and_keeps_what_was_saved() {
+        let dir = std::env::temp_dir().join(format!("semmeltv-db-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let file = dir.join("state/semmeltv.db");
+        let db = Db::open(&file, Path::new("/lib")).unwrap();
+        db.set_setting("x", Some("1")).unwrap();
+        drop(db);
+        let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let again = Db::open(&file, Path::new("/lib")).unwrap();
+        assert_eq!(again.setting("x").unwrap().as_deref(), Some("1"));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
