@@ -251,7 +251,11 @@ impl Job {
             return "Checking the pieces already downloaded".to_string();
         }
         let progress: u64 = self.parts.iter().map(|part| part.progress).sum();
-        let total: u64 = self.parts.iter().map(|part| part.total).sum();
+        let total: u64 = self
+            .parts
+            .iter()
+            .map(|part| if part.total > 0 { part.total } else { part.part.size })
+            .sum();
         let speed: f64 = self.parts.iter().map(|part| part.speed).sum();
         let count = self.count();
         let what = match self.current().and_then(FileState::episode) {

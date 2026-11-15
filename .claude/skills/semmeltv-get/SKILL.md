@@ -48,7 +48,7 @@ Done when Frederik has named one release, or decided to keep what he has.
 
 `JSON_LINE` is the release's line from step 2, unchanged. Use `--replace` when the title, or that episode, is already in the library: the job then takes over the existing library entry and its id, so watch progress and resume points carry over to the new file. The old video and the subtitles named after it move to `pcloud:SemmelTV/Replaced/<old path>`. Without `--replace`, a title already in the library is refused as "already in the library".
 
-Follow the job with `get jobs` (each line has the stage, a message and the last log lines) until its stage is `done` or `failed`. A job that cannot read the torrent after 5 minutes found no peers; offer Frederik the next release from step 3.
+Follow the job with `get jobs` (each line has the stage, a message and the last log lines) until its stage is `done` or `failed`. A season comes one episode at a time, in order, and each episode is in the library (`placed`, and `in the library:` in the log) while the next one downloads, so Frederik can start watching before the job is done. A job that cannot read the torrent after 5 minutes found no peers; offer Frederik the next release from step 3.
 
 Done when the job is `done`, and for a replacement its log shows `replaces` and `moved the replaced`.
 
