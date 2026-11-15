@@ -17,6 +17,24 @@ in
 
   time.timeZone = "Europe/Zurich";
 
+  nix.channel.enable = false;
+  nix.nixPath = [ "nixpkgs=${pkgs.path}" ];
+  nix.registry.nixpkgs.to = {
+    type = "path";
+    path = pkgs.path;
+  };
+
+  environment.systemPackages = with pkgs; [
+    bottom
+    htop
+    ncdu
+    lsof
+    curl
+    jq
+    dnsutils
+    tmux
+  ];
+
   services.semmeltv = {
     enable = true;
     adminUser = "frederik";
