@@ -468,6 +468,12 @@ if let Some(rusqlite::Error::SqliteFailure(failure, _)) = error.downcast_ref::<r
   - Seeds are hand-edited SQL.
   - A 560-line snapshot TOML lives in the repo.
   - `reset_db` and `migration reset` delete the whole SQLite file.
+  - A generated SQLite table rebuild can drop the table's indexes without
+    recreating them. Adding `Role::Guest` (`0001_guest.sql`) rebuilt
+    `profiles`, and the unique index on `name` from `0000` was gone even though
+    the snapshot still listed it; it is recreated by hand there. Read every
+    generated rebuild for its `CREATE INDEX` lines, and for hand-written
+    `CHECK`s on the rebuilt table, which are lost the same way.
 - **Smaller gaps.**
   - There is no case-insensitive unique (no `COLLATE NOCASE`), so "mami"
     vs "Mami" is still checked in Rust.
