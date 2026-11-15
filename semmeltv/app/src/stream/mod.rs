@@ -26,6 +26,7 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::io::Read;
 use std::path::PathBuf;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{OnceCell, watch};
@@ -533,8 +534,9 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         .or_else(|| media.audio.iter().position(|audio| audio.default))
         .or((!media.audio.is_empty()).then_some(0));
     let audio = audio_index.and_then(|index| media.audio.get(index));
+    let dialogue = streams.core.dialogue(profile).await;
     let (hevc, copy_audio) = match probe::verdict(&media, audio, body.client) {
-        Verdict::Plays { hevc, copy_audio } => (hevc, copy_audio),
+        Verdict::Plays { hevc, copy_audio } => (hevc, copy_audio && !dialogue.load(Ordering::SeqCst)),
         Verdict::Refused(reason) => {
             eprintln!("stream: {} can't open {}: {reason}", device_name(body.device.as_ref()), file_name(&chosen.file));
             return problem(StatusCode::UNPROCESSABLE_ENTITY, reason);
@@ -589,6 +591,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
             audio: audio.map(|audio| audio.index),
             hevc,
             copy_audio: copy_audio || audio.is_none(),
+            dialogue: dialogue.clone(),
             subtitles: subtitles.iter().filter_map(|subtitle| subtitle.embedded()).collect(),
         },
     );
@@ -635,7 +638,11 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         file_name(&live.file),
         device_name(live.device.as_ref()),
         if hevc { "HEVC" } else { "H.264" },
-        if copy_audio { "copied" } else { "converted" }
+        match (copy_audio, dialogue.load(Ordering::SeqCst)) {
+            (true, _) => "copied",
+            (false, true) => "converted, dialogue mode",
+            (false, false) => "converted",
+        }
     );
     streams.live.lock().unwrap().insert(id.clone(), live);
     let art = chosen.picked.art();

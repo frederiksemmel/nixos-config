@@ -210,6 +210,7 @@ fn router(api: Api) -> Router {
         .route("/api/audio/pair", post(pair_headphones).delete(cancel_pairing))
         .route("/api/audio/headphones", delete(forget_headphones))
         .route("/api/audio/delay", post(delay_sound))
+        .route("/api/audio/dialogue", get(dialogue).post(set_dialogue))
         .route("/api/volume/{change}", post(volume))
         .route("/api/subtitles/fetch", post(fetch_subtitles))
         .merge(subtitles::routes(api.core.clone()))
@@ -1277,6 +1278,26 @@ struct DelayBody {
     by: i32,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DialogueBody {
+    on: bool,
+}
+
+async fn dialogue(State(api): State<Api>, Who(profile): Who) -> Response {
+    let on = api
+        .core
+        .dialogue(profile)
+        .await
+        .load(std::sync::atomic::Ordering::SeqCst);
+    Json(serde_json::json!({ "on": on })).into_response()
+}
+
+async fn set_dialogue(State(api): State<Api>, Who(profile): Who, Json(body): Json<DialogueBody>) -> Response {
+    let outcome = api.core.set_dialogue(profile, body.on).await;
+    (status(outcome.ok), Json(outcome)).into_response()
+}
+
 async fn delay_sound(State(api): State<Api>, Json(body): Json<DelayBody>) -> Response {
     heard(api.core.delay_sound(body.by).await)
 }
@@ -1868,6 +1889,16 @@ mod tests {
         assert_eq!(get(&server, "/api/audio").0, 404);
         assert_eq!(post(&server, "/api/audio", json!({ "output": "headphones" })).0, 404);
         assert_eq!(post(&server, "/api/audio/pair", json!({})).0, 404);
+    }
+
+    #[test]
+    fn dialogue_mode_is_off_until_switched_on_and_stays_on() {
+        let server = serve(no_root(), None);
+        assert_eq!(get(&server, "/api/audio/dialogue"), (200, json!({ "on": false })));
+        let (status, _) = post(&server, "/api/audio/dialogue", json!({ "on": true }));
+        assert_eq!(status, 200);
+        assert_eq!(get(&server, "/api/audio/dialogue"), (200, json!({ "on": true })));
+        assert_eq!(post(&server, "/api/audio/dialogue", json!({ "on": "yes" })).0, 422);
     }
 
     #[test]

@@ -24,3 +24,8 @@ snapshot_name = "0003_snapshot.toml"
 id = 8037162959126689061
 name = "0004_no_guest.sql"
 snapshot_name = "0004_snapshot.toml"
+
+[[migrations]]
+id = 5488915889144614702
+name = "0005_audio-prefs-dialogue.sql"
+snapshot_name = "0005_snapshot.toml"

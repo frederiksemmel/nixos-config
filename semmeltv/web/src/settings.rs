@@ -7,7 +7,7 @@ use crate::subtitles::{language_order, style, switch};
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::page;
-use topcoat::runtime::{connected, link};
+use topcoat::runtime::{Event, connected, link, procedure, signal};
 use topcoat::view::{View, attributes, component, emit, live, view};
 
 fn tv_name(abilities: &TvAbilities) -> String {
@@ -115,6 +115,30 @@ async fn headphones_settings(cx: &Cx) -> Result<impl View> {
     })
 }
 
+pub const DIALOGUE_DETAIL: &str =
+    "Voices louder, explosions and music calmer. The green key on the remote switches it on the TV";
+
+#[procedure]
+pub async fn set_dialogue(cx: &Cx, on: bool) -> Result<String> {
+    Ok(Api::of(cx).set_dialogue(on).await)
+}
+
+#[component]
+pub async fn dialogue_switch(cx: &Cx, on: bool) -> Result<impl View> {
+    let said = signal(cx, String::new);
+    Ok(view! {
+        <label class="setting setting-row">
+            <span class="setting-name">"Dialogue mode" <small>(DIALOGUE_DETAIL)</small></span>
+            <input type="checkbox" class="switch" checked=(on)
+                @change=$(async |e: Event| {
+                    let answer = set_dialogue(e.target.checked).await;
+                    said.set(answer);
+                })>
+            <span class="setting-said" :hidden=$(said.get().is_empty())>$(said.get())</span>
+        </label>
+    })
+}
+
 #[component]
 async fn chevron() -> Result<impl View> {
     Ok(view! {
@@ -133,6 +157,7 @@ async fn download_icon() -> Result<impl View> {
 async fn settings_page(cx: &Cx) -> Result<impl View> {
     let api = Api::of(cx);
     let subtitles = api.subtitles().await;
+    let dialogue = api.dialogue().await;
     let abilities = api.tv_abilities().await.unwrap_or_default();
     let (paired, pair) = pairing(abilities.paired);
     let admin = crate::auth::me(cx).is_some_and(|me| me.person.admin());
@@ -177,6 +202,13 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                         </div>
                     }
                 </div>
+            </section>
+            <section class="settings">
+                <h2>"Sound"</h2>
+                match dialogue {
+                    Ok(on) => <div class="setting-group">dialogue_switch(on: on)</div>,
+                    Err(error) => <p class="setting-note">(error)</p>,
+                }
             </section>
             headphones_settings()
             if admin {

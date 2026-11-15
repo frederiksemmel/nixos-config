@@ -288,6 +288,10 @@ impl Actor {
             self.cancel_voice();
             return;
         }
+        if command == Command::Dialogue {
+            self.toggle_dialogue().await;
+            return;
+        }
         if let Some(player) = self.player() {
             player.command(command);
             return;
@@ -299,6 +303,30 @@ impl Actor {
             self.refresh_people().await;
         }
         self.core.bus.key(command);
+    }
+
+    async fn apply_dialogue(&mut self, by: ProfileId) -> Outcome {
+        let on = self.core.dialogue(by).await.load(Ordering::SeqCst);
+        let said = sound::dialogue_said(on);
+        if let Some(tv) = self.on_tv.as_ref().filter(|tv| tv.owner == by) {
+            tv.player.set_dialogue(on);
+            tv.player.say(said);
+        }
+        Outcome::done(said)
+    }
+
+    async fn toggle_dialogue(&mut self) {
+        let by = self.on_tv.as_ref().map_or(self.profile, |tv| tv.owner);
+        let on = !self.core.dialogue(by).await.load(Ordering::SeqCst);
+        if let Err(error) = self.core.save_dialogue(by, on).await {
+            eprintln!("dialogue mode: {error}");
+            self.show_message("Dialogue mode could not be saved".to_string());
+            return;
+        }
+        let outcome = self.apply_dialogue(by).await;
+        if self.on_tv.is_none() {
+            self.show_message(outcome.message);
+        }
     }
 
     fn publish_home(&self) {
@@ -440,6 +468,7 @@ impl Actor {
             let finishing = self.core.clone();
             let finished = move |finish: Finish| finishing.signal(Signal::Finished(finish));
             let keys = self.core.clone();
+            let dialogue = self.core.dialogue(owner).await.load(Ordering::SeqCst);
             let started = block_in_place(|| {
                 Player::start(
                     &source,
@@ -450,6 +479,7 @@ impl Actor {
                     self.title(path),
                     self.subtitles.clone(),
                     &self.audio_device(),
+                    dialogue,
                     saved,
                     move |command| keys.send(Request::Key(command)),
                     finished,
@@ -736,6 +766,7 @@ impl Actor {
                 return self.screen_command(command, by).await;
             }
             Request::TvProfile(by) => return self.show_profile(by).await,
+            Request::Dialogue(by) => return self.apply_dialogue(by).await,
             Request::Listen => {
                 return match &self.voice {
                     Some(voice) => {

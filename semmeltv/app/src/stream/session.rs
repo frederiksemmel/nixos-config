@@ -5,6 +5,7 @@ use crate::audio;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tokio::process::{Child, Command};
@@ -25,6 +26,7 @@ pub struct Spec {
     pub audio: Option<usize>,
     pub hevc: bool,
     pub copy_audio: bool,
+    pub dialogue: Arc<AtomicBool>,
     /// The embedded text subtitle tracks to write out as WebVTT while remuxing.
     pub subtitles: Vec<usize>,
 }
@@ -38,6 +40,7 @@ struct Fragment {
     path: PathBuf,
     last: bool,
     opening: bool,
+    dialogue: bool,
 }
 
 struct Run {
@@ -48,6 +51,7 @@ struct Run {
     produced: f64,
     paused: bool,
     exited: bool,
+    dialogue: bool,
 }
 
 #[derive(Default)]
@@ -132,7 +136,8 @@ impl Session {
             state.failed = Some(format!("{}: {error}", self.dir.display()));
             return;
         }
-        let mut command = self.command(number, self.plan.seek_for(segment));
+        let dialogue = self.dialogue();
+        let mut command = self.command(number, self.plan.seek_for(segment), dialogue);
         unsafe {
             command.pre_exec(|| {
                 libc::setpriority(libc::PRIO_PROCESS, 0, NICENESS);
@@ -149,6 +154,7 @@ impl Session {
                     produced: self.plan.start(segment),
                     paused: false,
                     exited: false,
+                    dialogue,
                 });
                 tokio::spawn(self.clone().watch(number, segment > 0, child));
             }
@@ -156,7 +162,7 @@ impl Session {
         }
     }
 
-    fn command(&self, number: u32, seek: Option<f64>) -> Command {
+    fn command(&self, number: u32, seek: Option<f64>, dialogue: bool) -> Command {
         let mut command = Command::new("ffmpeg");
         command.args(["-nostdin", "-hide_banner", "-loglevel", "error"]);
         if let Some(seek) = seek {
@@ -174,7 +180,7 @@ impl Session {
         if self.spec.copy_audio {
             command.args(["-c:a", "copy"]);
         } else {
-            command.args(["-af", audio::STEREO, "-c:a", "aac", "-b:a", "256k"]);
+            command.args(["-af", audio::stereo(dialogue), "-c:a", "aac", "-b:a", "256k"]);
         }
         command
             .args([
@@ -302,6 +308,14 @@ impl Session {
             return listed;
         }
         let offset = own.shift - init.shift;
+        let Some(run_dialogue) = state
+            .run
+            .as_ref()
+            .filter(|run| run.number == number)
+            .map(|run| run.dialogue)
+        else {
+            return listed;
+        };
         for (position, name) in names.iter().enumerate().skip(listed) {
             let path = self.dir.join(name);
             if position == 0 && discard_first {
@@ -319,6 +333,7 @@ impl Session {
                 path,
                 last: ended && position + 1 == names.len(),
                 opening: position == 0 && !discard_first,
+                dialogue: run_dialogue,
             };
             let end = timing.start + (timing.dts_end - timing.dts) as f64 / f64::from(init.timescale);
             if let Some(run) = state.run.as_mut().filter(|run| run.number == number) {
@@ -429,6 +444,30 @@ impl Session {
         }
     }
 
+    fn dialogue(&self) -> bool {
+        !self.spec.copy_audio && self.spec.dialogue.load(Ordering::SeqCst)
+    }
+
+    fn follow_dialogue(&self, state: &mut State, segment: usize) {
+        let on = self.dialogue();
+        let from = self.plan.start(segment) - MATCH;
+        let stale: Vec<i64> = state
+            .fragments
+            .values()
+            .filter(|fragment| fragment.dialogue != on && fragment.start >= from)
+            .map(|fragment| fragment.dts)
+            .collect();
+        for dts in stale {
+            if let Some(fragment) = state.fragments.remove(&dts) {
+                let _ = std::fs::remove_file(fragment.path);
+            }
+        }
+        if state.run.as_ref().is_some_and(|run| run.dialogue != on) {
+            retire(state);
+            state.run = None;
+        }
+    }
+
     fn touch(&self, state: &mut State, segment: usize) {
         state.used = Some(Instant::now());
         state.wanted = self.plan.start(segment);
@@ -444,6 +483,7 @@ impl Session {
             {
                 let mut state = self.state.lock().unwrap();
                 self.touch(&mut state, segment);
+                self.follow_dialogue(&mut state, segment);
                 if let Some(bytes) = self.assemble(&state, segment) {
                     return Ok(bytes);
                 }
@@ -576,6 +616,10 @@ mod tests {
     use super::*;
 
     fn rounders() -> Arc<Session> {
+        converted(true, Arc::default())
+    }
+
+    fn converted(copy_audio: bool, dialogue: Arc<AtomicBool>) -> Arc<Session> {
         let keyframes: Vec<f64> = (0..400).map(|n| f64::from(n) * 10.0).collect();
         let plan = Plan::new(&index::Index {
             duration: 4000.0,
@@ -585,7 +629,8 @@ mod tests {
             source: PathBuf::from("/nonexistent.mp4"),
             audio: Some(0),
             hevc: true,
-            copy_audio: true,
+            copy_audio,
+            dialogue,
             subtitles: Vec::new(),
         };
         Session::new(plan, PathBuf::from("/nonexistent"), spec)
@@ -600,7 +645,63 @@ mod tests {
             produced,
             paused: true,
             exited: false,
+            dialogue: false,
         }
+    }
+
+    fn remuxed(state: &mut State, from: u32, to: u32, dialogue: bool) {
+        for n in from..to {
+            let start = f64::from(n) * 10.0;
+            let dts = (start * 1000.0) as i64;
+            state.fragments.insert(
+                dts,
+                Fragment {
+                    start,
+                    dts,
+                    dts_end: dts + 10_000,
+                    offset: 0,
+                    path: PathBuf::from(format!("/nonexistent/run1-{n}.m4s")),
+                    last: false,
+                    opening: false,
+                    dialogue,
+                },
+            );
+        }
+    }
+
+    #[test]
+    fn switching_dialogue_mode_drops_what_lies_ahead_and_stops_the_old_remux() {
+        let dialogue = Arc::new(AtomicBool::new(false));
+        let session = converted(false, dialogue.clone());
+        let mut state = State {
+            run: Some(run_through(3000.0)),
+            ..State::default()
+        };
+        remuxed(&mut state, 281, 300, false);
+        let segment = session.plan.segment_at(2900.0);
+        session.follow_dialogue(&mut state, segment);
+        assert_eq!(state.fragments.len(), 19, "nothing changed, so nothing goes");
+        assert!(state.run.is_some());
+        dialogue.store(true, Ordering::SeqCst);
+        session.follow_dialogue(&mut state, segment);
+        let from = session.plan.start(segment) - MATCH;
+        assert!(state.fragments.values().all(|fragment| fragment.start < from));
+        assert!(!state.fragments.is_empty(), "what was served before the switch stays");
+        assert!(state.run.is_none());
+        assert!(session.should_restart(&state, segment));
+    }
+
+    #[test]
+    fn a_copied_e_ac3_stream_ignores_dialogue_mode() {
+        let session = converted(true, Arc::new(AtomicBool::new(true)));
+        let mut state = State {
+            run: Some(run_through(3000.0)),
+            ..State::default()
+        };
+        remuxed(&mut state, 281, 300, false);
+        session.follow_dialogue(&mut state, session.plan.segment_at(2900.0));
+        assert_eq!(state.fragments.len(), 19);
+        assert!(state.run.is_some());
     }
 
     #[test]
@@ -628,6 +729,7 @@ mod tests {
                     path: PathBuf::from(format!("/nonexistent/run1-{n}.m4s")),
                     last: false,
                     opening: false,
+                    dialogue: false,
                 },
             );
         }
@@ -696,6 +798,7 @@ mod tests {
             audio: Some(0),
             hevc: true,
             copy_audio: true,
+            dialogue: Arc::default(),
             subtitles: Vec::new(),
         };
         let root = std::env::temp_dir().join(format!("semmeltv-session-{}", std::process::id()));
@@ -715,5 +818,48 @@ mod tests {
         assert!(!jumped.segment(0).await.unwrap().is_empty());
         straight.close();
         jumped.close();
+    }
+
+    #[tokio::test]
+    #[ignore = "needs ffmpeg and SEMMELTV_STREAM_SAMPLE"]
+    async fn switching_dialogue_mode_remakes_the_segments_not_yet_served() {
+        let sample = PathBuf::from(std::env::var("SEMMELTV_STREAM_SAMPLE").unwrap());
+        let plan = Plan::new(&index::read(&sample).unwrap());
+        let count = plan.len();
+        assert!(count > 2, "{count} segments");
+        let dialogue = Arc::new(AtomicBool::new(false));
+        let spec = Spec {
+            source: sample,
+            audio: Some(0),
+            hevc: true,
+            copy_audio: false,
+            dialogue: dialogue.clone(),
+            subtitles: Vec::new(),
+        };
+        let root = std::env::temp_dir().join(format!("semmeltv-dialogue-{}", std::process::id()));
+        let session = Session::new(plan, root.clone(), spec);
+        session.start(0.0);
+        session.init(0.0).await.unwrap();
+        assert!(!session.segment(0).await.unwrap().is_empty());
+        assert!(!session.segment(1).await.unwrap().is_empty());
+        let made_before = |state: &State| state.fragments.values().filter(|fragment| !fragment.dialogue).count();
+        assert!(made_before(&session.state.lock().unwrap()) > 0);
+        dialogue.store(true, Ordering::SeqCst);
+        assert!(!session.segment(2).await.unwrap().is_empty());
+        {
+            let state = session.state.lock().unwrap();
+            assert!(state.run.as_ref().is_some_and(|run| run.dialogue && run.from == 2));
+            let from = session.plan.start(2) - MATCH;
+            assert!(
+                state
+                    .fragments
+                    .values()
+                    .filter(|fragment| fragment.start >= from)
+                    .all(|fragment| fragment.dialogue)
+            );
+        }
+        assert!(!session.segment(1).await.unwrap().is_empty());
+        session.close();
+        let _ = std::fs::remove_dir_all(root);
     }
 }

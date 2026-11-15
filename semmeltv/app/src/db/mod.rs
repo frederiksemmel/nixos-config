@@ -264,12 +264,31 @@ impl Db {
                 listening: *output == Output::Headphones,
             },
         };
+        let dialogue = self.dialogue(profile).await?;
+        self.store_audio_prefs(profile, headphones, dialogue).await
+    }
+
+    pub async fn dialogue(&self, profile: ProfileId) -> Result<bool> {
+        let mut db = self.db.clone();
+        let stored = StoredAudioPrefs::filter_by_profile_id(profile.0).first().exec(&mut db).await?;
+        Ok(stored.is_some_and(|stored| stored.dialogue))
+    }
+
+    pub async fn save_dialogue(&self, profile: ProfileId, on: bool) -> Result<()> {
+        let mut db = self.db.clone();
+        let stored = StoredAudioPrefs::filter_by_profile_id(profile.0).first().exec(&mut db).await?;
+        let headphones = stored.map_or(models::Headphones::Unpaired, |stored| stored.headphones);
+        self.store_audio_prefs(profile, headphones, on).await
+    }
+
+    async fn store_audio_prefs(&self, profile: ProfileId, headphones: models::Headphones, dialogue: bool) -> Result<()> {
         let mut db = self.db.clone();
         if models::Profile::filter_by_id(profile.0).first().exec(&mut db).await?.is_none() {
             return Err(toasty::Error::record_not_found(format!("profile {}", profile.0)).into());
         }
         StoredAudioPrefs::upsert_by_profile_id(profile.0)
             .headphones(headphones)
+            .dialogue(dialogue)
             .exec(&mut db)
             .await?;
         Ok(())
@@ -475,6 +494,23 @@ mod tests {
         assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), on_tv);
         db.save_audio_prefs(ProfileId(3), &AudioPrefs::Unpaired).await.unwrap();
         assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), AudioPrefs::Unpaired);
+    }
+
+    #[tokio::test]
+    async fn dialogue_mode_is_off_until_chosen_and_survives_headphone_changes() {
+        let db = db().await;
+        assert!(!db.dialogue(ProfileId(2)).await.unwrap());
+        db.save_dialogue(ProfileId(2), true).await.unwrap();
+        assert!(db.dialogue(ProfileId(2)).await.unwrap());
+        assert_eq!(db.audio_prefs(ProfileId(2)).await.unwrap(), AudioPrefs::Unpaired);
+        let prefs = AudioPrefs::Unpaired.pairing("AA:BB".to_string());
+        db.save_audio_prefs(ProfileId(2), &prefs).await.unwrap();
+        assert!(db.dialogue(ProfileId(2)).await.unwrap());
+        db.save_dialogue(ProfileId(2), false).await.unwrap();
+        assert_eq!(db.audio_prefs(ProfileId(2)).await.unwrap(), prefs);
+        assert!(!db.dialogue(ProfileId(2)).await.unwrap());
+        assert!(!db.dialogue(ProfileId(3)).await.unwrap());
+        assert!(db.save_dialogue(ProfileId(99), true).await.is_err());
     }
 
     #[test]

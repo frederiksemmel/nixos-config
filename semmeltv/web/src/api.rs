@@ -745,6 +745,21 @@ impl Api {
         self.post("/api/command", json!({ "text": text })).await
     }
 
+    pub async fn dialogue(&self) -> Result<bool, String> {
+        #[derive(Deserialize)]
+        struct Dialogue {
+            on: bool,
+        }
+        match self.get::<Dialogue>("/api/audio/dialogue").await? {
+            Found::Here(dialogue) => Ok(dialogue.on),
+            Found::Missing => Err("This TV has no dialogue mode".to_string()),
+        }
+    }
+
+    pub async fn set_dialogue(&self, on: bool) -> String {
+        self.post("/api/audio/dialogue", json!({ "on": on })).await
+    }
+
     pub async fn subtitles(&self) -> Result<Subtitles, String> {
         match self.get("/api/subtitles").await? {
             Found::Here(subtitles) => Ok(subtitles),

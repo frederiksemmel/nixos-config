@@ -199,6 +199,7 @@ pub struct AudioPrefs {
     #[belongs_to(key = profile_id, references = id)]
     pub profile: Deferred<Profile>,
     pub headphones: Headphones,
+    pub dialogue: bool,
 }
 
 #[derive(Debug, toasty::Model)]

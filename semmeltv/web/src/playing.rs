@@ -1,6 +1,7 @@
 use crate::api::{Api, Audio, Link, NowPlaying, Output, PhonePlay, Pick, Playing, Screen, TvAbilities, Voice};
 use crate::live::{Live, Tv};
 use crate::public::Public;
+use crate::settings::dialogue_switch;
 use std::time::Duration;
 use topcoat::Result;
 use topcoat::asset::{Asset, asset};
@@ -207,6 +208,7 @@ async fn play_pause() -> Result<impl View> {
 #[shard]
 pub async fn player(cx: &Cx) -> Result<impl View> {
     let abilities = Api::of(cx).tv_abilities().await.unwrap_or_default();
+    let dialogue = Api::of(cx).dialogue().await.ok();
     Ok(view! {
         <div class="player">
             <section class="bar" aria-label="Now playing">
@@ -285,6 +287,11 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                             </button>
                         </section>
                         sound()
+                        if let Some(on) = dialogue {
+                            <section class="pick dialogue" aria-label="Dialogue mode">
+                                <div class="setting-group">dialogue_switch(on: on)</div>
+                            </section>
+                        }
                         remote(abilities: &abilities)
                     </div>
                 </div>

@@ -459,6 +459,8 @@ again whenever it changes, with the same body as GET `/api/audio`:
 | DELETE | `/api/audio/pair` | none |
 | DELETE | `/api/audio/headphones` | none |
 | POST | `/api/audio/delay` | `{ "by": 20 }` |
+| GET | `/api/audio/dialogue` | none |
+| POST | `/api/audio/dialogue` | `{ "on": true }` |
 
 Where the sound goes: the TV over HDMI, or Bluetooth headphones paired with
 SemmelTV. Every request answers the whole state:
@@ -528,6 +530,11 @@ turned, since a smaller reported delay lets the picture go sooner), which
 BlueALSA keeps in `/var/lib/bluealsa` across reboots. The delay BlueALSA
 reports to mpv changes at once, during playback too. It answers the audio state, or 409 when the
 headphones aren't connected.
+
+GET `/api/audio/dialogue` answers `{ "on": false }`: whether the signed-in
+profile has dialogue mode on. POST it with `{ "on": true }` to switch it; the
+answer is an outcome such as `{ "message": "Dialogue mode on", "ok": true }`.
+Dialogue mode works on every TV, with or without headphones.
 
 ### Volume
 

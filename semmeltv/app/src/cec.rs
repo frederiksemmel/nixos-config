@@ -348,7 +348,8 @@ fn key_command(code: CecUserControlCode) -> Option<Command> {
         | CecUserControlCode::Pause
         | CecUserControlCode::PlayFunction
         | CecUserControlCode::PausePlayFunction => Some(Command::PlayPause),
-        CecUserControlCode::F1Blue | CecUserControlCode::F2Red | CecUserControlCode::F3Green => Some(Command::Listen),
+        CecUserControlCode::F1Blue | CecUserControlCode::F2Red => Some(Command::Listen),
+        CecUserControlCode::F3Green => Some(Command::Dialogue),
         CecUserControlCode::F4Yellow => Some(Command::Subtitles),
         _ => None,
     }
@@ -556,7 +557,7 @@ mod tests {
             (&[0x61], Reaction::Press(Command::PlayPause)),
             (&[0x71], Reaction::Press(Command::Listen)),
             (&[0x72], Reaction::Press(Command::Listen)),
-            (&[0x73], Reaction::Press(Command::Listen)),
+            (&[0x73], Reaction::Press(Command::Dialogue)),
             (&[0x74], Reaction::Press(Command::Subtitles)),
             (&[0x40], Reaction::Ignore),
             (&[0xff], Reaction::Ignore),

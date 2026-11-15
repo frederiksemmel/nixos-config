@@ -280,6 +280,26 @@ credits start are kept once for everyone. Files are keyed by their path in the
 library, so a position saved while streaming also applies to the same file
 played from the rclone cache.
 
+## Sound
+
+The TV and the stream to a browser without E-AC-3 both fold the sound into
+stereo with the same lavfi chain (`audio::stereo`), ending in a limiter at
+-1 dBFS so loud scenes no longer clip. A stream to such a browser carries
+256 kbit/s AAC; Safari gets the file's own E-AC-3 or AC-3.
+
+Dialogue mode, off by default and kept per profile, makes voices easier to
+follow on TV or laptop speakers. A 5.1 track is mixed to stereo with the
+centre channel, where the dialogue is, a little louder than the rest, and every
+track then goes through a gentle compressor and a slow dynamic normaliser, so
+explosions and music come down and quiet speech comes up. Measured on The
+Matrix, the gap between a dialogue scene and the lobby shootout drops from
+9.4 LU to 3 LU, and the loudness range of a dialogue scene from 21 LU to 12 LU.
+The green key on the remote, or D on a keyboard, switches it for whoever's
+video the TV plays, at once during a video; the web app has a switch in
+Settings and in the player sheet. A stream picks it up at the next segment it
+makes, and an E-AC-3 stream to Safari changes to converted AAC with the next
+video, since its codec can't change mid-stream.
+
 ## Subtitles
 
 The yellow key on the remote, or S on a keyboard, shows or hides subtitles
@@ -327,7 +347,7 @@ known. Download requests are understood but not carried out yet.
 recognised however speech recognition spells it: Semmel TV, SimilTV, Simmel TV,
 Semel TV, Samuel TV, Simple TV and the like.
 
-The wake word "Stevie the TV", the red, green or blue key on the remote, or V on a
+The wake word "Stevie the TV", the red or blue key on the remote, or V on a
 keyboard starts listening, during a video too. The wake word is detected a
 few hundred milliseconds after it ends, so the recording begins with the last
 0.6 seconds of audio. That keeps a command said in the same breath ("Stevie
@@ -379,7 +399,7 @@ async: the core and the API await them.
 | `started` | Currently watching, newest first | profile |
 | `dismissed_videos` | episodes and films taken off Started and Forgotten | profile |
 | `subtitle_settings` | the subtitle settings, as JSON | profile |
-| `audio_prefs` | no headphones, or the paired headphones and whether the sound goes to them | profile |
+| `audio_prefs` | no headphones, or the paired headphones and whether the sound goes to them; dialogue mode on or off | profile |
 | `video_facts` | an episode's or film's real duration, where its credits start, its subtitle delay and how many subtitle tracks it carries | video |
 | `settings` | one value per key, such as the Samsung pairing `tv_token` | TV |
 

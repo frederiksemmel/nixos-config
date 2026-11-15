@@ -9,6 +9,15 @@ use std::time::{Duration, Instant};
 
 pub const TV_DEVICE: &str = "auto";
 pub const STEREO: &str = "aformat=channel_layouts=stereo,alimiter=limit=-1dB:level=false";
+pub const DIALOGUE: &str = "aformat=channel_layouts=5.1(side),\
+    pan=stereo|FL=0.5*FC+0.35*FL+0.25*SL+0.2*LFE|FR=0.5*FC+0.35*FR+0.25*SR+0.2*LFE,\
+    acompressor=threshold=-28dB:ratio=2.5:attack=10:release=400:knee=6:makeup=2,\
+    dynaudnorm=f=250:g=31:p=0.7:m=5,\
+    alimiter=limit=-1dB:level=false";
+
+pub fn stereo(dialogue: bool) -> &'static str {
+    if dialogue { DIALOGUE } else { STEREO }
+}
 const COMMAND_TIMEOUT_SECONDS: &str = "20";
 const HEADPHONE_ICONS: [&str; 2] = ["audio-headphones", "audio-headset"];
 const MONITOR_RESTART: Duration = Duration::from_secs(2);

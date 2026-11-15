@@ -42,11 +42,12 @@ const LOADING_ID: u64 = 2;
 const OVERLAY_ID: u64 = 3;
 const TOAST_ID: u64 = 4;
 const CARD_FADE: Duration = Duration::from_millis(300);
-const KEYBINDS: [(&str, &str); 11] = [
+const KEYBINDS: [(&str, &str); 12] = [
     ("ESC", "script-message semmeltv-back"),
     ("BS", "script-message semmeltv-back"),
     ("v", "script-message semmeltv-listen"),
     ("s", "script-message semmeltv-subtitles"),
+    ("d", "script-message semmeltv-dialogue"),
     ("ENTER", "script-message semmeltv-select"),
     ("KP_ENTER", "script-message semmeltv-select"),
     ("SPACE", "script-message semmeltv-play-pause"),
@@ -145,6 +146,7 @@ fn key_command(message: &str) -> Option<Command> {
         "semmeltv-back" => Some(Command::Back),
         "semmeltv-listen" => Some(Command::Listen),
         "semmeltv-subtitles" => Some(Command::Subtitles),
+        "semmeltv-dialogue" => Some(Command::Dialogue),
         _ => None,
     }
 }
@@ -239,7 +241,7 @@ impl Playback {
             Command::Right => self.step(Direction::Forward, now),
             Command::Up => self.jump(LONG_JUMP, now),
             Command::Down => self.jump(-LONG_JUMP, now),
-            Command::Listen => {}
+            Command::Listen | Command::Dialogue => {}
             Command::Subtitles => {
                 self.change_subtitles(Change::Toggle, now);
                 return;
@@ -321,7 +323,7 @@ impl Playback {
 
     fn key(&mut self, command: Command, now: Instant) {
         match (command, &self.on_key) {
-            (Command::Back | Command::Listen, Some(on_key)) => on_key(command),
+            (Command::Back | Command::Listen | Command::Dialogue, Some(on_key)) => on_key(command),
             _ => self.command(command, now),
         }
     }
@@ -449,6 +451,10 @@ pub fn speed_label(speed: f64) -> String {
     format!("{}×", text.trim_end_matches('0').trim_end_matches('.'))
 }
 
+fn sound_filter(dialogue: bool) -> String {
+    format!("lavfi=[{}]", audio::stereo(dialogue))
+}
+
 fn resume_args(start: f64, tracks: Tracks) -> Vec<String> {
     let mut args = Vec::new();
     if start > 0.0 {
@@ -574,6 +580,7 @@ impl Player {
         title: Option<Title>,
         subtitles: Subtitles,
         audio_device: &str,
+        dialogue: bool,
         on_save: impl Fn() + Send + 'static,
         on_key: impl Fn(Command) + Send + 'static,
         on_exit: impl FnOnce(Finish) + Send + 'static,
@@ -590,7 +597,7 @@ impl Player {
             .arg("--keep-open")
             .args(video_args(env::var("SEMMELTV_DECODER").ok().as_deref()))
             .arg(format!("--audio-device={audio_device}"))
-            .arg(format!("--af=lavfi=[{}]", audio::STEREO))
+            .arg(format!("--af={}", sound_filter(dialogue)))
             .arg("--no-osc")
             .arg(format!("--background-color={}", card::BACKGROUND))
             .arg(format!("--osd-font={OSD_FONT}"))
@@ -699,6 +706,13 @@ impl Player {
 
     pub fn set_audio_device(&self, device: &str) {
         self.playback.lock().unwrap().set_audio_device(device);
+    }
+
+    pub fn set_dialogue(&self, on: bool) {
+        self.playback
+            .lock()
+            .unwrap()
+            .send(json!(["set_property", "af", sound_filter(on)]));
     }
 
     pub fn set_speed(&self, speed: f64) -> f64 {

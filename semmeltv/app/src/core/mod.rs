@@ -28,7 +28,7 @@ use crate::watching;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
@@ -56,6 +56,7 @@ pub enum Request {
     Phone(stream::Report),
     Screen(ScreenCommand, ProfileId),
     TvProfile(ProfileId),
+    Dialogue(ProfileId),
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -165,6 +166,7 @@ struct Published {
     storage: storage::Board,
     sidecars: RwLock<HashMap<PathBuf, usize>>,
     scans: AtomicU64,
+    dialogue: RwLock<HashMap<ProfileId, Arc<AtomicBool>>>,
 }
 
 struct Parts {

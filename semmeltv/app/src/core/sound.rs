@@ -1,7 +1,9 @@
-use super::{Core, Request};
+use super::{Core, Outcome, Request};
 use crate::audio::{self, Audio};
 use crate::db::{self, Db};
 use crate::profile::ProfileId;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tokio::task::spawn_blocking;
 
@@ -121,10 +123,50 @@ impl Core {
         blocking(move || audio.delay_sound(by)).await?.map_err(Refusal::Failed)
     }
 
+    pub async fn dialogue(&self, profile: ProfileId) -> Arc<AtomicBool> {
+        if let Some(flag) = self.published.dialogue.read().unwrap().get(&profile) {
+            return flag.clone();
+        }
+        let on = self.db().dialogue(profile).await.unwrap_or_else(|error| {
+            eprintln!("dialogue mode: {error}");
+            false
+        });
+        self.published
+            .dialogue
+            .write()
+            .unwrap()
+            .entry(profile)
+            .or_insert_with(|| Arc::new(AtomicBool::new(on)))
+            .clone()
+    }
+
+    pub(super) async fn save_dialogue(&self, profile: ProfileId, on: bool) -> Result<(), String> {
+        self.db()
+            .save_dialogue(profile, on)
+            .await
+            .map_err(|error| error.to_string())?;
+        self.dialogue(profile).await.store(on, Ordering::SeqCst);
+        Ok(())
+    }
+
+    pub async fn set_dialogue(&self, profile: ProfileId, on: bool) -> Outcome {
+        if let Err(error) = self.save_dialogue(profile, on).await {
+            eprintln!("dialogue mode: {error}");
+            return Outcome::refused("Dialogue mode could not be saved");
+        }
+        self.ask(Request::Dialogue(profile))
+            .await
+            .unwrap_or_else(|| Outcome::done(dialogue_said(on)))
+    }
+
     pub async fn change_volume(&self, change: audio::VolumeChange) -> Heard<Option<Result<String, String>>> {
         match self.audio().cloned() {
             Some(audio) => blocking(move || audio.change_volume(change)).await,
             None => Ok(None),
         }
     }
+}
+
+pub fn dialogue_said(on: bool) -> &'static str {
+    if on { "Dialogue mode on" } else { "Dialogue mode off" }
 }

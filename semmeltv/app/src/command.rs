@@ -11,6 +11,7 @@ pub enum Command {
     PlayPause,
     Listen,
     Subtitles,
+    Dialogue,
 }
 
 impl Command {
@@ -34,6 +35,8 @@ impl Command {
             Some(Self::Listen)
         } else if text == "s" {
             Some(Self::Subtitles)
+        } else if text == "d" {
+            Some(Self::Dialogue)
         } else {
             None
         }
