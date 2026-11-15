@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 import sys
 import time
@@ -513,14 +514,18 @@ async def send_feedback(request):
         "host": "semmeltv5", "person": {"id": who["id"], "name": who["name"]} if who else None,
         "device": (body.get("client") or {}).get("device"), "page": body.get("page"),
         "message": body["message"], "screenshot": None, "tv_screenshot": None,
-        "trail": (body.get("client") or {}).get("trail", []),
+        "trail": (body.get("client") or {}).get("trail", []), "agent": (body.get("client") or {}).get("agent"),
     }
+    shot = body.get("screenshot") or ""
+    if shot.startswith("data:image/jpeg;base64,"):
+        report["screenshot"] = f"{report['id']}-phone.jpg"
+        report["screenshot_bytes"] = len(base64.b64decode(shot.split(",", 1)[1]))
     feedback.append(report)
     return web.json_response({"id": report["id"]}, status=201)
 
 
 async def list_feedback(request):
-    reports = [{key: value for key, value in report.items() if key != "trail"} for report in reversed(feedback)]
+    reports = [{key: value for key, value in report.items() if key not in ("trail", "agent", "screenshot_bytes")} for report in reversed(feedback)]
     return web.json_response({"dir": "/var/lib/semmeltv/feedback", "reports": reports})
 
 

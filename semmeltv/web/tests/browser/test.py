@@ -293,6 +293,18 @@ def marks_episodes(page, engine):
           f'document.querySelectorAll("main .episode-row .mark-seen")[1]?.getAttribute("aria-pressed") === "{after}"', 8000)
 
 
+def png(width, height):
+    import struct
+    import zlib
+
+    def chunk(kind, data):
+        return struct.pack(">I", len(data)) + kind + data + struct.pack(">I", zlib.crc32(kind + data))
+
+    rows = b"".join(b"\x00" + bytes(value for x in range(width) for value in (x * 255 // width, y * 255 // height, 120)) for y in range(height))
+    header = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", header) + chunk(b"IDAT", zlib.compress(rows)) + chunk(b"IEND", b"")
+
+
 def feedback(page, engine):
     said = "The list jumped back to the top"
     before = len(fake_get("/fake/feedback"))
@@ -302,6 +314,9 @@ def feedback(page, engine):
     check(engine, "the feedback box is 16px, so iOS doesn't zoom into it",
           page.evaluate('parseFloat(getComputedStyle(document.querySelector(".feedback-panel textarea")).fontSize) >= 16'))
     page.locator(".feedback-panel textarea").fill(said)
+    page.locator(".feedback-attach input[type=file]").set_input_files({"name": "IMG_0001.PNG", "mimeType": "image/png", "buffer": png(390, 844)})
+    until(page, engine, "an attached screenshot shows before sending",
+          '!document.querySelector(".feedback-shot").hidden && document.querySelector(".feedback-shot img").naturalWidth > 0', 5000)
     page.locator(".feedback-send").tap()
     until(page, engine, "sending closes the box", 'document.querySelector(".feedback").hidden && !document.documentElement.dataset.feedback', 5000)
     reports = fake_get("/fake/feedback")
@@ -309,9 +324,15 @@ def feedback(page, engine):
     kinds = {entry["kind"] for entry in sent.get("trail", [])}
     check(engine, "the TV gets what was typed, the page and the page's trail",
           sent.get("message") == said and sent.get("page") and {"fetch", "tap"} <= kinds, str({key: sent.get(key) for key in ("message", "page")} | {"kinds": sorted(kinds)}))
+    if engine == "webkit":
+        safari = page.evaluate('(navigator.userAgent.match(/Version\\/([\\d.]+)/) || [])[1]')
+        check(engine, "the report names the iOS version from Safari's Version/ token, and that it ran in a tab",
+              sent.get("agent") == f"iOS {safari}, Safari tab", str(sent.get("agent")))
+    check(engine, "and the screenshot, as a JPEG", sent.get("screenshot", "").endswith("-phone.jpg") and sent.get("screenshot_bytes", 0) > 500,
+          str({key: sent.get(key) for key in ("screenshot", "screenshot_bytes")}))
     page.goto(BASE + "/feedback", wait_until="commit")
     until(page, engine, "admins see it on the Feedback page, ready to copy for Claude",
-          f'[...document.querySelectorAll(".report-message")].some((m) => m.textContent === {said!r}) && !!document.querySelector(".report [data-copy]")', 5000)
+          f'[...document.querySelectorAll(".report-message")].some((m) => m.textContent === {said!r}) && !!document.querySelector(".report [data-copy]") && [...document.querySelectorAll(".report-pictures img")].some((img) => img.getAttribute("src").endsWith("-phone.jpg"))', 5000)
     page.goto(BASE + "/", wait_until="commit")
     page.wait_for_selector(TILE)
 

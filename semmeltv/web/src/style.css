@@ -2078,7 +2078,8 @@ html[data-feedback] .feedback-open { background: var(--text); color: var(--bg); 
 .feedback-unshot svg { width: 16px; height: 16px; stroke-width: 2.5; }
 
 .feedback-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.feedback-attach { cursor: pointer; }
+.feedback-attach { position: relative; cursor: pointer; }
+.feedback-attach input { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
 .feedback-send { min-width: 96px; }
 .feedback-send:disabled { opacity: 0.6; }
 .feedback-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.4; }

@@ -33,9 +33,14 @@
   }
 
   function agent() {
-    const version = navigator.userAgent.match(/OS (\d+[_.]\d+)/) || navigator.userAgent.match(/Version\/([\d.]+)/);
+    const ua = navigator.userAgent;
     const standalone = navigator.standalone || matchMedia("(display-mode: standalone)").matches;
-    return [version ? `iOS/Safari ${version[1].replace("_", ".")}` : navigator.userAgent.slice(0, 120), standalone ? "home-screen app" : "tab"].join(", ");
+    const ios = /iPhone|iPad|iPod/.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    if (!ios) return [ua.slice(0, 120), standalone ? "home-screen app" : "tab"].join(", ");
+    const safari = ua.match(/Version\/([\d.]+)/);
+    const frozen = ua.match(/OS (\d+)[_.](\d+)/);
+    const version = safari ? `iOS ${safari[1]}` : `iOS unknown (the user agent says ${frozen ? `${frozen[1]}.${frozen[2]}` : "nothing"}, frozen)`;
+    return `${version}, ${standalone ? "home-screen app" : "Safari tab"}`;
   }
 
   function text(value) {

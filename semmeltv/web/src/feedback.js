@@ -52,7 +52,7 @@ function build() {
         <label class="pill quiet feedback-attach">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5.5" width="17" height="13" rx="2.5"></rect><circle cx="9" cy="10.5" r="1.6"></circle><path d="m20.5 15.5-5-4.5-8 7.5"></path></svg>
           <span>Add screenshot</span>
-          <input type="file" accept="image/*" hidden>
+          <input type="file" accept="image/*">
         </label>
         <button type="submit" class="pill feedback-send">Send</button>
       </div>

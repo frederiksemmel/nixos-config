@@ -439,6 +439,24 @@ mod tests {
     }
 
     #[test]
+    fn a_phone_screenshot_is_kept_next_to_its_report() {
+        let dir = std::env::temp_dir().join(format!("semmeltv-feedback-shot-{}", std::process::id()));
+        let feedback = Feedback::new(dir.clone(), Bus::default(), None);
+        let sent = Sent {
+            message: "Look at the status bar".to_string(),
+            page: None,
+            client: json!({}),
+            screenshot: Some("data:image/jpeg;base64,/9j/4AAQ".to_string()),
+        };
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let summary = runtime.block_on(feedback.store(None, sent)).unwrap();
+        let name = summary.screenshot.unwrap();
+        assert_eq!(name, format!("{}-phone.jpg", summary.id));
+        assert_eq!(std::fs::read(dir.join(&name)).unwrap(), [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn available_memory_is_read_in_megabytes() {
         assert_eq!(meminfo_available("MemTotal: 100 kB\nMemAvailable:    2048000 kB\n"), Some(2000));
     }
