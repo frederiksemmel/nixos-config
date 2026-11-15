@@ -38,7 +38,9 @@ function closeSheet() {
 }
 
 window.addEventListener("pagehide", () => setOpen(false));
-window.addEventListener("pageshow", () => setOpen(false));
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted) setOpen(false);
+});
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState === "hidden") setOpen(false);
 });
@@ -397,3 +399,8 @@ for (const name of ["touchend", "touchcancel"]) {
 }
 
 markChoices();
+window.semmeltvSheetReady = true;
+if (window.semmeltvSheetWanted) {
+  window.semmeltvSheetWanted = false;
+  openSheet();
+}

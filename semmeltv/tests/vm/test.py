@@ -891,6 +891,38 @@ with sync_playwright() as playwright:
             if remote is not phone:
                 remote.close()
 
+    for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
+        with scenario(f"a tap on the bar while the page still loads opens the remote, and it stays open once loading ends ({engine})"):
+            early = Phone(playwright, engine, device)
+            held: list[Any] = []
+            holding = [True]
+
+            def hold(route):
+                kind = route.request.resource_type
+                if holding[0] and (kind == "image" or (kind == "script" and "/player-" in route.request.url)):
+                    held.append(route)
+                else:
+                    route.fallback()
+
+            early.page.route("**/*", hold)
+            early.goto("/")
+            early.until('!!document.querySelector(".bar-open")')
+            early.page.wait_for_timeout(300)
+            assert not early.js("window.semmeltvSheetReady"), "the remote's script is still held back"
+            early.page.locator(".bar-open").tap()
+            early.page.wait_for_timeout(500)
+            holding[0] = False
+            for route in [route for route in held if route.request.resource_type == "script"]:
+                route.continue_()
+            early.until('document.documentElement.hasAttribute("data-sheet")', 5000)
+            assert early.js('document.readyState !== "complete"'), "the images still hold the page's load"
+            for route in [route for route in held if route.request.resource_type == "image"]:
+                route.continue_()
+            early.until('document.readyState === "complete"', 15000)
+            early.page.wait_for_timeout(800)
+            assert early.js('document.documentElement.hasAttribute("data-sheet")'), "the end of loading leaves the remote open"
+            early.close()
+
     with scenario("an iPhone back from the background shows the remote closed, and a swipe closes it after the live connection restarts"):
         iphone = Phone(playwright, "webkit", "iPhone 15")
         film_page(iphone)
@@ -1089,6 +1121,26 @@ with sync_playwright() as playwright:
         phone.until(f'document.querySelectorAll("main .episode-row .mark-seen")[2]?.getAttribute("aria-pressed") === "{flipped}"')
         phone.page.locator("main .episode-row .mark-seen").nth(2).tap()
         phone.until(f'document.querySelectorAll("main .episode-row .mark-seen")[2].getAttribute("aria-pressed") === "{before}" && !document.querySelector("main .episode-row .mark-seen[data-act=pending]")')
+
+    with scenario("skipping on the TV keeps its sound output running, so the TV never has to pick the sound up again"):
+        tv_plays_film(phone)
+        resumed_at = tv_position() or 0.0
+        try:
+            tv_seek(phone, 20)
+            tv_plays_past(22)
+            skipped_from = tv_position() or 0.0
+            status = tv.succeed("grep -l 'state:' /proc/asound/card*/pcm*p/sub*/status").split()[0]
+            tv.succeed(f"(for i in $(seq 800); do head -1 {status}; sleep 0.005; done > /tmp/sound-states 2>&1) &")
+            for _ in range(3):
+                assert phone.api("POST", "/api/playback/skip", {"direction": "forward"})["status"] == 200
+                time.sleep(0.7)
+            eventually("the skips reach the TV", lambda: (tv_position() or 0) > skipped_from + 5)
+            time.sleep(2)
+            states = set(tv.succeed("cat /tmp/sound-states").split("\n")) - {""}
+            assert states <= {"state: RUNNING", "state: XRUN"}, f"the sound output stopped during the skips: {states}"
+        finally:
+            tv_seek(phone, int(resumed_at))
+            stop_everything(phone)
 
     with scenario("the remote moves the TV's subtitles half a second at a time"):
         tv_plays_film(phone)

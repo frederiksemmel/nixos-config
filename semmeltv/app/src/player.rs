@@ -625,6 +625,7 @@ impl Player {
             .args(video_args(env::var("SEMMELTV_DECODER").ok().as_deref()))
             .arg(format!("--audio-device={audio_device}"))
             .arg(format!("--af={}", sound_filter(dialogue)))
+            .arg("--audio-stream-silence")
             .arg("--no-osc")
             .arg(format!("--background-color={}", card::BACKGROUND))
             .arg(format!("--osd-font={OSD_FONT}"))
@@ -663,7 +664,7 @@ impl Player {
                     );
                 }
             }
-            display::show_ui();
+            display::leave_film();
             let _ = std::fs::remove_file(&socket_path);
             on_exit(finish);
         });

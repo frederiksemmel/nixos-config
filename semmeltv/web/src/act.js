@@ -91,6 +91,9 @@
 
   act.pending = (key) => running.has(key);
   window.semmeltvAct = act;
+  document.addEventListener("click", (event) => {
+    if (!window.semmeltvSheetReady && event.target.closest?.('[data-sheet="open"]')) window.semmeltvSheetWanted = true;
+  });
   new MutationObserver((records) => {
     if (records.some((record) => record.type === "childList" && record.addedNodes.length)) paint();
   }).observe(document.documentElement, { subtree: true, childList: true });

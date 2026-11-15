@@ -129,6 +129,15 @@ fn choose_ui(outputs: &Value) -> Option<Mode> {
     output.change_to((width, height, refresh))
 }
 
+fn after_film(outputs: &Value) -> Option<Mode> {
+    let output = Output::enabled(outputs)?;
+    let &(width, height, _, _) = output.modes.iter().find(|mode| mode.3)?;
+    if (width, height) == UI_SIZE {
+        return None;
+    }
+    choose_ui(outputs)
+}
+
 fn outputs() -> Option<Value> {
     let output = Command::new("wlr-randr")
         .arg("--json")
@@ -149,6 +158,12 @@ pub fn match_video(video: Video) -> bool {
 
 pub fn show_ui() {
     if let Some(mode) = outputs().and_then(|outputs| choose_ui(&outputs)) {
+        mode.apply();
+    }
+}
+
+pub fn leave_film() {
+    if let Some(mode) = outputs().and_then(|outputs| after_film(&outputs)) {
         mode.apply();
     }
 }
@@ -249,6 +264,28 @@ mod tests {
         ];
         for (name, outputs, want) in cases {
             let got = choose_ui(&outputs).map(|mode| (mode.width, mode.height, mode.refresh));
+            assert_eq!(got, want, "{name}");
+        }
+    }
+
+    #[test]
+    fn after_a_film_the_menu_stays_in_its_1080p_mode() {
+        let current = |width: u64, refresh: f64| {
+            let mut outputs = tv();
+            for mode in outputs[0]["modes"].as_array_mut().unwrap() {
+                mode["current"] = json!(mode["width"] == width && mode["refresh"] == refresh);
+            }
+            outputs
+        };
+        let cases = [
+            ("a 1080p 23.976 film", current(1920, 23.976), None),
+            ("a 1080p 25 film", current(1920, 25.0), None),
+            ("the menu's own mode", current(1920, 60.0), None),
+            ("a 4k film", current(3840, 23.976), Some((1920, 1080, 60.0))),
+            ("a 720p film", current(1280, 60.0), Some((1920, 1080, 60.0))),
+        ];
+        for (name, outputs, want) in cases {
+            let got = after_film(&outputs).map(|mode| (mode.width, mode.height, mode.refresh));
             assert_eq!(got, want, "{name}");
         }
     }
