@@ -85,7 +85,7 @@ in
 
   config = {
     age.secrets.pcloud_token = {
-      file = ../../../secrets/pcloud_token.age;
+      file = ../../secrets/pcloud_token.age;
       owner = "semmeltv";
     };
 
