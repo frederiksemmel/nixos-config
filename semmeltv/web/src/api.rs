@@ -60,6 +60,31 @@ impl Card {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct Reporter {
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeedbackSummary {
+    pub id: String,
+    pub at: u64,
+    pub when: String,
+    pub host: String,
+    pub person: Option<Reporter>,
+    pub device: Option<String>,
+    pub page: Option<String>,
+    pub message: String,
+    pub screenshot: Option<String>,
+    pub tv_screenshot: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeedbackList {
+    pub dir: String,
+    pub reports: Vec<FeedbackSummary>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct WatchingCard {
     #[serde(flatten)]
     pub card: Card,
@@ -744,6 +769,13 @@ impl Api {
         match self.get("/api/storage").await? {
             Found::Here(storage) => Ok(storage),
             Found::Missing => Err("This TV keeps no downloads".to_string()),
+        }
+    }
+
+    pub async fn feedback(&self) -> Result<FeedbackList, String> {
+        match self.get("/api/feedback").await? {
+            Found::Here(list) => Ok(list),
+            Found::Missing => Err("This TV keeps no feedback".to_string()),
         }
     }
 

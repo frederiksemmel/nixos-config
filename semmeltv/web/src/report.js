@@ -6,6 +6,13 @@
   const started = performance.now();
   const queue = [];
   let timer = 0;
+  const TRAIL = "semmeltv.trail";
+  const MOST_TRAIL = 300;
+  const opened = Date.now();
+  let trail = [];
+  try {
+    trail = JSON.parse(sessionStorage.getItem(TRAIL) || "[]").slice(-MOST_TRAIL);
+  } catch {}
 
   function deviceId() {
     try {
@@ -41,6 +48,46 @@
     }
   }
 
+  function cut(value, most) {
+    return value.length > most ? `${value.slice(0, most)}…` : value;
+  }
+
+  function note(kind, message, detail) {
+    const entry = { t: Date.now(), kind, message: cut(text(message), 300), page: location.pathname };
+    if (detail !== undefined && detail !== null && detail !== "") entry.detail = cut(text(detail), 600);
+    trail.push(entry);
+    if (trail.length > MOST_TRAIL) trail.splice(0, trail.length - MOST_TRAIL);
+  }
+
+  function keepTrail() {
+    try {
+      sessionStorage.setItem(TRAIL, JSON.stringify(trail));
+    } catch {}
+  }
+
+  function snapshot() {
+    const connection = navigator.connection;
+    const html = document.documentElement;
+    return {
+      device: `${deviceName()} ${deviceId()}`,
+      agent: agent(),
+      user_agent: navigator.userAgent,
+      url: location.pathname + location.search,
+      viewport: `${innerWidth}x${innerHeight} @${devicePixelRatio}x`,
+      scroll_y: Math.round(scrollY),
+      visibility: document.visibilityState,
+      online: navigator.onLine,
+      connection: connection ? `${connection.effectiveType || "?"}, ${connection.downlink ?? "?"} Mbit/s, rtt ${connection.rtt ?? "?"} ms` : undefined,
+      live: html.dataset.live || "fresh",
+      device_mode: html.dataset.device,
+      page_age_s: Math.round((Date.now() - opened) / 1000),
+      language: navigator.language,
+      time_zone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      at: new Date().toISOString(),
+      trail: trail.slice(),
+    };
+  }
+
   function flush(beacon = false) {
     clearTimeout(timer);
     timer = 0;
@@ -54,6 +101,7 @@
   }
 
   function report(level, message, detail) {
+    note(level, message, detail);
     if (queue.length >= MOST_QUEUED) return;
     queue.push({ level, message: text(message), detail: detail === undefined ? undefined : text(detail), page: location.pathname, at: performance.now() - started });
     if (!timer) timer = setTimeout(flush, FLUSH_AFTER);
@@ -64,15 +112,19 @@
     const url = typeof input === "string" ? input : input.url;
     const method = (init && init.method) || "GET";
     if (url.endsWith("/api/log")) return send(input, init);
+    const path = url.replace(location.origin, "");
+    const began = performance.now();
     try {
       const response = await send(input, init);
+      if (!url.endsWith("/api/feedback")) note("fetch", `${method} ${path} ${response.status}`, `${Math.round(performance.now() - began)} ms`);
       if (!response.ok && /\/api\//.test(url)) {
         const answer = await response.clone().text().catch(() => "");
         report("warn", `${method} ${url.replace(location.origin, "")} answered ${response.status}`, answer.slice(0, 300));
       }
       return response;
     } catch (error) {
-      if (!(error && error.name === "AbortError")) report("error", `${method} ${url.replace(location.origin, "")} failed`, error);
+      if (error && error.name === "AbortError") note("fetch", `${method} ${path} aborted`, `${Math.round(performance.now() - began)} ms`);
+      else report("error", `${method} ${path} failed`, error);
       throw error;
     }
   };
@@ -92,7 +144,57 @@
   window.addEventListener("semmeltv:toast", (event) => {
     const detail = event.detail || {};
     if (detail.tone === "error" && detail.text) report("error", `toast: ${detail.text}`);
+    else if (detail.text) note("toast", detail.text, detail.tone);
   });
+
+  for (const name of ["pushState", "replaceState"]) {
+    const real = history[name].bind(history);
+    history[name] = (...args) => {
+      const before = location.pathname + location.search;
+      const result = real(...args);
+      const after = location.pathname + location.search;
+      if (after !== before) note("route", `${name === "pushState" ? "to" : "replaced with"} ${after}`);
+      return result;
+    };
+  }
+  window.addEventListener("popstate", () => note("route", `back or forward to ${location.pathname + location.search}`));
+
+  function label(element) {
+    const named = element.getAttribute("aria-label") || element.getAttribute("title") || element.innerText || element.textContent || "";
+    const said = named.replace(/\s+/g, " ").trim().slice(0, 60);
+    const href = element.getAttribute("href");
+    return [element.tagName.toLowerCase(), said && `"${said}"`, href && href.startsWith("/") && href].filter(Boolean).join(" ");
+  }
+
+  window.addEventListener("click", (event) => {
+    const target = event.target.closest?.("button, a, [role=button], input, select, summary");
+    if (target) note("tap", label(target));
+  }, { capture: true, passive: true });
+
+  for (const type of ["play", "pause", "waiting", "stalled", "ended", "error", "loadedmetadata", "emptied", "seeking"]) {
+    document.addEventListener(type, (event) => {
+      const media = event.target;
+      if (!(media instanceof HTMLMediaElement)) return;
+      const where = Number.isFinite(media.currentTime) ? `at ${media.currentTime.toFixed(1)} s` : "";
+      const problem = type === "error" && media.error ? `code ${media.error.code} ${media.error.message || ""}` : "";
+      note("media", `${media.tagName.toLowerCase()} ${type}`, [where, problem, `ready ${media.readyState}, network ${media.networkState}`].filter(Boolean).join(", "));
+    }, true);
+  }
+
+  window.addEventListener("online", () => note("network", "online"));
+  window.addEventListener("offline", () => note("network", "offline"));
+
+  const NativeSocket = window.WebSocket;
+  window.WebSocket = class extends NativeSocket {
+    constructor(url, protocols) {
+      super(url, protocols);
+      const where = String(url).replace(/^wss?:\/\/[^/]+/, "");
+      const began = Date.now();
+      note("socket", `connecting ${where}`);
+      this.addEventListener("open", () => note("socket", `open ${where}`, `after ${Date.now() - began} ms`));
+      this.addEventListener("close", (event) => note("socket", `closed ${where}`, `code ${event.code}${event.reason ? ` ${event.reason}` : ""}, after ${Math.round((Date.now() - began) / 1000)} s`));
+    }
+  };
   const LEFT = "semmeltv.left";
   let touch = null;
   window.addEventListener("touchstart", (event) => {
@@ -114,13 +216,17 @@
     } catch {}
     report("info", "page hides", `${event.persisted ? "kept in the back-forward cache" : "unloading"}, ${lastTouch()}, scrollY ${Math.round(scrollY)}`);
     flush(true);
+    keepTrail();
   });
   window.addEventListener("pageshow", (event) => {
     if (event.persisted) report("info", "page shows again from the back-forward cache");
   });
   document.addEventListener("visibilitychange", () => {
     report("info", `page ${document.visibilityState}`);
-    if (document.visibilityState === "hidden") flush(true);
+    if (document.visibilityState === "hidden") {
+      flush(true);
+      keepTrail();
+    }
   });
 
   function arrival() {
@@ -136,5 +242,6 @@
   }
 
   window.semmeltvReport = report;
+  window.semmeltvTrail = { note, snapshot };
   report("info", "page opened", `${innerWidth}x${innerHeight} @${devicePixelRatio}x, ${arrival()}`);
 })();

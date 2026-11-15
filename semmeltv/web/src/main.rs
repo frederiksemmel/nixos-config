@@ -2,6 +2,7 @@ mod api;
 mod auth;
 mod brand;
 mod downloads;
+mod feedback;
 mod layout;
 mod live;
 mod pages;

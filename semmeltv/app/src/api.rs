@@ -53,6 +53,8 @@ pub struct Config {
     pub downloads: Option<Downloads>,
     pub stream: PathBuf,
     pub gate: Option<Gate>,
+    pub feedback: PathBuf,
+    pub grim: Option<String>,
 }
 
 #[derive(Debug)]
@@ -250,6 +252,7 @@ struct Api {
     downloads: Option<Downloads>,
     stream: PathBuf,
     gate: Option<Gate>,
+    feedback: crate::feedback::Feedback,
 }
 
 impl Api {
@@ -272,6 +275,7 @@ pub fn spawn(
     television: Television,
     audio: Option<Audio>,
 ) {
+    let feedback = crate::feedback::Feedback::new(config.feedback, bus.clone(), config.grim);
     let api = Api {
         shared,
         root,
@@ -289,6 +293,7 @@ pub fn spawn(
         downloads: config.downloads,
         stream: config.stream,
         gate: config.gate,
+        feedback,
     };
     let address = config.address;
     let spawned = thread::Builder::new().name("api".to_string()).spawn(move || {
@@ -353,6 +358,7 @@ fn router(api: Api) -> Router {
         .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
         .merge(tv::routes(api.television.clone()))
         .merge(crate::client_log::routes())
+        .merge(crate::feedback::routes(api.feedback.clone()))
         .merge(storage::routes(api.shared.storage.clone(), api.app.clone()))
         .merge(stream::routes(
             api.shared.clone(),
@@ -1767,6 +1773,15 @@ mod tests {
             downloads: None,
             stream: std::env::temp_dir().join(format!("semmeltv-api-stream-{}", std::process::id())),
             gate: None,
+            feedback: crate::feedback::Feedback::new(
+                std::env::temp_dir().join(format!(
+                    "semmeltv-api-feedback-{}-{}",
+                    std::process::id(),
+                    SERVED.fetch_add(1, Ordering::SeqCst)
+                )),
+                bus.clone(),
+                None,
+            ),
         };
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
@@ -1794,6 +1809,31 @@ mod tests {
         let mut response = agent().post(format!("{}{path}", server.base)).send_json(body).unwrap();
         let status = response.status().as_u16();
         (status, response.body_mut().read_json().unwrap_or(Value::Null))
+    }
+
+    static SERVED: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn feedback_is_kept_as_files_and_read_back_newest_first() {
+        let server = serve(no_root(), None);
+        let trail = json!([{ "kind": "tap", "message": "button \"Play\"" }]);
+        let sent = json!({ "message": "The list jumped", "page": "/shows/dark", "client": { "device": "iPhone 1a2b", "trail": trail } });
+        let (status, first) = post(&server, "/api/feedback", sent.clone());
+        assert_eq!(status, 201, "{first}");
+        let (_, second) = post(&server, "/api/feedback", sent);
+        let (status, list) = get(&server, "/api/feedback");
+        assert_eq!(status, 200);
+        assert_eq!(list["reports"][0]["id"], second["id"]);
+        assert_eq!(list["reports"][1]["id"], first["id"]);
+        assert_eq!(list["reports"][0]["device"], "iPhone 1a2b");
+        assert_eq!(list["reports"][0]["page"], "/shows/dark");
+        let (status, report) = get(&server, &format!("/api/feedback/{}", first["id"].as_str().unwrap()));
+        assert_eq!(status, 200);
+        assert_eq!(report["message"], "The list jumped");
+        assert_eq!(report["client"]["trail"], trail);
+        assert!(report["tv"]["screen"].is_object());
+        assert_eq!(get(&server, "/api/feedback/..%2Fsemmeltv").0, 404);
+        assert_eq!(post(&server, "/api/feedback", json!({ "message": "  " })).0, 422);
     }
 
     fn no_root() -> PathBuf {

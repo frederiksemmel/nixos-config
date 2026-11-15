@@ -195,6 +195,19 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     )
                 </div>
             </section>
+            <section class="settings">
+                <h2>"Feedback"</h2>
+                <div class="setting-group">
+                    link(href: "/feedback", attrs: attributes! { cx => class="setting row-link" },
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M7 16.5H5.5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H12l-5 4Z"></path>
+                            <path d="M12 7.5v3.6M12 13.9v.1"></path>
+                        </svg>
+                        <span class="setting-name">"Reports" <small>"What people sent with the speech bubble, newest first"</small></span>
+                        chevron()
+                    )
+                </div>
+            </section>
             }
         </article>
     })

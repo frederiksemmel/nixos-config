@@ -24,6 +24,7 @@ outage = {"until": 0.0}
 screen_answers = {"delay": 0.0, "refuse": False}
 tv = {"on": True}
 opens = []
+feedback = []
 streams = {}
 progress_log = []
 ended = set()
@@ -83,7 +84,8 @@ async def gate(request, handler):
     who = caller(request)
     if who is None:
         return web.json_response({"error": "Not signed in"}, status=401)
-    if path.startswith(("/api/storage", "/api/auth/members", "/api/tv/pair")) and who["role"] != "admin":
+    admin_only = path.startswith(("/api/storage", "/api/auth/members", "/api/tv/pair")) or path == "/api/feedback" and request.method == "GET"
+    if admin_only and who["role"] != "admin":
         return web.json_response({"error": "Only an admin can do that"}, status=403)
     return await handler(request)
 
@@ -493,6 +495,31 @@ async def accepted(request):
     return web.json_response({"ok": True})
 
 
+async def send_feedback(request):
+    body = await request.json()
+    if not (body.get("message") or "").strip() and not body.get("screenshot"):
+        return web.json_response({"error": "Write what happened first"}, status=422)
+    who = caller(request)
+    report = {
+        "id": f"20261115-1312{len(feedback):02d}-ab12", "at": 1794748331, "when": "2026-11-15 13:12:11 UTC",
+        "host": "semmeltv5", "person": {"id": who["id"], "name": who["name"]} if who else None,
+        "device": (body.get("client") or {}).get("device"), "page": body.get("page"),
+        "message": body["message"], "screenshot": None, "tv_screenshot": None,
+        "trail": (body.get("client") or {}).get("trail", []),
+    }
+    feedback.append(report)
+    return web.json_response({"id": report["id"]}, status=201)
+
+
+async def list_feedback(request):
+    reports = [{key: value for key, value in report.items() if key != "trail"} for report in reversed(feedback)]
+    return web.json_response({"dir": "/var/lib/semmeltv/feedback", "reports": reports})
+
+
+async def fake_feedback(request):
+    return web.json_response(feedback)
+
+
 app = web.Application(middlewares=[gate])
 app.router.add_get("/api/auth/choices", auth_choices)
 app.router.add_get("/api/auth/me", auth_me)
@@ -539,5 +566,8 @@ app.router.add_delete("/api/audio/pair", stop_pairing)
 app.router.add_delete("/api/audio/headphones", forget)
 app.router.add_post("/fake/fail-next-connect", fail_next_connect)
 app.router.add_post("/fake/forget-subtitles", forget_subtitles)
+app.router.add_post("/api/feedback", send_feedback)
+app.router.add_get("/api/feedback", list_feedback)
+app.router.add_get("/fake/feedback", fake_feedback)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)

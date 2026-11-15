@@ -51,3 +51,11 @@ marks the page `data-live="stale"` until the pulse is back, which dims the
 bar's and the remote's playing state and holds their controls.
 The microphone is plain JavaScript (`src/microphone.js`), because Topcoat's
 runtime cannot reach `getUserMedia` or audio worklets.
+
+`src/report.js` sends the page's errors to the TV's journal (`/api/log`) and
+keeps a trail of the last 300 things the page did: taps, route changes, every
+API call with its status and time, socket and video events, toasts and errors.
+The trail lives in `sessionStorage`, so it survives reloads. The speech bubble
+in the top bar (`src/feedback.js`) sends the trail with what was typed or
+dictated, and an optional screenshot, to the TV's `/api/feedback`. Admins read
+the reports on `/feedback`; see the [app README](../app/README.md#feedback).

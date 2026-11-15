@@ -53,6 +53,7 @@ pub fn access(method: &Method, path: &str) -> Access {
         | ["api", "log"] => Access::Open,
         ["api", "stream", id, ..] if *id != "open" => Access::Stream,
         ["api", "events"] if method == Method::GET => Access::Service,
+        ["api", "feedback", ..] if method == Method::GET => Access::Admin,
         ["api", "storage", ..] | ["api", "tv", "pair"] | ["api", "auth", "members", ..] | ["api", "downloads", ..] => {
             Access::Admin
         }
@@ -216,6 +217,14 @@ mod tests {
         assert_eq!(access(&Method::GET, "/api/auth/members"), Access::Admin);
         assert_eq!(access(&Method::POST, "/api/auth/members/2/invite"), Access::Admin);
         assert_eq!(access(&Method::POST, "/api/downloads/confirm"), Access::Admin);
+    }
+
+    #[test]
+    fn everyone_sends_feedback_and_admins_read_it() {
+        assert_eq!(access(&Method::POST, "/api/feedback"), Access::Signed);
+        assert_eq!(access(&Method::GET, "/api/feedback"), Access::Admin);
+        assert_eq!(access(&Method::GET, "/api/feedback/20261115-131211-ab12"), Access::Admin);
+        assert_eq!(access(&Method::GET, "/api/feedback/files/20261115-131211-ab12-tv.jpg"), Access::Admin);
     }
 
     #[test]

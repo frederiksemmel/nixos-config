@@ -446,6 +446,38 @@ event stream from the app itself: the library, search, details, artwork, playing
 and playback control. [API.md](API.md) lists the endpoints. The TV keeps running
 if the address cannot be bound. The web app in `../web` is built on it.
 
+## Feedback
+
+Every page of the web app has a speech bubble in its top bar. It opens a box to
+type or dictate into, with an optional screenshot. Sending stores a report on
+the TV with:
+
+- the text, who sent it and the page;
+- the phone's trail of the last 300 things it did;
+- the TV's own snapshot at that moment: what plays, the screen and audio state,
+  the last 20 minutes of the app's journal, warnings from `semmeltv-web`,
+  `semmeltv-mount`, nginx and the kernel, uptime, load, memory, temperature,
+  the Pi's throttle flags, the deployed revision (`/etc/semmeltv/revision`),
+  and a screenshot of the TV taken with grim.
+
+Reports are files, not rows in `semmeltv.db`, so they survive a database reset.
+`SEMMELTV_FEEDBACK` names the folder: by default `feedback` next to the
+database, which on the TVs is `/var/lib/semmeltv/feedback`. It holds
+`<id>.json`, `<id>-phone.jpg`, `<id>-tv.jpg` and `index.jsonl`, one summary per
+line. The TV keeps the newest 300. Nothing leaves the TV. Admins see the list
+on the web app's Feedback page (Settings, then Feedback). Its "Copy for Claude"
+button copies a summary and the command that fetches the full report.
+
+From beast, triage with:
+
+    ssh semmeltv5 'tail -n 20 /var/lib/semmeltv/feedback/index.jsonl' | jq -c '{id, when, person: .person.name, page, message}'
+    ssh semmeltv5 cat /var/lib/semmeltv/feedback/<id>.json | jq '.message, .client.trail[-40:], .tv.problems'
+    ssh semmeltv5 cat /var/lib/semmeltv/feedback/<id>.json | jq -r '.tv.app_journal[]' | tail -80
+    scp semmeltv5:/var/lib/semmeltv/feedback/<id>-tv.jpg .
+
+The same works for `semmeltv3`. A report's `tv.problems` lists what the TV
+couldn't collect, such as a journal it couldn't read.
+
 ## Artwork
 
     semmeltv artwork --manifest DIR/library.db [--refresh]

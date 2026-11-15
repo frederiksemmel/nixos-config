@@ -48,7 +48,7 @@ in
     stateDir = lib.mkOption {
       type = lib.types.path;
       default = "/var/lib/semmeltv";
-      description = "Home of the `semmeltv` user, holding `library`, `cache` and the database `semmeltv.db`.";
+      description = "Home of the `semmeltv` user, holding `library`, `cache`, the database `semmeltv.db` and the feedback reports in `feedback`.";
     };
 
     adminUser = lib.mkOption {
@@ -95,6 +95,7 @@ in
         "render"
         "input"
         "audio"
+        "systemd-journal"
       ];
     };
 
@@ -103,6 +104,7 @@ in
         [
           cfg.stateDir
           "${cfg.stateDir}/cache"
+          "${cfg.stateDir}/feedback"
         ]
         (_: {
           d = {
@@ -133,6 +135,8 @@ in
         SEMMELTV_LIBRARY = "${cfg.stateDir}/library";
         SEMMELTV_CACHE = "${cfg.stateDir}/cache";
         SEMMELTV_DB = "${cfg.stateDir}/semmeltv.db";
+        SEMMELTV_FEEDBACK = "${cfg.stateDir}/feedback";
+        SEMMELTV_GRIM = lib.getExe pkgs.grim;
         FONTCONFIG_FILE = "${pkgs.makeFontsConf {
           fontDirectories = [
             pkgs.dejavu_fonts
@@ -148,6 +152,10 @@ in
     };
 
     environment.systemPackages = [ pkgs.sqlite ];
+
+    environment.etc."semmeltv/revision" = lib.mkIf (config.system.configurationRevision != null) {
+      text = config.system.configurationRevision;
+    };
 
     systemd.services.cage-tty1 = {
       after = [ "systemd-tmpfiles-setup.service" ];

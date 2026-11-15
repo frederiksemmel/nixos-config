@@ -244,6 +244,29 @@ def marks_episodes(page, engine):
           f'document.querySelectorAll("main .episode-row .mark-seen")[1]?.getAttribute("aria-pressed") === "{after}"', 8000)
 
 
+def feedback(page, engine):
+    said = "The list jumped back to the top"
+    before = len(fake_get("/fake/feedback"))
+    page.locator("#feedback-open").tap()
+    until(page, engine, "the feedback button opens a box ready to type or dictate into",
+          'document.activeElement === document.querySelector(".feedback-panel textarea")', 3000)
+    check(engine, "the feedback box is 16px, so iOS doesn't zoom into it",
+          page.evaluate('parseFloat(getComputedStyle(document.querySelector(".feedback-panel textarea")).fontSize) >= 16'))
+    page.locator(".feedback-panel textarea").fill(said)
+    page.locator(".feedback-send").tap()
+    until(page, engine, "sending closes the box", 'document.querySelector(".feedback").hidden && !document.documentElement.dataset.feedback', 5000)
+    reports = fake_get("/fake/feedback")
+    sent = reports[-1] if len(reports) > before else {}
+    kinds = {entry["kind"] for entry in sent.get("trail", [])}
+    check(engine, "the TV gets what was typed, the page and the page's trail",
+          sent.get("message") == said and sent.get("page") and {"fetch", "tap"} <= kinds, str({key: sent.get(key) for key in ("message", "page")} | {"kinds": sorted(kinds)}))
+    page.goto(BASE + "/feedback", wait_until="commit")
+    until(page, engine, "admins see it on the Feedback page, ready to copy for Claude",
+          f'[...document.querySelectorAll(".report-message")].some((m) => m.textContent === {said!r}) && !!document.querySelector(".report [data-copy]")', 5000)
+    page.goto(BASE + "/", wait_until="commit")
+    page.wait_for_selector(TILE)
+
+
 def raise_toast(page, text, tone="info"):
     page.evaluate("([text, tone]) => window.dispatchEvent(new CustomEvent('semmeltv:toast', { detail: { text, tone } }))", [text, tone])
 
@@ -624,6 +647,7 @@ def run(p, engine, device):
     answers(page, engine, "after the sheet")
     scrolls(page, engine, "after the sheet")
     toasts(page, engine)
+    feedback(page, engine)
     settings_subpages(page, engine)
     headphones(page, engine)
     switch_answers_at_once(page, engine)

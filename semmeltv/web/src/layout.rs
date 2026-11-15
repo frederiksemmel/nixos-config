@@ -20,6 +20,7 @@ const ACT: Asset = asset!("./act.js");
 const PHONE_STYLE: Asset = asset!("./phone.css");
 const AUTH: Asset = asset!("./auth.js");
 const LIVE: Asset = asset!("./live.js");
+const FEEDBACK: Asset = asset!("./feedback.js");
 
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
@@ -55,6 +56,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     <script type="module" src=(MICROPHONE)></script>
                     <script type="module" src=(APP)></script>
                     <script type="module" src=(PHONE)></script>
+                    <script type="module" src=(FEEDBACK)></script>
                 }
             </head>
             <body>
@@ -77,6 +79,12 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                             <i class="microphone-level" id="microphone-level"></i>
                         </button>
                     </div>
+                    <button class="top-link feedback-open" id="feedback-open" type="button" aria-label="Send feedback" aria-haspopup="dialog">
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M7 16.5H5.5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H12l-5 4Z"></path>
+                            <path d="M12 7.5v3.6M12 13.9v.1"></path>
+                        </svg>
+                    </button>
                     link(href: "/settings", attrs: attributes! { cx => class="top-link" aria-label="Settings" }, playing::settings_icon())
                     auth::profile_button()
                 </header>

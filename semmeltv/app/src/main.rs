@@ -13,6 +13,7 @@ mod db;
 mod details;
 mod display;
 mod downloads;
+mod feedback;
 mod fetch;
 mod heatmap;
 mod hold;
@@ -248,6 +249,8 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         token: db.tv_token(),
     };
     let library = args.library.clone();
+    let feedback = env_path("SEMMELTV_FEEDBACK")
+        .unwrap_or_else(|| args.db.parent().unwrap_or(Path::new(".")).join("feedback"));
     let downloads = env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new);
     let gate = if args.api.is_some() { sign_in_gate(&db)? } else { None };
     let setup = app::Setup {
@@ -274,6 +277,8 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
                 .filter(|device| !device.is_empty()),
             stream: env_path("SEMMELTV_STREAM_DIR").unwrap_or_else(|| PathBuf::from("/dev/shm/semmeltv-stream")),
             gate,
+            feedback,
+            grim: env_text("SEMMELTV_GRIM"),
         }),
     };
     app::run(setup).map_err(|error| error.to_string())

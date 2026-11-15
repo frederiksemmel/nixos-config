@@ -17,6 +17,8 @@ in
 
   time.timeZone = "Europe/Zurich";
 
+  system.configurationRevision = flake.self.rev or flake.self.dirtyRev or null;
+
   nix.channel.enable = false;
   nix.nixPath = [ "nixpkgs=${pkgs.path}" ];
   nix.registry.nixpkgs.to = {

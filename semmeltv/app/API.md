@@ -30,8 +30,8 @@ With it set, every request passes one gate in the app before anything else:
   which its random session id already guards. Opening a stream does need one.
 - A request that changes something (any method but GET, HEAD and OPTIONS) with
   an `Origin` outside the list gets 403, whatever its cookie.
-- Storage, `/api/tv/pair`, `/api/auth/members/...` and downloads need an admin,
-  else 403 "Only an admin can do that".
+- Storage, `/api/tv/pair`, `/api/auth/members/...`, downloads and reading
+  feedback need an admin, else 403 "Only an admin can do that".
 - `GET /api/events` also takes `Authorization: Bearer <token>`, the token in
   `SEMMELTV_SERVICE_TOKEN_FILE`, which is how the web app's server follows the
   TV. The token opens nothing else.
@@ -733,6 +733,37 @@ the path under the library, `hash` and `size` the video's OpenSubtitles hash
 and size or null. It saves the subtitles beside the video on pCloud, refreshes
 that folder on the TV's mount, and answers with the saved file's path, or 422
 and `{ error }`.
+
+## Feedback
+
+`POST /api/feedback` stores a report from anyone signed in:
+
+```json
+{
+  "message": "The episode list jumped back to season 1",
+  "page": "/shows/dark",
+  "client": { "device": "iPhone 1a2b", "trail": [] },
+  "screenshot": "data:image/jpeg;base64,…"
+}
+```
+
+It needs `message` or `screenshot`; everything else is optional. `client`
+is whatever the page sends. The web app sends its device, viewport and its
+trail of the last 300 things it did: taps, route changes, API calls with status
+and time, socket and video events, and errors. The TV cuts the trail from the
+oldest end to fit 400 KB, adds its own snapshot, and answers 201
+`{ "id": "20261115-131211-ab12" }`, or 422 `{ "error": … }`. The body may be
+up to 6 MB.
+
+Admins read them back:
+
+- `GET /api/feedback`: `{ "dir": …, "reports": [summary, …] }`, the newest
+  100. A summary has `id`, `at` (Unix seconds), `when` (UTC), `host`, `person`
+  (`id`, `name`), `device`, `page`, `message`, `screenshot` and
+  `tv_screenshot` (file names, or null).
+- `GET /api/feedback/{id}`: the whole report, the summary plus `client` and
+  `tv`.
+- `GET /api/feedback/files/{name}`: a screenshot named in a summary.
 
 ## Trying it
 

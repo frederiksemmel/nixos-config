@@ -11,7 +11,7 @@ use topcoat::view::{View, attributes, component, view};
 path_param!(token);
 
 const OPEN: [&str; 4] = ["/profiles", "/invite/", "/_topcoat/assets/", "/_topcoat/fonts/"];
-const FOR_ADMINS: [&str; 3] = ["/storage", "/downloads", "/people"];
+const FOR_ADMINS: [&str; 4] = ["/storage", "/downloads", "/people", "/feedback"];
 
 pub fn me(cx: &Cx) -> Option<&Me> {
     try_request_context::<Me>(cx)
@@ -393,6 +393,7 @@ mod tests {
         assert!(for_admins("/storage"));
         assert!(for_admins("/downloads"));
         assert!(for_admins("/people"));
+        assert!(for_admins("/feedback"));
         assert!(!for_admins("/storagex"));
         assert!(!for_admins("/settings"));
     }
