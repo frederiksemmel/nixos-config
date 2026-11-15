@@ -19,6 +19,7 @@ mod import;
 mod intent;
 mod led;
 mod library;
+mod library_db;
 mod loader;
 mod manifest;
 mod mdblist;
@@ -58,7 +59,7 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|toasty ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|toasty tv|library ARGS…|library show|library from-toml FILE] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -130,7 +131,7 @@ fn parse_args() -> Result<Args, String> {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
             "ui" | "list" | "artwork" | "import" | "downloads" => args.mode = argument,
-            "toasty" => {
+            "toasty" | "library" => {
                 args.toasty = raw.by_ref().collect();
                 args.mode = argument;
             }
@@ -211,7 +212,10 @@ fn open_db(args: &Args) -> Result<Db, String> {
 
 fn stored_progress(args: &Args) -> progress::Progress {
     open_db(args)
-        .and_then(|db| db.progress(ProfileId::FIRST).map_err(|error| error.to_string()))
+        .and_then(|db| {
+            db.set_library(&library::load_listed(&args.library, args.meta()).unwrap_or_default());
+            db.progress(ProfileId::FIRST).map_err(|error| error.to_string())
+        })
         .unwrap_or_else(|error| {
             eprintln!("progress: {error}");
             progress::Progress::default()
@@ -220,8 +224,6 @@ fn stored_progress(args: &Args) -> progress::Progress {
 
 fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     let db = open_db(&args)?;
-    db::import::from_cache(&db, cache.root(), ProfileId::FIRST, watching::now())
-        .map_err(|error| format!("importing {}: {error}", cache.root().display()))?;
     let capacity: Option<u64> = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
         .and_then(|bytes| bytes.parse().ok());
@@ -273,6 +275,43 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         }),
     };
     app::run(setup).map_err(|error| error.to_string())
+}
+
+fn run_toasty(args: &Args) -> Result<(), String> {
+    let (which, rest) = args.toasty.split_first().ok_or("toasty needs tv or library, then a migration command")?;
+    let rest = rest.to_vec();
+    match which.as_str() {
+        "tv" => db::toasty_cli(&args.db, rest),
+        "library" => {
+            let file = args.manifest.clone().unwrap_or_else(|| env::temp_dir().join("semmeltv-library-scratch.db"));
+            library_db::toasty_cli(&file, rest)
+        }
+        other => return Err(format!("toasty {other}: say tv or library")),
+    }
+    .map_err(|error| error.to_string())
+}
+
+fn run_library(args: &Args) -> Result<(), String> {
+    let manifest = args.manifest.as_ref().ok_or("library needs --manifest FILE, the library.db")?;
+    match args.toasty.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
+        ["show"] => {
+            let library = manifest::Manifest::read(manifest).map_err(|error| format!("{}: {error:?}", manifest.display()))?;
+            println!("{}", library.render());
+            Ok(())
+        }
+        ["from-toml", toml] => {
+            let library = library_db::from_toml(Path::new(toml), manifest)?;
+            let episodes: usize = library.show.iter().map(|show| show.episodes.len()).sum();
+            println!(
+                "{}: {} shows, {episodes} episodes, {} movies",
+                manifest.display(),
+                library.show.len(),
+                library.movie.len()
+            );
+            Ok(())
+        }
+        _ => Err("library show | library from-toml FILE.toml, with --manifest library.db".to_string()),
+    }
 }
 
 fn run_import(args: &Args) -> Result<(), String> {
@@ -463,18 +502,18 @@ fn run() -> Result<(), String> {
     let cache = Cache::new(args.cache.clone());
     match args.mode.as_str() {
         "list" => list(&library::load(&args.library, args.meta())?),
-        "understand" => println!(
-            "{:?}",
-            intent::understand(
-                &args.transcript,
-                &library::load(&args.library, args.meta())?,
-                &stored_progress(&args)
-            )
-        ),
+        "understand" => {
+            let library = library::load(&args.library, args.meta())?;
+            println!(
+                "{:?}",
+                intent::understand(&args.transcript, &library, &stored_progress(&args))
+            );
+        }
         "artwork" => run_artwork(&args)?,
         "import" => run_import(&args)?,
         "downloads" => run_downloads(&args)?,
-        "toasty" => db::toasty_cli(&args.db, args.toasty.clone()).map_err(|error| error.to_string())?,
+        "toasty" => run_toasty(&args)?,
+        "library" => run_library(&args)?,
         "hear" => hear(&args)?,
         "invite" => invite(&args)?,
         _ => run_ui(args, cache)?,

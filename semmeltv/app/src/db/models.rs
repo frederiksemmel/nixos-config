@@ -7,9 +7,15 @@ pub enum Role {
     Viewer,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, toasty::Embed)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]
 pub enum Kind {
     Series,
+    Movie,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]
+pub enum VideoKind {
+    Episode,
     Movie,
 }
 
@@ -40,11 +46,11 @@ pub struct Profile {
     #[has_many(pair = creator)]
     pub invites_sent: Deferred<Vec<Invite>>,
     #[has_many]
-    pub file_places: Deferred<Vec<FilePlace>>,
+    pub video_places: Deferred<Vec<VideoPlace>>,
     #[has_many]
-    pub show_places: Deferred<Vec<ShowPlace>>,
+    pub series_places: Deferred<Vec<SeriesPlace>>,
     #[has_many]
-    pub watching: Deferred<Vec<Watching>>,
+    pub started: Deferred<Vec<Started>>,
     #[has_many]
     pub dismissals: Deferred<Vec<Dismissal>>,
     #[has_one]
@@ -103,9 +109,10 @@ pub struct Invite {
 }
 
 #[derive(Debug, toasty::Model)]
-pub struct File {
-    #[key]
-    pub path: String,
+#[key(kind, video_id)]
+pub struct VideoFact {
+    pub kind: VideoKind,
+    pub video_id: i64,
     pub duration: Option<f64>,
     pub credits: Option<f64>,
     #[default(0.0)]
@@ -114,10 +121,11 @@ pub struct File {
 }
 
 #[derive(Debug, toasty::Model)]
-#[key(profile_id, path)]
-pub struct FilePlace {
+#[key(profile_id, kind, video_id)]
+pub struct VideoPlace {
     pub profile_id: i64,
-    pub path: String,
+    pub kind: VideoKind,
+    pub video_id: i64,
     #[belongs_to(key = profile_id, references = id)]
     pub profile: Deferred<Profile>,
     pub stopped_at: Option<f64>,
@@ -129,10 +137,10 @@ pub struct FilePlace {
 }
 
 #[derive(Debug, toasty::Model)]
-#[key(profile_id, show_key)]
-pub struct ShowPlace {
+#[key(profile_id, show_id)]
+pub struct SeriesPlace {
     pub profile_id: i64,
-    pub show_key: String,
+    pub show_id: i64,
     #[belongs_to(key = profile_id, references = id)]
     pub profile: Deferred<Profile>,
     pub season: i64,
@@ -141,23 +149,24 @@ pub struct ShowPlace {
 }
 
 #[derive(Debug, toasty::Model)]
-#[table = "watching"]
-#[key(profile_id, kind, title_key)]
-pub struct Watching {
+#[table = "started"]
+#[key(profile_id, kind, title_id)]
+pub struct Started {
     pub profile_id: i64,
     pub kind: Kind,
-    pub title_key: String,
+    pub title_id: i64,
     #[belongs_to(key = profile_id, references = id)]
     pub profile: Deferred<Profile>,
     pub last_played: i64,
 }
 
 #[derive(Debug, toasty::Model)]
-#[table = "dismissed"]
-#[key(profile_id, path)]
+#[table = "dismissed_videos"]
+#[key(profile_id, kind, video_id)]
 pub struct Dismissal {
     pub profile_id: i64,
-    pub path: String,
+    pub kind: VideoKind,
+    pub video_id: i64,
     #[belongs_to(key = profile_id, references = id)]
     pub profile: Deferred<Profile>,
     pub at: i64,
@@ -198,10 +207,10 @@ pub fn all() -> toasty::ModelSet {
         Passkey,
         Session,
         Invite,
-        File,
-        FilePlace,
-        ShowPlace,
-        Watching,
+        VideoFact,
+        VideoPlace,
+        SeriesPlace,
+        Started,
         Dismissal,
         SubtitleSettings,
         AudioPrefs,

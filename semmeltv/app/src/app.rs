@@ -257,7 +257,12 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         ui: ui.as_weak(),
     };
     let saved = cache.saved_manifest();
-    let library = library::load_saved(&root, &saved).unwrap_or_default();
+    let library = library::load_saved(&root, &saved)
+        .ok()
+        .filter(|library| !library.is_empty())
+        .or_else(|| library::load_listed(&root, &meta).ok())
+        .unwrap_or_default();
+    db.set_library(&library);
     let profile = db
         .setting(TV_PROFILE)
         .unwrap_or_else(|error| {
@@ -618,6 +623,10 @@ impl App {
             return;
         }
         self.downloaded = self.store.downloaded(library.paths());
+        if self.db.set_library(&library) {
+            self.shared.forget_progress();
+            self.progress = self.load_progress(self.profile);
+        }
         self.shared.set_library(&library);
         match self.nav.replace(library) {
             Reload::ShowGone => self.ui.set_show_open(false),

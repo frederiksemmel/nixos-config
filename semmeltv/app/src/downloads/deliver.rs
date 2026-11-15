@@ -182,13 +182,13 @@ impl Shelf {
     fn manifest_hash(&self) -> Result<String, String> {
         let listing = run(
             "rclone",
-            &["hashsum", "sha1", &self.remote, "--include", "/library.toml"],
+            &["hashsum", "sha1", &self.remote, "--include", &format!("/{}", manifest::FILE_NAME)],
         )?;
         listing
             .split_whitespace()
             .next()
             .map(str::to_string)
-            .ok_or_else(|| format!("no library.toml in {}", self.remote))
+            .ok_or_else(|| format!("no library.db in {}", self.remote))
     }
 
     pub fn upload(&self, placed: &Placed) -> Result<(), String> {
@@ -202,7 +202,7 @@ impl Shelf {
             let after = self.manifest_hash()?;
             if after != before {
                 log(format!(
-                    "library.toml changed on pCloud while importing (attempt {attempt}), starting over"
+                    "library.db changed on pCloud while importing (attempt {attempt}), starting over"
                 ));
                 continue;
             }
@@ -211,14 +211,14 @@ impl Shelf {
                 &["copy", &self.work.join(artwork::DIR).to_string_lossy(), &self.remote(artwork::DIR)],
             )?;
             if self.manifest_hash()? != before {
-                log(format!("library.toml changed on pCloud before the upload (attempt {attempt}), starting over"));
+                log(format!("library.db changed on pCloud before the upload (attempt {attempt}), starting over"));
                 continue;
             }
             run("rclone", &["copyto", &manifest.to_string_lossy(), &self.remote(manifest::FILE_NAME)])?;
-            log("library.toml uploaded".to_string());
+            log("library.db uploaded".to_string());
             return Ok(());
         }
-        Err(format!("library.toml kept changing on pCloud; tried {ATTEMPTS} times"))
+        Err(format!("library.db kept changing on pCloud; tried {ATTEMPTS} times"))
     }
 
     fn prepare(&self, target: &Target, placed: &[Placed], log: &dyn Fn(String)) -> Result<PathBuf, String> {
@@ -249,7 +249,7 @@ impl Shelf {
             ],
         )?;
         let files = parse::read_listing(&listing)?;
-        let existing = Manifest::read(&manifest_path).map_err(|_| "library.toml on pCloud is unreadable".to_string())?;
+        let existing = Manifest::read(&manifest_path).map_err(|_| "library.db on pCloud is unreadable".to_string())?;
         let parsed = parse::build(&files);
         let identity = Identity {
             id: target.tmdb,

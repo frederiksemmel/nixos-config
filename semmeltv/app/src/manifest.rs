@@ -1,12 +1,12 @@
 use crate::tags::Tags;
-use serde::Deserialize;
-use serde::de::{self, Deserializer};
+use serde::de::{self, Deserializer, MapAccess, Visitor};
+use serde::{Deserialize, Serialize, Serializer};
 use std::fmt::{self, Display, Formatter, Write as _};
 use std::fs;
 use std::io;
 use std::path::Path;
 
-pub const FILE_NAME: &str = "library.toml";
+pub const FILE_NAME: &str = "library.db";
 
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
 
@@ -76,20 +76,44 @@ impl Display for Date {
     }
 }
 
+impl Serialize for Date {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
 impl<'de> Deserialize<'de> for Date {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        match toml::value::Datetime::deserialize(deserializer)? {
-            toml::value::Datetime {
-                date: Some(date),
-                time: None,
-                offset: None,
-            } => Ok(Self {
-                year: date.year,
-                month: date.month,
-                day: date.day,
-            }),
-            other => Err(de::Error::custom(format!("{other} is not a plain date"))),
+        struct Dates;
+
+        impl<'de> Visitor<'de> for Dates {
+            type Value = Date;
+
+            fn expecting(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+                formatter.write_str("a date like 2024-05-01")
+            }
+
+            fn visit_str<E: de::Error>(self, text: &str) -> Result<Date, E> {
+                Date::parse(text).ok_or_else(|| E::custom(format!("{text} is not a date like 2024-05-01")))
+            }
+
+            fn visit_map<M: MapAccess<'de>>(self, map: M) -> Result<Date, M::Error> {
+                match toml::value::Datetime::deserialize(de::value::MapAccessDeserializer::new(map))? {
+                    toml::value::Datetime {
+                        date: Some(date),
+                        time: None,
+                        offset: None,
+                    } => Ok(Date {
+                        year: date.year,
+                        month: date.month,
+                        day: date.day,
+                    }),
+                    other => Err(de::Error::custom(format!("{other} is not a plain date"))),
+                }
+            }
         }
+
+        deserializer.deserialize_any(Dates)
     }
 }
 
@@ -168,14 +192,14 @@ impl Scores {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Certificate {
     pub country: String,
     pub rating: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Member {
     pub name: String,
@@ -185,7 +209,7 @@ pub struct Member {
     pub imdb: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct About {
     pub tagline: Option<String>,
@@ -282,6 +306,8 @@ pub struct Manifest {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShowEntry {
+    #[serde(skip)]
+    pub id: Option<i64>,
     pub title: String,
     pub year: Option<u16>,
     pub last_aired: Option<u16>,
@@ -303,6 +329,8 @@ pub struct ShowEntry {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EpisodeEntry {
+    #[serde(skip)]
+    pub id: Option<i64>,
     pub season: u32,
     pub episode: u32,
     pub title: Option<String>,
@@ -321,6 +349,8 @@ pub struct EpisodeEntry {
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MovieEntry {
+    #[serde(skip)]
+    pub id: Option<i64>,
     pub title: String,
     pub year: Option<u16>,
     pub tmdb: Option<u64>,
@@ -366,12 +396,11 @@ impl Manifest {
     }
 
     pub fn read(path: &Path) -> Result<Self, ReadError> {
-        let text = fs::read_to_string(path).map_err(ReadError::Unreadable)?;
-        Self::parse(&text).map_err(ReadError::Invalid)
+        crate::library_db::read(path)
     }
 
     pub fn write(&self, path: &Path) -> io::Result<()> {
-        write_atomically(path, self.render().as_bytes())
+        crate::library_db::write(path, self)
     }
 
     pub fn render(&self) -> String {
@@ -452,8 +481,13 @@ pub enum ReadError {
     Invalid(String),
 }
 
+pub fn temporary(path: &Path) -> std::path::PathBuf {
+    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    path.with_file_name(format!(".{name}.tmp"))
+}
+
 pub fn write_atomically(path: &Path, bytes: &[u8]) -> io::Result<()> {
-    let temporary = path.with_extension("toml.tmp");
+    let temporary = temporary(path);
     fs::write(&temporary, bytes)?;
     fs::rename(temporary, path)
 }

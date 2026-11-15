@@ -75,20 +75,23 @@ mod tests {
         let root = std::env::temp_dir().join(format!("semmeltv-watch-{}", std::process::id()));
         fs::create_dir_all(root.join("Movies")).unwrap();
         fs::write(root.join("Movies/Up.mkv"), b"x").unwrap();
-        let saved = root.join("saved.toml");
+        let saved = root.join("saved.db");
         let good = "[[movie]]\ntitle = \"Up\"\npath = \"Movies/Up.mkv\"\nadded = 2024-01-01\n";
-        fs::write(root.join(manifest::FILE_NAME), good).unwrap();
+        crate::manifest::Manifest::parse(good)
+            .unwrap()
+            .write(&root.join(manifest::FILE_NAME))
+            .unwrap();
         assert_eq!(read(&root, &root, &saved).unwrap().movies.len(), 1);
-        assert_eq!(fs::read_to_string(&saved).unwrap(), good);
+        assert_eq!(fs::read(&saved).unwrap(), fs::read(root.join(manifest::FILE_NAME)).unwrap());
 
-        fs::write(root.join(manifest::FILE_NAME), "not toml [").unwrap();
+        fs::write(root.join(manifest::FILE_NAME), "not a database").unwrap();
         assert_eq!(read(&root, &root, &saved).unwrap().movies.len(), 1);
         fs::remove_file(root.join(manifest::FILE_NAME)).unwrap();
         fs::remove_file(root.join("Movies/Up.mkv")).unwrap();
         assert_eq!(read(&root, &root, &saved).unwrap().movies.len(), 1);
 
         fs::remove_file(&saved).unwrap();
-        assert!(read(&root, &root, &saved).unwrap_err().contains("library.toml"));
+        assert!(read(&root, &root, &saved).unwrap_err().contains("library.db"));
         fs::remove_dir_all(root).unwrap();
     }
 

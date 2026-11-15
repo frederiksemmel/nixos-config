@@ -1,24 +1,27 @@
 mod auth;
-mod diesel;
-pub mod import;
+mod index;
+mod legacy;
 mod models;
 mod progress;
 
+use crate::library::Library;
 use crate::profile::ProfileId;
 use crate::subtitles::{self, Remembered};
-use models::{AudioPrefs as StoredAudioPrefs, File, Setting as StoredSetting, SubtitleSettings};
-use std::collections::BTreeMap;
+use index::{Index, Video};
+use models::{AudioPrefs as StoredAudioPrefs, Setting as StoredSetting, SubtitleSettings, VideoFact};
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::future::Future;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, mpsc};
+use std::sync::{Arc, Mutex, RwLock, mpsc};
 use std::time::Duration;
 use tokio::runtime::Runtime;
 use toasty_driver_sqlite::{JournalMode, Sqlite, Synchronous};
 
-static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!("toasty");
+static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!("toasty/tv");
 const TV_TOKEN: &str = "tv_token";
+const KEYED_BY_LIBRARY: &str = "keyed_by_library";
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -32,6 +35,8 @@ struct Inner {
     db: toasty::Db,
     runtime: Option<Runtime>,
     library: PathBuf,
+    index: RwLock<Index>,
+    blind: Mutex<HashSet<ProfileId>>,
 }
 
 impl Drop for Inner {
@@ -55,7 +60,7 @@ pub struct AudioPrefs {
     pub headphones: Option<String>,
 }
 
-fn runtime() -> Result<Runtime> {
+pub(crate) fn runtime() -> Result<Runtime> {
     Ok(tokio::runtime::Builder::new_multi_thread()
         .worker_threads(1)
         .thread_name("semmeltv-db")
@@ -63,7 +68,7 @@ fn runtime() -> Result<Runtime> {
         .build()?)
 }
 
-fn wait<T: Send + 'static>(
+pub(crate) fn wait<T: Send + 'static>(
     runtime: &Runtime,
     work: impl Future<Output = toasty::Result<T>> + Send + 'static,
 ) -> Result<T> {
@@ -91,7 +96,6 @@ impl Db {
         if let Some(dir) = file.parent() {
             fs::create_dir_all(dir)?;
         }
-        let earlier = diesel::set_aside(file)?;
         let runtime = runtime()?;
         fs::OpenOptions::new().create(true).append(true).mode(0o600).open(file)?;
         let driver = Sqlite::open(file)
@@ -100,9 +104,6 @@ impl Db {
             .busy_timeout(Duration::from_secs(5));
         let db = Self::ready(runtime, driver, library)?;
         private(file)?;
-        if let Some(earlier) = earlier {
-            db.wait(move |db| diesel::copy(db, earlier))?;
-        }
         Ok(db)
     }
 
@@ -122,6 +123,8 @@ impl Db {
                 db,
                 runtime: Some(runtime),
                 library: library.to_path_buf(),
+                index: RwLock::default(),
+                blind: Mutex::default(),
             }),
         })
     }
@@ -135,15 +138,36 @@ impl Db {
         wait(runtime, work(self.inner.db.clone()))
     }
 
-    fn key(&self, file: &Path) -> String {
-        file.strip_prefix(&self.inner.library)
-            .unwrap_or(file)
-            .to_string_lossy()
-            .into_owned()
+    pub fn set_library(&self, library: &Library) -> bool {
+        let (was_empty, index) = {
+            let mut index = self.inner.index.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let was_empty = index.is_empty();
+            index.add(library);
+            (was_empty, index.clone())
+        };
+        if index.is_empty() {
+            return false;
+        }
+        let root = self.inner.library.clone();
+        match self.wait(move |db| legacy::convert(db, root, index)) {
+            Ok(0) => {}
+            Ok(moved) => {
+                eprintln!("database: keyed {moved} rows of progress by library id");
+                if let Err(error) = self.set_setting(KEYED_BY_LIBRARY, Some("yes")) {
+                    eprintln!("database: {error}");
+                }
+            }
+            Err(error) => eprintln!("database: keying progress by library id: {error}"),
+        }
+        was_empty
     }
 
-    fn path(&self, key: &str) -> PathBuf {
-        self.inner.library.join(key)
+    fn video(&self, file: &Path) -> Option<Video> {
+        self.inner
+            .index
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .video(file)
     }
 
     pub fn setting(&self, name: &str) -> Result<Option<String>> {
@@ -197,28 +221,35 @@ impl Db {
 
     pub fn subtitle_files(&self) -> Result<BTreeMap<PathBuf, Remembered>> {
         let rows = self.wait(|mut db| async move {
-            let fields = File::fields();
-            File::filter(fields.subtitle_delay().ne(0.0).or(fields.embedded_subtitles().is_some()))
+            let fields = VideoFact::fields();
+            VideoFact::filter(fields.subtitle_delay().ne(0.0).or(fields.embedded_subtitles().is_some()))
                 .exec(&mut db)
                 .await
         })?;
+        let index = self.inner.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         Ok(rows
             .into_iter()
-            .map(|file| {
+            .filter_map(|fact| {
+                let path = index.path(Video {
+                    kind: fact.kind,
+                    id: fact.video_id,
+                })?;
                 let remembered = Remembered {
-                    delay: file.subtitle_delay,
-                    embedded: file.embedded_subtitles.and_then(|count| usize::try_from(count).ok()),
+                    delay: fact.subtitle_delay,
+                    embedded: fact.embedded_subtitles.and_then(|count| usize::try_from(count).ok()),
                 };
-                (self.path(&file.path), remembered)
+                Some((path.clone(), remembered))
             })
             .collect())
     }
 
     pub fn save_subtitle_file(&self, file: &Path, remembered: Remembered) -> Result<()> {
-        let key = self.key(file);
+        let Some(Video { kind, id }) = self.video(file) else {
+            return Err(format!("{} is not in the library", file.display()).into());
+        };
         let embedded = remembered.embedded.map(|count| count as i64);
         self.wait(move |mut db| async move {
-            File::upsert_by_path(key)
+            VideoFact::upsert_by_kind_and_video_id(kind, id)
                 .subtitle_delay(remembered.delay)
                 .embedded_subtitles(embedded)
                 .exec(&mut db)
@@ -261,16 +292,30 @@ impl Db {
 }
 
 pub fn toasty_cli(file: &Path, arguments: Vec<String>) -> Result<()> {
+    toasty_cli_for(file, models::all(), "toasty/tv", arguments)
+}
+
+pub(crate) fn toasty_cli_for(
+    file: &Path,
+    models: toasty::ModelSet,
+    migrations: &str,
+    arguments: Vec<String>,
+) -> Result<()> {
     let runtime = runtime()?;
     let file = file.to_path_buf();
+    let config = toasty_cli::Config::new().migration(toasty_cli::MigrationConfig::new().path(migrations));
     wait(&runtime, async move {
-        let db = toasty::Db::builder().models(models::all()).build(Sqlite::open(file)).await?;
-        let config = toasty_cli::Config::load().map_err(|error| toasty::Error::from_args(format_args!("{error:#}")))?;
+        let db = toasty::Db::builder().models(models).build(Sqlite::open(file)).await?;
         toasty_cli::ToastyCli::with_config(db, config)
             .parse_from(std::iter::once("toasty".to_string()).chain(arguments))
             .await
             .map_err(|error| toasty::Error::from_args(format_args!("{error:#}")))
     })
+}
+
+#[cfg(test)]
+pub fn test_library() -> Library {
+    progress::tests::library()
 }
 
 #[derive(Clone)]
@@ -300,7 +345,9 @@ mod tests {
     use super::*;
 
     fn db() -> Db {
-        Db::memory(Path::new("/lib"))
+        let db = Db::memory(Path::new("/lib"));
+        db.set_library(&progress::tests::library());
+        db
     }
 
     #[test]
@@ -434,11 +481,42 @@ mod tests {
         db.save_subtitle_file(file, remembered).unwrap();
         assert_eq!(db.subtitle_files().unwrap(), BTreeMap::from([(file.to_path_buf(), remembered)]));
         let stored = db
-            .wait(|mut db| async move { File::all().exec(&mut db).await })
+            .wait(|mut db| async move { VideoFact::all().exec(&mut db).await })
             .unwrap();
-        assert_eq!(stored[0].path, "Movies/Up/Up.mkv");
+        assert_eq!((stored[0].kind, stored[0].video_id), (models::VideoKind::Movie, 9));
         db.save_subtitle_file(file, Remembered::default()).unwrap();
         assert!(db.subtitle_files().unwrap().is_empty());
+        assert!(db.save_subtitle_file(Path::new("/lib/elsewhere.mkv"), remembered).is_err());
+    }
+
+    #[test]
+    fn progress_kept_by_path_moves_to_library_ids_once() {
+        let db = Db::memory(Path::new("/lib"));
+        db.wait(|mut db| async move {
+            for sql in [
+                "INSERT INTO legacy_files VALUES ('Movies/Up/Up.mkv', 5760.0, NULL, 0.5, 2)",
+                "INSERT INTO legacy_file_places VALUES (1, 'Movies/Up/Up.mkv', 600.0, 1800000000, 0, 1, 3, 1)",
+                "INSERT INTO legacy_file_places VALUES (1, 'Movies/Gone.mkv', 10.0, 1, 0, NULL, NULL, NULL)",
+                "INSERT INTO legacy_show_places VALUES (2, 'dark', 1, 2, 1)",
+                "INSERT INTO legacy_watching VALUES (1, 'movie', 'up', 1800000000)",
+                "INSERT INTO legacy_dismissed VALUES (1, 'Series/Dark/S01/Dark.S01E02.mkv', 1700000000)",
+            ] {
+                toasty::sql::statement(sql).exec(&mut db).await?;
+            }
+            Ok(())
+        })
+        .unwrap();
+        db.set_library(&progress::tests::library());
+        let first = db.progress(ProfileId::FIRST).unwrap();
+        let up = first.files[Path::new(progress::tests::UP)];
+        assert_eq!((up.stopped_at, up.duration, up.tracks.subtitles_shown), (Some(600.0), Some(5760.0), Some(true)));
+        assert_eq!(first.watching.entries()[0].key, "up");
+        assert_eq!(first.dismissed[0].file, Path::new(progress::tests::DARK));
+        assert_eq!(db.progress(ProfileId(2)).unwrap().shows["dark"].episode, 2);
+        assert_eq!(db.subtitle_files().unwrap()[Path::new(progress::tests::UP)].delay, 0.5);
+        assert_eq!(db.setting(KEYED_BY_LIBRARY).unwrap().as_deref(), Some("yes"));
+        db.set_library(&progress::tests::library());
+        assert_eq!(db.progress(ProfileId::FIRST).unwrap(), first);
     }
 
     #[test]

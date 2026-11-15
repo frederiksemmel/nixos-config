@@ -189,6 +189,10 @@ impl Shared {
         sidecars + self.subtitles.embedded(video).unwrap_or(0)
     }
 
+    pub fn forget_progress(&self) {
+        self.progress.write().unwrap().clear();
+    }
+
     pub fn set_progress(&self, profile: ProfileId, progress: &Progress) {
         self.progress.write().unwrap().insert(profile, Arc::new(progress.clone()));
     }

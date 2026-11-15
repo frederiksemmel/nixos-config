@@ -1,12 +1,12 @@
 ---
 name: semmeltv-incoming
-description: Sort new videos from pcloud:Incoming into the SemmelTV library, update library.toml and fetch artwork and ratings.
+description: Sort new videos from pcloud:Incoming into the SemmelTV library, update library.db and fetch artwork and ratings.
 disable-model-invocation: true
 ---
 
 # Sort pCloud Incoming into SemmelTV
 
-Run on beast, with the user present. The library lives in `pcloud:SemmelTV`: `library.toml`, `Movies/`, `Series/` and `Artwork/`. Every write to pCloud in this skill goes through one of three commands: `rclone moveto` for a video, `rclone copy` for new images in `Artwork/`, and `rclone copyto` for `library.toml`, and each of those needs the user's go-ahead from step 3 or 6. Leave everything else on pCloud as it is. Nothing here deletes.
+Run on beast, with the user present. The library lives in `pcloud:SemmelTV`: `library.db`, `Movies/`, `Series/` and `Artwork/`. Every write to pCloud in this skill goes through one of three commands: `rclone moveto` for a video, `rclone copy` for new images in `Artwork/`, and `rclone copyto` for `library.db`, and each of those needs the user's go-ahead from step 3 or 6. Leave everything else on pCloud as it is. Nothing here deletes.
 
 `pcloud:Incoming/` may not exist yet. On the first run, create it with `rclone mkdir pcloud:Incoming`, tell the user to put files there, and stop.
 
@@ -51,23 +51,29 @@ Done when `rclone lsf -R --files-only pcloud:Incoming` shows only junk and uncer
 Take a listing, the current manifest and the artwork, then import against the local copy. A listing is used instead of the `~/pcloud` mount because the mount can lag behind the moves.
 
     work=$(mktemp -d)
-    rclone copyto pcloud:SemmelTV/library.toml "$work/library.toml"
-    cp "$work/library.toml" "$work/before.toml"
+    rclone hashsum sha1 pcloud:SemmelTV --include /library.db | cut -d' ' -f1 > "$work/before.sha1"
+    rclone copyto pcloud:SemmelTV/library.db "$work/library.db"
+    semmeltv --manifest "$work/library.db" library show > "$work/before.txt"
     rclone copy pcloud:SemmelTV/Artwork "$work/Artwork"
     rclone lsf -R --files-only --format tsp --include "/Series/**" --include "/Movies/**" pcloud:SemmelTV > "$work/listing.txt"
-    semmeltv import --listing "$work/listing.txt" --manifest "$work/library.toml"
-    semmeltv artwork --manifest "$work/library.toml"
+    semmeltv import --listing "$work/listing.txt" --manifest "$work/library.db"
+    semmeltv artwork --manifest "$work/library.db"
+    semmeltv --manifest "$work/library.db" library show > "$work/after.txt"
 
-A missing `pcloud:SemmelTV/library.toml` means something is wrong: stop and tell the user, since a first import dates everything by file and is not this skill's job.
+A missing `pcloud:SemmelTV/library.db` means something is wrong: stop and tell the user, since a first import dates everything by file and is not this skill's job.
 
-Done when every moved video appears as `added:` in the import output. A moved file that shows up as `video not imported` lost out to a larger copy of the same title; tell the user. The artwork step only fetches what `$work/Artwork` and the manifest lack, writes backdrops, posters and episode stills into `$work/Artwork` and episode names and runtimes into `$work/library.toml`, and lists titles without a TMDB id. It also stores IMDb, Rotten Tomatoes critics and audience, and Metacritic scores from MDBList for titles not rated yet, and prints the MDBList requests it used. New episodes get their IMDb rating from IMDb's datasets in the same run. MDBList allows 1000 a day: when a run reports titles left for the next run, run `semmeltv artwork` again the next day before uploading, or upload now and let a later run fill them in.
+Done when every moved video appears as `added:` in the import output. A moved file that shows up as `video not imported` lost out to a larger copy of the same title; tell the user. The artwork step only fetches what `$work/Artwork` and the manifest lack, writes backdrops, posters and episode stills into `$work/Artwork` and episode names and runtimes into `$work/library.db`, and lists titles without a TMDB id. It also stores IMDb, Rotten Tomatoes critics and audience, and Metacritic scores from MDBList for titles not rated yet, and prints the MDBList requests it used. New episodes get their IMDb rating from IMDb's datasets in the same run. MDBList allows 1000 a day: when a run reports titles left for the next run, run `semmeltv artwork` again the next day before uploading, or upload now and let a later run fill them in.
 
 ## 6. Review and upload
 
-Show the user `diff "$work/before.toml" "$work/library.toml"`, the import's `review:` lines and the artwork step's summary. For a `review = true` entry the user can settle, edit the local file and drop the flag; a title given a `tmdb` id that way needs `semmeltv artwork` again. When the user agrees, upload the images first and the manifest last, so the TV never lists a title before its art:
+Show the user `diff "$work/before.txt" "$work/after.txt"`, the import's `review:` lines and the artwork step's summary. The library is a database and is not edited by hand. For a `review = true` entry the user settles, clear the flag or set a `tmdb` id with `sqlite3 "$work/library.db"` (`UPDATE movies SET review = 0, tmdb = 1234 WHERE path = '…'`, or `shows`/`episodes`) after showing the user the statement; a title given a `tmdb` id that way needs `semmeltv artwork` again. When the user agrees, check that nobody else changed the library meanwhile (the downloads services on the TVs also import), then upload the images first and the library last, so the TV never lists a title before its art:
+
+    [ "$(rclone hashsum sha1 pcloud:SemmelTV --include /library.db | cut -d' ' -f1)" = "$(cat "$work/before.sha1")" ]
+
+If the hashes differ, start step 5 again with a fresh copy rather than overwrite the other change.
 
     rclone copy "$work/Artwork" pcloud:SemmelTV/Artwork
-    rclone copyto "$work/library.toml" pcloud:SemmelTV/library.toml
+    rclone copyto "$work/library.db" pcloud:SemmelTV/library.db
 
 semmeltv5 copies both to local disk within 15 minutes; to show it now, run `ssh semmeltv5 sudo systemctl start semmeltv-sync`.
 
@@ -77,4 +83,4 @@ List what moved, what is marked for review, the titles without art, and the junk
 
 ## Refreshing artwork and ratings
 
-TMDB's terms allow keeping images for six months, and ratings drift. When the user asks for a refresh, do step 5 without the listing and the import, with `semmeltv artwork --refresh --manifest "$work/library.toml"`, which downloads again every image older than five months and asks MDBList again for ratings 30 days old or older. An image it cannot replace is deleted locally and printed as a `problem:`; `rclone copy` leaves the pCloud copy in place, so name those to the user. Then upload as in step 6, after the user's go-ahead.
+TMDB's terms allow keeping images for six months, and ratings drift. When the user asks for a refresh, do step 5 without the listing and the import, with `semmeltv artwork --refresh --manifest "$work/library.db"`, which downloads again every image older than five months and asks MDBList again for ratings 30 days old or older. An image it cannot replace is deleted locally and printed as a `problem:`; `rclone copy` leaves the pCloud copy in place, so name those to the user. Then upload as in step 6, after the user's go-ahead.

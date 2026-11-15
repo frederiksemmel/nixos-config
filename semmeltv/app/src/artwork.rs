@@ -669,14 +669,14 @@ added = 2024-05-01
 
     fn films(name: &str) -> PathBuf {
         let dir = workdir(name);
-        fs::write(dir.join("library.toml"), FILMS).unwrap();
+        store(&dir.join("library.db"), FILMS);
         dir
     }
 
     #[test]
     fn ratings_come_from_mdblist_by_tmdb_id() {
         let dir = workdir("ratings");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let mdblist = FakeMdblist::new(10);
         let fake = Fake::new();
         let summary = run(&manifest, &fake, Some(&mdblist), false).unwrap();
@@ -710,13 +710,13 @@ added = 2024-05-01
     #[test]
     fn scores_missing_from_mdblist_keep_the_stored_ones() {
         let dir = films("ratings-keep");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let stored = FILMS.replacen(
             "path = \"Movies/Up.mkv\"",
             "ratings = { imdb = 8.0, rt = 97, metacritic = 88 }\npath = \"Movies/Up.mkv\"",
             1,
         );
-        fs::write(&manifest, stored).unwrap();
+        store(&manifest, &stored);
         let mdblist = FakeMdblist::new(10).without_rt();
         run(&manifest, &Fake::new(), Some(&mdblist), false).unwrap();
         let up = &Manifest::read(&manifest).unwrap().movie[0];
@@ -735,7 +735,7 @@ added = 2024-05-01
     #[test]
     fn the_daily_limit_keeps_what_was_fetched_and_leaves_the_rest() {
         let dir = films("ratings-limit");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let summary = run(&manifest, &Fake::new(), Some(&FakeMdblist::new(1)), false).unwrap();
         assert_eq!((summary.rated, summary.ratings_waiting), (1, 1));
         assert_eq!(summary.problems, ["MDBList: Daily API limit exceeded!"]);
@@ -751,7 +751,7 @@ added = 2024-05-01
     #[test]
     fn refreshing_asks_again_only_for_ratings_a_month_old() {
         let dir = films("ratings-refresh");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         run(&manifest, &Fake::new(), Some(&FakeMdblist::new(5)), false).unwrap();
         let mut written = Manifest::read(&manifest).unwrap();
         written.movie[0].rated = Date::parse("2020-01-01");
@@ -767,16 +767,15 @@ added = 2024-05-01
     #[test]
     fn episodes_take_their_imdb_rating_from_the_datasets_once() {
         let dir = workdir("episode-ratings");
-        let manifest = dir.join("library.toml");
-        fs::write(
+        let manifest = dir.join("library.db");
+        store(
             &manifest,
-            MANIFEST.replacen(
+            &MANIFEST.replacen(
                 "tmdb = 70523",
                 "tmdb = 70523\nimdb = \"tt5753856\"\nrated = 2026-11-01",
                 1,
             ),
-        )
-        .unwrap();
+        );
         let mdblist = FakeMdblist::new(10);
         let summary = run(&manifest, &Fake::new(), Some(&mdblist), false).unwrap();
         assert_eq!(summary.episodes_rated, 2);
@@ -800,8 +799,12 @@ added = 2024-05-01
         let dir = env::temp_dir().join(format!("semmeltv-{name}-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("library.toml"), MANIFEST).unwrap();
+        store(&dir.join("library.db"), MANIFEST);
         dir
+    }
+
+    fn store(path: &Path, toml: &str) {
+        Manifest::parse(toml).unwrap().write(path).unwrap();
     }
 
     fn age(path: &Path, days: u64) {
@@ -839,7 +842,7 @@ added = 2024-05-01
     #[test]
     fn a_run_saves_art_beside_the_manifest_and_names_and_runtimes_into_it() {
         let dir = workdir("art-run");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let art = dir.join(DIR);
         let fake = Fake::new();
 
@@ -874,7 +877,7 @@ added = 2024-05-01
     #[test]
     fn a_second_run_only_asks_for_what_is_still_missing() {
         let dir = workdir("art-again");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let fake = Fake::new();
         run(&manifest, &fake, None, false).unwrap();
         fake.calls();
@@ -888,7 +891,7 @@ added = 2024-05-01
     #[test]
     fn shows_learn_when_they_last_aired_and_running_ones_are_asked_again_on_refresh() {
         let dir = workdir("show-run");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let shows = r#"[[show]]
 title = "Dark"
 year = 2017
@@ -901,7 +904,7 @@ year = 2022
 tmdb = 87108
 episodes = []
 "#;
-        fs::write(&manifest, shows).unwrap();
+        store(&manifest, shows);
         let fake = Fake::new();
         run(&manifest, &fake, None, false).unwrap();
         let written = Manifest::read(&manifest).unwrap();
@@ -929,7 +932,7 @@ episodes = []
     #[test]
     fn titles_are_described_once_with_photos_of_their_cast_and_again_after_five_months_on_refresh() {
         let dir = films("describe");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let art = dir.join(DIR);
         let fake = Fake::new();
         run(&manifest, &fake, None, false).unwrap();
@@ -964,7 +967,7 @@ episodes = []
     #[test]
     fn refreshing_replaces_only_images_older_than_five_months() {
         let dir = workdir("art-refresh");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let art = dir.join(DIR);
         let fake = Fake::new();
         run(&manifest, &fake, None, false).unwrap();
@@ -982,7 +985,7 @@ episodes = []
     #[test]
     fn a_missing_poster_is_fetched_on_its_own() {
         let dir = workdir("poster-missing");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let art = dir.join(DIR);
         let fake = Fake::new();
         run(&manifest, &fake, None, false).unwrap();
@@ -999,7 +1002,7 @@ episodes = []
     #[test]
     fn refreshing_replaces_posters_older_than_five_months() {
         let dir = workdir("poster-refresh");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let art = dir.join(DIR);
         let fake = Fake::new();
         run(&manifest, &fake, None, false).unwrap();
@@ -1017,7 +1020,7 @@ episodes = []
     #[test]
     fn an_old_image_that_cannot_be_refreshed_is_deleted() {
         let dir = workdir("art-expire");
-        let manifest = dir.join("library.toml");
+        let manifest = dir.join("library.db");
         let target = backdrop(&dir.join(DIR), Kind::Movie, 14160);
         run(&manifest, &Fake::new(), None, false).unwrap();
         age(&target, 200);

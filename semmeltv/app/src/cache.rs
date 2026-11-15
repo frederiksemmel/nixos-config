@@ -1,4 +1,4 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub struct Cache {
     root: PathBuf,
@@ -9,11 +9,7 @@ impl Cache {
         Self { root }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
-    }
-
     pub fn saved_manifest(&self) -> PathBuf {
-        self.root.join("library.last-good.toml")
+        self.root.join("library.last-good.db")
     }
 }

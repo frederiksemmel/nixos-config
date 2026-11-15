@@ -1,29 +1,42 @@
 # SemmelTV
 
-Apple TV style interface for a personal video library. It reads `library.toml`
+Apple TV style interface for a personal video library. It reads `library.db`
 at the root of a library folder, draws menus with Slint, and plays video in a
 separate mpv window.
 
     semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
              [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
              [--manifest FILE] [--listing FILE] [--refresh]
+    semmeltv --manifest library.db library show | library from-toml FILE.toml
 
-The library is `pcloud:SemmelTV`: `library.toml`, `Movies/`, `Series/` and
+The library is `pcloud:SemmelTV`: `library.db`, `Movies/`, `Series/` and
 `Artwork/`. `--library` defaults to `$SEMMELTV_LIBRARY`, then `~/pcloud/SemmelTV`.
-`--meta` is where `library.toml` and `Artwork/` are read from, when they live apart
+`--meta` is where `library.db` and `Artwork/` are read from, when they live apart
 from the videos; it defaults to `$SEMMELTV_META`, then the library.
 `--cache` defaults to `$SEMMELTV_CACHE`, then `$XDG_CACHE_HOME/semmeltv`.
 `--db` defaults to `$SEMMELTV_DB`, then `$XDG_STATE_HOME/semmeltv/semmeltv.db`.
 `--vfs-cache` defaults to `$SEMMELTV_VFS_CACHE`. Nothing in the app writes to the
-library: import and artwork work on a local copy of `library.toml`, which the
-`/semmeltv-incoming` skill uploads.
+library: import and artwork work on a local copy of `library.db`, which the
+`/semmeltv-incoming` skill and the downloads service upload.
 
-## library.toml
+## library.db
 
-The only source of truth, written by `semmeltv import` and fine to edit by hand.
-The app reads nothing else: no file names, no folders. An entry whose file is
-missing is skipped. Paths are relative to the library root, and `added` is a
-date.
+The only source of truth for what is in the library: a SQLite file on pCloud,
+shared by both TVs and every profile, with a table of shows, one of episodes and
+one of movies (`src/library_db/`, through Toasty like the TV's own database).
+Every show, episode and movie has a stable id, which survives a new title or a
+moved file, and each profile's progress refers to those ids. It is written by
+`semmeltv import`, `semmeltv artwork` and the downloads service, each on a local
+copy that it uploads only if pCloud's copy did not change meanwhile. The app
+reads nothing else: no file names, no folders. An entry whose file is missing is
+skipped. Paths are relative to the library root, and `added` is a date.
+
+It is not edited by hand. `semmeltv --manifest library.db library show` prints
+it as text, which is how the incoming skill shows what changed, and `library
+from-toml FILE.toml` builds one from that text. Schema changes are Toasty
+migrations in `toasty/library/`, generated with `semmeltv toasty library
+migration generate --name …`. A TV whose app is older than the file's schema
+keeps its last good copy and says why. Printed, an entry looks like this:
 
     [[show]]
     title = "Dark"
@@ -51,16 +64,14 @@ TMDB along with a missing episode `title`. A show's `last_aired` year and
 the artwork step as well. `imdb`, `ratings` (`imdb` out of 10;
 `rt`, `popcorn` and `metacritic` out of 100) and `rated` come from the artwork
 step too; see Ratings. `review = true`, on a show, an episode or a film, marks
-something a person should check; it changes nothing in the app. Unknown keys are
-an error, so typos surface. Import rewrites the file sorted by title, which drops
-comments.
+something a person should check; it changes nothing in the app.
 
 Home and the rows sort by `added`, shows by their newest episode. Newly Added is
 the 12 newest titles.
 
 ## Importing
 
-    semmeltv import --manifest library.toml [--library DIR | --listing FILE]
+    semmeltv import --manifest library.db [--library DIR | --listing FILE]
 
 Compares the videos under `Series/` and `Movies/` with the manifest, parsing file
 names as it goes, and adds what is new. Existing entries stay as they are, except
@@ -84,15 +95,15 @@ A quiet line at the bottom of Home and of a show describes the focused card:
 
     HEVC 10-bit · 1080p · 5.1 · 2h 11m · Stopped at 1h 04m · Downloaded
 
-Encoding and audio come from `library.toml`. The duration is the one mpv reported
-once a file has played, and until then the `runtime` in `library.toml`. The stopping
+Encoding and audio come from `library.db`. The duration is the one mpv reported
+once a file has played, and until then the `runtime` in `library.db`. The stopping
 point comes from the database, and a finished title has none, nor does one left
 in its first minute. A show on Home describes its resume episode, named first, as
 in `S2 E3`. Anything unknown is left out. No video file is read for any of this.
 
 ## Refreshing
 
-The app checks `library.toml` every 30 seconds and reloads it when it changed.
+The app checks `library.db` every 30 seconds and reloads it when it changed.
 Focus stays on the same title and an open show stays open. During playback the
 reload waits until the video ends. Art for cards that had none is looked for
 again on every reload.
@@ -100,10 +111,10 @@ again on every reload.
 ## Streaming and offline
 
 On semmeltv5, `/var/lib/semmeltv/library` is a read-only rclone mount of pCloud's
-`Movies/` and `Series/` with a full VFS cache on local disk. `library.toml` and
+`Movies/` and `Series/` with a full VFS cache on local disk. `library.db` and
 `Artwork/` are not read through the mount: `semmeltv-sync` copies them to
 `/var/lib/semmeltv/meta` (`SEMMELTV_META`), at boot and every 15 minutes. It
-compares `library.toml`'s SHA-1 with pCloud's and does nothing more while they
+compares `library.db`'s SHA-1 with pCloud's and does nothing more while they
 match. When they differ it downloads the new manifest beside the old one, copies
 new artwork, renames the manifest into place, then deletes artwork pCloud no
 longer has, so every entry's artwork is on disk before the app sees the entry.
@@ -146,7 +157,7 @@ its allocated blocks in the cache cover its size, since cache files are sparse.
 Newly added titles are not downloaded until watched.
 
 Offline, the app uses the last good copy of the manifest,
-`library.last-good.toml` in the cache, and plays downloaded files straight from
+`library.last-good.db` in the cache, and plays downloaded files straight from
 the rclone cache, which also works when the mount is down or was started without
 a network. Selecting anything else says it can't be reached. rclone's own view of
 a cached file only survives offline until `--dir-cache-time` (1h) runs out, which
@@ -269,7 +280,7 @@ because the times do not fit every release: a file with a recap the database's
 release lacks lands partway through the titles.
 
 Times come from [TheIntroDB](https://theintrodb.org) when an episode starts, and
-are not stored. An episode needs its show's `tmdb` in `library.toml`, and without
+are not stored. An episode needs its show's `tmdb` in `library.db`, and without
 one or without a network it plays with no button. When
 several ranges exist the earliest counts, since later ones have been wrong. Their
 terms allow personal, non-commercial use and forbid passing the data on, so
@@ -329,45 +340,50 @@ What the app hears and does goes out on the API's event stream; see
 Everything the app learns while running lives in one SQLite database,
 `/var/lib/semmeltv/semmeltv.db` on a Pi, owned by the `semmeltv` user, through
 the [Toasty](https://github.com/tokio-rs/toasty) ORM
-([why](../docs/adr/0002-toasty.md), [how](../docs/toasty.md)). `library.toml`
-stays the only source of truth for the library, and `library.last-good.toml`
+([why](../docs/adr/0002-toasty.md), [how](../docs/toasty.md)). `library.db`
+stays the only source of truth for the library, and `library.last-good.db`
 stays in the cache. The models are in `src/db/models.rs`, the migrations Toasty
-generated from them in `toasty/`; the app applies new ones when it starts.
+generated from them in `toasty/tv/`; the app applies new ones when it starts.
 `src/db/` is the only code that touches the database.
 
 | Table | Holds | Per |
 | --- | --- | --- |
 | `profiles` | Frederik (admin), Mami, Miriam, Ramu (viewers): name, role, password hash, colour | |
 | `passkeys`, `sessions`, `invites` | sign-in, kept by the auth code | profile |
-| `file_places` | a file's stopping point, when it was last played, finished, audio and subtitle track, subtitles shown | profile |
-| `show_places` | the last episode started per show, and whether it finished | profile |
-| `watching` | Currently watching, newest first | profile |
-| `dismissed` | files taken off Started and Forgotten | profile |
+| `video_places` | an episode's or film's stopping point, when it was last played, finished, audio and subtitle track, subtitles shown | profile |
+| `series_places` | the last episode started per show, and whether it finished | profile |
+| `started` | Currently watching, newest first | profile |
+| `dismissed_videos` | episodes and films taken off Started and Forgotten | profile |
 | `subtitle_settings` | the subtitle settings, as JSON | profile |
 | `audio_prefs` | TV or headphones, and which headphones | profile |
-| `files` | a file's real duration, where its credits start, its subtitle delay and how many subtitle tracks it carries | file |
+| `video_facts` | an episode's or film's real duration, where its credits start, its subtitle delay and how many subtitle tracks it carries | video |
 | `settings` | one value per key, such as the Samsung pairing `tv_token` | TV |
 
-Paths are stored relative to the library root, as `library.toml` writes them.
-The `tv_profile` setting is the profile the TV's own screen acts as.
+Episodes, films and shows are referred to by their id in `library.db`, so a
+renamed title or a moved file keeps everyone's progress. The rest of the app
+still speaks in file paths and title keys: the store maps them to ids through
+the library the app loaded last, and leaves out what that library does not
+know, without deleting it. Until the app has loaded a library, it reads no
+progress and deletes none. The `tv_profile` setting is the profile the TV's own
+screen acts as.
 
-The first start with an empty database imports the files that came before it
-from the cache: `progress.json`, `subtitles.json`, `subtitle-files.json`,
-`tv-token` and mpv's `watch-later/` folder, into profile 1, and moves them to
-`before-database/` in the cache. An `imported_cache` setting keeps it from
-running twice.
+Progress from before library ids, kept by file path and title key, is moved
+over once the app knows the library: migration `0002` renames those tables to
+`legacy_*`, and the app copies what it can match into the new ones and drops
+them.
 
 Read it on the Pi with `sudo -u semmeltv sqlite3 /var/lib/semmeltv/semmeltv.db`.
 
-A database from the Diesel days (it has `__diesel_schema_migrations`) is moved
-over on the first start: the app renames it to `semmeltv.diesel.db`, creates
-the Toasty schema in its place and copies every row across in one transaction.
-
 After changing a model, generate the next migration from `semmeltv/app`, with a
 scratch database since generating only compares the models with the last
-snapshot in `toasty/snapshots/`:
+snapshot in `toasty/tv/snapshots/`:
 
-    cargo run -- --db /tmp/scratch.db toasty migration generate --name what-changed
+    cargo run -- --db /tmp/scratch.db toasty tv migration generate --name what-changed
+
+Use `toasty library` for the library's models in `src/library_db/models.rs`. When
+a table goes and another comes in the same change, the command asks whether it
+was a rename, which needs a terminal; generating the additions and the removals
+as two migrations avoids the question.
 
 `semmeltv toasty …` is Toasty's own migration CLI, built into the app because
 it needs the app's models. Review the SQL it writes before committing it.
@@ -424,7 +440,7 @@ if the address cannot be bound. The web app in `../web` is built on it.
 
 ## Artwork
 
-    semmeltv artwork --manifest DIR/library.toml [--refresh]
+    semmeltv artwork --manifest DIR/library.db [--refresh]
 
 Artwork is fetched when titles are added, not on the TVs, which need no TMDB
 token. The step reads the manifest and, for every title with a `tmdb` id, saves

@@ -1239,6 +1239,7 @@ mod tests {
     #[test]
     fn the_delay_applies_live_and_is_remembered_for_the_file() {
         let db = Db::memory(Path::new("/lib"));
+        db.set_library(&crate::db::test_library());
         let film = Path::new("/lib/Movies/Up/Up.mkv");
         let subtitles = Subtitles::load(&db, ProfileId::FIRST);
         assert!(!subtitles.change(Change::Delay(0.5)).ok);

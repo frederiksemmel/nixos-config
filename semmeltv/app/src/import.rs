@@ -315,6 +315,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             self.mark_review(format!("{}: {}", parsed.title, doubt(identity.as_ref())));
         }
         self.manifest.show.push(ShowEntry {
+            id: None,
             title: better_title(&parsed.title, identity.as_ref()),
             year: parsed.year.or(identity.as_ref().and_then(Identity::year)),
             last_aired: None,
@@ -357,6 +358,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
         self.report.added.push(line);
         self.known.insert(path.clone());
         self.manifest.show[index].episodes.push(EpisodeEntry {
+            id: None,
             season: parsed.season,
             episode: number,
             title: parsed.title.clone(),
@@ -403,6 +405,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
         self.report.added.push(line);
         self.known.insert(path.clone());
         self.manifest.movie.push(MovieEntry {
+            id: None,
             title,
             year,
             tmdb: identity.as_ref().map(|identity| identity.id),

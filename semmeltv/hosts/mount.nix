@@ -60,22 +60,23 @@ let
     text = ''
       ${rcloneConfig}
       umask 022
-      remote=$(rclone hashsum sha1 pcloud:SemmelTV --include /library.toml --config "$config" | cut -d' ' -f1)
+      remote=$(rclone hashsum sha1 pcloud:SemmelTV --include /library.db --config "$config" | cut -d' ' -f1)
       if [ -z "$remote" ]; then
-        echo "pcloud:SemmelTV/library.toml not found"
+        echo "pcloud:SemmelTV/library.db not found"
         exit 1
       fi
-      local=$(sha1sum ${meta}/library.toml 2>/dev/null | cut -d' ' -f1 || true)
+      local=$(sha1sum ${meta}/library.db 2>/dev/null | cut -d' ' -f1 || true)
       if [ "$remote" = "$local" ] && [ -d ${meta}/Artwork ]; then
-        echo "library.toml unchanged ($remote), artwork not synced"
+        echo "library.db unchanged ($remote), artwork not synced"
         exit 0
       fi
-      echo "library.toml changed (''${local:-none} -> $remote), syncing"
-      rclone copyto pcloud:SemmelTV/library.toml ${meta}/.library.toml.new --config "$config"
+      echo "library.db changed (''${local:-none} -> $remote), syncing"
+      rclone copyto pcloud:SemmelTV/library.db ${meta}/.library.db.new --config "$config"
       rclone copy pcloud:SemmelTV/Artwork ${meta}/Artwork --config "$config" --stats 0
-      mv -f ${meta}/.library.toml.new ${meta}/library.toml
+      mv -f ${meta}/.library.db.new ${meta}/library.db
       rclone sync pcloud:SemmelTV/Artwork ${meta}/Artwork --config "$config" --stats 0
-      echo "synced library.toml $(sha1sum ${meta}/library.toml | cut -d' ' -f1) and $(find ${meta}/Artwork -type f | wc -l) artwork files"
+      rm -f ${meta}/library.toml
+      echo "synced library.db $(sha1sum ${meta}/library.db | cut -d' ' -f1) and $(find ${meta}/Artwork -type f | wc -l) artwork files"
     '';
   };
 in
@@ -139,7 +140,7 @@ in
     };
 
     systemd.services.semmeltv-sync = {
-      description = "Copy SemmelTV's library.toml and artwork from pCloud to local disk";
+      description = "Copy SemmelTV's library.db and artwork from pCloud to local disk";
       after = [
         "network-online.target"
         "systemd-tmpfiles-setup.service"

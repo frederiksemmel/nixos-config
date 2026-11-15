@@ -23,6 +23,7 @@ pub struct Library {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Show {
+    pub id: i64,
     pub key: String,
     pub title: String,
     pub year: Option<u16>,
@@ -43,6 +44,7 @@ pub struct Season {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Episode {
+    pub id: i64,
     pub season: u32,
     pub number: u32,
     pub title: Option<String>,
@@ -55,6 +57,7 @@ pub struct Episode {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Movie {
+    pub id: i64,
     pub key: String,
     pub title: String,
     pub year: Option<u16>,
@@ -290,6 +293,7 @@ fn build_show(root: &Path, entry: &ShowEntry, present: &impl Fn(&Path) -> bool) 
         .collect();
     seasons.sort_by_key(|season| if season.number == 0 { u32::MAX } else { season.number });
     Some(Show {
+        id: entry.id.unwrap_or_default(),
         key: show_key(&entry.title),
         title: entry.title.clone(),
         year: entry.year,
@@ -305,6 +309,7 @@ fn build_show(root: &Path, entry: &ShowEntry, present: &impl Fn(&Path) -> bool) 
 
 fn build_episode(root: &Path, entry: &EpisodeEntry) -> Episode {
     Episode {
+        id: entry.id.unwrap_or_default(),
         season: entry.season,
         number: entry.episode,
         title: entry.title.clone(),
@@ -318,6 +323,7 @@ fn build_episode(root: &Path, entry: &EpisodeEntry) -> Episode {
 
 fn build_movie(root: &Path, entry: &MovieEntry) -> Movie {
     Movie {
+        id: entry.id.unwrap_or_default(),
         key: movie_key(&entry.title, entry.year),
         title: entry.title.clone(),
         year: entry.year,
@@ -346,6 +352,11 @@ pub fn read_manifest(meta: &Path) -> Result<Manifest, String> {
         ReadError::Unreadable(error) => format!("{}: {error}", path.display()),
         ReadError::Invalid(error) => format!("{}: {error}", path.display()),
     })
+}
+
+pub fn load_listed(root: &Path, meta: &Path) -> Result<Library, String> {
+    let manifest = read_manifest(meta)?;
+    Ok(Library::from_manifest(root, &manifest, |_| true))
 }
 
 pub fn load_saved(root: &Path, saved: &Path) -> Result<Library, String> {
@@ -647,11 +658,10 @@ added = 2024-01-01
         let poster = meta.join("Artwork/movie/14160/poster.jpg");
         fs::create_dir_all(poster.parent().unwrap()).unwrap();
         fs::write(&poster, b"jpeg").unwrap();
-        fs::write(
-            meta.join(manifest::FILE_NAME),
-            "[[movie]]\ntitle = \"Up\"\ntmdb = 14160\npath = \"Movies/Up/Up.mkv\"\nadded = 2024-01-01\n",
-        )
-        .unwrap();
+        Manifest::parse("[[movie]]\ntitle = \"Up\"\ntmdb = 14160\npath = \"Movies/Up/Up.mkv\"\nadded = 2024-01-01\n")
+            .unwrap()
+            .write(&meta.join(manifest::FILE_NAME))
+            .unwrap();
         let library = load(&root, &meta).unwrap();
         let up = &library.movies[0];
         assert_eq!(up.path, root.join("Movies/Up/Up.mkv"));
@@ -666,8 +676,11 @@ added = 2024-01-01
         let dir = std::env::temp_dir().join(format!("semmeltv-saved-{}", std::process::id()));
         let root = dir.join("mount");
         fs::create_dir_all(&root).unwrap();
-        let saved = dir.join("saved.toml");
-        fs::write(root.join(manifest::FILE_NAME), movies(&[("Up", "2024-01-01")])).unwrap();
+        let saved = dir.join("saved.db");
+        Manifest::parse(&movies(&[("Up", "2024-01-01")]))
+            .unwrap()
+            .write(&root.join(manifest::FILE_NAME))
+            .unwrap();
         assert!(load(&root, &root).unwrap().movies.is_empty());
         save_copy(&root, &saved);
         fs::remove_file(root.join(manifest::FILE_NAME)).unwrap();

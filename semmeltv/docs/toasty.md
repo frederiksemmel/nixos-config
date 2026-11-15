@@ -275,7 +275,8 @@ The workflow:
 
 1. **Change a model** in `src/db/models.rs`.
 2. **Generate** from `semmeltv/app`:
-   `cargo run -- --db /tmp/scratch.db toasty migration generate --name what-changed`.
+   `cargo run -- --db /tmp/scratch.db toasty tv migration generate --name what-changed`
+   (`toasty library` for the library's own database, `library.db`).
    That writes three files:
    - `toasty/migrations/0001_what-changed.sql`;
    - `toasty/snapshots/0001_snapshot.toml`: the whole schema as TOML, which
@@ -298,8 +299,19 @@ rather than a second binary, because the app crate is a single `main.rs`
 with modules.
 
 The household seed (Frederik, Mami, Miriam, Ramu) is four `INSERT` rows
-appended by hand to `0000_initial.sql`. Toasty has no seed concept. Since
-`checksums = false` in `Toasty.toml`, editing a generated file is allowed.
+appended by hand to `0000_initial.sql`. Toasty has no seed concept. Migrations
+are not checksummed by default, so editing a generated file is allowed.
+
+Two databases share the CLI: the TV's (`toasty/tv/`) and the library's
+(`toasty/library/`), each with its own models and history, configured in code
+with `toasty_cli::Config::new().migration(MigrationConfig::new().path(…))`.
+
+When one change drops a table and adds another, `generate` asks whether it was a
+rename, and that prompt needs a terminal. Keying progress by library id did both.
+It was generated as two migrations instead: first with the old models still
+defined (only additions), then without them (only drops). The drops in the
+second were hand-edited into `ALTER TABLE … RENAME TO legacy_…`, so the app can
+copy the old rows over before dropping them.
 
 The generated SQL for one table:
 

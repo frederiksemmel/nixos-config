@@ -1,0 +1,16 @@
+version = 1
+
+[[migrations]]
+id = 323130007488943372
+name = "0000_initial.sql"
+snapshot_name = "0000_snapshot.toml"
+
+[[migrations]]
+id = 5876248649961444582
+name = "0001_library-ids.sql"
+snapshot_name = "0001_snapshot.toml"
+
+[[migrations]]
+id = 5328161045675486718
+name = "0002_path-tables.sql"
+snapshot_name = "0002_snapshot.toml"

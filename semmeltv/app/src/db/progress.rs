@@ -1,22 +1,23 @@
-use super::models::{self, Dismissal as StoredDismissal, File, FilePlace, ShowPlace, Watching as StoredWatching};
+use super::index::{self, Index, Known, Video};
+use super::models::{self, Dismissal as StoredDismissal, SeriesPlace, Started as StoredStarted, VideoFact, VideoPlace};
 use super::{Db, Result};
 use crate::profile::ProfileId;
 use crate::progress::{Position, Progress, Tracks, Watched};
-use crate::watching::{Dismissal, Entry, Kind, Watching};
+use crate::watching::{Dismissal, Entry, Watching};
 use std::collections::BTreeMap;
 use toasty::Executor;
 use toasty_core::driver::operation::TransactionMode;
 
 #[derive(Clone, Debug, PartialEq)]
 struct Facts {
-    path: String,
+    video: Video,
     duration: Option<f64>,
     credits: Option<f64>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct Spot {
-    path: String,
+    video: Video,
     stopped_at: Option<f64>,
     last_played: Option<i64>,
     finished: bool,
@@ -27,7 +28,7 @@ struct Spot {
 
 #[derive(Clone, Debug, PartialEq)]
 struct Show {
-    key: String,
+    show_id: i64,
     season: i64,
     episode: i64,
     finished: bool,
@@ -36,13 +37,13 @@ struct Show {
 #[derive(Clone, Debug, PartialEq)]
 struct Started {
     kind: models::Kind,
-    key: String,
+    title_id: i64,
     last_played: i64,
 }
 
 #[derive(Clone, Debug, PartialEq)]
 struct Dismissed {
-    path: String,
+    video: Video,
     at: i64,
 }
 
@@ -51,45 +52,51 @@ struct Rows {
     facts: Vec<Facts>,
     spots: Vec<Spot>,
     shows: Vec<Show>,
-    watching: Vec<Started>,
+    started: Vec<Started>,
     dismissed: Vec<Dismissed>,
 }
 
 async fn load(executor: &mut dyn Executor, profile: i64) -> toasty::Result<Rows> {
-    let file = File::fields();
-    let facts = File::filter(file.duration().is_some().or(file.credits().is_some()))
+    let fact = VideoFact::fields();
+    let facts = VideoFact::filter(fact.duration().is_some().or(fact.credits().is_some()))
         .exec(executor)
         .await?;
-    let spots = FilePlace::filter(FilePlace::fields().profile_id().eq(profile))
+    let spots = VideoPlace::filter(VideoPlace::fields().profile_id().eq(profile))
         .exec(executor)
         .await?;
-    let shows = ShowPlace::filter(ShowPlace::fields().profile_id().eq(profile))
+    let shows = SeriesPlace::filter(SeriesPlace::fields().profile_id().eq(profile))
         .exec(executor)
         .await?;
-    let watching = StoredWatching::filter(StoredWatching::fields().profile_id().eq(profile))
+    let started = StoredStarted::filter(StoredStarted::fields().profile_id().eq(profile))
         .order_by((
-            StoredWatching::fields().last_played().desc(),
-            StoredWatching::fields().title_key().asc(),
+            StoredStarted::fields().last_played().desc(),
+            StoredStarted::fields().title_id().asc(),
         ))
         .exec(executor)
         .await?;
     let dismissed = StoredDismissal::filter(StoredDismissal::fields().profile_id().eq(profile))
-        .order_by((StoredDismissal::fields().at().asc(), StoredDismissal::fields().path().asc()))
+        .order_by((StoredDismissal::fields().at().asc(), StoredDismissal::fields().video_id().asc()))
         .exec(executor)
         .await?;
     Ok(Rows {
         facts: facts
             .into_iter()
-            .map(|file| Facts {
-                path: file.path,
-                duration: file.duration,
-                credits: file.credits,
+            .map(|fact| Facts {
+                video: Video {
+                    kind: fact.kind,
+                    id: fact.video_id,
+                },
+                duration: fact.duration,
+                credits: fact.credits,
             })
             .collect(),
         spots: spots
             .into_iter()
             .map(|place| Spot {
-                path: place.path,
+                video: Video {
+                    kind: place.kind,
+                    id: place.video_id,
+                },
                 stopped_at: place.stopped_at,
                 last_played: place.last_played,
                 finished: place.finished,
@@ -101,43 +108,46 @@ async fn load(executor: &mut dyn Executor, profile: i64) -> toasty::Result<Rows>
         shows: shows
             .into_iter()
             .map(|show| Show {
-                key: show.show_key,
+                show_id: show.show_id,
                 season: show.season,
                 episode: show.episode,
                 finished: show.finished,
             })
             .collect(),
-        watching: watching
+        started: started
             .into_iter()
             .map(|entry| Started {
                 kind: entry.kind,
-                key: entry.title_key,
+                title_id: entry.title_id,
                 last_played: entry.last_played,
             })
             .collect(),
         dismissed: dismissed
             .into_iter()
             .map(|dismissal| Dismissed {
-                path: dismissal.path,
+                video: Video {
+                    kind: dismissal.kind,
+                    id: dismissal.video_id,
+                },
                 at: dismissal.at,
             })
             .collect(),
     })
 }
 
-async fn store(executor: &mut dyn Executor, profile: i64, wanted: Rows) -> toasty::Result<()> {
+async fn store(executor: &mut dyn Executor, profile: i64, wanted: Rows, known: Known) -> toasty::Result<()> {
     let stored = load(executor, profile).await?;
-    let (facts, _) = changed(stored.facts, wanted.facts, |row| row.path.clone());
+    let (facts, _) = changed(stored.facts, wanted.facts, |row| row.video);
     for row in facts {
-        File::upsert_by_path(row.path)
+        VideoFact::upsert_by_kind_and_video_id(row.video.kind, row.video.id)
             .duration(row.duration)
             .credits(row.credits)
             .exec(executor)
             .await?;
     }
-    let (spots, gone) = changed(stored.spots, wanted.spots, |row| row.path.clone());
+    let (spots, gone) = changed(stored.spots, wanted.spots, |row| row.video);
     for row in spots {
-        FilePlace::upsert_by_profile_id_and_path(profile, row.path)
+        VideoPlace::upsert_by_profile_id_and_kind_and_video_id(profile, row.video.kind, row.video.id)
             .stopped_at(row.stopped_at)
             .last_played(row.last_played)
             .finished(row.finished)
@@ -147,64 +157,75 @@ async fn store(executor: &mut dyn Executor, profile: i64, wanted: Rows) -> toast
             .exec(executor)
             .await?;
     }
-    if !gone.is_empty() {
-        let fields = FilePlace::fields();
-        FilePlace::filter(fields.profile_id().eq(profile).and(fields.path().in_list(gone)))
-            .delete()
-            .exec(executor)
-            .await?;
+    for video in gone.into_iter().filter(|video| known.videos.contains(video)) {
+        let fields = VideoPlace::fields();
+        VideoPlace::filter(
+            fields
+                .profile_id()
+                .eq(profile)
+                .and(fields.kind().eq(video.kind))
+                .and(fields.video_id().eq(video.id)),
+        )
+        .delete()
+        .exec(executor)
+        .await?;
     }
-    let (shows, gone) = changed(stored.shows, wanted.shows, |row| row.key.clone());
+    let (shows, gone) = changed(stored.shows, wanted.shows, |row| row.show_id);
     for row in shows {
-        ShowPlace::upsert_by_profile_id_and_show_key(profile, row.key)
+        SeriesPlace::upsert_by_profile_id_and_show_id(profile, row.show_id)
             .season(row.season)
             .episode(row.episode)
             .finished(row.finished)
             .exec(executor)
             .await?;
     }
+    let gone: Vec<i64> = gone.into_iter().filter(|id| known.shows.contains(id)).collect();
     if !gone.is_empty() {
-        let fields = ShowPlace::fields();
-        ShowPlace::filter(fields.profile_id().eq(profile).and(fields.show_key().in_list(gone)))
+        let fields = SeriesPlace::fields();
+        SeriesPlace::filter(fields.profile_id().eq(profile).and(fields.show_id().in_list(gone)))
             .delete()
             .exec(executor)
             .await?;
     }
-    let (entries, gone) = changed(stored.watching, wanted.watching, |row| {
-        (kind_name(row.kind), row.key.clone())
-    });
-    for row in entries {
-        StoredWatching::upsert_by_profile_id_and_kind_and_title_key(profile, row.kind, row.key)
+    let (started, gone) = changed(stored.started, wanted.started, |row| (row.kind, row.title_id));
+    for row in started {
+        StoredStarted::upsert_by_profile_id_and_kind_and_title_id(profile, row.kind, row.title_id)
             .last_played(row.last_played)
             .exec(executor)
             .await?;
     }
-    for (kind, key) in gone {
-        let fields = StoredWatching::fields();
-        StoredWatching::filter(
+    for (kind, id) in gone.into_iter().filter(|title| known.titles.contains(title)) {
+        let fields = StoredStarted::fields();
+        StoredStarted::filter(
             fields
                 .profile_id()
                 .eq(profile)
-                .and(fields.kind().eq(kind_of(kind)))
-                .and(fields.title_key().eq(key)),
+                .and(fields.kind().eq(kind))
+                .and(fields.title_id().eq(id)),
         )
         .delete()
         .exec(executor)
         .await?;
     }
-    let (dismissals, gone) = changed(stored.dismissed, wanted.dismissed, |row| row.path.clone());
+    let (dismissals, gone) = changed(stored.dismissed, wanted.dismissed, |row| row.video);
     for row in dismissals {
-        StoredDismissal::upsert_by_profile_id_and_path(profile, row.path)
+        StoredDismissal::upsert_by_profile_id_and_kind_and_video_id(profile, row.video.kind, row.video.id)
             .at(row.at)
             .exec(executor)
             .await?;
     }
-    if !gone.is_empty() {
+    for video in gone.into_iter().filter(|video| known.videos.contains(video)) {
         let fields = StoredDismissal::fields();
-        StoredDismissal::filter(fields.profile_id().eq(profile).and(fields.path().in_list(gone)))
-            .delete()
-            .exec(executor)
-            .await?;
+        StoredDismissal::filter(
+            fields
+                .profile_id()
+                .eq(profile)
+                .and(fields.kind().eq(video.kind))
+                .and(fields.video_id().eq(video.id)),
+        )
+        .delete()
+        .exec(executor)
+        .await?;
     }
     Ok(())
 }
@@ -220,166 +241,208 @@ fn changed<K: Ord, R: PartialEq>(stored: Vec<R>, wanted: Vec<R>, key: impl Fn(&R
     (write, gone.into_keys().collect())
 }
 
-fn kind_name(kind: models::Kind) -> &'static str {
-    match kind {
-        models::Kind::Series => "series",
-        models::Kind::Movie => "movie",
-    }
-}
-
-fn kind_of(name: &str) -> models::Kind {
-    if name == "series" {
-        models::Kind::Series
-    } else {
-        models::Kind::Movie
-    }
-}
-
 impl Db {
     pub fn progress(&self, profile: ProfileId) -> Result<Progress> {
         let rows = self.wait(move |mut db| async move { load(&mut db, profile.0).await })?;
-        Ok(self.assemble(rows))
+        let index = self.inner.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut blind = self.inner.blind.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if index.is_empty() {
+            blind.insert(profile);
+        } else {
+            blind.remove(&profile);
+        }
+        Ok(assemble(&index, rows))
     }
 
     pub fn save_progress(&self, profile: ProfileId, progress: &Progress) -> Result<()> {
-        let wanted = self.rows(progress);
+        let (wanted, known) = {
+            let index = self.inner.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let blind = self.inner.blind.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let known = if blind.contains(&profile) { Known::default() } else { index.known() };
+            (rows(&index, progress), known)
+        };
         self.wait(move |mut db| async move {
             let mut transaction = db
                 .transaction_builder()
                 .mode(TransactionMode::Immediate)
                 .begin()
                 .await?;
-            store(&mut transaction, profile.0, wanted).await?;
+            store(&mut transaction, profile.0, wanted, known).await?;
             transaction.commit().await
         })
     }
+}
 
-    fn rows(&self, progress: &Progress) -> Rows {
-        let mut rows = Rows::default();
-        for (file, watched) in &progress.files {
-            let path = self.key(file);
-            if watched.duration.is_some() || watched.credits.is_some() {
-                rows.facts.push(Facts {
-                    path: path.clone(),
-                    duration: watched.duration,
-                    credits: watched.credits,
-                });
-            }
-            let spot = Spot {
-                path,
+fn rows(index: &Index, progress: &Progress) -> Rows {
+    let mut rows = Rows::default();
+    for (file, watched) in &progress.files {
+        let Some(video) = index.video(file) else {
+            continue;
+        };
+        if watched.duration.is_some() || watched.credits.is_some() {
+            rows.facts.push(Facts {
+                video,
+                duration: watched.duration,
+                credits: watched.credits,
+            });
+        }
+        let untouched = watched.stopped_at.is_none()
+            && watched.last_played.is_none()
+            && !watched.finished
+            && watched.tracks == Tracks::default();
+        if !untouched {
+            rows.spots.push(Spot {
+                video,
                 stopped_at: watched.stopped_at,
                 last_played: watched.last_played.map(|at| at as i64),
                 finished: watched.finished,
                 audio_track: watched.tracks.audio,
                 subtitle_track: watched.tracks.subtitle,
                 subtitles_shown: watched.tracks.subtitles_shown,
-            };
-            let untouched = spot.stopped_at.is_none()
-                && spot.last_played.is_none()
-                && !spot.finished
-                && watched.tracks == Tracks::default();
-            if !untouched {
-                rows.spots.push(spot);
-            }
+            });
         }
-        rows.shows = progress
-            .shows
-            .iter()
-            .map(|(key, position)| Show {
-                key: key.clone(),
+    }
+    rows.shows = progress
+        .shows
+        .iter()
+        .filter_map(|(key, position)| {
+            Some(Show {
+                show_id: index.show(key)?,
                 season: position.season.into(),
                 episode: position.episode.into(),
                 finished: position.finished,
             })
-            .collect();
-        rows.watching = progress
-            .watching
-            .entries()
-            .iter()
-            .map(|entry| Started {
-                kind: match entry.kind {
-                    Kind::Series => models::Kind::Series,
-                    Kind::Movie => models::Kind::Movie,
-                },
-                key: entry.key.clone(),
+        })
+        .collect();
+    rows.started = progress
+        .watching
+        .entries()
+        .iter()
+        .filter_map(|entry| {
+            Some(Started {
+                kind: index::kind(entry.kind),
+                title_id: index.title(entry.kind, &entry.key)?,
                 last_played: entry.last_played as i64,
             })
-            .collect();
-        let mut dismissed: BTreeMap<String, i64> = BTreeMap::new();
-        for dismissal in &progress.dismissed {
-            dismissed.insert(self.key(&dismissal.file), dismissal.at as i64);
+        })
+        .collect();
+    let mut dismissed: BTreeMap<Video, i64> = BTreeMap::new();
+    for dismissal in &progress.dismissed {
+        if let Some(video) = index.video(&dismissal.file) {
+            dismissed.insert(video, dismissal.at as i64);
         }
-        rows.dismissed = dismissed.into_iter().map(|(path, at)| Dismissed { path, at }).collect();
-        rows
     }
+    rows.dismissed = dismissed.into_iter().map(|(video, at)| Dismissed { video, at }).collect();
+    rows
+}
 
-    fn assemble(&self, rows: Rows) -> Progress {
-        let mut progress = Progress::default();
-        for facts in rows.facts {
-            let watched = progress.files.entry(self.path(&facts.path)).or_default();
-            watched.duration = facts.duration;
-            watched.credits = facts.credits;
-        }
-        for spot in rows.spots {
-            let watched: &mut Watched = progress.files.entry(self.path(&spot.path)).or_default();
-            watched.stopped_at = spot.stopped_at;
-            watched.last_played = spot.last_played.and_then(|at| u64::try_from(at).ok());
-            watched.finished = spot.finished;
-            watched.tracks = Tracks {
-                audio: spot.audio_track,
-                subtitle: spot.subtitle_track,
-                subtitles_shown: spot.subtitles_shown,
-            };
-        }
-        for show in rows.shows {
-            let (Ok(season), Ok(episode)) = (u32::try_from(show.season), u32::try_from(show.episode)) else {
-                continue;
-            };
-            let position = Position {
-                season,
-                episode,
-                finished: show.finished,
-            };
-            progress.shows.insert(show.key, position);
-        }
-        progress.watching = Watching::from_entries(
-            rows.watching
-                .into_iter()
-                .filter_map(|entry| {
-                    Some(Entry {
-                        kind: match entry.kind {
-                            models::Kind::Series => Kind::Series,
-                            models::Kind::Movie => Kind::Movie,
-                        },
-                        key: entry.key,
-                        last_played: u64::try_from(entry.last_played).ok()?,
-                    })
-                })
-                .collect(),
-        );
-        progress.dismissed = rows
-            .dismissed
+fn assemble(index: &Index, rows: Rows) -> Progress {
+    let mut progress = Progress::default();
+    for facts in rows.facts {
+        let Some(path) = index.path(facts.video) else {
+            continue;
+        };
+        let watched = progress.files.entry(path.clone()).or_default();
+        watched.duration = facts.duration;
+        watched.credits = facts.credits;
+    }
+    for spot in rows.spots {
+        let Some(path) = index.path(spot.video) else {
+            continue;
+        };
+        let watched: &mut Watched = progress.files.entry(path.clone()).or_default();
+        watched.stopped_at = spot.stopped_at;
+        watched.last_played = spot.last_played.and_then(|at| u64::try_from(at).ok());
+        watched.finished = spot.finished;
+        watched.tracks = Tracks {
+            audio: spot.audio_track,
+            subtitle: spot.subtitle_track,
+            subtitles_shown: spot.subtitles_shown,
+        };
+    }
+    for show in rows.shows {
+        let (Some(key), Ok(season), Ok(episode)) = (
+            index.show_key(show.show_id),
+            u32::try_from(show.season),
+            u32::try_from(show.episode),
+        ) else {
+            continue;
+        };
+        let position = Position {
+            season,
+            episode,
+            finished: show.finished,
+        };
+        progress.shows.insert(key.clone(), position);
+    }
+    progress.watching = Watching::from_entries(
+        rows.started
             .into_iter()
-            .map(|dismissed| Dismissal {
-                file: self.path(&dismissed.path),
+            .filter_map(|entry| {
+                Some(Entry {
+                    kind: index::watching_kind(entry.kind),
+                    key: index.title_key(entry.kind, entry.title_id)?.clone(),
+                    last_played: u64::try_from(entry.last_played).ok()?,
+                })
+            })
+            .collect(),
+    );
+    progress.dismissed = rows
+        .dismissed
+        .into_iter()
+        .filter_map(|dismissed| {
+            Some(Dismissal {
+                file: index.path(dismissed.video)?.clone(),
                 at: u64::try_from(dismissed.at).unwrap_or_default(),
             })
-            .collect();
-        progress
-    }
+        })
+        .collect();
+    progress
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
+    use crate::library::{Episode, Library, Movie, Season, Show as LibraryShow};
     use crate::progress::Place;
+    use crate::watching::Kind;
     use std::path::{Path, PathBuf};
 
-    const DARK: &str = "/lib/Series/Dark/S01/Dark.S01E02.mkv";
-    const UP: &str = "/lib/Movies/Up/Up.mkv";
+    pub const DARK: &str = "/lib/Series/Dark/S01/Dark.S01E02.mkv";
+    pub const UP: &str = "/lib/Movies/Up/Up.mkv";
+
+    pub fn library() -> Library {
+        Library {
+            shows: vec![LibraryShow {
+                id: 7,
+                key: "dark".to_string(),
+                title: "Dark".to_string(),
+                seasons: vec![Season {
+                    number: 1,
+                    episodes: vec![Episode {
+                        id: 70,
+                        season: 1,
+                        number: 2,
+                        path: PathBuf::from(DARK),
+                        ..Episode::default()
+                    }],
+                }],
+                ..LibraryShow::default()
+            }],
+            movies: vec![Movie {
+                id: 9,
+                key: "up".to_string(),
+                title: "Up".to_string(),
+                path: PathBuf::from(UP),
+                ..Movie::default()
+            }],
+        }
+    }
 
     fn db() -> Db {
-        Db::memory(Path::new("/lib"))
+        let db = Db::memory(Path::new("/lib"));
+        db.set_library(&library());
+        db
     }
 
     fn sample() -> Progress {
@@ -460,7 +523,6 @@ mod tests {
         assert!(other.dismissed.is_empty());
         let dark = other.files[Path::new(DARK)];
         assert_eq!(dark.stopped_at, None);
-        assert_eq!(dark.last_played, None);
         assert_eq!(dark.tracks, Tracks::default());
         assert_eq!(dark.duration, Some(2700.0));
         assert_eq!(dark.credits, Some(2600.0));
@@ -468,37 +530,51 @@ mod tests {
     }
 
     #[test]
-    fn another_profiles_save_leaves_the_first_profiles_places_alone() {
+    fn a_renamed_file_and_show_keep_their_progress() {
         let db = db();
-        let first = sample();
-        db.save_progress(ProfileId::FIRST, &first).unwrap();
-        let mut other = db.progress(ProfileId(2)).unwrap();
-        other.record(
-            Path::new(UP),
-            Place {
-                position: 100.0,
-                duration: 5760.0,
-                credits: None,
-            },
-        );
-        db.save_progress(ProfileId(2), &other).unwrap();
-        assert_eq!(db.progress(ProfileId::FIRST).unwrap(), first);
-        assert_eq!(db.progress(ProfileId(2)).unwrap(), other);
+        db.save_progress(ProfileId::FIRST, &sample()).unwrap();
+        let mut renamed = library();
+        renamed.shows[0].key = "dark-2017".to_string();
+        let moved = PathBuf::from("/lib/Series/Dark (2017)/Season 1/Dark.S01E02.mkv");
+        renamed.shows[0].seasons[0].episodes[0].path = moved.clone();
+        db.set_library(&renamed);
+        let progress = db.progress(ProfileId::FIRST).unwrap();
+        assert_eq!(progress.files[&moved].stopped_at, Some(600.0));
+        assert_eq!(progress.shows["dark-2017"].episode, 2);
+        assert_eq!(progress.watching.last_played(Kind::Series, "dark-2017"), Some(1_800_000_100));
+        assert!(!progress.files.contains_key(Path::new(DARK)));
     }
 
     #[test]
-    fn paths_are_stored_as_the_library_names_them() {
-        let db = db();
+    fn progress_read_before_the_library_is_known_never_deletes_anything() {
+        let file = std::env::temp_dir().join(format!("semmeltv-blind-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&file);
+        let db = Db::open(&file, Path::new("/lib")).unwrap();
+        db.set_library(&library());
         db.save_progress(ProfileId::FIRST, &sample()).unwrap();
-        let stored: Vec<String> = db
-            .wait(|mut db| async move {
-                let places = FilePlace::all()
-                    .order_by(FilePlace::fields().path().asc())
-                    .exec(&mut db)
-                    .await?;
-                Ok(places.into_iter().map(|place| place.path).collect())
-            })
-            .unwrap();
-        assert_eq!(stored, ["Movies/Up/Up.mkv", "Series/Dark/S01/Dark.S01E02.mkv"]);
+        drop(db);
+        let blind = Db::open(&file, Path::new("/lib")).unwrap();
+        let empty = blind.progress(ProfileId::FIRST).unwrap();
+        assert_eq!(empty, Progress::default());
+        blind.set_library(&library());
+        blind.save_progress(ProfileId::FIRST, &empty).unwrap();
+        assert_eq!(blind.progress(ProfileId::FIRST).unwrap(), sample());
+        let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn files_the_library_does_not_know_are_left_out() {
+        let db = db();
+        let mut progress = sample();
+        progress.record(
+            Path::new("/lib/Movies/Gone.mkv"),
+            Place {
+                position: 10.0,
+                duration: 100.0,
+                credits: None,
+            },
+        );
+        db.save_progress(ProfileId::FIRST, &progress).unwrap();
+        assert_eq!(db.progress(ProfileId::FIRST).unwrap(), sample());
     }
 }
