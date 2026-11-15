@@ -307,6 +307,11 @@ in
 
           $env.GPG_TTY = (tty)
 
+          # Run a block over and over, clearing the screen each time: `repeat { tailscale status | rg semmel }`.
+          def repeat [body: closure, --every (-n): duration = 2sec] {
+            loop { clear; do $body | print; sleep $every }
+          }
+
           # Same completer as carapace's nushell integration, but returning null
           # instead of an empty list so nushell falls back to file completion for
           # arguments carapace has no spec for (e.g. `nu some_script.nu <TAB>`).
