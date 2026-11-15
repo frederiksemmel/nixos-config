@@ -410,11 +410,13 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
 
     let playback_timer = Timer::default();
     let ticking = Rc::downgrade(&app);
+    let pace = RefCell::new(audio::Pace::default());
     playback_timer.start(TimerMode::Repeated, PLAYBACK_EVERY, move || {
         if let Some(app) = ticking.upgrade()
             && let Ok(app) = app.try_borrow()
         {
             app.publish_playback();
+            app.hear_sound(&mut pace.borrow_mut());
         }
     });
 
@@ -1587,6 +1589,20 @@ impl App {
 
     fn player(&self) -> Option<&Player> {
         self.on_tv.as_ref().map(|tv| &tv.player)
+    }
+
+    fn hear_sound(&self, pace: &mut audio::Pace) {
+        let Some(audio) = &self.audio else {
+            return;
+        };
+        let playing = self
+            .on_tv
+            .as_ref()
+            .map(|on_tv| on_tv.player.state())
+            .filter(|state| state.started && !state.paused)
+            .map(|state| (state.position, state.speed));
+        let now = Instant::now();
+        audio.heard(pace.observe(now, playing), now);
     }
 
     fn publish_playback(&self) {
