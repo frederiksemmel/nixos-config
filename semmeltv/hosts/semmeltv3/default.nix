@@ -1,5 +1,6 @@
 {
   config,
+  flake,
   nixos-raspberrypi,
   ...
 }:
@@ -8,7 +9,14 @@
     ../common.nix
     ../mount.nix
     nixos-raspberrypi.nixosModules.raspberry-pi-3.base
+    flake.self.nixosModules.epaper
   ];
+
+  services.epaper = {
+    enable = true;
+    tokenFile = config.age.secrets.epaper_telegram_token.path;
+  };
+  age.secrets.epaper_telegram_token.file = ../../../secrets/epaper_telegram_token.age;
 
   networking.hostName = "semmeltv3";
 
