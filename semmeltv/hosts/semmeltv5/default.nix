@@ -37,6 +37,7 @@
       lan = {
         domain = "semmeltv5.semmeltv.ch";
         public = true;
+        forward."semmeltv3.semmeltv.ch" = "192.168.1.173:8443";
         desecTokenFile = config.age.secrets.desec_token.path;
       };
     };

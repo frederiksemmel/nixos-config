@@ -147,6 +147,18 @@ in
           loops connections to its own public address back in
         '';
 
+        forward = lib.mkOption {
+          type = lib.types.attrsOf lib.types.str;
+          default = { };
+          example = {
+            "semmeltv3.semmeltv.ch" = "192.168.1.179:8443";
+          };
+          description = ''
+            Names of other TVs behind the same router port forward. Their HTTPS connections arrive
+            here and pass through unopened, by TLS server name, to the given `host:port`.
+          '';
+        };
+
         zone = lib.mkOption {
           type = lib.types.str;
           default = "semmeltv.ch";
@@ -262,15 +274,34 @@ in
           recommendedProxySettings = true;
           recommendedTlsSettings = true;
           recommendedGzipSettings = true;
+          streamConfig = lib.mkIf (lan.forward != { }) ''
+            map $ssl_preread_server_name $semmeltv_tv {
+            ${lib.concatStrings (lib.mapAttrsToList (name: target: "  ${name} ${target};\n") lan.forward)}  default 127.0.0.1:${toString (lanPort + 1)};
+            }
+            server {
+              listen 0.0.0.0:${toString lanPort};
+              ssl_preread on;
+              proxy_pass $semmeltv_tv;
+            }
+          '';
           virtualHosts.${lan.domain} = {
             useACMEHost = lan.domain;
             onlySSL = true;
             listen = [
-              {
-                addr = "0.0.0.0";
-                port = lanPort;
-                ssl = true;
-              }
+              (
+                if lan.forward == { } then
+                  {
+                    addr = "0.0.0.0";
+                    port = lanPort;
+                    ssl = true;
+                  }
+                else
+                  {
+                    addr = "127.0.0.1";
+                    port = lanPort + 1;
+                    ssl = true;
+                  }
+              )
             ];
             locations."/" = {
               proxyPass = web;

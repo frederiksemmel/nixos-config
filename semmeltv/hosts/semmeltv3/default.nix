@@ -25,6 +25,7 @@
       };
       lan = {
         domain = "semmeltv3.semmeltv.ch";
+        public = true;
         desecTokenFile = config.age.secrets.desec_token.path;
       };
     };

@@ -2,6 +2,7 @@ let
   frederik = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFYY+tQCwMzcg13wu+aJbcK0uA2EWS89akoAgxnW2yRL frederiksemmel@gmail.com";
   fstux = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIP3QuT7omO+HC1C5S24UjNC5WtnY9S343SELlJTRal9V root@fstux";
   semmeltv5 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINhTyGPbQD2wussVc/glbcGVkpOBSLy1Q6rhthB3jCvj";
+  semmeltv3 = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAINxRKNEaBgXMtzllDze+vrEryZciokxsGb5WV7IFzqMp";
 in
 {
   "spadesvision_gdrive_token.age".publicKeys = [ frederik ];
@@ -9,6 +10,7 @@ in
   "pcloud_token.age".publicKeys = [
     frederik
     semmeltv5
+    semmeltv3
   ];
   "spadesvision_ssh_config.age".publicKeys = [ frederik ];
   "spadesvision_ssh_config_agent.age".publicKeys = [ frederik ];
@@ -38,10 +40,14 @@ in
     frederik
     semmeltv5
   ];
-  "mullvad_wireguard_semmeltv3.age".publicKeys = [ frederik ];
+  "mullvad_wireguard_semmeltv3.age".publicKeys = [
+    frederik
+    semmeltv3
+  ];
   "desec_token.age".publicKeys = [
     frederik
     semmeltv5
+    semmeltv3
   ];
   "tmdb_token.age".publicKeys = [
     frederik
@@ -50,5 +56,6 @@ in
   "semmeltv_service_token.age".publicKeys = [
     frederik
     semmeltv5
+    semmeltv3
   ];
 }
