@@ -73,11 +73,39 @@ pub struct PartState {
     pub checking: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Stage {
+    Checking,
+    Downloading,
+    Uploading,
+    Done,
+    Failed,
+    Stopped,
+}
+
+impl Stage {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Checking => "checking",
+            Self::Downloading => "downloading",
+            Self::Uploading => "uploading",
+            Self::Done => "done",
+            Self::Failed => "failed",
+            Self::Stopped => "stopped",
+        }
+    }
+
+    fn stoppable(self) -> bool {
+        matches!(self, Self::Checking | Self::Downloading)
+    }
+}
+
 #[derive(Clone, Debug, Deserialize)]
 pub struct Job {
     pub id: String,
     pub label: String,
-    pub stage: String,
+    pub stage: Stage,
     pub message: String,
     pub parts: Vec<PartState>,
     pub log: Vec<String>,
@@ -191,11 +219,11 @@ fn progress_line(job: &Job) -> String {
     let uploaded: u64 = job.parts.iter().map(|part| part.uploaded).sum();
     let speed: f64 = job.parts.iter().map(|part| part.speed).sum();
     let peers: u64 = job.parts.iter().filter_map(|part| part.peers).sum();
-    match job.stage.as_str() {
-        "downloading" if job.parts.iter().any(|part| part.checking) => {
+    match job.stage {
+        Stage::Downloading if job.parts.iter().any(|part| part.checking) => {
             format!("{} downloaded before the restart · {uploaded} bytes uploaded", gb(done))
         }
-        "downloading" if total > 0 => format!(
+        Stage::Downloading if total > 0 => format!(
             "{} of {} · {speed:.1} MiB/s · {peers} peers · {uploaded} bytes uploaded",
             gb(done),
             gb(total)
@@ -207,8 +235,8 @@ fn progress_line(job: &Job) -> String {
 fn percent(job: &Job) -> f64 {
     let done: u64 = job.parts.iter().map(|part| part.progress).sum();
     let total: u64 = job.parts.iter().map(|part| part.total).sum();
-    match job.stage.as_str() {
-        "uploading" | "done" => 100.0,
+    match job.stage {
+        Stage::Uploading | Stage::Done => 100.0,
         _ if total == 0 => 0.0,
         _ => (done as f64 * 100.0 / total as f64).clamp(0.0, 100.0),
     }
@@ -218,15 +246,15 @@ fn percent(job: &Job) -> f64 {
 async fn job_row(cx: &Cx, job: &Job) -> Result<impl View> {
     let said = signal(cx, String::new);
     let id = job.id.clone();
-    let stoppable = matches!(job.stage.as_str(), "checking" | "downloading");
+    let stoppable = job.stage.stoppable();
     let last = job.log.last().cloned().unwrap_or_default();
     Ok(view! {
-        <li class="download-job" data-stage=(job.stage.as_str())>
+        <li class="download-job" data-stage=(job.stage.name())>
             <div class="download-job-line">
                 <b>(job.label.as_str())</b>
                 <span>(job.message.as_str())</span>
             </div>
-            if job.stage != "done" {
+            if job.stage != Stage::Done {
                 <div class="download-bar"><i style=(format!("width:{:.1}%", percent(job)))></i></div>
                 <p class="download-facts">(progress_line(job))</p>
                 <p class="download-log">(last)</p>
@@ -435,4 +463,34 @@ async fn downloads_page(cx: &Cx) -> Result<impl View> {
             job_list()
         </article>
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn job(stage: &str) -> serde_json::Result<Job> {
+        serde_json::from_value(json!({
+            "id": "1", "label": "Up", "stage": stage, "message": "", "log": [],
+            "parts": [{ "progress": 50, "total": 100, "uploaded": 0, "speed": 0.0, "peers": null }]
+        }))
+    }
+
+    #[test]
+    fn every_stage_the_tv_sends_reads_and_an_unknown_one_does_not() {
+        for stage in ["checking", "downloading", "uploading", "done", "failed", "stopped"] {
+            assert_eq!(job(stage).unwrap().stage.name(), stage);
+        }
+        assert!(job("finished").is_err());
+    }
+
+    #[test]
+    fn only_a_running_download_can_be_stopped_and_an_upload_counts_as_complete() {
+        let downloading = job("downloading").unwrap();
+        assert!(downloading.stage.stoppable());
+        assert_eq!(percent(&downloading), 50.0);
+        let uploading = job("uploading").unwrap();
+        assert!(!uploading.stage.stoppable());
+        assert_eq!(percent(&uploading), 100.0);
+    }
 }
