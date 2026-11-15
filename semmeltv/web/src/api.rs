@@ -369,6 +369,13 @@ pub struct NowPlaying {
     pub jump: Option<i32>,
     #[serde(default)]
     pub subtitle_delay: f64,
+    #[serde(default)]
+    pub skip: Option<Skip>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct Skip {
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]

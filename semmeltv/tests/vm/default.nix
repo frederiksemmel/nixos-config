@@ -81,7 +81,20 @@ pkgs.testers.runNixOSTest {
       serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${./fake-downloads.py} 100001";
     };
 
-    services.cage.environment.WLR_NO_HARDWARE_CURSORS = "1";
+    systemd.services.fake-introdb = {
+      description = "theintrodb.org's segment API, answering what the test leaves in /run/fake-introdb";
+      wantedBy = [ "multi-user.target" ];
+      before = [ "cage-tty1.service" ];
+      serviceConfig = {
+        RuntimeDirectory = "fake-introdb";
+        ExecStart = "${pkgs.python3}/bin/python3 -m http.server 9198 --bind 127.0.0.1 --directory /run/fake-introdb";
+      };
+    };
+
+    services.cage.environment = {
+      WLR_NO_HARDWARE_CURSORS = "1";
+      SEMMELTV_INTRODB = "http://127.0.0.1:9198/v4/media";
+    };
 
     systemd.tmpfiles.rules = [ "L+ /var/lib/semmeltv/library - - - - ${library}" ];
 

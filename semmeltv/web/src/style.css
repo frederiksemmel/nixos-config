@@ -1033,6 +1033,10 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
   color: var(--bg);
 }
 
+.skip-prompt { display: flex; justify-content: center; margin-bottom: -6px; }
+.skip-prompt:not(:has(button:not([hidden]))) { display: none; }
+.skip-prompt .pill { min-width: 148px; }
+
 .transport-toggle svg { width: 36px; height: 36px; }
 .transport button:active { transform: scale(0.94); }
 

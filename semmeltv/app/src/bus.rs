@@ -4,6 +4,7 @@ use crate::library::Library;
 use crate::profile::ProfileId;
 use crate::progress::Progress;
 use crate::screen;
+use crate::segments::Kind;
 use crate::up_next;
 use serde::Serialize;
 use std::collections::HashSet;
@@ -99,6 +100,22 @@ pub struct NowPlaying {
     pub audio: Option<i64>,
     pub loading: bool,
     pub jump: Option<i32>,
+    pub skip: Option<Skip>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+pub struct Skip {
+    pub kind: Kind,
+    pub label: &'static str,
+}
+
+impl From<Kind> for Skip {
+    fn from(kind: Kind) -> Self {
+        Self {
+            kind,
+            label: kind.label(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
@@ -283,6 +300,37 @@ mod tests {
             .collect();
         assert_eq!(positions, [Some(10.1), Some(11.2), None]);
         assert_eq!(bus.now_playing(), None);
+    }
+
+    #[test]
+    fn the_skip_prompt_the_tv_shows_is_announced_at_once_and_named_like_on_the_tv() {
+        let bus = Bus::default();
+        let (_, mut events) = bus.subscribe();
+        let at = |skip: Option<Kind>| {
+            Some(NowPlaying {
+                position: 30.2,
+                skip: skip.map(Skip::from),
+                ..NowPlaying::default()
+            })
+        };
+        bus.playback(at(None));
+        bus.playback(at(Some(Kind::Intro)));
+        bus.playback(at(None));
+        let skips: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
+            .map(|event| serde_json::to_value(event).unwrap()["now_playing"]["skip"].clone())
+            .collect();
+        assert_eq!(
+            skips,
+            [
+                json!(null),
+                json!({ "kind": "intro", "label": "Skip intro" }),
+                json!(null)
+            ]
+        );
+        assert_eq!(
+            serde_json::to_value(Skip::from(Kind::Recap)).unwrap(),
+            json!({ "kind": "recap", "label": "Skip recap" })
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use super::tending::{self, Tended};
 use super::{Core, Input, Outcome, Request, ScreenCommand, ScreenKind, Seek, Signal, TV_PROFILE, sound};
 use crate::audio::{self, Audio};
-use crate::bus::{Home, NowPlaying, Panel, Playing, Voice as VoiceEvent};
+use crate::bus::{Home, NowPlaying, Panel, Playing, Skip, Voice as VoiceEvent};
 use crate::card;
 use crate::command::Command;
 use crate::db::{self, Db};
@@ -20,7 +20,7 @@ use crate::profile::ProfileId;
 use crate::progress::{self, Position, Progress};
 use crate::screen;
 use crate::seek::Direction;
-use crate::segments::Title;
+use crate::segments::{Kind, Title};
 use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, Subtitles};
@@ -1216,9 +1216,21 @@ impl Actor {
             Seek::By(seconds) => player.seek_by(seconds),
             Seek::Step(Direction::Back) => player.command(Command::Left),
             Seek::Step(Direction::Forward) => player.command(Command::Right),
+            Seek::Segment => return self.skip_segment(player),
         }
         self.publish_playback();
         Outcome::done("Seeking")
+    }
+
+    fn skip_segment(&self, player: &Player) -> Outcome {
+        let Some(kind) = player.state().skip.filter(|_| player.skip_segment()) else {
+            return Outcome::refused("The TV shows nothing to skip right now");
+        };
+        self.publish_playback();
+        Outcome::done(match kind {
+            Kind::Intro => "Skipped the intro",
+            Kind::Recap => "Skipped the recap",
+        })
     }
 
     fn now_playing_for(&self, path: &Path) -> NowPlaying {
@@ -1285,6 +1297,7 @@ impl Actor {
                     audio: state.audio,
                     loading: !state.started,
                     jump: state.jump,
+                    skip: state.skip.map(Skip::from),
                     ..base.clone()
                 }
             },

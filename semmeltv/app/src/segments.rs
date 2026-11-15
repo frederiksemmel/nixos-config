@@ -1,4 +1,5 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use std::env;
 use std::time::Duration;
 
 const API: &str = "https://api.theintrodb.org/v4/media";
@@ -10,7 +11,8 @@ pub struct Title {
     pub episode: Option<(u32, u32)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Kind {
     Recap,
     Intro,
@@ -96,8 +98,9 @@ pub fn fetch(title: Title, duration: f64) -> Result<Found, ureq::Error> {
         .timeout_global(Some(TIMEOUT))
         .build()
         .into();
+    let api = env::var("SEMMELTV_INTRODB").ok().filter(|url| !url.is_empty());
     let response = agent
-        .get(API)
+        .get(api.as_deref().unwrap_or(API))
         .query("tmdb_id", title.tmdb.to_string())
         .query("duration_ms", ((duration * 1000.0) as u64).to_string());
     let response = match title.episode {

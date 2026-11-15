@@ -96,6 +96,7 @@ pub enum Seek {
     To(f64),
     By(f64),
     Step(Direction),
+    Segment,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]

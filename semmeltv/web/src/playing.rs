@@ -252,6 +252,7 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                         sheet_now()
                         <section class="sheet-playback" aria-label="Playback">
                             <div class="scrub" role="slider" tabindex="0" aria-label="Position" aria-valuemin="0">track()</div>
+                            <div class="skip-prompt">skip_prompt()</div>
                             <div class="transport">
                                 <button type="button" class="skip" data-skip="back" aria-label="Skip back"
                                     @click=$(async |_e| { skip("back".to_owned()).await; })>
@@ -740,6 +741,33 @@ async fn sheet_now(cx: &Cx) -> Result<impl View> {
     })
 }
 
+fn skip_label(tv: &Tv) -> Option<String> {
+    tv.playing()?.skip.as_ref().map(|prompt| prompt.label.clone())
+}
+
+#[component]
+async fn skip_prompt(cx: &Cx) -> Result<impl View> {
+    Ok(live! {
+        let mut playback = app_context::<Live>(cx).playback.clone();
+        'shown: loop {
+            let shown = skip_label(&playback.borrow_and_update());
+            let token = emit! {
+                if let Some(label) = &shown {
+                    <button type="button" class="pill" data-post="/api/playback/skip-segment" data-done="hide">(label.as_str())</button>
+                }
+            }?;
+            loop {
+                if !connected(cx) || playback.changed().await.is_err() {
+                    break 'shown Ok(token);
+                }
+                if skip_label(&playback.borrow()) != shown {
+                    break;
+                }
+            }
+        }
+    })
+}
+
 #[component]
 async fn track(cx: &Cx) -> Result<impl View> {
     Ok(live! {
@@ -921,5 +949,23 @@ mod tests {
         );
         assert!(read(serde_json::json!({ "kind": "episode", "show": "dark" })).is_err());
         assert!(read(serde_json::json!({ "movie": "dune-2021" })).is_err());
+    }
+
+    #[test]
+    fn the_skip_pill_names_the_prompt_the_tv_shows_and_only_while_it_shows_one() {
+        let now = |prompt: serde_json::Value| {
+            serde_json::from_value::<NowPlaying>(serde_json::json!({
+                "title": "Dark", "caption": "", "kind": "file", "position": 30.0, "duration": 3000.0,
+                "paused": false, "subtitle": null, "audio": null, "loading": false, "jump": null, "skip": prompt
+            }))
+            .unwrap()
+        };
+        let intro = now(serde_json::json!({ "kind": "intro", "label": "Skip intro" }));
+        assert_eq!(skip_label(&Tv::Playing(intro)).as_deref(), Some("Skip intro"));
+        let recap = now(serde_json::json!({ "kind": "recap", "label": "Skip recap" }));
+        assert_eq!(skip_label(&Tv::Playing(recap)).as_deref(), Some("Skip recap"));
+        assert_eq!(skip_label(&Tv::Playing(now(serde_json::Value::Null))), None);
+        assert_eq!(skip_label(&Tv::Idle), None);
+        assert_eq!(skip_label(&Tv::Unknown), None);
     }
 }

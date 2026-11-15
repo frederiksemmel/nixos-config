@@ -1274,6 +1274,41 @@ with sync_playwright() as playwright:
         locked.until("navigator.mediaSession.metadata === null && window.mediaKeys.play === null", 40000)
         locked.close()
 
+    with scenario("the remote's Skip intro does what OK does while the TV shows the prompt, and goes with it"):
+        intro = json.dumps({"intro": [{"start_ms": 0, "end_ms": 90000}]})
+        tv.succeed(f"mkdir -p /run/fake-introdb/v4 && echo {shlex.quote(intro)} > /run/fake-introdb/v4/media")
+        try:
+            SKIP = 'document.querySelector(".skip-prompt button:not([hidden])")'
+            phone.goto("/")
+            at_home(phone)
+            phone.page.locator(".bar-open").tap()
+            phone.until('document.documentElement.hasAttribute("data-sheet")', 3000)
+            assert phone.js(f"!{SKIP}"), "no Skip pill while nothing plays"
+            phone.api("POST", "/api/play", {"show": SHOW, "season": 1, "episode": 2})
+            assert tv_starts_at() < 60, "episode 2 starts inside its intro"
+            phone.until(f"{SKIP}?.textContent === 'Skip intro'", 30000)
+            assert phone.api("GET", "/api/playback")["body"]["now_playing"]["skip"] == {"kind": "intro", "label": "Skip intro"}
+            tv_shows("Skip intro")
+            phone.shot("remote-skip-intro")
+            tv.screenshot("tv-skip-intro")
+            phone.page.locator(".skip-prompt button").tap()
+            eventually("the TV jumps to where the intro ends", lambda: (tv_position() or 0) >= 89)
+            phone.until(f"!{SKIP}", 5000)
+            eventually("the TV's prompt is gone", lambda: phone.api("GET", "/api/playback")["body"]["now_playing"]["skip"] is None)
+            assert mpv("get_property", "pause") is False, "skipping the intro does not pause"
+            refused = phone.api("POST", "/api/playback/skip-segment", {})
+            assert refused["status"] == 422, refused
+            assert mpv("get_property", "pause") is False, "a skip without a prompt does not pause as OK would"
+            phone.page.locator(".sheet-close").tap()
+            phone.until('!document.documentElement.hasAttribute("data-sheet")', 3000)
+        finally:
+            tv.succeed("rm -f /run/fake-introdb/v4/media")
+            stop_everything(phone)
+            stopped = lambda: phone.api("GET", f"/api/shows/{SHOW}")["body"]["seasons"][0]["episodes"][1]["stopped_at"]
+            eventually("the TV is done with episode 2", lambda: phone.api("GET", "/api/playback")["body"]["now_playing"] is None)
+            phone.api("POST", "/api/watched", {"kind": "show", "key": SHOW, "season": 1, "episode": 2, "watched": False})
+            eventually("episode 2 starts over again", lambda: stopped() is None)
+
     with scenario("the TV/phone switch moves at the tap and snaps back when the TV refuses"):
         phone.goto("/")
         at_home(phone)

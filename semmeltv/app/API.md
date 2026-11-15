@@ -226,13 +226,13 @@ such image.
 | POST | `/api/command` | `{ "text": "play outlander season 2" }`, understood exactly like speech |
 | POST | `/api/listen` | none: start listening, as the remote's red, green and blue keys do |
 | GET | `/api/playback` | `{ now_playing }`, see below |
-| POST | `/api/playback/{control}` | none. `control` is `pause`, `resume`, `toggle`, `stop`, `mute` or `unmute` |
+| POST | `/api/playback/{control}` | none. `control` is `pause`, `resume`, `toggle`, `stop`, `mute`, `unmute` or `skip-segment`: what OK does while the TV shows Skip intro or Skip recap, refused with 422 while it shows neither |
 | POST | `/api/playback/seek` | `{ "to": seconds }` or `{ "by": seconds }`, negative to go back |
 | POST | `/api/playback/skip` | `{ "direction": "back" }` or `"forward"`: a press of the remote's left or right key, so presses in a row skip further |
 | POST | `/api/playback/speed` | `{ "speed": 1.25 }`: 0.5 to 2, in steps of 0.05. Every video starts at 1 |
 
 `now_playing` is null or
-`{ title, caption, kind, …, position, duration, paused, muted, speed, subtitle, subtitle_delay, audio, loading, jump }`.
+`{ title, caption, kind, …, position, duration, paused, muted, speed, subtitle, subtitle_delay, audio, loading, jump, skip }`.
 `subtitle` is the id of the subtitle track that shows, or null when none does.
 `subtitle_delay` is the subtitle delay in seconds, positive to show them later. `audio` is the playing
 audio track's id. They follow what mpv reports, so a change made by the remote, by voice or from the web
@@ -241,6 +241,9 @@ reaches every event listener.
 `show`, `season` and `episode`; or `"file"`, a file outside the library, with
 none of them. `jump` is the last skip in seconds, negative going back, while a run of
 skips can still continue, and null otherwise.
+`skip` is `{ kind, label }` while the TV shows its prompt to skip the intro or the recap, with
+`kind` `"intro"` or `"recap"` and `label` the prompt's text, such as `"Skip intro"`, and null
+otherwise.
 
 ## TV
 

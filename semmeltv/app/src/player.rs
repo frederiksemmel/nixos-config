@@ -300,6 +300,14 @@ impl Playback {
         }
     }
 
+    fn skip_segment(&mut self, now: Instant) -> bool {
+        if self.prompt.is_none() {
+            return false;
+        }
+        self.command(Command::Select, now);
+        true
+    }
+
     fn update_prompt(&mut self) {
         let prompt = segments::at(&self.segments, self.position).map(|segment| segment.kind);
         if prompt != self.prompt {
@@ -595,6 +603,7 @@ pub struct State {
     pub audio: Option<i64>,
     pub started: bool,
     pub jump: Option<i32>,
+    pub skip: Option<Kind>,
 }
 
 impl Player {
@@ -747,6 +756,7 @@ impl Player {
                     audio: tracks.audio,
                     started: seen.started,
                     jump: seen.jump,
+                    skip: None,
                 };
             }
         };
@@ -762,6 +772,7 @@ impl Player {
             audio,
             started: playback.phase.started(),
             jump: playback.scrub.jump_shown(Instant::now()),
+            skip: playback.prompt,
         }
     }
 
@@ -769,6 +780,13 @@ impl Player {
         match &self.backend {
             Backend::Mpv(playback) => playback.lock().unwrap().command(command, Instant::now()),
             Backend::TvSet { session, .. } => session.key(command),
+        }
+    }
+
+    pub fn skip_segment(&self) -> bool {
+        match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap().skip_segment(Instant::now()),
+            Backend::TvSet { .. } => false,
         }
     }
 
@@ -1531,6 +1549,19 @@ mod tests {
         assert_eq!(playback.select(), json!(["seek", 20.0, "absolute"]));
         playback.position = 20.0;
         assert_eq!(playback.select(), json!(["cycle", "pause"]));
+    }
+
+    #[test]
+    fn skipping_from_the_phone_does_what_ok_does_and_only_while_the_prompt_shows() {
+        let mut shown = during_the_intro();
+        shown.update_prompt();
+        let sent = sent_by(|playback| assert!(playback.skip_segment(Instant::now())), shown);
+        assert_eq!(sent, [json!(["seek", 20.0, "absolute"])]);
+        let mut past = during_the_intro();
+        past.position = 25.0;
+        past.update_prompt();
+        let sent = sent_by(|playback| assert!(!playback.skip_segment(Instant::now())), past);
+        assert_eq!(sent, Vec::<Value>::new());
     }
 
     #[test]

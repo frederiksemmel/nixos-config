@@ -984,6 +984,7 @@ async fn control(State(api): State<Api>, Path(name): Path<String>) -> Response {
         "stop" => Request::Control(Control::Stop),
         "mute" => Request::Control(Control::Mute),
         "unmute" => Request::Control(Control::Unmute),
+        "skip-segment" => Request::Seek(Seek::Segment),
         _ => return not_found(format!("no playback control {name}")),
     };
     ask(&api.core, request).await
@@ -2037,6 +2038,14 @@ mod tests {
                 200,
                 vec![],
                 Some("Seek(Step(Back))"),
+            ),
+            (
+                "POST",
+                "/api/playback/skip-segment",
+                json!({}),
+                200,
+                vec![],
+                Some("Seek(Segment)"),
             ),
             (
                 "POST",
