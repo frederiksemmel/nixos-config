@@ -37,11 +37,16 @@ let
       pkgs.gnused
     ];
     text = ''
-      ${if lan.public then ''
-        address=$(curl --silent --fail --max-time 20 https://checkipv4.dedyn.io/ || true)
-      '' else ''
-        address=$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
-      ''}
+      ${
+        if lan.public then
+          ''
+            address=$(curl --silent --fail --max-time 20 https://checkipv4.dedyn.io/ || true)
+          ''
+        else
+          ''
+            address=$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
+          ''
+      }
       if [[ -z $address ]]; then
         echo "no IPv4 address yet"
         exit 0
@@ -53,7 +58,9 @@ let
       curl --fail-with-body --silent --show-error --request PATCH \
         --header "Authorization: Token $DESEC_TOKEN" \
         --header "Content-Type: application/json" \
-        --data '[{"subname": "${subname}", "type": "A", "ttl": ${if lan.public then "900" else "3600"}, "records": ["'"$address"'"]}]' \
+        --data '[{"subname": "${subname}", "type": "A", "ttl": ${
+          if lan.public then "900" else "3600"
+        }, "records": ["'"$address"'"]}]' \
         "https://desec.io/api/v1/domains/${lan.zone}/rrsets/"
       echo
       printf '%s\n' "$address" >"$published"
@@ -276,7 +283,9 @@ in
           recommendedGzipSettings = true;
           streamConfig = lib.mkIf (lan.forward != { }) ''
             map $ssl_preread_server_name $semmeltv_tv {
-            ${lib.concatStrings (lib.mapAttrsToList (name: target: "  ${name} ${target};\n") lan.forward)}  default 127.0.0.1:${toString (lanPort + 1)};
+            ${
+              lib.concatStrings (lib.mapAttrsToList (name: target: "  ${name} ${target};\n") lan.forward)
+            }  default 127.0.0.1:${toString (lanPort + 1)};
             }
             server {
               listen 0.0.0.0:${toString lanPort};
@@ -305,7 +314,12 @@ in
             ];
             locations."/" = {
               proxyPass = web;
-              extraConfig = stripUntrusted;
+              proxyWebsockets = true;
+              extraConfig = stripUntrusted + ''
+                proxy_read_timeout 1h;
+                proxy_send_timeout 1h;
+                proxy_buffering off;
+              '';
             };
             locations."/api" = {
               proxyPass = api;
@@ -335,7 +349,9 @@ in
         };
 
         systemd.services.semmeltv-publish-address = {
-          description = "Point ${lan.domain} at the ${if lan.public then "home's public" else "TV's local"} IPv4 address";
+          description = "Point ${lan.domain} at the ${
+            if lan.public then "home's public" else "TV's local"
+          } IPv4 address";
           wants = [ "network-online.target" ];
           after = [ "network-online.target" ];
           serviceConfig = {
