@@ -12,6 +12,11 @@
 
   networking.hostName = "semmeltv3";
 
+  zramSwap = {
+    enable = true;
+    memoryPercent = 100;
+  };
+
   services.semmeltv = {
     offlineCacheGiB = 12;
     headphones.enable = true;
