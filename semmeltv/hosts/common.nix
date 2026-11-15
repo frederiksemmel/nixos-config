@@ -46,7 +46,10 @@ in
     jq
     dnsutils
     tmux
+    iw
   ];
+
+  networking.wireless.iwd.enable = true;
 
   services.semmeltv = {
     enable = true;

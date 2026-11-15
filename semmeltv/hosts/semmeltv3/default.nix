@@ -12,12 +12,20 @@
 
   networking.hostName = "semmeltv3";
 
-  networking.wireless = {
-    enable = true;
-    secretsFile = config.age.secrets.wifi_joincena.path;
-    networks.joincena.pskRaw = "ext:psk_joincena";
-  };
   age.secrets.wifi_joincena.file = ../../../secrets/wifi_joincena.age;
+  systemd.services.iwd-joincena = {
+    wantedBy = [ "iwd.service" ];
+    before = [ "iwd.service" ];
+    serviceConfig = {
+      Type = "oneshot";
+      UMask = "0077";
+    };
+    script = ''
+      mkdir -p /var/lib/iwd
+      passphrase=$(sed -n 's/^psk_joincena=//p' ${config.age.secrets.wifi_joincena.path})
+      printf '[Security]\nPassphrase=%s\n' "$passphrase" > /var/lib/iwd/joincena.psk
+    '';
+  };
 
   zramSwap = {
     enable = true;
