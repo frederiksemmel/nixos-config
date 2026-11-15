@@ -162,8 +162,29 @@ in
           };
           description = ''
             Names of other TVs behind the same router port forward. Their HTTPS connections arrive
-            here and pass through unopened, by TLS server name, to the given `host:port`.
+            here and pass through unopened, by TLS server name, to the given `host:port`, which must be
+            that TV's `relayPort`: every relayed connection starts with a PROXY protocol header naming
+            the visitor's address.
           '';
+        };
+
+        relayedFrom = lib.mkOption {
+          type = lib.types.nullOr lib.types.str;
+          default = null;
+          example = "192.168.1.178";
+          description = ''
+            Address of the TV whose `forward` relays this TV's name, or null. Relayed connections arrive
+            on `relayPort` with a PROXY protocol header, which is trusted from this address only, so the
+            app sees the visitor's own address and not the relaying TV's.
+          '';
+        };
+
+        relayPort = lib.mkOption {
+          type = lib.types.port;
+          default = lanPort + 2;
+          defaultText = lib.literalExpression "8445";
+          readOnly = true;
+          description = "Port that relayed connections, with their PROXY protocol header, arrive on.";
         };
 
         zone = lib.mkOption {
@@ -291,6 +312,7 @@ in
               listen 0.0.0.0:${toString lanPort};
               ssl_preread on;
               proxy_pass $semmeltv_tv;
+              proxy_protocol on;
             }
           '';
           virtualHosts.${lan.domain} = {
@@ -309,9 +331,26 @@ in
                     addr = "127.0.0.1";
                     port = lanPort + 1;
                     ssl = true;
+                    proxyProtocol = true;
                   }
               )
-            ];
+            ]
+            ++ lib.optional (lan.relayedFrom != null) {
+              addr = "0.0.0.0";
+              port = lan.relayPort;
+              ssl = true;
+              proxyProtocol = true;
+            };
+            extraConfig =
+              lib.optionalString (lan.forward != { }) ''
+                set_real_ip_from 127.0.0.1;
+              ''
+              + lib.optionalString (lan.relayedFrom != null) ''
+                set_real_ip_from ${lan.relayedFrom};
+              ''
+              + lib.optionalString (lan.forward != { } || lan.relayedFrom != null) ''
+                real_ip_header proxy_protocol;
+              '';
             locations."/" = {
               proxyPass = web;
               proxyWebsockets = true;
@@ -334,7 +373,7 @@ in
         };
 
         networking.firewall = {
-          allowedTCPPorts = [ lanPort ];
+          allowedTCPPorts = [ lanPort ] ++ lib.optional (lan.relayedFrom != null) lan.relayPort;
           extraCommands = ''
             iptables -t nat -N semmeltv-https 2>/dev/null || true
             iptables -t nat -F semmeltv-https

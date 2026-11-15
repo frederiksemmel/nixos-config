@@ -32,6 +32,7 @@
       lan = {
         domain = "semmeltv3.semmeltv.ch";
         public = true;
+        relayedFrom = "192.168.1.178";
         desecTokenFile = config.age.secrets.desec_token.path;
       };
     };
