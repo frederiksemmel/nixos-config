@@ -18,6 +18,7 @@ in
   "mdblist_api_key.age".publicKeys = [
     frederik
     semmeltv5
+    semmeltv3
   ];
   "spadesvision_nixbuild_ssh_key.age".publicKeys = [
     frederik
@@ -52,6 +53,7 @@ in
   "tmdb_token.age".publicKeys = [
     frederik
     semmeltv5
+    semmeltv3
   ];
   "semmeltv_service_token.age".publicKeys = [
     frederik
