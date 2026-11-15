@@ -1,3 +1,5 @@
+mod health;
+
 use crate::audio;
 use crate::card::{self, Billing};
 use crate::command::Command;
@@ -8,6 +10,7 @@ use crate::seek::{self, Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
 use crate::sidecar;
 use crate::subtitles::{self, Answer, Change, Observed, Subtitles};
+use health::{Health, Reading};
 use serde_json::{Value, json};
 use std::env;
 use std::io::{self, BufRead, BufReader, Write};
@@ -37,6 +40,9 @@ const VIDEO_ID: u64 = 4;
 const PAUSE_ID: u64 = 5;
 const SUBTITLES_ID: u64 = 6;
 const CHAPTERS_ID: u64 = 7;
+const DROPPED_ID: u64 = 8;
+const LATE_ID: u64 = 9;
+const WAITING_ID: u64 = 10;
 const PROMPT_ID: u64 = 1;
 const LOADING_ID: u64 = 2;
 const OVERLAY_ID: u64 = 3;
@@ -88,6 +94,7 @@ enum Event {
     Loaded,
     Subtitles(Observed),
     Chapters(Option<f64>),
+    Health(Reading),
 }
 
 impl Event {
@@ -102,6 +109,9 @@ impl Event {
                 PAUSE_ID => Some(Self::Paused(message["data"].as_bool()?)),
                 SUBTITLES_ID => Observed::parse(&message).map(Self::Subtitles),
                 CHAPTERS_ID => Some(Self::Chapters(credits_chapter(&message["data"]))),
+                DROPPED_ID => Some(Self::Health(Reading::Dropped(message["data"].as_u64()?))),
+                LATE_ID => Some(Self::Health(Reading::Late(message["data"].as_u64()?))),
+                WAITING_ID => Some(Self::Health(Reading::Waiting(message["data"].as_bool()?))),
                 _ => None,
             },
             "client-message" => key_command(message["args"][0].as_str()?).map(Self::Key),
@@ -219,6 +229,7 @@ struct Playback {
     card: Card,
     on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
+    health: Health,
 }
 
 impl Playback {
@@ -307,6 +318,7 @@ impl Playback {
     fn begin(&mut self, now: Instant) {
         if self.phase == Phase::Opening {
             self.phase = Phase::Playing { paused: false };
+            self.health.begin(now);
             self.wake(now);
         }
     }
@@ -360,6 +372,15 @@ impl Playback {
             let order = self.scrub.poll(now);
             self.seek(order);
             self.present(now);
+        }
+        if let Some(window) = self.health.trouble_due(now) {
+            eprintln!(
+                "player: {} at {}: {} in the last {} s",
+                self.name,
+                health::clock(self.position),
+                window.trouble(),
+                health::WINDOW.as_secs()
+            );
         }
     }
 
@@ -624,7 +645,18 @@ impl Player {
         thread::spawn(move || {
             connect(&mut child, &socket_path, &shared, title);
             let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
-            shared.lock().unwrap().subtitles.stopped();
+            {
+                let playback = shared.lock().unwrap();
+                playback.subtitles.stopped();
+                if let Some(total) = playback.health.total() {
+                    eprintln!(
+                        "player: {} stopped after {} played: {}",
+                        playback.name,
+                        health::clock(playback.played),
+                        total.summary()
+                    );
+                }
+            }
             display::show_ui();
             let _ = std::fs::remove_file(&socket_path);
             on_exit(finish);
@@ -776,6 +808,12 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
             let _ = send(&mut stream, json!(["observe_property", PAUSE_ID, "pause"]));
             let _ = send(&mut stream, json!(["observe_property", CHAPTERS_ID, "chapter-list"]));
+            let _ = send(&mut stream, json!(["observe_property", DROPPED_ID, "frame-drop-count"]));
+            let _ = send(
+                &mut stream,
+                json!(["observe_property", LATE_ID, "vo-delayed-frame-count"]),
+            );
+            let _ = send(&mut stream, json!(["observe_property", WAITING_ID, "paused-for-cache"]));
             for name in subtitles::OBSERVED {
                 let _ = send(&mut stream, json!(["observe_property", SUBTITLES_ID, name]));
             }
@@ -856,6 +894,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 }
             }
             Some(Event::Chapters(credits)) => shared.lock().unwrap().chapter_credits = credits,
+            Some(Event::Health(reading)) => shared.lock().unwrap().health.observe(reading),
             None => {}
         }
     }
@@ -980,6 +1019,22 @@ mod tests {
                 Some(Event::Key(Command::Select)),
             ),
             (r#"{"event":"playback-restart"}"#, Some(Event::Started)),
+            (
+                r#"{"event":"property-change","id":8,"name":"frame-drop-count","data":2}"#,
+                Some(Event::Health(Reading::Dropped(2))),
+            ),
+            (
+                r#"{"event":"property-change","id":9,"name":"vo-delayed-frame-count","data":5}"#,
+                Some(Event::Health(Reading::Late(5))),
+            ),
+            (
+                r#"{"event":"property-change","id":10,"name":"paused-for-cache","data":true}"#,
+                Some(Event::Health(Reading::Waiting(true))),
+            ),
+            (
+                r#"{"event":"property-change","id":9,"name":"vo-delayed-frame-count"}"#,
+                None,
+            ),
             (r#"{"request_id":0,"error":"success"}"#, None),
             (r#"{"event":"property-change","id":1,"name":"time-pos"}"#, None),
             (
