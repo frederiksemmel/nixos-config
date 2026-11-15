@@ -845,6 +845,21 @@ with sync_playwright() as playwright:
             report.querySelector(".report-copy").textContent.includes({settled['id']!r})
             && [...report.querySelectorAll(".comment:not([hidden]) .comment-who b")].map((name) => name.textContent).join() === "Claude,Frederik")""")
 
+    with scenario("a comment typed but not sent survives a reload, and is forgotten once sent"):
+        draft = f'textarea[data-draft="{settled["id"]}:comment"]'
+        phone.page.locator(draft).fill("Half a thought before the TV restarts")
+        phone.goto("/feedback")
+        phone.until(f"document.querySelector({draft!r})?.value === 'Half a thought before the TV restarts'")
+        row = phone.page.locator(".report").filter(has=phone.page.locator(".report-message", has_text=settled["message"]))
+        row.get_by_role("button", name="Comment").tap()
+        phone.until(f"""[...document.querySelectorAll(".comment.person:not([hidden]) .comment-text")].some((text) => text.textContent === "Half a thought before the TV restarts")
+            && document.querySelector({draft!r}).value === \"\"""")
+        phone.page.wait_for_timeout(2500)
+        phone.goto("/feedback")
+        phone.page.wait_for_timeout(1000)
+        assert phone.js(f"document.querySelector({draft!r}).value") == "", "a sent comment is no draft"
+        assert phone.js(f"localStorage.getItem('semmeltv.draft.{settled['id']}:comment')") is None
+
     for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
         with scenario(f"the remote opens, closes by a swipe without a reload, and a reload brings it back closed ({engine})"):
             remote = phone if engine == "chromium" else Phone(playwright, engine, device)

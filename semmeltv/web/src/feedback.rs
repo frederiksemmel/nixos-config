@@ -258,6 +258,7 @@ async fn report_row(
                 }
             })>
                 <textarea rows="2" maxlength="4000" placeholder="Reply, or answer the question" aria-label="Comment"
+                    data-draft=(format!("{}:comment", report.id))
                     :value=$(words.get())
                     @input=$(|e: Event| words.set(e.target.value))></textarea>
                 <p class="controls-said" aria-live="polite" :hidden=$(answer.get().is_empty())>$(answer.get())</p>
@@ -292,12 +293,12 @@ async fn report_row(
                         </button>
                     }
                 </div>
-                <textarea rows="2" maxlength="4000"
+                <textarea rows="2" maxlength="4000" data-draft=(format!("{}:first", report.id))
                     :hidden=$(choice.get() == "new")
                     :placeholder=$(if choice.get() == "fixed" { "Commit" } else if choice.get() == "no_change" { "Why nothing changes" } else { "Why it needs a person" })
                     :value=$(first.get())
                     @input=$(|e: Event| first.set(e.target.value))></textarea>
-                <textarea rows="2" maxlength="4000"
+                <textarea rows="2" maxlength="4000" data-draft=(format!("{}:second", report.id))
                     :hidden=$(if choice.get() == "new" { true } else { choice.get() == "no_change" })
                     :placeholder=$(if choice.get() == "fixed" { "What the fix changed" } else { "What they have to decide" })
                     :value=$(second.get())
