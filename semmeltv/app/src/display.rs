@@ -179,119 +179,77 @@ mod tests {
         }])
     }
 
-    fn hd(fps: f64) -> Video {
-        Video {
-            width: 1920,
-            height: 1080,
-            fps,
+    fn video(width: u64, height: u64, fps: f64) -> Video {
+        Video { width, height, fps }
+    }
+
+    #[test]
+    fn each_video_gets_its_display_mode() {
+        let cases = [
+            ("1080p film", video(1920, 1080, 23.976024), Some((1920, 1080, 23.976))),
+            ("letterboxed film", video(1920, 800, 24.0), Some((1920, 1080, 24.0))),
+            ("4k film", video(3840, 2160, 23.976), Some((3840, 2160, 23.976))),
+            (
+                "larger than every mode",
+                video(7680, 4320, 24.0),
+                Some((3840, 2160, 24.0)),
+            ),
+            (
+                "smaller, rate only at 1080p",
+                video(1280, 720, 25.0),
+                Some((1920, 1080, 25.0)),
+            ),
+            (
+                "smaller, rate at its own size",
+                video(1280, 720, 60.0),
+                Some((1280, 720, 60.0)),
+            ),
+            (
+                "slightly off its nominal rate",
+                video(1920, 1080, 23.944723),
+                Some((1920, 1080, 23.976)),
+            ),
+            (
+                "exact 24 beats 23.976",
+                video(3840, 2160, 24.0),
+                Some((3840, 2160, 24.0)),
+            ),
+            (
+                "exact 29.97 beats 30",
+                video(3840, 2160, 29.97003),
+                Some((3840, 2160, 29.969999)),
+            ),
+            ("the current mode", video(3840, 2160, 30.0), None),
+            ("a multiple of the current rate", video(3840, 2160, 15.0), None),
+            ("a rate the display lacks", video(3840, 2160, 50.0), None),
+            ("a rate nothing comes near", video(1920, 1080, 1000.0), None),
+        ];
+        for (name, video, want) in cases {
+            let got = choose(&tv(), video).map(|mode| (mode.width, mode.height, mode.refresh));
+            assert_eq!(got, want, "{name}");
         }
     }
 
-    fn uhd(fps: f64) -> Video {
-        Video {
-            width: 3840,
-            height: 2160,
-            fps,
-        }
-    }
-
     #[test]
-    fn a_1080p_film_plays_at_1080p_and_its_exact_rate() {
-        let matching = choose(&tv(), hd(23.976024)).unwrap();
-        assert_eq!(
-            (matching.width, matching.height, matching.refresh),
-            (1920, 1080, 23.976)
-        );
-    }
-
-    #[test]
-    fn a_letterboxed_film_still_gets_1080p() {
-        let video = Video {
-            width: 1920,
-            height: 800,
-            fps: 24.0,
-        };
-        let matching = choose(&tv(), video).unwrap();
-        assert_eq!((matching.width, matching.height, matching.refresh), (1920, 1080, 24.0));
-    }
-
-    #[test]
-    fn a_4k_film_keeps_4k() {
-        let matching = choose(&tv(), uhd(23.976)).unwrap();
-        assert_eq!((matching.width, matching.height), (3840, 2160));
-    }
-
-    #[test]
-    fn a_video_larger_than_every_mode_gets_the_largest() {
-        let video = Video {
-            width: 7680,
-            height: 4320,
-            fps: 24.0,
-        };
-        let matching = choose(&tv(), video).unwrap();
-        assert_eq!((matching.width, matching.height, matching.refresh), (3840, 2160, 24.0));
-    }
-
-    #[test]
-    fn a_smaller_video_gets_the_smallest_mode_with_its_rate() {
-        let small = Video {
-            width: 1280,
-            height: 720,
-            fps: 25.0,
-        };
-        let matching = choose(&tv(), small).unwrap();
-        assert_eq!((matching.width, matching.height, matching.refresh), (1920, 1080, 25.0));
-        let matching = choose(&tv(), Video { fps: 60.0, ..small }).unwrap();
-        assert_eq!((matching.width, matching.height), (1280, 720));
-    }
-
-    #[test]
-    fn a_film_slightly_off_its_nominal_rate_gets_the_nearest_mode() {
-        let matching = choose(&tv(), hd(23.944723)).unwrap();
-        assert_eq!(matching.refresh, 23.976);
-    }
-
-    #[test]
-    fn an_exact_rate_beats_a_close_one() {
-        assert_eq!(choose(&tv(), uhd(24.0)).unwrap().refresh, 24.0);
-        assert_eq!(choose(&tv(), uhd(29.97003)).unwrap().refresh, 29.969999);
-    }
-
-    #[test]
-    fn a_mode_the_display_already_has_changes_nothing() {
-        assert_eq!(choose(&tv(), uhd(30.0)), None);
-        assert_eq!(choose(&tv(), uhd(15.0)), None);
-    }
-
-    #[test]
-    fn a_rate_the_display_lacks_changes_nothing() {
-        assert_eq!(choose(&tv(), uhd(50.0)), None);
-        assert_eq!(choose(&tv(), hd(1000.0)), None);
-    }
-
-    #[test]
-    fn the_ui_runs_at_1080p_and_the_fastest_rate_there() {
-        let mode = choose_ui(&tv()).unwrap();
-        assert_eq!((mode.width, mode.height, mode.refresh), (1920, 1080, 60.0));
-    }
-
-    #[test]
-    fn the_ui_mode_changes_nothing_once_it_is_set() {
-        let mut outputs = tv();
-        for mode in outputs[0]["modes"].as_array_mut().unwrap() {
+    fn the_ui_gets_1080p_at_its_fastest_rate() {
+        let mut ui_set = tv();
+        for mode in ui_set[0]["modes"].as_array_mut().unwrap() {
             let ui = mode["width"] == 1920 && mode["refresh"] == 60.0;
             mode["current"] = json!(ui);
         }
-        assert_eq!(choose_ui(&outputs), None);
-    }
-
-    #[test]
-    fn a_display_without_1080p_keeps_its_mode() {
-        let outputs = json!([{
+        let no_1080p = json!([{
             "name": "HDMI-A-1",
             "enabled": true,
             "modes": [{ "width": 1280, "height": 720, "refresh": 60.0, "current": true }],
         }]);
-        assert_eq!(choose_ui(&outputs), None);
+        let cases = [
+            ("4k now", tv(), Some((1920, 1080, 60.0))),
+            ("the ui mode already set", ui_set, None),
+            ("a display without 1080p", no_1080p, None),
+        ];
+        for (name, outputs, want) in cases {
+            let got = choose_ui(&outputs).map(|mode| (mode.width, mode.height, mode.refresh));
+            assert_eq!(got, want, "{name}");
+        }
     }
 }

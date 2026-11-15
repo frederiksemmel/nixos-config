@@ -539,36 +539,32 @@ mod tests {
     }
 
     #[test]
-    fn remote_buttons_become_commands() {
-        let cases = [
-            (0x00, Command::Select),
-            (0x01, Command::Up),
-            (0x02, Command::Down),
-            (0x03, Command::Left),
-            (0x04, Command::Right),
-            (0x0d, Command::Back),
-            (0x44, Command::PlayPause),
-            (0x45, Command::Back),
-            (0x46, Command::PlayPause),
-            (0x48, Command::Left),
-            (0x49, Command::Right),
-            (0x60, Command::PlayPause),
-            (0x61, Command::PlayPause),
-            (0x71, Command::Listen),
-            (0x72, Command::Listen),
-            (0x73, Command::Listen),
-            (0x74, Command::Subtitles),
+    fn remote_buttons_become_commands_or_nothing() {
+        let cases: [(&[u8], Reaction); 20] = [
+            (&[0x00], Reaction::Press(Command::Select)),
+            (&[0x01], Reaction::Press(Command::Up)),
+            (&[0x02], Reaction::Press(Command::Down)),
+            (&[0x03], Reaction::Press(Command::Left)),
+            (&[0x04], Reaction::Press(Command::Right)),
+            (&[0x0d], Reaction::Press(Command::Back)),
+            (&[0x44], Reaction::Press(Command::PlayPause)),
+            (&[0x45], Reaction::Press(Command::Back)),
+            (&[0x46], Reaction::Press(Command::PlayPause)),
+            (&[0x48], Reaction::Press(Command::Left)),
+            (&[0x49], Reaction::Press(Command::Right)),
+            (&[0x60], Reaction::Press(Command::PlayPause)),
+            (&[0x61], Reaction::Press(Command::PlayPause)),
+            (&[0x71], Reaction::Press(Command::Listen)),
+            (&[0x72], Reaction::Press(Command::Listen)),
+            (&[0x73], Reaction::Press(Command::Listen)),
+            (&[0x74], Reaction::Press(Command::Subtitles)),
+            (&[0x40], Reaction::Ignore),
+            (&[0xff], Reaction::Ignore),
+            (&[], Reaction::Ignore),
         ];
-        for (code, command) in cases {
-            assert_eq!(press(code), Reaction::Press(command), "{code:#x}");
+        for (code, reaction) in cases {
+            assert_eq!(react(CecOpcode::UserControlPressed, code, OWN), reaction, "{code:x?}");
         }
-    }
-
-    #[test]
-    fn unknown_or_empty_buttons_are_ignored() {
-        assert_eq!(press(0x40), Reaction::Ignore);
-        assert_eq!(press(0xff), Reaction::Ignore);
-        assert_eq!(react(CecOpcode::UserControlPressed, &[], OWN), Reaction::Ignore);
     }
 
     #[test]
@@ -590,83 +586,85 @@ mod tests {
     }
 
     #[test]
-    fn the_tv_gets_the_answers_it_needs_to_forward_keys() {
-        assert_eq!(react(CecOpcode::RequestActiveSource, &[], OWN), Reaction::Announce);
-        assert_eq!(
-            react(CecOpcode::MenuRequest, &[0], OWN),
-            Reaction::Reply(CecOpcode::MenuStatus, MENU_ACTIVATED)
-        );
-        assert_eq!(
-            react(CecOpcode::GiveDevicePowerStatus, &[], OWN),
-            Reaction::Reply(CecOpcode::ReportPowerStatus, POWER_ON)
-        );
-    }
-
-    #[test]
-    fn a_stream_path_here_announces_and_one_elsewhere_stops() {
-        assert_eq!(react(CecOpcode::SetStreamPath, &[0x10, 0x00], OWN), Reaction::Announce);
-        assert_eq!(react(CecOpcode::SetStreamPath, &[0x20, 0x00], OWN), Reaction::Stop);
-    }
-
-    #[test]
-    fn switching_the_tv_to_another_input_stops_playback() {
-        assert_eq!(
-            react(CecOpcode::RoutingChange, &[0x10, 0x00, 0x20, 0x00], OWN),
-            Reaction::Stop
-        );
-        assert_eq!(
-            react(CecOpcode::RoutingChange, &[0x10, 0x00, 0x00, 0x00], OWN),
-            Reaction::Stop
-        );
-        assert_eq!(react(CecOpcode::ActiveSource, &[0x30, 0x00], OWN), Reaction::Stop);
-    }
-
-    #[test]
-    fn switching_the_tv_to_this_input_does_not_stop() {
-        assert_eq!(
-            react(CecOpcode::RoutingChange, &[0x20, 0x00, 0x10, 0x00], OWN),
-            Reaction::Ignore
-        );
-        assert_eq!(react(CecOpcode::ActiveSource, &[0x10, 0x00], OWN), Reaction::Ignore);
-    }
-
-    #[test]
-    fn truncated_routing_messages_are_ignored() {
-        assert_eq!(
-            react(CecOpcode::RoutingChange, &[0x10, 0x00, 0x20], OWN),
-            Reaction::Ignore
-        );
-        assert_eq!(react(CecOpcode::ActiveSource, &[0x30], OWN), Reaction::Ignore);
-        assert_eq!(react(CecOpcode::SetStreamPath, &[], OWN), Reaction::Ignore);
-    }
-
-    #[test]
-    fn holding_select_does_not_select_twice() {
-        let mut keys = KeyFilter::default();
-        let start = Instant::now();
-        assert_eq!(keys.press(Command::Select, start), Some(Command::Select));
-        for step in 1..5 {
-            let now = start + Duration::from_millis(step * 200);
-            assert_eq!(keys.press(Command::Select, now), None);
+    fn each_cec_message_gets_its_reaction() {
+        let cases: [(CecOpcode, &[u8], Reaction); 13] = [
+            (CecOpcode::RequestActiveSource, &[], Reaction::Announce),
+            (
+                CecOpcode::MenuRequest,
+                &[0],
+                Reaction::Reply(CecOpcode::MenuStatus, MENU_ACTIVATED),
+            ),
+            (
+                CecOpcode::GiveDevicePowerStatus,
+                &[],
+                Reaction::Reply(CecOpcode::ReportPowerStatus, POWER_ON),
+            ),
+            (CecOpcode::SetStreamPath, &[0x10, 0x00], Reaction::Announce),
+            (CecOpcode::SetStreamPath, &[0x20, 0x00], Reaction::Stop),
+            (CecOpcode::RoutingChange, &[0x10, 0x00, 0x20, 0x00], Reaction::Stop),
+            (CecOpcode::RoutingChange, &[0x10, 0x00, 0x00, 0x00], Reaction::Stop),
+            (CecOpcode::ActiveSource, &[0x30, 0x00], Reaction::Stop),
+            (CecOpcode::RoutingChange, &[0x20, 0x00, 0x10, 0x00], Reaction::Ignore),
+            (CecOpcode::ActiveSource, &[0x10, 0x00], Reaction::Ignore),
+            (CecOpcode::RoutingChange, &[0x10, 0x00, 0x20], Reaction::Ignore),
+            (CecOpcode::ActiveSource, &[0x30], Reaction::Ignore),
+            (CecOpcode::SetStreamPath, &[], Reaction::Ignore),
+        ];
+        for (opcode, parameters, reaction) in cases {
+            assert_eq!(react(opcode, parameters, OWN), reaction, "{opcode:?} {parameters:x?}");
         }
     }
 
     #[test]
-    fn select_works_again_after_a_release_or_a_pause() {
-        let mut keys = KeyFilter::default();
-        let start = Instant::now();
-        keys.press(Command::Select, start);
-        keys.release();
-        assert!(keys.press(Command::Select, start + Duration::from_millis(50)).is_some());
-        assert!(keys.press(Command::Select, start + Duration::from_secs(2)).is_some());
-    }
-
-    #[test]
-    fn holding_an_arrow_keeps_moving() {
-        let mut keys = KeyFilter::default();
-        let start = Instant::now();
-        keys.press(Command::Right, start);
-        assert!(keys.press(Command::Right, start + Duration::from_millis(200)).is_some());
+    fn key_repeats_pass_only_for_arrows() {
+        enum Key {
+            Press(Command, u64, Option<Command>),
+            Release,
+        }
+        use Key::{Press, Release};
+        let select = Some(Command::Select);
+        let cases: [(&str, &[Key]); 3] = [
+            (
+                "holding select",
+                &[
+                    Press(Command::Select, 0, select),
+                    Press(Command::Select, 200, None),
+                    Press(Command::Select, 400, None),
+                    Press(Command::Select, 600, None),
+                    Press(Command::Select, 800, None),
+                ],
+            ),
+            (
+                "select after a release or a pause",
+                &[
+                    Press(Command::Select, 0, select),
+                    Release,
+                    Press(Command::Select, 50, select),
+                    Press(Command::Select, 2000, select),
+                ],
+            ),
+            (
+                "holding an arrow",
+                &[
+                    Press(Command::Right, 0, Some(Command::Right)),
+                    Press(Command::Right, 200, Some(Command::Right)),
+                ],
+            ),
+        ];
+        for (name, keys) in cases {
+            let mut filter = KeyFilter::default();
+            let start = Instant::now();
+            for (step, key) in keys.iter().enumerate() {
+                match *key {
+                    Press(command, millis, passed) => assert_eq!(
+                        filter.press(command, start + Duration::from_millis(millis)),
+                        passed,
+                        "{name}, step {step}"
+                    ),
+                    Release => filter.release(),
+                }
+            }
+        }
     }
 
     const COLD: Duration = Duration::from_secs(45);
@@ -688,19 +686,30 @@ mod tests {
     }
 
     #[test]
-    fn plugging_in_after_ten_seconds_wakes_the_tv_once() {
-        let start = Instant::now();
-        let mut wake = running(start);
-        assert_eq!(replug(&mut wake, start, secs(10.0)), Greeting::Wake);
-        assert_eq!(wake.link_changed(true, true, start + secs(11.0)), Greeting::Announce);
-    }
-
-    #[test]
-    fn a_short_hot_plug_pulse_only_announces() {
-        let start = Instant::now();
-        let mut wake = running(start);
-        assert_eq!(replug(&mut wake, start, secs(0.5)), Greeting::Announce);
-        assert_eq!(replug(&mut wake, start + secs(1.0), secs(9.9)), Greeting::Announce);
+    fn replugging_wakes_only_after_ten_seconds_away() {
+        let cases: [(&str, &[(f64, f64, Greeting)]); 2] = [
+            ("ten seconds away", &[(0.0, 10.0, Greeting::Wake)]),
+            (
+                "short hot plug pulses",
+                &[(0.0, 0.5, Greeting::Announce), (1.0, 9.9, Greeting::Announce)],
+            ),
+        ];
+        for (name, replugs) in cases {
+            let start = Instant::now();
+            let mut wake = running(start);
+            for (at, absent, greeting) in replugs {
+                assert_eq!(
+                    replug(&mut wake, start + secs(*at), secs(*absent)),
+                    *greeting,
+                    "{name}, at {at}"
+                );
+            }
+            assert_eq!(
+                wake.link_changed(true, true, start + secs(60.0)),
+                Greeting::Announce,
+                "{name}, a change of valid address"
+            );
+        }
     }
 
     #[test]
@@ -713,26 +722,12 @@ mod tests {
     }
 
     #[test]
-    fn a_change_of_valid_address_never_wakes() {
-        let start = Instant::now();
-        let mut wake = running(start);
-        assert_eq!(wake.link_changed(true, true, start + secs(60.0)), Greeting::Announce);
-    }
-
-    #[test]
     fn the_wake_waits_for_a_logical_address() {
         let start = Instant::now();
         let mut wake = running(start);
         wake.link_changed(false, false, start);
         assert_eq!(wake.link_changed(true, false, start + secs(20.0)), Greeting::Silent);
         assert_eq!(wake.link_changed(true, true, start + secs(20.1)), Greeting::Wake);
-    }
-
-    #[test]
-    fn nothing_is_sent_without_a_logical_address() {
-        let start = Instant::now();
-        let mut wake = running(start);
-        assert_eq!(wake.link_changed(true, false, start + secs(1.0)), Greeting::Silent);
     }
 
     #[test]
@@ -746,35 +741,25 @@ mod tests {
     }
 
     #[test]
-    fn a_cold_boot_wakes_the_tv_once() {
-        let start = Instant::now();
-        let mut wake = TvWake::start(true, COLD, start);
-        assert_eq!(wake.link_changed(true, false, start), Greeting::Silent);
-        assert_eq!(wake.link_changed(true, true, start), Greeting::Wake);
-        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
-    }
-
-    #[test]
-    fn a_cold_boot_ends_at_three_minutes() {
-        let start = Instant::now();
-        let mut wake = TvWake::start(true, secs(179.9), start);
-        assert_eq!(wake.link_changed(true, true, start), Greeting::Wake);
-        let mut wake = TvWake::start(true, secs(180.0), start);
-        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
-    }
-
-    #[test]
-    fn a_restart_announces_without_waking() {
-        let start = Instant::now();
-        let mut wake = TvWake::start(true, WARM, start);
-        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
-    }
-
-    #[test]
-    fn an_unknown_uptime_counts_as_a_restart() {
-        let start = Instant::now();
-        let mut wake = TvWake::start(true, Duration::MAX, start);
-        assert_eq!(wake.link_changed(true, true, start), Greeting::Announce);
+    fn start_wakes_only_after_a_cold_boot() {
+        let cases = [
+            (COLD, Greeting::Wake),
+            (secs(179.9), Greeting::Wake),
+            (secs(180.0), Greeting::Announce),
+            (WARM, Greeting::Announce),
+            (Duration::MAX, Greeting::Announce),
+        ];
+        for (uptime, greeting) in cases {
+            let start = Instant::now();
+            let mut wake = TvWake::start(true, uptime, start);
+            assert_eq!(wake.link_changed(true, false, start), Greeting::Silent, "{uptime:?}");
+            assert_eq!(wake.link_changed(true, true, start), greeting, "{uptime:?}");
+            assert_eq!(
+                wake.link_changed(true, true, start),
+                Greeting::Announce,
+                "{uptime:?}, once"
+            );
+        }
     }
 
     #[test]
@@ -796,24 +781,32 @@ mod tests {
     }
 
     #[test]
-    fn a_tv_that_is_on_again_can_be_woken_again() {
-        for opcode in [CecOpcode::RequestActiveSource, CecOpcode::SetStreamPath] {
+    fn only_the_tv_turning_on_lifts_the_standby_suppression() {
+        let cases = [
+            (CecLogicalAddress::Tv, CecOpcode::RequestActiveSource, Greeting::Wake),
+            (CecLogicalAddress::Tv, CecOpcode::SetStreamPath, Greeting::Wake),
+            (
+                CecLogicalAddress::Playback1,
+                CecOpcode::RequestActiveSource,
+                Greeting::Announce,
+            ),
+            (
+                CecLogicalAddress::Tv,
+                CecOpcode::GiveDevicePowerStatus,
+                Greeting::Announce,
+            ),
+        ];
+        for (initiator, opcode, greeting) in cases {
             let start = Instant::now();
             let mut wake = running(start);
             wake.heard(CecLogicalAddress::Tv, CecOpcode::Standby);
-            wake.heard(CecLogicalAddress::Tv, opcode);
-            assert_eq!(replug(&mut wake, start, secs(60.0)), Greeting::Wake, "{opcode:?}");
+            wake.heard(initiator, opcode);
+            assert_eq!(
+                replug(&mut wake, start, secs(60.0)),
+                greeting,
+                "{initiator:?} {opcode:?}"
+            );
         }
-    }
-
-    #[test]
-    fn only_the_tv_can_lift_the_suppression() {
-        let start = Instant::now();
-        let mut wake = running(start);
-        wake.heard(CecLogicalAddress::Tv, CecOpcode::Standby);
-        wake.heard(CecLogicalAddress::Playback1, CecOpcode::RequestActiveSource);
-        wake.heard(CecLogicalAddress::Tv, CecOpcode::GiveDevicePowerStatus);
-        assert_eq!(replug(&mut wake, start, secs(60.0)), Greeting::Announce);
     }
 
     #[test]

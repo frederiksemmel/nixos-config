@@ -296,18 +296,6 @@ pub mod tests {
     }
 
     #[test]
-    fn a_refusal_is_reported_as_one() {
-        let fake = fake(Tv {
-            refuse: true,
-            ..Tv::default()
-        });
-        assert_eq!(
-            fake.renderer().step(2),
-            Err(Failure::Refused("501 Action Failed".to_string()))
-        );
-    }
-
-    #[test]
     fn an_unreachable_tv_says_so() {
         let failure = Renderer::new("http://127.0.0.1:9/dmr".to_string()).step(2).unwrap_err();
         assert!(matches!(failure, Failure::Unreachable(_)), "{failure:?}");

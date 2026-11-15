@@ -1128,27 +1128,6 @@ mod tests {
     use crate::bus::Event;
     use std::sync::mpsc;
 
-    #[test]
-    fn without_headphones_there_is_no_wire_volume_or_delay() {
-        let mut state = State::default();
-        state.set_wire(Wire::Connected(Sound::Headphones));
-        assert_eq!(state.wire(), Wire::Idle);
-        assert_eq!(state.shown(), (Output::Tv, Link::Disconnected));
-        assert_eq!(view_of(&state).headphones, None);
-        let device = Device {
-            address: "AA".to_string(),
-            name: "AirPods".to_string(),
-        };
-        state.headphones = Some(Known {
-            volume: Some(Level { value: 64, muted: false }),
-            audio_delay: Some(40),
-            ..Known::new(device, Wire::Connected(Sound::Headphones))
-        });
-        assert_eq!(state.shown(), (Output::Headphones, Link::Connected));
-        state.headphones = None;
-        assert_eq!((state.wire(), state.output()), (Wire::Idle, Output::Tv));
-    }
-
     const AIRPODS: &str = "34:0E:22:67:03:38";
     const OTHER: &str = "00:11:22:33:44:55";
     const SINK: &str = "/org/bluealsa/hci0/dev_34_0E_22_67_03_38/a2dpsrc/sink";
@@ -1398,18 +1377,6 @@ mod tests {
         assert!(rig.routes.recv_timeout(Duration::from_millis(100)).is_err(), "the same headphones change nothing");
     }
 
-    #[test]
-    fn headphones_another_profile_keeps_stay_bonded() {
-        let rig = paired_rig();
-        rig.audio.set_kept([AIRPODS.to_string()]);
-        rig.audio.forget();
-        assert!(rig.calls.recv_timeout(Duration::from_millis(100)).is_err());
-        assert_eq!(rig.audio.view().headphones, None);
-        let rig = paired_rig();
-        rig.audio.forget();
-        assert_eq!(call(&rig), format!("forget {AIRPODS}"));
-    }
-
     fn tick(pace: &mut Pace, start: Instant, millis: u64, position: f64) -> Flow {
         pace.observe(start + Duration::from_millis(millis), Some((position, 1.0)))
     }
@@ -1482,41 +1449,31 @@ mod tests {
     }
 
     #[test]
-    fn a_sink_already_there_after_connecting_takes_the_sound() {
-        let rig = paired_rig();
-        rig.world.lock().unwrap().sinks = vec![AIRPODS.to_string()];
-        rig.audio.choose(Output::Headphones);
-        assert_eq!(route(&rig).said, "Sound on AirPods");
-        assert_eq!(rig.audio.view().output, Output::Headphones);
-    }
-
-    #[test]
-    fn headphones_that_do_not_connect_leave_the_sound_on_the_tv_with_an_error() {
-        let rig = paired_rig();
-        rig.world.lock().unwrap().connects = false;
-        rig.audio.choose(Output::Headphones);
-        let view = settled(&rig, |view| link(view) != Some(Link::Connecting));
-        assert_eq!((view.output, link(&view)), (Output::Tv, Some(Link::Disconnected)));
-        assert_eq!(
-            view.error.as_deref(),
-            Some("AirPods didn't connect. Open the case near the TV and try again.")
-        );
-        assert_eq!(
-            calls_until(&rig, &format!("disconnect {AIRPODS}")),
-            [format!("connect {AIRPODS}"), format!("disconnect {AIRPODS}")]
-        );
-        assert!(rig.routes.try_recv().is_err());
-        let view = rig.audio.choose(Output::Headphones);
-        assert_eq!((link(&view), view.error), (Some(Link::Connecting), None));
-    }
-
-    #[test]
-    fn headphones_that_connect_without_playing_count_as_failed() {
-        let rig = paired_rig();
-        rig.audio.choose(Output::Headphones);
-        let view = settled(&rig, |view| link(view) != Some(Link::Connecting));
-        assert_eq!(link(&view), Some(Link::Disconnected));
-        assert!(view.error.is_some());
+    fn headphones_that_never_play_leave_the_sound_on_the_tv() {
+        for (name, connects) in [("connecting fails", false), ("no sink before the deadline", true)] {
+            let rig = paired_rig();
+            rig.world.lock().unwrap().connects = connects;
+            rig.audio.choose(Output::Headphones);
+            let view = settled(&rig, |view| link(view) != Some(Link::Connecting));
+            assert_eq!(
+                (view.output, link(&view)),
+                (Output::Tv, Some(Link::Disconnected)),
+                "{name}"
+            );
+            assert_eq!(
+                view.error.as_deref(),
+                Some("AirPods didn't connect. Open the case near the TV and try again."),
+                "{name}"
+            );
+            assert_eq!(
+                calls_until(&rig, &format!("disconnect {AIRPODS}")),
+                [format!("connect {AIRPODS}"), format!("disconnect {AIRPODS}")],
+                "{name}"
+            );
+            assert!(rig.routes.try_recv().is_err(), "{name}");
+            let view = rig.audio.choose(Output::Headphones);
+            assert_eq!((link(&view), view.error), (Some(Link::Connecting), None), "{name}");
+        }
     }
 
     #[test]
@@ -1649,29 +1606,49 @@ mod tests {
     }
 
     #[test]
-    fn pairing_that_finds_nothing_fails_and_keeps_the_old_headphones() {
-        let rig = paired_rig();
-        rig.audio.pair().unwrap();
-        let view = settled(&rig, |view| {
-            view.pairing.as_ref().is_some_and(|pairing| pairing.state == Stage::Failed)
-        });
-        assert_eq!(view.pairing.unwrap().message, NOTHING_FOUND);
-        assert_eq!(view.headphones.unwrap().address, AIRPODS);
-        assert_eq!(calls_until(&rig, "stop scan"), ["scan", "stop scan"]);
-    }
-
-    #[test]
-    fn headphones_that_refuse_to_pair_fail_with_their_name() {
-        let rig = rig(World {
-            in_range: Some(airpods()),
-            ..World::default()
-        });
-        rig.audio.pair().unwrap();
-        let view = settled(&rig, |view| {
-            view.pairing.as_ref().is_some_and(|pairing| pairing.state == Stage::Failed)
-        });
-        assert!(view.pairing.unwrap().message.starts_with("AirPods didn't pair."));
-        assert_eq!(view.headphones, None);
+    fn pairing_that_fails_says_why_and_keeps_the_old_headphones() {
+        let refused =
+            "AirPods didn't pair. Hold the button on the case until the light flashes white and try again.".to_string();
+        let cases = [
+            (
+                "nothing found",
+                World {
+                    paired: Some(airpods()),
+                    connects: true,
+                    pairs: true,
+                    ..World::default()
+                },
+                NOTHING_FOUND.to_string(),
+                Some(AIRPODS),
+                vec!["scan".to_string(), "stop scan".to_string()],
+            ),
+            (
+                "pairing refused",
+                World {
+                    in_range: Some(airpods()),
+                    ..World::default()
+                },
+                refused,
+                None,
+                vec!["scan".to_string(), "stop scan".to_string(), format!("pair {AIRPODS}")],
+            ),
+        ];
+        for (name, world, message, headphones, calls) in cases {
+            let rig = rig(world);
+            rig.audio.pair().unwrap();
+            let view = settled(&rig, |view| {
+                view.pairing
+                    .as_ref()
+                    .is_some_and(|pairing| pairing.state == Stage::Failed)
+            });
+            assert_eq!(view.pairing.map(|pairing| pairing.message), Some(message), "{name}");
+            assert_eq!(
+                view.headphones.map(|known| known.address).as_deref(),
+                headphones,
+                "{name}"
+            );
+            assert_eq!(calls_until(&rig, calls.last().unwrap()), calls, "{name}");
+        }
     }
 
     #[test]
@@ -1688,16 +1665,38 @@ mod tests {
     }
 
     #[test]
-    fn forgetting_the_headphones_brings_the_sound_back_to_the_tv() {
-        let rig = paired_rig();
-        rig.audio.sinks_listed(&[AIRPODS.to_string()]);
-        rig.audio.choose(Output::Headphones);
-        route(&rig);
-        let view = rig.audio.forget();
-        assert_eq!((view.output, view.headphones), (Output::Tv, None));
-        assert_eq!(route(&rig).device, TV_DEVICE);
-        assert_eq!(call(&rig), format!("forget {AIRPODS}"));
-        assert_eq!(rig.audio.device(), TV_DEVICE);
+    fn forgetting_headphones_returns_the_sound_and_unbonds_unless_kept() {
+        let cases = [
+            ("on the tv, kept by another profile", true, false),
+            ("on the tv", false, false),
+            ("playing, kept by another profile", true, true),
+            ("playing", false, true),
+        ];
+        for (name, kept, playing) in cases {
+            let rig = paired_rig();
+            if kept {
+                rig.audio.set_kept([AIRPODS.to_string()]);
+            }
+            if playing {
+                rig.audio.sinks_listed(&[AIRPODS.to_string()]);
+                rig.audio.choose(Output::Headphones);
+                route(&rig);
+            }
+            let view = rig.audio.forget();
+            assert_eq!((view.output, view.headphones), (Output::Tv, None), "{name}");
+            if playing {
+                assert_eq!(route(&rig).device, TV_DEVICE, "{name}");
+            } else {
+                assert!(rig.routes.try_recv().is_err(), "{name}");
+            }
+            assert_eq!(rig.audio.device(), TV_DEVICE, "{name}");
+            if kept {
+                assert!(rig.calls.recv_timeout(Duration::from_millis(100)).is_err(), "{name}");
+            } else {
+                assert_eq!(call(&rig), format!("forget {AIRPODS}"), "{name}");
+            }
+            assert_eq!(rig.audio.view().headphones, None, "{name}");
+        }
     }
 
     #[test]

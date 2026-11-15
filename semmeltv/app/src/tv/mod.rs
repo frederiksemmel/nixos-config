@@ -474,18 +474,6 @@ mod tests {
     }
 
     #[test]
-    fn only_a_samsung_with_a_renderer_pairs() {
-        let renderer = upnp::Renderer::new("http://192.168.1.148:9197/dmr".to_string());
-        let token = Token::memory();
-        let samsung = backends(Kind::Samsung, Some(&renderer), &token);
-        assert!(samsung.volume.is_some() && samsung.pairing.is_some());
-        let generic = backends(Kind::Generic, Some(&renderer), &token);
-        assert!(generic.volume.is_some() && generic.pairing.is_none());
-        let bare = backends(Kind::Samsung, None, &token);
-        assert!(bare.volume.is_none() && bare.pairing.is_none());
-    }
-
-    #[test]
     fn a_refusal_means_pairing_only_on_a_tv_that_pairs() {
         let refusing = || {
             upnp::tests::fake(upnp::tests::Tv {

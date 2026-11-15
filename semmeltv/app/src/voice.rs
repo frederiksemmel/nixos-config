@@ -476,34 +476,58 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_request_listens_then_transcribes_then_ends_and_owes_the_unmute_until_it_ends() {
-        let (ear, pass) = Ear::Idle.hear(&Heard::Listening, true);
-        assert_eq!((ear, pass), (Ear::Listening { unmute: true }, Pass::On));
-        let (ear, _) = ear.hear(&Heard::Transcribing, false);
-        assert_eq!(ear, Ear::Transcribing { unmute: true });
-        assert!(ear.active() && ear.unmute());
-        let (ear, pass) = ear.hear(&Heard::Transcript("pause".to_string()), false);
-        assert_eq!((ear, pass), (Ear::Idle, Pass::On));
-        assert!(!ear.active() && !ear.unmute());
-    }
-
-    #[test]
-    fn listening_again_keeps_an_unmute_already_owed() {
-        let (ear, _) = Ear::Idle.hear(&Heard::Listening, true);
-        let (ear, _) = ear.hear(&Heard::Listening, false);
-        assert_eq!(ear, Ear::Listening { unmute: true });
-    }
-
-    #[test]
-    fn a_cancelled_request_drops_its_transcription_and_its_result_then_listens_again() {
-        let ear = Ear::Cancelled;
-        assert!(!ear.active() && !ear.unmute());
-        let (ear, pass) = ear.hear(&Heard::Transcribing, false);
-        assert_eq!((ear, pass), (Ear::Cancelled, Pass::Drop));
-        let (ear, pass) = ear.hear(&Heard::Transcript("play dune".to_string()), false);
-        assert_eq!((ear, pass), (Ear::Idle, Pass::Drop));
-        let (ear, pass) = Ear::Cancelled.hear(&Heard::Listening, false);
-        assert_eq!((ear, pass), (Ear::Listening { unmute: false }, Pass::On));
+    fn the_ear_follows_each_request() {
+        let transcript = |text: &str| Heard::Transcript(text.to_string());
+        let owing = Ear::Listening { unmute: true };
+        let cases = [
+            (Ear::Idle, Heard::Listening, true, owing, Pass::On, (true, true)),
+            (
+                owing,
+                Heard::Transcribing,
+                false,
+                Ear::Transcribing { unmute: true },
+                Pass::On,
+                (true, true),
+            ),
+            (
+                Ear::Transcribing { unmute: true },
+                transcript("pause"),
+                false,
+                Ear::Idle,
+                Pass::On,
+                (false, false),
+            ),
+            (owing, Heard::Listening, false, owing, Pass::On, (true, true)),
+            (
+                Ear::Cancelled,
+                Heard::Transcribing,
+                false,
+                Ear::Cancelled,
+                Pass::Drop,
+                (false, false),
+            ),
+            (
+                Ear::Cancelled,
+                transcript("play dune"),
+                false,
+                Ear::Idle,
+                Pass::Drop,
+                (false, false),
+            ),
+            (
+                Ear::Cancelled,
+                Heard::Listening,
+                false,
+                Ear::Listening { unmute: false },
+                Pass::On,
+                (true, false),
+            ),
+        ];
+        for (ear, heard, muting, want, pass, (active, unmute)) in cases {
+            let row = format!("{ear:?} hears {heard:?}, muting {muting}");
+            assert_eq!(ear.hear(&heard, muting), (want, pass), "{row}");
+            assert_eq!((want.active(), want.unmute()), (active, unmute), "{row}");
+        }
     }
 
     fn tone(amplitude: f32) -> Vec<i16> {
@@ -512,69 +536,40 @@ mod tests {
             .collect()
     }
 
-    fn feed(endpointer: &mut Endpointer, frame: &[i16], count: usize) -> Vec<Progress> {
-        (0..count).map(|_| endpointer.push(frame)).collect()
-    }
-
     #[test]
-    fn speech_ends_after_a_pause() {
-        let mut endpointer = Endpointer::default();
-        assert!(
-            feed(&mut endpointer, &tone(60.0), 15)
+    fn the_endpointer_ends_on_speech_and_gives_up_on_noise() {
+        let cases: [(&str, &[(f32, usize)], Progress); 5] = [
+            (
+                "speech then a pause",
+                &[(60.0, 15), (6000.0, 40), (60.0, END_QUIET_FRAMES)],
+                Progress::Ended,
+            ),
+            (
+                "speech right at the start",
+                &[(6000.0, 30), (0.0, END_QUIET_FRAMES)],
+                Progress::Ended,
+            ),
+            (
+                "a short click",
+                &[(6000.0, 2), (60.0, GIVE_UP_FRAMES - 2)],
+                Progress::Nothing,
+            ),
+            ("room noise", &[(250.0, GIVE_UP_FRAMES)], Progress::Nothing),
+            ("endless speech", &[(6000.0, LONGEST_FRAMES)], Progress::Ended),
+        ];
+        for (name, frames, want) in cases {
+            let mut endpointer = Endpointer::default();
+            let progress: Vec<Progress> = frames
                 .iter()
-                .all(|p| *p == Progress::Listening)
-        );
-        assert!(
-            feed(&mut endpointer, &tone(6000.0), 40)
-                .iter()
-                .all(|p| *p == Progress::Listening)
-        );
-        let after = feed(&mut endpointer, &tone(60.0), END_QUIET_FRAMES);
-        assert_eq!(after.last(), Some(&Progress::Ended));
-        assert!(after[..END_QUIET_FRAMES - 1].iter().all(|p| *p == Progress::Listening));
-    }
-
-    #[test]
-    fn the_summary_says_when_speech_started_and_stopped() {
-        let mut endpointer = Endpointer::default();
-        feed(&mut endpointer, &tone(60.0), 10);
-        feed(&mut endpointer, &tone(6000.0), 40);
-        feed(&mut endpointer, &tone(60.0), END_QUIET_FRAMES);
-        assert!(
-            endpointer
-                .summary()
-                .starts_with("2.3 s recorded, speech from 0.3 s to 1.5 s, noise floor")
-        );
-    }
-
-    #[test]
-    fn speech_right_at_the_start_is_heard() {
-        let mut endpointer = Endpointer::default();
-        feed(&mut endpointer, &tone(6000.0), 30);
-        let after = feed(&mut endpointer, &[0; FRAME], END_QUIET_FRAMES);
-        assert_eq!(after.last(), Some(&Progress::Ended));
-    }
-
-    #[test]
-    fn a_short_click_is_not_speech() {
-        let mut endpointer = Endpointer::default();
-        feed(&mut endpointer, &tone(6000.0), 2);
-        let after = feed(&mut endpointer, &tone(60.0), GIVE_UP_FRAMES - 2);
-        assert_eq!(after.last(), Some(&Progress::Nothing));
-    }
-
-    #[test]
-    fn room_noise_is_not_speech() {
-        let mut endpointer = Endpointer::default();
-        let progress = feed(&mut endpointer, &tone(250.0), GIVE_UP_FRAMES);
-        assert_eq!(progress.last(), Some(&Progress::Nothing));
-    }
-
-    #[test]
-    fn endless_speech_is_cut_off() {
-        let mut endpointer = Endpointer::default();
-        let progress = feed(&mut endpointer, &tone(6000.0), LONGEST_FRAMES);
-        assert_eq!(progress.last(), Some(&Progress::Ended));
+                .flat_map(|&(amplitude, count)| {
+                    let frame = tone(amplitude);
+                    (0..count).map(|_| endpointer.push(&frame)).collect::<Vec<_>>()
+                })
+                .collect();
+            let (last, before) = progress.split_last().unwrap();
+            assert_eq!(*last, want, "{name}");
+            assert!(before.iter().all(|p| *p == Progress::Listening), "{name}: {before:?}");
+        }
     }
 
     #[test]

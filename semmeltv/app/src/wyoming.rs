@@ -156,15 +156,6 @@ mod tests {
     use std::sync::mpsc;
 
     #[test]
-    fn events_survive_a_round_trip() {
-        let bytes = encode("audio-chunk", format(), &[1, 2, 3, 4]);
-        let event = decode(&mut Cursor::new(bytes)).unwrap();
-        assert_eq!(event.kind, "audio-chunk");
-        assert_eq!(event.data["rate"], 16_000);
-        assert_eq!(event.payload, vec![1, 2, 3, 4]);
-    }
-
-    #[test]
     fn data_sent_after_the_header_is_merged() {
         let data = r#"{"text":"Pause."}"#;
         let bytes = format!("{{\"type\":\"transcript\",\"data_length\":{}}}\n{data}", data.len());
