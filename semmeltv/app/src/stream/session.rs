@@ -1,5 +1,6 @@
 use super::fmp4::{self, Init};
 use super::plan::Plan;
+use crate::audio;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -164,7 +165,7 @@ impl Session {
         if self.spec.copy_audio {
             command.args(["-c:a", "copy"]);
         } else {
-            command.args(["-c:a", "aac", "-ac", "2", "-b:a", "192k"]);
+            command.args(["-af", audio::STEREO, "-c:a", "aac", "-b:a", "256k"]);
         }
         command
             .args([

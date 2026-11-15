@@ -1,3 +1,4 @@
+use crate::audio;
 use crate::command::Command;
 use crate::display::{self, Video};
 use crate::card::{self, Billing};
@@ -542,6 +543,7 @@ impl Player {
             .arg("--keep-open")
             .arg("--hwdec=drm")
             .arg(format!("--audio-device={audio_device}"))
+            .arg(format!("--af=lavfi=[{}]", audio::STEREO))
             .arg("--gpu-context=wayland")
             .arg("--profile=fast")
             .arg("--video-sync=display-resample")

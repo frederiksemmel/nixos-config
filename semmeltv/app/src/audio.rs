@@ -8,6 +8,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 pub const TV_DEVICE: &str = "auto";
+pub const STEREO: &str = "aformat=channel_layouts=stereo,alimiter=limit=-1dB:level=false";
 const COMMAND_TIMEOUT_SECONDS: &str = "20";
 const HEADPHONE_ICONS: [&str; 2] = ["audio-headphones", "audio-headset"];
 const MONITOR_RESTART: Duration = Duration::from_secs(2);
