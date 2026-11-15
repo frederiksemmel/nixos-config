@@ -2130,7 +2130,7 @@ html[data-feedback] .feedback-open { background: var(--text); color: var(--bg); 
 .comment { display: grid; gap: 2px; padding: 8px 12px; border-radius: 12px; background: var(--bg); }
 .comment[hidden] { display: none; }
 .comment.claude { border-left: 3px solid var(--accent); }
-.comment-who { font-size: 13px; color: var(--muted); }
+.comment-who { display: flex; gap: 6px; align-items: baseline; font-size: 13px; color: var(--muted); }
 .comment-who b { color: var(--text); }
 .comment-text { font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
 .report-say { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; width: 100%; }
