@@ -9,8 +9,9 @@ and nginx expose it; on semmeltv5 it is at
 session, see Sign-in.
 
 Requests that change something on the TV take the same path as voice. The app
-turns them into an action, resolves it against the library and progress, and
-performs it on the UI thread. They answer with what happened:
+turns them into a request to its core, which resolves it against the library
+and progress and performs it, without waiting for the TV's screen. They answer
+with what happened:
 
     { "message": "Playing Outlander · season 2, episode 1", "ok": true }
 

@@ -1,12 +1,12 @@
 use super::Db;
 use super::models::{self, Invite as StoredInvite, Passkey, Profile as StoredProfile, Session as StoredSession};
-use crate::auth::store::{AuthStore, Invite, NewProfile, Profile, Role, Session, StoreError, Stored, StoredPasskey};
+use crate::auth::store::{Invite, NewProfile, Profile, Role, Session, StoreError, Stored, StoredPasskey};
 use crate::profile::ProfileId;
 use toasty_core::driver::operation::TransactionMode;
 
-fn stored<T>(result: super::Result<T>) -> Stored<T> {
+fn stored<T>(result: toasty::Result<T>) -> Stored<T> {
     result.map_err(|error| {
-        if unique_violation(error.as_ref()) {
+        if unique_violation(&error) {
             StoreError::Taken
         } else {
             StoreError::Failed(error.to_string())
@@ -93,29 +93,30 @@ fn invite(stored: StoredInvite) -> Invite {
     }
 }
 
-impl AuthStore for Db {
-    fn profiles(&self) -> Stored<Vec<Profile>> {
-        let rows = stored(self.wait(|mut db| async move {
+impl Db {
+    pub async fn profiles(&self) -> Stored<Vec<Profile>> {
+        let mut db = self.db.clone();
+        let rows = stored(
             StoredProfile::all()
                 .order_by(StoredProfile::fields().id().asc())
                 .exec(&mut db)
-                .await
-        }))?;
+                .await,
+        )?;
         Ok(rows.into_iter().map(profile).collect())
     }
 
-    fn profile(&self, id: ProfileId) -> Stored<Option<Profile>> {
-        let row = stored(self.wait(move |mut db| async move {
-            StoredProfile::filter_by_id(id.0).first().exec(&mut db).await
-        }))?;
+    pub async fn profile(&self, id: ProfileId) -> Stored<Option<Profile>> {
+        let mut db = self.db.clone();
+        let row = stored(StoredProfile::filter_by_id(id.0).first().exec(&mut db).await)?;
         Ok(row.map(profile))
     }
 
-    fn create_profile(&self, new: NewProfile, at: u64) -> Stored<Profile> {
-        if self.profiles()?.iter().any(|known| known.name.to_lowercase() == new.name.to_lowercase()) {
+    pub async fn create_profile(&self, new: NewProfile, at: u64) -> Stored<Profile> {
+        if self.profiles().await?.iter().any(|known| known.name.to_lowercase() == new.name.to_lowercase()) {
             return Err(StoreError::Taken);
         }
-        let row = stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        let row = stored(
             toasty::create!(StoredProfile {
                 name: new.name,
                 role: role(new.role),
@@ -123,61 +124,64 @@ impl AuthStore for Db {
                 created_at: seconds(at),
             })
             .exec(&mut db)
-            .await
-        }))?;
+            .await,
+        )?;
         Ok(profile(row))
     }
 
-    fn delete_profile(&self, id: ProfileId) -> Stored<bool> {
-        stored(self.wait(move |mut db| async move {
+    pub async fn delete_profile(&self, id: ProfileId) -> Stored<bool> {
+        let mut db = self.db.clone();
+        let deleted = async {
             let mut transaction = db.transaction().await?;
             let Some(found) = StoredProfile::filter_by_id(id.0).first().exec(&mut transaction).await? else {
                 return Ok(false);
             };
             found.delete().exec(&mut transaction).await?;
             transaction.commit().await?;
-            Ok(true)
-        }))
+            Ok::<_, toasty::Error>(true)
+        };
+        stored(deleted.await)
     }
 
-    fn set_password_hash(&self, id: ProfileId, hash: Option<&str>) -> Stored<()> {
+    pub async fn set_password_hash(&self, id: ProfileId, hash: Option<&str>) -> Stored<()> {
         let hash = hash.map(str::to_string);
-        let found = stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        let changed = async {
             let mut transaction = db.transaction().await?;
             let Some(mut found) = StoredProfile::filter_by_id(id.0).first().exec(&mut transaction).await? else {
                 return Ok(false);
             };
             toasty::update!(found { password_hash: hash }).exec(&mut transaction).await?;
             transaction.commit().await?;
-            Ok(true)
-        }))?;
-        if !found {
+            Ok::<_, toasty::Error>(true)
+        };
+        if !stored(changed.await)? {
             return Err(StoreError::Failed(format!("no profile {}", id.0)));
         }
         Ok(())
     }
 
-    fn passkeys(&self, profile: ProfileId) -> Stored<Vec<StoredPasskey>> {
-        let rows = stored(self.wait(move |mut db| async move {
+    pub async fn passkeys(&self, profile: ProfileId) -> Stored<Vec<StoredPasskey>> {
+        let mut db = self.db.clone();
+        let rows = stored(
             Passkey::filter_by_profile_id(profile.0)
                 .order_by(Passkey::fields().id().asc())
                 .exec(&mut db)
-                .await
-        }))?;
+                .await,
+        )?;
         Ok(rows.into_iter().map(passkey).collect())
     }
 
-    fn passkey(&self, credential_id: &[u8]) -> Stored<Option<StoredPasskey>> {
-        let credential_id = credential_id.to_vec();
-        let row = stored(self.wait(move |mut db| async move {
-            Passkey::filter_by_credential_id(credential_id).first().exec(&mut db).await
-        }))?;
+    pub async fn passkey(&self, credential_id: &[u8]) -> Stored<Option<StoredPasskey>> {
+        let mut db = self.db.clone();
+        let row = stored(Passkey::filter_by_credential_id(credential_id.to_vec()).first().exec(&mut db).await)?;
         Ok(row.map(passkey))
     }
 
-    fn add_passkey(&self, new: &StoredPasskey) -> Stored<()> {
+    pub async fn add_passkey(&self, new: &StoredPasskey) -> Stored<()> {
         let new = new.clone();
-        stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        stored(
             toasty::create!(Passkey {
                 profile_id: new.profile.0,
                 credential_id: new.credential_id,
@@ -188,27 +192,29 @@ impl AuthStore for Db {
                 last_used_at: new.last_used_at.map(seconds),
             })
             .exec(&mut db)
-            .await?;
-            Ok(())
-        }))
+            .await,
+        )?;
+        Ok(())
     }
 
-    fn update_passkey(&self, credential_id: &[u8], json: &str, used_at: u64) -> Stored<()> {
+    pub async fn update_passkey(&self, credential_id: &[u8], json: &str, used_at: u64) -> Stored<()> {
         let (credential_id, json) = (credential_id.to_vec(), json.to_string());
-        stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        stored(
             toasty::update!(Passkey::filter_by_credential_id(credential_id) {
                 passkey: json,
                 last_used_at: Some(seconds(used_at)),
             })
             .exec(&mut db)
-            .await?;
-            Ok(())
-        }))
+            .await,
+        )?;
+        Ok(())
     }
 
-    fn remove_passkey(&self, profile: ProfileId, credential_id: &[u8]) -> Stored<bool> {
+    pub async fn remove_passkey(&self, profile: ProfileId, credential_id: &[u8]) -> Stored<bool> {
         let credential_id = credential_id.to_vec();
-        stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        let removed = async {
             let fields = Passkey::fields();
             let mine = fields.profile_id().eq(profile.0).and(fields.credential_id().eq(credential_id));
             let mut transaction = db.transaction().await?;
@@ -217,13 +223,15 @@ impl AuthStore for Db {
                 Passkey::filter(mine).delete().exec(&mut transaction).await?;
             }
             transaction.commit().await?;
-            Ok(found.is_some())
-        }))
+            Ok::<_, toasty::Error>(found.is_some())
+        };
+        stored(removed.await)
     }
 
-    fn create_session(&self, new: &Session) -> Stored<()> {
+    pub async fn create_session(&self, new: &Session) -> Stored<()> {
         let new = new.clone();
-        stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        stored(
             toasty::create!(StoredSession {
                 token_hash: new.token_hash,
                 profile_id: new.profile.0,
@@ -233,64 +241,61 @@ impl AuthStore for Db {
                 label: new.label,
             })
             .exec(&mut db)
-            .await?;
-            Ok(())
-        }))
+            .await,
+        )?;
+        Ok(())
     }
 
-    fn session(&self, token_hash: &[u8]) -> Stored<Option<Session>> {
-        let token_hash = token_hash.to_vec();
-        let row = stored(self.wait(move |mut db| async move {
-            StoredSession::filter_by_token_hash(token_hash).first().exec(&mut db).await
-        }))?;
+    pub async fn session(&self, token_hash: &[u8]) -> Stored<Option<Session>> {
+        let mut db = self.db.clone();
+        let row = stored(StoredSession::filter_by_token_hash(token_hash.to_vec()).first().exec(&mut db).await)?;
         Ok(row.map(session))
     }
 
-    fn sessions(&self, profile: ProfileId) -> Stored<Vec<Session>> {
-        let rows = stored(self.wait(move |mut db| async move {
-            StoredSession::filter_by_profile_id(profile.0).exec(&mut db).await
-        }))?;
+    pub async fn sessions(&self, profile: ProfileId) -> Stored<Vec<Session>> {
+        let mut db = self.db.clone();
+        let rows = stored(StoredSession::filter_by_profile_id(profile.0).exec(&mut db).await)?;
         Ok(rows.into_iter().map(session).collect())
     }
 
-    fn touch_session(&self, token_hash: &[u8], last_seen_at: u64, expires_at: u64) -> Stored<()> {
+    pub async fn touch_session(&self, token_hash: &[u8], last_seen_at: u64, expires_at: u64) -> Stored<()> {
         let token_hash = token_hash.to_vec();
-        stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        stored(
             toasty::update!(StoredSession::filter_by_token_hash(token_hash) {
                 last_seen_at: seconds(last_seen_at),
                 expires_at: seconds(expires_at),
             })
             .exec(&mut db)
-            .await?;
-            Ok(())
-        }))
+            .await,
+        )?;
+        Ok(())
     }
 
-    fn delete_session(&self, token_hash: &[u8]) -> Stored<()> {
-        let token_hash = token_hash.to_vec();
-        stored(self.wait(move |mut db| async move {
-            StoredSession::filter_by_token_hash(token_hash).delete().exec(&mut db).await
-        }))
+    pub async fn delete_session(&self, token_hash: &[u8]) -> Stored<()> {
+        let mut db = self.db.clone();
+        stored(StoredSession::filter_by_token_hash(token_hash.to_vec()).delete().exec(&mut db).await)
     }
 
-    fn delete_sessions(&self, profile: ProfileId) -> Stored<()> {
-        stored(self.wait(move |mut db| async move {
-            StoredSession::filter_by_profile_id(profile.0).delete().exec(&mut db).await
-        }))
+    pub async fn delete_sessions(&self, profile: ProfileId) -> Stored<()> {
+        let mut db = self.db.clone();
+        stored(StoredSession::filter_by_profile_id(profile.0).delete().exec(&mut db).await)
     }
 
-    fn delete_expired_sessions(&self, now: u64) -> Stored<()> {
-        stored(self.wait(move |mut db| async move {
+    pub async fn delete_expired_sessions(&self, now: u64) -> Stored<()> {
+        let mut db = self.db.clone();
+        stored(
             StoredSession::filter(StoredSession::fields().expires_at().le(seconds(now)))
                 .delete()
                 .exec(&mut db)
-                .await
-        }))
+                .await,
+        )
     }
 
-    fn create_invite(&self, new: &Invite) -> Stored<()> {
+    pub async fn create_invite(&self, new: &Invite) -> Stored<()> {
         let new = new.clone();
-        stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        stored(
             toasty::create!(StoredInvite {
                 token_hash: new.token_hash,
                 profile_id: new.profile.0,
@@ -300,27 +305,27 @@ impl AuthStore for Db {
                 used_at: new.used_at.map(seconds),
             })
             .exec(&mut db)
-            .await?;
-            Ok(())
-        }))
+            .await,
+        )?;
+        Ok(())
     }
 
-    fn invite(&self, token_hash: &[u8]) -> Stored<Option<Invite>> {
-        let token_hash = token_hash.to_vec();
-        let row = stored(self.wait(move |mut db| async move {
-            StoredInvite::filter_by_token_hash(token_hash).first().exec(&mut db).await
-        }))?;
+    pub async fn invite(&self, token_hash: &[u8]) -> Stored<Option<Invite>> {
+        let mut db = self.db.clone();
+        let row = stored(StoredInvite::filter_by_token_hash(token_hash.to_vec()).first().exec(&mut db).await)?;
         Ok(row.map(invite))
     }
 
-    fn invites(&self) -> Stored<Vec<Invite>> {
-        let rows = stored(self.wait(|mut db| async move { StoredInvite::all().exec(&mut db).await }))?;
+    pub async fn invites(&self) -> Stored<Vec<Invite>> {
+        let mut db = self.db.clone();
+        let rows = stored(StoredInvite::all().exec(&mut db).await)?;
         Ok(rows.into_iter().map(invite).collect())
     }
 
-    fn use_invite(&self, token_hash: &[u8], at: u64) -> Stored<bool> {
+    pub async fn use_invite(&self, token_hash: &[u8], at: u64) -> Stored<bool> {
         let token_hash = token_hash.to_vec();
-        stored(self.wait(move |mut db| async move {
+        let mut db = self.db.clone();
+        let used = async {
             let mut transaction = db.transaction_builder().mode(TransactionMode::Immediate).begin().await?;
             let fields = StoredInvite::fields();
             let unused = StoredInvite::filter(fields.token_hash().eq(token_hash).and(fields.used_at().is_none()))
@@ -332,14 +337,14 @@ impl AuthStore for Db {
             };
             toasty::update!(unused { used_at: Some(seconds(at)) }).exec(&mut transaction).await?;
             transaction.commit().await?;
-            Ok(true)
-        }))
+            Ok::<_, toasty::Error>(true)
+        };
+        stored(used.await)
     }
 
-    fn delete_invites(&self, profile: ProfileId) -> Stored<()> {
-        stored(self.wait(move |mut db| async move {
-            StoredInvite::filter_by_profile_id(profile.0).delete().exec(&mut db).await
-        }))
+    pub async fn delete_invites(&self, profile: ProfileId) -> Stored<()> {
+        let mut db = self.db.clone();
+        stored(StoredInvite::filter_by_profile_id(profile.0).delete().exec(&mut db).await)
     }
 }
 
@@ -347,18 +352,17 @@ impl AuthStore for Db {
 mod tests {
     use super::*;
     use crate::auth::Auth;
-    use std::sync::Arc;
 
-    fn auth() -> (Auth, Db) {
-        let db = Db::memory();
-        let auth = Auth::new(Arc::new(db.clone()), &["https://tv.example.org".to_string()]).unwrap();
+    async fn auth() -> (Auth, Db) {
+        let db = Db::memory().await;
+        let auth = Auth::new(db.clone(), &["https://tv.example.org".to_string()]).unwrap();
         (auth, db)
     }
 
-    #[test]
-    fn the_household_is_there_from_the_start() {
-        let (auth, _) = auth();
-        let people = auth.people().unwrap();
+    #[tokio::test]
+    async fn the_household_is_there_from_the_start() {
+        let (auth, _) = auth().await;
+        let people = auth.people().await.unwrap();
         let names = people.iter().map(|person| person.name.as_str()).collect::<Vec<_>>();
         assert_eq!(names, ["Frederik", "Mami", "Miriam", "Ramu", "Guest"]);
         assert!(people[0].admin());
@@ -366,29 +370,29 @@ mod tests {
         assert_eq!(people[4].role, Role::Guest);
     }
 
-    #[test]
-    fn invites_sessions_and_passwords_round_trip_through_the_database() {
-        let (auth, db) = auth();
+    #[tokio::test]
+    async fn invites_sessions_and_passwords_round_trip_through_the_database() {
+        let (auth, db) = auth().await;
         let mami = ProfileId(2);
-        let invite = auth.invite(Some(ProfileId::FIRST), mami).unwrap();
-        let (profile, session) = auth.redeem(&invite, "iPhone · Safari").unwrap();
+        let invite = auth.invite(Some(ProfileId::FIRST), mami).await.unwrap();
+        let (profile, session) = auth.redeem(&invite, "iPhone · Safari").await.unwrap();
         assert_eq!(profile, mami);
-        assert!(auth.redeem(&invite, "again").is_err());
-        assert_eq!(auth.resolve(std::slice::from_ref(&session)).unwrap().person().unwrap().name, "Mami");
-        assert_eq!(db.sessions(mami).unwrap()[0].label, "iPhone · Safari");
+        assert!(auth.redeem(&invite, "again").await.is_err());
+        assert_eq!(auth.resolve(std::slice::from_ref(&session)).await.unwrap().person().unwrap().name, "Mami");
+        assert_eq!(db.sessions(mami).await.unwrap()[0].label, "iPhone · Safari");
 
-        auth.set_password(mami, "correct horse").unwrap();
-        assert!(auth.sign_in_with_password(mami, "correct horse", "iPad").is_ok());
-        assert!(auth.sign_in_with_password(mami, "wrong horse", "iPad").is_err());
-        assert_eq!(db.sessions(mami).unwrap().len(), 2);
+        auth.set_password(mami, "correct horse").await.unwrap();
+        assert!(auth.sign_in_with_password(mami, "correct horse", "iPad").await.is_ok());
+        assert!(auth.sign_in_with_password(mami, "wrong horse", "iPad").await.is_err());
+        assert_eq!(db.sessions(mami).await.unwrap().len(), 2);
 
-        auth.sign_out_everywhere(mami).unwrap();
-        assert_eq!(auth.resolve(&[session]).unwrap().active, None);
+        auth.sign_out_everywhere(mami).await.unwrap();
+        assert_eq!(auth.resolve(&[session]).await.unwrap().active, None);
     }
 
-    #[test]
-    fn passkeys_are_unique_and_removing_a_profile_takes_its_rows_along() {
-        let (auth, db) = auth();
+    #[tokio::test]
+    async fn passkeys_are_unique_and_removing_a_profile_takes_its_rows_along() {
+        let (auth, db) = auth().await;
         let key = StoredPasskey {
             profile: ProfileId(4),
             credential_id: vec![1, 2, 3],
@@ -398,16 +402,16 @@ mod tests {
             created_at: 1,
             last_used_at: None,
         };
-        db.add_passkey(&key).unwrap();
-        assert_eq!(db.add_passkey(&StoredPasskey { profile: ProfileId(3), ..key.clone() }), Err(StoreError::Taken));
-        db.update_passkey(&[1, 2, 3], "{\"x\":1}", 5).unwrap();
-        assert_eq!(db.passkey(&[1, 2, 3]).unwrap().unwrap().last_used_at, Some(5));
-        auth.invite(Some(ProfileId::FIRST), ProfileId(4)).unwrap();
-        auth.delete_profile(ProfileId::FIRST, ProfileId(4)).unwrap();
-        assert_eq!(db.passkey(&[1, 2, 3]).unwrap(), None);
-        assert!(db.invites().unwrap().is_empty());
-        assert_eq!(auth.create_profile("mami", Role::Viewer).unwrap_err(), crate::auth::Refusal::NameTaken);
-        let new = auth.create_profile("Oma", Role::Viewer).unwrap();
-        assert_eq!(auth.person(new.id).unwrap().name, "Oma");
+        db.add_passkey(&key).await.unwrap();
+        assert_eq!(db.add_passkey(&StoredPasskey { profile: ProfileId(3), ..key.clone() }).await, Err(StoreError::Taken));
+        db.update_passkey(&[1, 2, 3], "{\"x\":1}", 5).await.unwrap();
+        assert_eq!(db.passkey(&[1, 2, 3]).await.unwrap().unwrap().last_used_at, Some(5));
+        auth.invite(Some(ProfileId::FIRST), ProfileId(4)).await.unwrap();
+        auth.delete_profile(ProfileId::FIRST, ProfileId(4)).await.unwrap();
+        assert_eq!(db.passkey(&[1, 2, 3]).await.unwrap(), None);
+        assert!(db.invites().await.unwrap().is_empty());
+        assert_eq!(auth.create_profile("mami", Role::Viewer).await.unwrap_err(), crate::auth::Refusal::NameTaken);
+        let new = auth.create_profile("Oma", Role::Viewer).await.unwrap();
+        assert_eq!(auth.person(new.id).await.unwrap().name, "Oma");
     }
 }

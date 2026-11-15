@@ -359,6 +359,7 @@ pub fn load_listed(root: &Path, meta: &Path) -> Result<Library, String> {
     Ok(Library::from_manifest(root, &manifest, |_| true))
 }
 
+#[cfg(test)]
 pub fn load_saved(root: &Path, saved: &Path) -> Result<Library, String> {
     let manifest = Manifest::read(saved).map_err(|_| format!("No saved copy at {}", saved.display()))?;
     Ok(Library::from_manifest(root, &manifest, |_| true))

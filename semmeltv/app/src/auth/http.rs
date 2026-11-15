@@ -1,5 +1,5 @@
 use super::gate::{self, Gate};
-use super::{Auth, Outcome, Person, Refusal, Resolved, Role};
+use super::{Auth, Person, Refusal, Resolved, Role};
 use crate::profile::ProfileId;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
@@ -52,12 +52,6 @@ fn refused(refusal: Refusal) -> Response {
     (status(&refusal), Json(body)).into_response()
 }
 
-async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Outcome<T> + Send + 'static) -> Outcome<T> {
-    tokio::task::spawn_blocking(work)
-        .await
-        .unwrap_or_else(|error| Err(Refusal::Store(error.to_string())))
-}
-
 pub fn label(headers: &HeaderMap) -> String {
     let agent = headers.get(header::USER_AGENT).and_then(|value| value.to_str().ok()).unwrap_or("");
     let device = [
@@ -96,11 +90,11 @@ fn origin(auth: &Auth, headers: &HeaderMap) -> Result<String, Response> {
     }
 }
 
-fn signed_in(gate: &Gate, resolved: &Resolved, person: Person, token: String) -> Response {
+async fn signed_in(gate: &Gate, resolved: &Resolved, person: Person, token: String) -> Response {
     let mut tokens = vec![token];
     for (known, old) in resolved.active.iter().chain(&resolved.others) {
         if known.id == person.id {
-            if let Err(refusal) = gate.auth.sign_out(old) {
+            if let Err(refusal) = gate.auth.sign_out(old).await {
                 eprintln!("auth: ending a replaced session: {refusal}");
             }
         } else {
@@ -114,11 +108,10 @@ fn signed_in(gate: &Gate, resolved: &Resolved, person: Person, token: String) ->
 }
 
 async fn choices(State(gate): State<Gate>, Extension(resolved): Extension<Resolved>, headers: HeaderMap) -> Response {
-    let auth = gate.auth.clone();
     let here = gate::origin(&headers)
         .or_else(|| origin(&gate.auth, &headers).ok())
         .unwrap_or_default();
-    match blocking(move || auth.choices(&here)).await {
+    match gate.auth.choices(&here).await {
         Ok(choices) => {
             let active = resolved.person().map(|person| person.id);
             let on_device = resolved.others.iter().map(|(person, _)| person.id).collect::<Vec<_>>();
@@ -145,16 +138,13 @@ async fn me(
     Extension(resolved): Extension<Resolved>,
     headers: HeaderMap,
 ) -> Response {
-    let auth = gate.auth.clone();
     let here = origin(&gate.auth, &headers).unwrap_or_default();
-    let id = person.id;
-    let found = blocking(move || {
-        let passkeys = auth.passkeys(id, &here)?;
-        let password = auth.has_password(id)?;
-        Ok((passkeys, password))
-    })
-    .await;
-    match found {
+    let found = async {
+        let passkeys = gate.auth.passkeys(person.id, &here).await?;
+        let password = gate.auth.has_password(person.id).await?;
+        Ok::<_, Refusal>((passkeys, password))
+    };
+    match found.await {
         Ok((passkeys, password)) => Json(json!({
             "person": person,
             "others": resolved.others.iter().map(|(person, _)| person).collect::<Vec<_>>(),
@@ -179,15 +169,13 @@ async fn password_sign_in(
     headers: HeaderMap,
     Json(body): Json<PasswordSignIn>,
 ) -> Response {
-    let auth = gate.auth.clone();
     let label = label(&headers);
-    let signed = blocking(move || {
-        let token = auth.sign_in_with_password(body.profile, &body.password, &label)?;
-        Ok((auth.person(body.profile)?, token))
-    })
-    .await;
-    match signed {
-        Ok((person, token)) => signed_in(&gate, &resolved, person, token),
+    let signed = async {
+        let token = gate.auth.sign_in_with_password(body.profile, &body.password, &label).await?;
+        Ok::<_, Refusal>((gate.auth.person(body.profile).await?, token))
+    };
+    match signed.await {
+        Ok((person, token)) => signed_in(&gate, &resolved, person, token).await,
         Err(refusal) => refused(refusal),
     }
 }
@@ -204,16 +192,14 @@ async fn guest_sign_in(
     headers: HeaderMap,
     Json(body): Json<GuestSignIn>,
 ) -> Response {
-    let auth = gate.auth.clone();
     let label = label(&headers);
     let at_home = gate::at_home(&headers);
-    let signed = blocking(move || {
-        let token = auth.sign_in_as_guest(body.profile, at_home, &label)?;
-        Ok((auth.person(body.profile)?, token))
-    })
-    .await;
-    match signed {
-        Ok((person, token)) => signed_in(&gate, &resolved, person, token),
+    let signed = async {
+        let token = gate.auth.sign_in_as_guest(body.profile, at_home, &label).await?;
+        Ok::<_, Refusal>((gate.auth.person(body.profile).await?, token))
+    };
+    match signed.await {
+        Ok((person, token)) => signed_in(&gate, &resolved, person, token).await,
         Err(refusal) => refused(refusal),
     }
 }
@@ -229,8 +215,7 @@ async fn start_sign_in(State(gate): State<Gate>, headers: HeaderMap, Json(body):
         Ok(origin) => origin,
         Err(response) => return response,
     };
-    let auth = gate.auth.clone();
-    match blocking(move || auth.start_sign_in(&origin, body.profile)).await {
+    match gate.auth.start_sign_in(&origin, body.profile).await {
         Ok((ceremony, options)) => Json(json!({ "ceremony": ceremony, "options": options })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -253,15 +238,13 @@ async fn finish_sign_in(
         Ok(origin) => origin,
         Err(response) => return response,
     };
-    let auth = gate.auth.clone();
     let label = label(&headers);
-    let signed = blocking(move || {
-        let (profile, token) = auth.finish_sign_in(&origin, &body.ceremony, &body.credential, &label)?;
-        Ok((auth.person(profile)?, token))
-    })
-    .await;
-    match signed {
-        Ok((person, token)) => signed_in(&gate, &resolved, person, token),
+    let signed = async {
+        let (profile, token) = gate.auth.finish_sign_in(&origin, &body.ceremony, &body.credential, &label).await?;
+        Ok::<_, Refusal>((gate.auth.person(profile).await?, token))
+    };
+    match signed.await {
+        Ok((person, token)) => signed_in(&gate, &resolved, person, token).await,
         Err(refusal) => refused(refusal),
     }
 }
@@ -281,8 +264,7 @@ async fn switch(State(gate): State<Gate>, Extension(resolved): Extension<Resolve
     }
     let target = resolved.others.iter().find(|(person, _)| person.id == body.profile).cloned();
     let Some((person, token)) = target.filter(|(person, _)| !person.admin()) else {
-        let auth = gate.auth.clone();
-        let name = blocking(move || auth.person(body.profile)).await.map(|person| person.name);
+        let name = gate.auth.person(body.profile).await.map(|person| person.name);
         return match name {
             Ok(name) => (
                 StatusCode::UNAUTHORIZED,
@@ -294,7 +276,7 @@ async fn switch(State(gate): State<Gate>, Extension(resolved): Extension<Resolve
     };
     let mut tokens = vec![token];
     if active.admin() {
-        if let Err(refusal) = gate.auth.sign_out(&active_token) {
+        if let Err(refusal) = gate.auth.sign_out(&active_token).await {
             eprintln!("auth: signing an admin out on a switch: {refusal}");
         }
     } else {
@@ -314,9 +296,7 @@ async fn switch(State(gate): State<Gate>, Extension(resolved): Extension<Resolve
 
 async fn sign_out(State(gate): State<Gate>, Extension(resolved): Extension<Resolved>) -> Response {
     if let Some((_, token)) = &resolved.active {
-        let auth = gate.auth.clone();
-        let token = token.clone();
-        if let Err(refusal) = blocking(move || auth.sign_out(&token)).await {
+        if let Err(refusal) = gate.auth.sign_out(token).await {
             return refused(refusal);
         }
     }
@@ -328,8 +308,7 @@ async fn sign_out(State(gate): State<Gate>, Extension(resolved): Extension<Resol
 }
 
 async fn peek_invite(State(gate): State<Gate>, Path(token): Path<String>) -> Response {
-    let auth = gate.auth.clone();
-    match blocking(move || auth.peek_invite(&token)).await {
+    match gate.auth.peek_invite(&token).await {
         Ok(person) => Json(json!({ "person": person })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -341,15 +320,13 @@ async fn redeem(
     Path(token): Path<String>,
     headers: HeaderMap,
 ) -> Response {
-    let auth = gate.auth.clone();
     let label = label(&headers);
-    let signed = blocking(move || {
-        let (profile, session) = auth.redeem(&token, &label)?;
-        Ok((auth.person(profile)?, session))
-    })
-    .await;
-    match signed {
-        Ok((person, token)) => signed_in(&gate, &resolved, person, token),
+    let signed = async {
+        let (profile, session) = gate.auth.redeem(&token, &label).await?;
+        Ok::<_, Refusal>((gate.auth.person(profile).await?, session))
+    };
+    match signed.await {
+        Ok((person, token)) => signed_in(&gate, &resolved, person, token).await,
         Err(refusal) => refused(refusal),
     }
 }
@@ -365,8 +342,7 @@ async fn set_password(
     Extension(person): Extension<Person>,
     Json(body): Json<NewPassword>,
 ) -> Response {
-    let auth = gate.auth.clone();
-    match blocking(move || auth.set_password(person.id, &body.password)).await {
+    match gate.auth.set_password(person.id, &body.password).await {
         Ok(()) => Json(json!({ "ok": true, "message": "Password saved" })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -381,8 +357,7 @@ async fn start_registration(
         Ok(origin) => origin,
         Err(response) => return response,
     };
-    let auth = gate.auth.clone();
-    match blocking(move || auth.start_registration(&origin, person.id)).await {
+    match gate.auth.start_registration(&origin, person.id).await {
         Ok((ceremony, options)) => Json(json!({ "ceremony": ceremony, "options": options })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -405,9 +380,8 @@ async fn finish_registration(
         Ok(origin) => origin,
         Err(response) => return response,
     };
-    let auth = gate.auth.clone();
     let name = label(&headers);
-    match blocking(move || auth.finish_registration(&origin, person.id, &body.ceremony, &body.credential, &name)).await {
+    match gate.auth.finish_registration(&origin, person.id, &body.ceremony, &body.credential, &name).await {
         Ok(passkey) => Json(json!({ "ok": true, "message": "Passkey saved", "passkey": passkey })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -418,8 +392,7 @@ async fn remove_passkey(
     Extension(person): Extension<Person>,
     Path(id): Path<String>,
 ) -> Response {
-    let auth = gate.auth.clone();
-    match blocking(move || auth.remove_passkey(person.id, &id)).await {
+    match gate.auth.remove_passkey(person.id, &id).await {
         Ok(true) => Json(json!({ "ok": true, "message": "Passkey removed" })).into_response(),
         Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "No such passkey", "ok": false }))).into_response(),
         Err(refusal) => refused(refusal),
@@ -427,8 +400,7 @@ async fn remove_passkey(
 }
 
 async fn members(State(gate): State<Gate>) -> Response {
-    let auth = gate.auth.clone();
-    match blocking(move || auth.members()).await {
+    match gate.auth.members().await {
         Ok(members) => Json(json!({ "members": members })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -442,8 +414,7 @@ struct NewMember {
 }
 
 async fn create_member(State(gate): State<Gate>, Json(body): Json<NewMember>) -> Response {
-    let auth = gate.auth.clone();
-    match blocking(move || auth.create_profile(&body.name, body.role)).await {
+    match gate.auth.create_profile(&body.name, body.role).await {
         Ok(person) => Json(json!({ "ok": true, "message": format!("{} added", person.name), "person": person }))
             .into_response(),
         Err(refusal) => refused(refusal),
@@ -455,14 +426,12 @@ async fn delete_member(
     Extension(person): Extension<Person>,
     Path(id): Path<i64>,
 ) -> Response {
-    let auth = gate.auth.clone();
-    let removed = blocking(move || {
-        let name = auth.person(ProfileId(id))?.name;
-        auth.delete_profile(person.id, ProfileId(id))?;
-        Ok(name)
-    })
-    .await;
-    match removed {
+    let removed = async {
+        let name = gate.auth.person(ProfileId(id)).await?.name;
+        gate.auth.delete_profile(person.id, ProfileId(id)).await?;
+        Ok::<_, Refusal>(name)
+    };
+    match removed.await {
         Ok(name) => Json(json!({ "ok": true, "message": format!("{name} removed") })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -478,13 +447,11 @@ async fn invite(
         Ok(origin) => origin,
         Err(response) => return response,
     };
-    let auth = gate.auth.clone();
-    let made = blocking(move || {
-        let name = auth.person(ProfileId(id))?.name;
-        Ok((name, auth.invite(Some(person.id), ProfileId(id))?))
-    })
-    .await;
-    match made {
+    let made = async {
+        let name = gate.auth.person(ProfileId(id)).await?.name;
+        Ok::<_, Refusal>((name, gate.auth.invite(Some(person.id), ProfileId(id)).await?))
+    };
+    match made.await {
         Ok((name, token)) => Json(json!({
             "ok": true,
             "message": format!("Invite link for {name}"),
@@ -497,14 +464,12 @@ async fn invite(
 }
 
 async fn sign_out_member(State(gate): State<Gate>, Path(id): Path<i64>) -> Response {
-    let auth = gate.auth.clone();
-    let done = blocking(move || {
-        let name = auth.person(ProfileId(id))?.name;
-        auth.sign_out_everywhere(ProfileId(id))?;
-        Ok(name)
-    })
-    .await;
-    match done {
+    let done = async {
+        let name = gate.auth.person(ProfileId(id)).await?.name;
+        gate.auth.sign_out_everywhere(ProfileId(id)).await?;
+        Ok::<_, Refusal>(name)
+    };
+    match done.await {
         Ok(name) => Json(json!({ "ok": true, "message": format!("{name} is signed out everywhere") })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -533,10 +498,9 @@ mod tests {
         assert_eq!(label(&HeaderMap::new()), "Browser");
     }
 
-    #[test]
-    fn the_origin_comes_from_the_request_and_must_be_known() {
-        let store = std::sync::Arc::new(super::super::memory::MemoryStore::default());
-        let auth = Auth::new(store, &["https://tv.example.org".to_string()]).unwrap();
+    #[tokio::test]
+    async fn the_origin_comes_from_the_request_and_must_be_known() {
+        let auth = Auth::new(crate::db::Db::memory().await, &["https://tv.example.org".to_string()]).unwrap();
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, HeaderValue::from_static("tv.example.org"));
         assert_eq!(origin(&auth, &headers).unwrap(), "https://tv.example.org");

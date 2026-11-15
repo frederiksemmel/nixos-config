@@ -1,4 +1,5 @@
-use crate::api::{self, Ask, Request};
+use crate::api;
+use crate::core::{Core, Request};
 use crate::library::{Item, Library};
 use crate::offline;
 use crate::progress::Progress;
@@ -446,7 +447,7 @@ impl Board {
         *self.0.write().unwrap() = Some(report);
     }
 
-    fn get(&self) -> Option<Report> {
+    pub fn get(&self) -> Option<Report> {
         self.0.read().unwrap().clone()
     }
 }
@@ -456,22 +457,16 @@ pub enum Change {
     Remove(Title),
 }
 
-#[derive(Clone)]
-struct Endpoint {
-    board: Board,
-    app: Ask,
-}
-
-pub fn routes<S: Clone + Send + Sync + 'static>(board: Board, app: Ask) -> Router<S> {
+pub fn routes<S: Clone + Send + Sync + 'static>(core: Core) -> Router<S> {
     Router::new()
         .route("/api/storage", get(show))
         .route("/api/storage/remove", post(remove))
-        .with_state(Endpoint { board, app })
+        .with_state(core)
 }
 
-async fn show(State(endpoint): State<Endpoint>) -> Response {
+async fn show(State(core): State<Core>) -> Response {
     use axum::response::IntoResponse;
-    match endpoint.board.get() {
+    match core.storage() {
         Some(report) => Json(report).into_response(),
         None => api::problem(
             axum::http::StatusCode::NOT_FOUND,
@@ -480,8 +475,8 @@ async fn show(State(endpoint): State<Endpoint>) -> Response {
     }
 }
 
-async fn remove(State(endpoint): State<Endpoint>, Json(title): Json<Title>) -> Response {
-    api::ask_app(&endpoint.app, Request::Storage(Change::Remove(title))).await
+async fn remove(State(core): State<Core>, Json(title): Json<Title>) -> Response {
+    api::ask(&core, Request::Storage(Change::Remove(title))).await
 }
 
 pub fn size(bytes: u64) -> String {

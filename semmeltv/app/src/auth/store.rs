@@ -84,31 +84,3 @@ impl fmt::Display for StoreError {
 }
 
 pub type Stored<T> = Result<T, StoreError>;
-
-pub trait AuthStore: Send + Sync {
-    fn profiles(&self) -> Stored<Vec<Profile>>;
-    fn profile(&self, id: ProfileId) -> Stored<Option<Profile>>;
-    fn create_profile(&self, profile: NewProfile, at: u64) -> Stored<Profile>;
-    fn delete_profile(&self, id: ProfileId) -> Stored<bool>;
-    fn set_password_hash(&self, id: ProfileId, hash: Option<&str>) -> Stored<()>;
-
-    fn passkeys(&self, profile: ProfileId) -> Stored<Vec<StoredPasskey>>;
-    fn passkey(&self, credential_id: &[u8]) -> Stored<Option<StoredPasskey>>;
-    fn add_passkey(&self, passkey: &StoredPasskey) -> Stored<()>;
-    fn update_passkey(&self, credential_id: &[u8], passkey: &str, used_at: u64) -> Stored<()>;
-    fn remove_passkey(&self, profile: ProfileId, credential_id: &[u8]) -> Stored<bool>;
-
-    fn create_session(&self, session: &Session) -> Stored<()>;
-    fn session(&self, token_hash: &[u8]) -> Stored<Option<Session>>;
-    fn sessions(&self, profile: ProfileId) -> Stored<Vec<Session>>;
-    fn touch_session(&self, token_hash: &[u8], last_seen_at: u64, expires_at: u64) -> Stored<()>;
-    fn delete_session(&self, token_hash: &[u8]) -> Stored<()>;
-    fn delete_sessions(&self, profile: ProfileId) -> Stored<()>;
-    fn delete_expired_sessions(&self, now: u64) -> Stored<()>;
-
-    fn create_invite(&self, invite: &Invite) -> Stored<()>;
-    fn invite(&self, token_hash: &[u8]) -> Stored<Option<Invite>>;
-    fn invites(&self) -> Stored<Vec<Invite>>;
-    fn use_invite(&self, token_hash: &[u8], at: u64) -> Stored<bool>;
-    fn delete_invites(&self, profile: ProfileId) -> Stored<()>;
-}

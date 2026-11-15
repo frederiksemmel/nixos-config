@@ -1,4 +1,5 @@
-use crate::api::{self, Ask, Pending, Request};
+use crate::api;
+use crate::core::{Core, Request};
 use crate::auth::gate::Who;
 use crate::db::{self, Db};
 use crate::profile::ProfileId;
@@ -11,10 +12,10 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use tokio::sync::oneshot;
+use tokio::sync::mpsc;
 
 pub const OBSERVED: [&str; 5] = ["track-list", "sid", "sub-visibility", "aid", "sub-delay"];
 const LANGUAGES: &[(&[&str], &str)] = &[
@@ -447,6 +448,7 @@ struct Inner {
     sidecars: Vec<Sidecar>,
     awaited: usize,
     files: BTreeMap<PathBuf, Remembered>,
+    stored: HashMap<ProfileId, Settings>,
 }
 
 impl Inner {
@@ -463,14 +465,14 @@ impl Inner {
     }
 }
 
-fn stored(db: &Db, profile: ProfileId) -> Settings {
+async fn stored(db: &Db, profile: ProfileId) -> Option<Settings> {
     db.subtitle_settings(profile)
+        .await
         .unwrap_or_else(|error| {
             eprintln!("subtitles: the stored settings of profile {}: {error}", profile.0);
             None
         })
         .and_then(|settings| settings.checked().ok())
-        .unwrap_or_default()
 }
 
 fn delay_label(delay: f64) -> String {
@@ -484,27 +486,49 @@ fn delay_label(delay: f64) -> String {
 #[derive(Clone, Default)]
 pub struct Subtitles {
     store: Option<Db>,
+    files: Option<mpsc::UnboundedSender<(PathBuf, Remembered)>>,
     state: Arc<Mutex<Inner>>,
 }
 
 impl Subtitles {
-    pub fn load(db: &Db, profile: ProfileId) -> Self {
-        let settings = stored(db, profile);
-        let files = db.subtitle_files().unwrap_or_else(|error| {
+    pub async fn load(db: &Db, profile: ProfileId) -> Self {
+        let mut everyone = HashMap::new();
+        let profiles = db.profiles().await.unwrap_or_else(|error| {
+            eprintln!("subtitles: the profiles: {error}");
+            Vec::new()
+        });
+        for id in profiles.iter().map(|profile| profile.id).chain([profile]) {
+            if let Some(settings) = stored(db, id).await {
+                everyone.insert(id, settings);
+            }
+        }
+        let files = db.subtitle_files().await.unwrap_or_else(|error| {
             eprintln!("subtitles: the stored delays: {error}");
             BTreeMap::new()
         });
+        let (changed, mut changes) = mpsc::unbounded_channel::<(PathBuf, Remembered)>();
+        let keeping = db.clone();
+        tokio::spawn(async move {
+            while let Some((file, remembered)) = changes.recv().await {
+                if let Err(error) = keeping.save_subtitle_file(&file, remembered).await {
+                    eprintln!("subtitles: {}: {error}", file.display());
+                }
+            }
+        });
         Self {
             store: Some(db.clone()),
+            files: Some(changed),
             state: Arc::new(Mutex::new(Inner {
                 owner: Some(profile),
-                settings,
+                settings: everyone.get(&profile).cloned().unwrap_or_default(),
                 files,
+                stored: everyone,
                 ..Inner::default()
             })),
         }
     }
 
+    #[cfg(test)]
     pub fn settings(&self) -> Settings {
         self.state.lock().unwrap().settings.clone()
     }
@@ -518,18 +542,16 @@ impl Subtitles {
         if state.owner.unwrap_or(ProfileId::FIRST) == profile {
             return state.settings.clone();
         }
-        drop(state);
-        self.store.as_ref().map_or_else(Settings::default, |db| stored(db, profile))
+        state.stored.get(&profile).cloned().unwrap_or_default()
     }
 
     pub fn set_owner(&self, profile: ProfileId) {
-        if self.owner() == profile {
+        let mut state = self.state.lock().unwrap();
+        if state.owner.unwrap_or(ProfileId::FIRST) == profile {
             return;
         }
-        let settings = self.store.as_ref().map_or_else(Settings::default, |db| stored(db, profile));
-        let mut state = self.state.lock().unwrap();
         state.owner = Some(profile);
-        state.settings = settings;
+        state.settings = state.stored.get(&profile).cloned().unwrap_or_default();
     }
 
     pub fn mpv_args(&self, file: &Path) -> Vec<String> {
@@ -579,22 +601,21 @@ impl Subtitles {
         self.playing().map_or(0.0, |playing| playing.delay)
     }
 
-    fn save(&self, profile: ProfileId, settings: Settings) -> db::Result<()> {
+    async fn save(&self, profile: ProfileId, settings: Settings) -> db::Result<()> {
         if let Some(db) = &self.store {
-            db.save_subtitle_settings(profile, &settings)?;
+            db.save_subtitle_settings(profile, &settings).await?;
         }
         let mut state = self.state.lock().unwrap();
         if state.owner.unwrap_or(ProfileId::FIRST) == profile {
-            state.settings = settings;
+            state.settings = settings.clone();
         }
+        state.stored.insert(profile, settings);
         Ok(())
     }
 
-    fn save_file(&self, (file, remembered): (PathBuf, Remembered)) {
-        if let Some(db) = &self.store
-            && let Err(error) = db.save_subtitle_file(&file, remembered)
-        {
-            eprintln!("subtitles: {}: {error}", file.display());
+    fn save_file(&self, change: (PathBuf, Remembered)) {
+        if let Some(files) = &self.files {
+            let _ = files.send(change);
         }
     }
 
@@ -741,17 +762,18 @@ struct View {
 #[derive(Clone)]
 struct Endpoint {
     subtitles: Subtitles,
-    app: Ask,
+    core: Core,
 }
 
-pub fn routes<S: Clone + Send + Sync + 'static>(subtitles: Subtitles, app: Ask) -> Router<S> {
+pub fn routes<S: Clone + Send + Sync + 'static>(core: Core) -> Router<S> {
+    let subtitles = core.subtitles().clone();
     Router::new()
         .route("/api/subtitles", get(show).put(update))
         .route("/api/subtitles/track", post(track))
         .route("/api/subtitles/toggle", post(toggle))
         .route("/api/subtitles/delay", post(delay))
         .route("/api/audio/track", post(audio))
-        .with_state(Endpoint { subtitles, app })
+        .with_state(Endpoint { subtitles, core })
 }
 
 fn view(subtitles: &Subtitles, profile: ProfileId) -> Json<View> {
@@ -774,19 +796,11 @@ async fn update(
         Ok(settings) => settings,
         Err(error) => return api::problem(StatusCode::BAD_REQUEST, error),
     };
-    let saving = endpoint.subtitles.clone();
-    let saved = tokio::task::spawn_blocking(move || saving.save(profile, settings)).await;
-    match saved {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => return api::problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
-        Err(error) => return api::problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    if let Err(error) = endpoint.subtitles.save(profile, settings).await {
+        return api::problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
     }
     if endpoint.subtitles.owner() == profile {
-        let (reply, _) = oneshot::channel();
-        (endpoint.app)(Pending {
-            request: Request::Subtitles(Change::Restyle),
-            reply,
-        });
+        endpoint.core.send(Request::Subtitles(Change::Restyle));
     }
     view(&endpoint.subtitles, profile).into_response()
 }
@@ -798,7 +812,7 @@ struct TrackBody {
 }
 
 async fn track(State(endpoint): State<Endpoint>, Json(body): Json<TrackBody>) -> Response {
-    api::ask_app(&endpoint.app, Request::Subtitles(Change::Track(body.track))).await
+    api::ask(&endpoint.core, Request::Subtitles(Change::Track(body.track))).await
 }
 
 #[derive(Deserialize)]
@@ -808,7 +822,7 @@ struct AudioBody {
 }
 
 async fn audio(State(endpoint): State<Endpoint>, Json(body): Json<AudioBody>) -> Response {
-    api::ask_app(&endpoint.app, Request::Subtitles(Change::Audio(body.track))).await
+    api::ask(&endpoint.core, Request::Subtitles(Change::Audio(body.track))).await
 }
 
 #[derive(Deserialize)]
@@ -818,18 +832,20 @@ struct DelayBody {
 }
 
 async fn delay(State(endpoint): State<Endpoint>, Json(body): Json<DelayBody>) -> Response {
-    api::ask_app(&endpoint.app, Request::Subtitles(Change::Delay(body.delay))).await
+    api::ask(&endpoint.core, Request::Subtitles(Change::Delay(body.delay))).await
 }
 
 async fn toggle(State(endpoint): State<Endpoint>) -> Response {
-    api::ask_app(&endpoint.app, Request::Subtitles(Change::Toggle)).await
+    api::ask(&endpoint.core, Request::Subtitles(Change::Toggle)).await
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::api::Outcome;
+    use crate::core::Outcome;
+    use crate::library::Library;
     use std::sync::mpsc;
+    use std::time::Duration;
     use tokio::net::TcpListener;
 
     fn sub(id: i64, lang: &str, title: &str) -> Value {
@@ -1013,29 +1029,29 @@ mod tests {
         assert!(bad(json!({ "font": "Comic Sans" })));
     }
 
-    #[test]
-    fn settings_survive_a_restart_and_belong_to_one_profile() {
-        let db = Db::memory();
-        let subtitles = Subtitles::load(&db, ProfileId::FIRST);
+    #[tokio::test]
+    async fn settings_survive_a_restart_and_belong_to_one_profile() {
+        let db = Db::memory().await;
+        let subtitles = Subtitles::load(&db, ProfileId::FIRST).await;
         assert_eq!(subtitles.settings(), Settings::default());
         let bigger = Settings {
             size: 1.5,
             ..Settings::default()
         };
-        subtitles.save(ProfileId::FIRST, bigger.clone()).unwrap();
-        assert_eq!(Subtitles::load(&db, ProfileId::FIRST).settings(), bigger);
-        assert_eq!(Subtitles::load(&db, ProfileId(2)).settings(), Settings::default());
+        subtitles.save(ProfileId::FIRST, bigger.clone()).await.unwrap();
+        assert_eq!(Subtitles::load(&db, ProfileId::FIRST).await.settings(), bigger);
+        assert_eq!(Subtitles::load(&db, ProfileId(2)).await.settings(), Settings::default());
     }
 
-    #[test]
-    fn each_profile_keeps_its_own_style_and_the_video_takes_its_owners() {
-        let db = Db::memory();
-        let subtitles = Subtitles::load(&db, ProfileId::FIRST);
+    #[tokio::test]
+    async fn each_profile_keeps_its_own_style_and_the_video_takes_its_owners() {
+        let db = Db::memory().await;
+        let subtitles = Subtitles::load(&db, ProfileId::FIRST).await;
         let big = Settings {
             size: 2.0,
             ..Settings::default()
         };
-        subtitles.save(ProfileId(2), big.clone()).unwrap();
+        subtitles.save(ProfileId(2), big.clone()).await.unwrap();
         assert_eq!(subtitles.settings(), Settings::default(), "Mami's change leaves the playing style alone");
         assert_eq!(subtitles.settings_of(ProfileId(2)), big);
         subtitles.set_owner(ProfileId(2));
@@ -1071,32 +1087,29 @@ mod tests {
     struct Server {
         base: String,
         asked: mpsc::Receiver<String>,
-        _runtime: tokio::runtime::Runtime,
+        runtime: tokio::runtime::Runtime,
         db: Db,
     }
 
     fn serve() -> Server {
-        let db = Db::memory();
-        let subtitles = Subtitles::load(&db, ProfileId::FIRST);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (core, asked) = runtime.block_on(async {
+            let (core, inbox) = Core::detached(Library::default()).await;
+            let asked = Core::answering(inbox, |_| Outcome::done("Subtitles: English"));
+            (core, asked)
+        });
+        let subtitles = core.subtitles();
         subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
         subtitles.observe(Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap());
-        let (asked, received) = mpsc::channel();
-        let app: Ask = Arc::new(move |pending: Pending| {
-            let _ = asked.send(format!("{:?}", pending.request));
-            let _ = pending.reply.send(Outcome {
-                message: "Subtitles: English".to_string(),
-                ok: true,
-            });
-        });
-        let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
-        let router: Router = routes(subtitles, app);
+        let db = core.db().clone();
+        let router: Router = routes(core);
         runtime.spawn(async move { axum::serve(listener, router).await });
         Server {
             base,
-            asked: received,
-            _runtime: runtime,
+            asked,
+            runtime,
             db,
         }
     }
@@ -1141,7 +1154,8 @@ mod tests {
         assert_eq!(body["settings"]["shown"], true);
         assert_eq!(body["settings"]["color"], "#FFFFFF");
         assert_eq!(server.asked.recv().unwrap(), "Subtitles(Restyle)");
-        let saved = server.db.subtitle_settings(ProfileId::FIRST).unwrap().unwrap();
+        let saved = server.runtime.block_on(server.db.subtitle_settings(ProfileId::FIRST));
+        let saved = saved.unwrap().unwrap();
         assert_eq!(saved.size, 1.4);
         let (status, body) = send(&server, "PUT", "/api/subtitles", json!({ "color": "pink" }));
         assert_eq!(status, 400);
@@ -1196,14 +1210,15 @@ mod tests {
         }
     }
 
-    #[test]
-    fn library_subtitles_are_added_once_the_file_loads_and_shown_when_wanted() {
+    #[tokio::test]
+    async fn library_subtitles_are_added_once_the_file_loads_and_shown_when_wanted() {
         let subtitles = Subtitles::default();
         subtitles
             .save(ProfileId::FIRST, Settings {
                 shown: true,
                 ..Settings::default()
             })
+            .await
             .unwrap();
         let film = Path::new("/lib/Movies/Airplane 1980/Airplane.mp4");
         subtitles.started(film, vec![english("/lib/Movies/Airplane 1980/Subs/13_English.srt")]);
@@ -1236,12 +1251,22 @@ mod tests {
         assert_eq!(subtitles.embedded(film), Some(0));
     }
 
-    #[test]
-    fn the_delay_applies_live_and_is_remembered_for_the_file() {
-        let db = Db::memory();
+    async fn kept(db: &Db, film: &Path, wanted: bool) -> bool {
+        for _ in 0..500 {
+            if db.subtitle_files().await.unwrap().contains_key(film) == wanted {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
+    }
+
+    #[tokio::test]
+    async fn the_delay_applies_live_and_is_remembered_for_the_file() {
+        let db = Db::memory().await;
         db.set_library(&crate::db::test_library());
         let film = Path::new("/lib/Movies/Up/Up.mkv");
-        let subtitles = Subtitles::load(&db, ProfileId::FIRST);
+        let subtitles = Subtitles::load(&db, ProfileId::FIRST).await;
         assert!(!subtitles.change(Change::Delay(0.5)).ok);
         subtitles.started(film, Vec::new());
         let answer = subtitles.change(Change::Delay(-1.04));
@@ -1250,7 +1275,8 @@ mod tests {
         subtitles.observe(Observed::Delay(-1.0));
         assert_eq!(subtitles.delay(), -1.0);
         subtitles.stopped();
-        let again = Subtitles::load(&db, ProfileId::FIRST);
+        assert!(kept(&db, film, true).await);
+        let again = Subtitles::load(&db, ProfileId::FIRST).await;
         assert!(again.mpv_args(film).contains(&"--sub-delay=-1".to_string()));
         assert!(
             again
@@ -1259,7 +1285,7 @@ mod tests {
         );
         again.started(film, Vec::new());
         assert_eq!(again.change(Change::Delay(0.0)).message, "Subtitle delay off");
-        assert!(!db.subtitle_files().unwrap().contains_key(film));
+        assert!(kept(&db, film, false).await);
         assert_eq!(
             again.change(Change::Delay(500.0)).commands,
             [json!(["set_property", "sub-delay", 60.0])]

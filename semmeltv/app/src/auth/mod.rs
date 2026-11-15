@@ -1,10 +1,9 @@
 pub mod gate;
 pub mod http;
-#[cfg(test)]
-pub mod memory;
 mod password;
 pub mod store;
 
+use crate::db::Db;
 use crate::profile::ProfileId;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -14,7 +13,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use store::{AuthStore, Invite, NewProfile, Profile, Session, StoreError, StoredPasskey};
+use store::{Invite, NewProfile, Profile, Session, StoreError, StoredPasskey};
 pub use store::Role;
 use webauthn_rs::prelude::{
     CreationChallengeResponse, Passkey, PasskeyAuthentication, PasskeyRegistration, PublicKeyCredential,
@@ -183,7 +182,7 @@ pub struct Auth {
 }
 
 struct Inner {
-    store: Arc<dyn AuthStore>,
+    db: Db,
     parties: Vec<Party>,
     ceremonies: Mutex<HashMap<String, Ceremony>>,
     failures: Mutex<HashMap<ProfileId, Failures>>,
@@ -237,11 +236,11 @@ pub struct Choice {
 }
 
 impl Auth {
-    pub fn new(store: Arc<dyn AuthStore>, origins: &[String]) -> Result<Self, String> {
-        Self::with_clock(store, origins, Arc::new(now))
+    pub fn new(db: Db, origins: &[String]) -> Result<Self, String> {
+        Self::with_clock(db, origins, Arc::new(now))
     }
 
-    pub fn with_clock(store: Arc<dyn AuthStore>, origins: &[String], clock: Clock) -> Result<Self, String> {
+    pub fn with_clock(db: Db, origins: &[String], clock: Clock) -> Result<Self, String> {
         let mut parties = Vec::new();
         for origin in origins {
             let url = Url::parse(origin).map_err(|error| format!("origin {origin}: {error}"))?;
@@ -256,7 +255,7 @@ impl Auth {
         }
         Ok(Self {
             inner: Arc::new(Inner {
-                store,
+                db,
                 parties,
                 ceremonies: Mutex::new(HashMap::new()),
                 failures: Mutex::new(HashMap::new()),
@@ -269,8 +268,8 @@ impl Auth {
         (self.inner.clock)()
     }
 
-    fn store(&self) -> &dyn AuthStore {
-        self.inner.store.as_ref()
+    fn db(&self) -> &Db {
+        &self.inner.db
     }
 
     fn party(&self, origin: &str) -> Outcome<&Party> {
@@ -286,24 +285,24 @@ impl Auth {
         self.party(origin).is_ok()
     }
 
-    fn profile(&self, id: ProfileId) -> Outcome<Profile> {
-        self.store().profile(id)?.ok_or(Refusal::UnknownProfile)
+    async fn profile(&self, id: ProfileId) -> Outcome<Profile> {
+        self.db().profile(id).await?.ok_or(Refusal::UnknownProfile)
     }
 
-    pub fn person(&self, id: ProfileId) -> Outcome<Person> {
-        Ok(Person::from(&self.profile(id)?))
+    pub async fn person(&self, id: ProfileId) -> Outcome<Person> {
+        Ok(Person::from(&self.profile(id).await?))
     }
 
-    pub fn people(&self) -> Outcome<Vec<Person>> {
-        Ok(self.store().profiles()?.iter().map(Person::from).collect())
+    pub async fn people(&self) -> Outcome<Vec<Person>> {
+        Ok(self.db().profiles().await?.iter().map(Person::from).collect())
     }
 
-    pub fn choices(&self, origin: &str) -> Outcome<Vec<Choice>> {
+    pub async fn choices(&self, origin: &str) -> Outcome<Vec<Choice>> {
         let rp_id = self.party(origin).ok().map(|party| rp_id(&party.origin));
         let mut choices = Vec::new();
-        for profile in self.store().profiles()? {
+        for profile in self.db().profiles().await? {
             let passkey = match &rp_id {
-                Some(rp_id) => self.store().passkeys(profile.id)?.iter().any(|passkey| &passkey.rp_id == rp_id),
+                Some(rp_id) => self.db().passkeys(profile.id).await?.iter().any(|passkey| &passkey.rp_id == rp_id),
                 None => false,
             };
             choices.push(Choice {
@@ -316,34 +315,35 @@ impl Auth {
         Ok(choices)
     }
 
-    fn open_session(&self, profile: ProfileId, label: &str) -> Outcome<String> {
+    async fn open_session(&self, profile: ProfileId, label: &str) -> Outcome<String> {
         let token = token();
         let now = self.now();
-        self.store().create_session(&Session {
+        let session = Session {
             token_hash: hash(&token),
             profile,
             created_at: now,
             last_seen_at: now,
             expires_at: now + SESSION_LIFETIME,
             label: label.chars().take(120).collect(),
-        })?;
+        };
+        self.db().create_session(&session).await?;
         Ok(token)
     }
 
-    pub fn resolve(&self, tokens: &[String]) -> Outcome<Resolved> {
+    pub async fn resolve(&self, tokens: &[String]) -> Outcome<Resolved> {
         let now = self.now();
         let mut found: Vec<(Person, String)> = Vec::new();
         let mut rewrite = tokens.len() > MOST_SESSIONS_ON_A_DEVICE;
         let mut renewed = false;
         for token in tokens.iter().take(MOST_SESSIONS_ON_A_DEVICE) {
-            let Some(session) = self.store().session(&hash(token))? else {
+            let Some(session) = self.db().session(&hash(token)).await? else {
                 rewrite = true;
                 continue;
             };
-            let profile = self.store().profile(session.profile)?;
+            let profile = self.db().profile(session.profile).await?;
             let live = session.expires_at > now;
             let Some(profile) = profile.filter(|_| live) else {
-                self.store().delete_session(&session.token_hash)?;
+                self.db().delete_session(&session.token_hash).await?;
                 rewrite = true;
                 continue;
             };
@@ -352,7 +352,7 @@ impl Auth {
                 continue;
             }
             if found.is_empty() && now.saturating_sub(session.last_seen_at) >= RENEW_AFTER {
-                self.store().touch_session(&session.token_hash, now, now + SESSION_LIFETIME)?;
+                self.db().touch_session(&session.token_hash, now, now + SESSION_LIFETIME).await?;
                 renewed = true;
             }
             found.push((Person::from(&profile), token.clone()));
@@ -395,37 +395,41 @@ impl Auth {
         }
     }
 
-    pub fn sign_in_with_password(&self, profile: ProfileId, password: &str, label: &str) -> Outcome<String> {
-        let found = self.profile(profile)?;
+    pub async fn sign_in_with_password(&self, profile: ProfileId, password: &str, label: &str) -> Outcome<String> {
+        let found = self.profile(profile).await?;
         self.throttled(profile)?;
         let Some(stored) = found.password_hash.as_deref() else {
             return Err(Refusal::NoPassword(found.name));
         };
-        if password.chars().count() > LONGEST_PASSWORD || !password::verify(password, stored) {
+        if password.chars().count() > LONGEST_PASSWORD || !verify(password, stored).await? {
             self.failed(profile);
             return Err(Refusal::WrongPassword);
         }
         self.inner.failures.lock().unwrap().remove(&profile);
-        self.open_session(profile, label)
+        self.open_session(profile, label).await
     }
 
-    pub fn sign_in_as_guest(&self, profile: ProfileId, at_home: bool, label: &str) -> Outcome<String> {
-        if self.profile(profile)?.role != Role::Guest {
+    pub async fn sign_in_as_guest(&self, profile: ProfileId, at_home: bool, label: &str) -> Outcome<String> {
+        if self.profile(profile).await?.role != Role::Guest {
             return Err(Refusal::NotAGuest);
         }
         if !at_home {
             return Err(Refusal::GuestFromAfar);
         }
-        self.open_session(profile, label)
+        self.open_session(profile, label).await
     }
 
-    pub fn set_password(&self, profile: ProfileId, password: &str) -> Outcome<()> {
+    pub async fn set_password(&self, profile: ProfileId, password: &str) -> Outcome<()> {
         Self::check_password_shape(password)?;
-        if self.profile(profile)?.role == Role::Guest {
+        if self.profile(profile).await?.role == Role::Guest {
             return Err(Refusal::GuestsHaveNoSignIn);
         }
-        let hashed = password::hash(password).map_err(Refusal::Store)?;
-        self.store().set_password_hash(profile, Some(&hashed))?;
+        let password = password.to_string();
+        let hashed = tokio::task::spawn_blocking(move || password::hash(&password))
+            .await
+            .map_err(|error| Refusal::Store(error.to_string()))?
+            .map_err(Refusal::Store)?;
+        self.db().set_password_hash(profile, Some(&hashed)).await?;
         Ok(())
     }
 
@@ -461,10 +465,10 @@ impl Auth {
         Ok(ceremony)
     }
 
-    fn passkeys_here(&self, profile: ProfileId, party: &Party) -> Outcome<Vec<(StoredPasskey, Passkey)>> {
+    async fn passkeys_here(&self, profile: ProfileId, party: &Party) -> Outcome<Vec<(StoredPasskey, Passkey)>> {
         let rp_id = rp_id(&party.origin);
         let mut found = Vec::new();
-        for stored in self.store().passkeys(profile)? {
+        for stored in self.db().passkeys(profile).await? {
             if stored.rp_id != rp_id {
                 continue;
             }
@@ -476,13 +480,13 @@ impl Auth {
         Ok(found)
     }
 
-    pub fn start_registration(&self, origin: &str, profile: ProfileId) -> Outcome<(String, CreationChallengeResponse)> {
+    pub async fn start_registration(&self, origin: &str, profile: ProfileId) -> Outcome<(String, CreationChallengeResponse)> {
         let party = self.party(origin)?;
-        let found = self.profile(profile)?;
+        let found = self.profile(profile).await?;
         if found.role == Role::Guest {
             return Err(Refusal::GuestsHaveNoSignIn);
         }
-        let known = self.passkeys_here(profile, party)?;
+        let known = self.passkeys_here(profile, party).await?;
         let exclude = known.iter().map(|(_, passkey)| passkey.cred_id().clone()).collect::<Vec<_>>();
         let (options, state) = party
             .webauthn
@@ -495,7 +499,7 @@ impl Auth {
         Ok((id, options))
     }
 
-    pub fn finish_registration(
+    pub async fn finish_registration(
         &self,
         origin: &str,
         profile: ProfileId,
@@ -526,17 +530,17 @@ impl Auth {
             created_at: self.now(),
             last_used_at: None,
         };
-        match self.store().add_passkey(&stored) {
+        match self.db().add_passkey(&stored).await {
             Err(StoreError::Taken) => return Err(Refusal::PasskeyTaken),
             other => other?,
         }
         Ok(view(&stored, &party.origin))
     }
 
-    pub fn start_sign_in(&self, origin: &str, profile: ProfileId) -> Outcome<(String, RequestChallengeResponse)> {
+    pub async fn start_sign_in(&self, origin: &str, profile: ProfileId) -> Outcome<(String, RequestChallengeResponse)> {
         let party = self.party(origin)?;
-        let found = self.profile(profile)?;
-        let known = self.passkeys_here(profile, party)?;
+        let found = self.profile(profile).await?;
+        let known = self.passkeys_here(profile, party).await?;
         if known.is_empty() {
             return Err(Refusal::NoPasskey(found.name));
         }
@@ -549,7 +553,7 @@ impl Auth {
         Ok((id, options))
     }
 
-    pub fn finish_sign_in(
+    pub async fn finish_sign_in(
         &self,
         origin: &str,
         ceremony: &str,
@@ -566,59 +570,61 @@ impl Auth {
             Refusal::PasskeyFailed
         })?;
         let stored = self
-            .store()
-            .passkey(result.cred_id())?
+            .db()
+            .passkey(result.cred_id())
+            .await?
             .filter(|stored| stored.profile == begun.profile)
             .ok_or(Refusal::PasskeyFailed)?;
         let mut passkey: Passkey =
             serde_json::from_str(&stored.passkey).map_err(|error| Refusal::Store(error.to_string()))?;
         passkey.update_credential(&result);
         let json = serde_json::to_string(&passkey).map_err(|error| Refusal::Store(error.to_string()))?;
-        self.store().update_passkey(&stored.credential_id, &json, self.now())?;
-        let token = self.open_session(begun.profile, label)?;
+        self.db().update_passkey(&stored.credential_id, &json, self.now()).await?;
+        let token = self.open_session(begun.profile, label).await?;
         Ok((begun.profile, token))
     }
 
-    pub fn has_password(&self, profile: ProfileId) -> Outcome<bool> {
-        Ok(self.profile(profile)?.password_hash.is_some())
+    pub async fn has_password(&self, profile: ProfileId) -> Outcome<bool> {
+        Ok(self.profile(profile).await?.password_hash.is_some())
     }
 
-    pub fn passkeys(&self, profile: ProfileId, origin: &str) -> Outcome<Vec<PasskeyView>> {
+    pub async fn passkeys(&self, profile: ProfileId, origin: &str) -> Outcome<Vec<PasskeyView>> {
         let origin = origin.trim_end_matches('/');
-        Ok(self.store().passkeys(profile)?.iter().map(|stored| view(stored, origin)).collect())
+        Ok(self.db().passkeys(profile).await?.iter().map(|stored| view(stored, origin)).collect())
     }
 
-    pub fn remove_passkey(&self, profile: ProfileId, id: &str) -> Outcome<bool> {
+    pub async fn remove_passkey(&self, profile: ProfileId, id: &str) -> Outcome<bool> {
         let credential_id = URL_SAFE_NO_PAD.decode(id).map_err(|_| Refusal::PasskeyFailed)?;
-        Ok(self.store().remove_passkey(profile, &credential_id)?)
+        Ok(self.db().remove_passkey(profile, &credential_id).await?)
     }
 
-    pub fn sign_out(&self, token: &str) -> Outcome<()> {
-        Ok(self.store().delete_session(&hash(token))?)
+    pub async fn sign_out(&self, token: &str) -> Outcome<()> {
+        Ok(self.db().delete_session(&hash(token)).await?)
     }
 
-    pub fn sign_out_everywhere(&self, profile: ProfileId) -> Outcome<()> {
-        Ok(self.store().delete_sessions(profile)?)
+    pub async fn sign_out_everywhere(&self, profile: ProfileId) -> Outcome<()> {
+        Ok(self.db().delete_sessions(profile).await?)
     }
 
-    pub fn invite(&self, by: Option<ProfileId>, profile: ProfileId) -> Outcome<String> {
-        self.profile(profile)?;
+    pub async fn invite(&self, by: Option<ProfileId>, profile: ProfileId) -> Outcome<String> {
+        self.profile(profile).await?;
         let token = token();
         let now = self.now();
-        self.store().delete_invites(profile)?;
-        self.store().create_invite(&Invite {
+        self.db().delete_invites(profile).await?;
+        let invite = Invite {
             token_hash: hash(&token),
             profile,
             created_by: by,
             created_at: now,
             expires_at: now + INVITE_LIFETIME,
             used_at: None,
-        })?;
+        };
+        self.db().create_invite(&invite).await?;
         Ok(token)
     }
 
-    fn live_invite(&self, token: &str) -> Outcome<Invite> {
-        let invite = self.store().invite(&hash(token))?.ok_or(Refusal::InviteUnknown)?;
+    async fn live_invite(&self, token: &str) -> Outcome<Invite> {
+        let invite = self.db().invite(&hash(token)).await?.ok_or(Refusal::InviteUnknown)?;
         if invite.used_at.is_some() {
             return Err(Refusal::InviteUsed);
         }
@@ -628,32 +634,32 @@ impl Auth {
         Ok(invite)
     }
 
-    pub fn peek_invite(&self, token: &str) -> Outcome<Person> {
-        let invite = self.live_invite(token)?;
-        self.person(invite.profile)
+    pub async fn peek_invite(&self, token: &str) -> Outcome<Person> {
+        let invite = self.live_invite(token).await?;
+        self.person(invite.profile).await
     }
 
-    pub fn redeem(&self, token: &str, label: &str) -> Outcome<(ProfileId, String)> {
-        let invite = self.live_invite(token)?;
-        self.profile(invite.profile)?;
-        if !self.store().use_invite(&invite.token_hash, self.now())? {
+    pub async fn redeem(&self, token: &str, label: &str) -> Outcome<(ProfileId, String)> {
+        let invite = self.live_invite(token).await?;
+        self.profile(invite.profile).await?;
+        if !self.db().use_invite(&invite.token_hash, self.now()).await? {
             return Err(Refusal::InviteUsed);
         }
-        let session = self.open_session(invite.profile, label)?;
+        let session = self.open_session(invite.profile, label).await?;
         Ok((invite.profile, session))
     }
 
-    pub fn members(&self) -> Outcome<Vec<Member>> {
+    pub async fn members(&self) -> Outcome<Vec<Member>> {
         let now = self.now();
-        let invites = self.store().invites()?;
+        let invites = self.db().invites().await?;
         let mut members = Vec::new();
-        for profile in self.store().profiles()? {
-            let sessions = self.store().sessions(profile.id)?;
+        for profile in self.db().profiles().await? {
+            let sessions = self.db().sessions(profile.id).await?;
             let live = sessions.iter().filter(|session| session.expires_at > now).collect::<Vec<_>>();
             members.push(Member {
                 person: Person::from(&profile),
                 password: profile.password_hash.is_some(),
-                passkeys: self.store().passkeys(profile.id)?.len(),
+                passkeys: self.db().passkeys(profile.id).await?.len(),
                 sessions: live.len(),
                 last_seen_at: live.iter().map(|session| session.last_seen_at).max(),
                 invite_expires_at: invites
@@ -666,45 +672,49 @@ impl Auth {
         Ok(members)
     }
 
-    pub fn create_profile(&self, name: &str, role: Role) -> Outcome<Person> {
+    pub async fn create_profile(&self, name: &str, role: Role) -> Outcome<Person> {
         let name = name.trim();
         if name.is_empty() || name.chars().count() > LONGEST_NAME {
             return Err(Refusal::BadName);
         }
-        let created = self.store().create_profile(
-            NewProfile {
-                name: name.to_string(),
-                role,
-                color: None,
-            },
-            self.now(),
-        );
-        match created {
+        let new = NewProfile {
+            name: name.to_string(),
+            role,
+            color: None,
+        };
+        match self.db().create_profile(new, self.now()).await {
             Ok(profile) => Ok(Person::from(&profile)),
             Err(StoreError::Taken) => Err(Refusal::NameTaken),
             Err(error) => Err(error.into()),
         }
     }
 
-    pub fn delete_profile(&self, by: ProfileId, profile: ProfileId) -> Outcome<()> {
+    pub async fn delete_profile(&self, by: ProfileId, profile: ProfileId) -> Outcome<()> {
         if by == profile {
             return Err(Refusal::Yourself);
         }
-        let found = self.profile(profile)?;
-        let profiles = self.store().profiles()?;
+        let found = self.profile(profile).await?;
+        let profiles = self.db().profiles().await?;
         let admins = profiles.iter().filter(|known| known.role == Role::Admin).count();
         if found.role == Role::Admin && admins <= 1 {
             return Err(Refusal::LastAdmin);
         }
-        self.store().delete_profile(profile)?;
+        self.db().delete_profile(profile).await?;
         Ok(())
     }
 
-    pub fn forget_expired(&self) {
-        if let Err(error) = self.store().delete_expired_sessions(self.now()) {
+    pub async fn forget_expired(&self) {
+        if let Err(error) = self.db().delete_expired_sessions(self.now()).await {
             eprintln!("auth: forgetting expired sessions: {error}");
         }
     }
+}
+
+async fn verify(password: &str, stored: &str) -> Outcome<bool> {
+    let (password, stored) = (password.to_string(), stored.to_string());
+    tokio::task::spawn_blocking(move || password::verify(&password, &stored))
+        .await
+        .map_err(|error| Refusal::Store(error.to_string()))
 }
 
 fn rp_id(origin: &str) -> String {
@@ -727,41 +737,24 @@ fn view(stored: &StoredPasskey, origin: &str) -> PasskeyView {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use memory::MemoryStore;
     use std::sync::atomic::{AtomicU64, Ordering};
 
     const ORIGIN: &str = "https://tv.example.org";
 
     struct Rig {
         auth: Auth,
-        store: Arc<MemoryStore>,
+        db: Db,
         time: Arc<AtomicU64>,
     }
 
     impl Rig {
-        fn new() -> Self {
-            let store = Arc::new(MemoryStore::with([
-                NewProfile {
-                    name: "Frederik".to_string(),
-                    role: Role::Admin,
-                    color: None,
-                },
-                NewProfile {
-                    name: "Mami".to_string(),
-                    role: Role::Viewer,
-                    color: None,
-                },
-                NewProfile {
-                    name: "Guest".to_string(),
-                    role: Role::Guest,
-                    color: None,
-                },
-            ]));
+        async fn new() -> Self {
+            let db = Db::memory().await;
             let time = Arc::new(AtomicU64::new(1_000_000));
             let clock = time.clone();
-            let auth = Auth::with_clock(store.clone(), &[ORIGIN.to_string()], Arc::new(move || clock.load(Ordering::SeqCst)))
+            let auth = Auth::with_clock(db.clone(), &[ORIGIN.to_string()], Arc::new(move || clock.load(Ordering::SeqCst)))
                 .unwrap();
-            Rig { auth, store, time }
+            Rig { auth, db, time }
         }
 
         fn pass(&self, seconds: u64) {
@@ -772,133 +765,133 @@ mod tests {
     const FREDERIK: ProfileId = ProfileId(1);
     const MAMI: ProfileId = ProfileId(2);
 
-    #[test]
-    fn an_invite_signs_in_once_and_only_until_it_expires() {
-        let rig = Rig::new();
-        let invite = rig.auth.invite(Some(FREDERIK), MAMI).unwrap();
-        assert_eq!(rig.auth.peek_invite(&invite).unwrap().name, "Mami");
-        let (profile, session) = rig.auth.redeem(&invite, "iPhone").unwrap();
+    #[tokio::test]
+    async fn an_invite_signs_in_once_and_only_until_it_expires() {
+        let rig = Rig::new().await;
+        let invite = rig.auth.invite(Some(FREDERIK), MAMI).await.unwrap();
+        assert_eq!(rig.auth.peek_invite(&invite).await.unwrap().name, "Mami");
+        let (profile, session) = rig.auth.redeem(&invite, "iPhone").await.unwrap();
         assert_eq!(profile, MAMI);
-        assert_eq!(rig.auth.resolve(&[session]).unwrap().person().unwrap().name, "Mami");
-        assert_eq!(rig.auth.redeem(&invite, "iPhone"), Err(Refusal::InviteUsed));
+        assert_eq!(rig.auth.resolve(&[session]).await.unwrap().person().unwrap().name, "Mami");
+        assert_eq!(rig.auth.redeem(&invite, "iPhone").await, Err(Refusal::InviteUsed));
 
-        let late = rig.auth.invite(Some(FREDERIK), MAMI).unwrap();
+        let late = rig.auth.invite(Some(FREDERIK), MAMI).await.unwrap();
         rig.pass(INVITE_LIFETIME);
-        assert_eq!(rig.auth.redeem(&late, "iPhone"), Err(Refusal::InviteExpired));
-        assert_eq!(rig.auth.redeem("made-up", "iPhone"), Err(Refusal::InviteUnknown));
+        assert_eq!(rig.auth.redeem(&late, "iPhone").await, Err(Refusal::InviteExpired));
+        assert_eq!(rig.auth.redeem("made-up", "iPhone").await, Err(Refusal::InviteUnknown));
     }
 
-    #[test]
-    fn a_new_invite_replaces_the_one_before() {
-        let rig = Rig::new();
-        let first = rig.auth.invite(Some(FREDERIK), MAMI).unwrap();
-        let second = rig.auth.invite(Some(FREDERIK), MAMI).unwrap();
-        assert_eq!(rig.auth.redeem(&first, "iPad"), Err(Refusal::InviteUnknown));
-        assert!(rig.auth.redeem(&second, "iPad").is_ok());
+    #[tokio::test]
+    async fn a_new_invite_replaces_the_one_before() {
+        let rig = Rig::new().await;
+        let first = rig.auth.invite(Some(FREDERIK), MAMI).await.unwrap();
+        let second = rig.auth.invite(Some(FREDERIK), MAMI).await.unwrap();
+        assert_eq!(rig.auth.redeem(&first, "iPad").await, Err(Refusal::InviteUnknown));
+        assert!(rig.auth.redeem(&second, "iPad").await.is_ok());
     }
 
-    #[test]
-    fn tokens_are_stored_only_as_hashes() {
-        let rig = Rig::new();
-        let invite = rig.auth.invite(Some(FREDERIK), MAMI).unwrap();
-        let (_, session) = rig.auth.redeem(&invite, "iPhone").unwrap();
-        let stored = rig.store.sessions(MAMI).unwrap();
+    #[tokio::test]
+    async fn tokens_are_stored_only_as_hashes() {
+        let rig = Rig::new().await;
+        let invite = rig.auth.invite(Some(FREDERIK), MAMI).await.unwrap();
+        let (_, session) = rig.auth.redeem(&invite, "iPhone").await.unwrap();
+        let stored = rig.db.sessions(MAMI).await.unwrap();
         assert_eq!(stored[0].token_hash, hash(&session));
         assert_ne!(stored[0].token_hash, session.as_bytes());
-        assert_eq!(rig.store.invites().unwrap()[0].token_hash, hash(&invite));
+        assert_eq!(rig.db.invites().await.unwrap()[0].token_hash, hash(&invite));
     }
 
-    #[test]
-    fn a_session_lasts_a_week_after_it_was_last_used() {
-        let rig = Rig::new();
-        rig.auth.set_password(MAMI, "correct horse").unwrap();
-        let session = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPhone").unwrap();
+    #[tokio::test]
+    async fn a_session_lasts_a_week_after_it_was_last_used() {
+        let rig = Rig::new().await;
+        rig.auth.set_password(MAMI, "correct horse").await.unwrap();
+        let session = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPhone").await.unwrap();
 
         rig.pass(6 * 24 * 60 * 60);
-        let resolved = rig.auth.resolve(std::slice::from_ref(&session)).unwrap();
+        let resolved = rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap();
         assert!(resolved.active.is_some());
         assert!(resolved.rewrite, "a renewed session sends its cookie again");
 
         rig.pass(6 * 24 * 60 * 60);
-        assert!(rig.auth.resolve(std::slice::from_ref(&session)).unwrap().active.is_some());
+        assert!(rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap().active.is_some());
 
         rig.pass(10 * 60);
-        let again = rig.auth.resolve(std::slice::from_ref(&session)).unwrap();
+        let again = rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap();
         assert!(again.active.is_some());
         assert!(!again.rewrite, "a session renews at most once an hour");
 
         rig.pass(SESSION_LIFETIME);
-        let gone = rig.auth.resolve(std::slice::from_ref(&session)).unwrap();
+        let gone = rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap();
         assert_eq!(gone.active, None);
         assert!(gone.rewrite);
-        assert!(rig.store.sessions(MAMI).unwrap().is_empty());
+        assert!(rig.db.sessions(MAMI).await.unwrap().is_empty());
     }
 
-    #[test]
-    fn a_device_keeps_several_profiles_with_the_first_active() {
-        let rig = Rig::new();
-        rig.auth.set_password(MAMI, "correct horse").unwrap();
-        rig.auth.set_password(FREDERIK, "battery staple").unwrap();
-        let mami = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPad").unwrap();
-        let frederik = rig.auth.sign_in_with_password(FREDERIK, "battery staple", "iPad").unwrap();
-        let resolved = rig.auth.resolve(&[mami.clone(), "stale".to_string(), frederik.clone()]).unwrap();
+    #[tokio::test]
+    async fn a_device_keeps_several_profiles_with_the_first_active() {
+        let rig = Rig::new().await;
+        rig.auth.set_password(MAMI, "correct horse").await.unwrap();
+        rig.auth.set_password(FREDERIK, "battery staple").await.unwrap();
+        let mami = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPad").await.unwrap();
+        let frederik = rig.auth.sign_in_with_password(FREDERIK, "battery staple", "iPad").await.unwrap();
+        let resolved = rig.auth.resolve(&[mami.clone(), "stale".to_string(), frederik.clone()]).await.unwrap();
         assert_eq!(resolved.person().unwrap().id, MAMI);
         assert_eq!(resolved.others.len(), 1);
         assert_eq!(resolved.tokens(), vec![mami, frederik]);
         assert!(resolved.rewrite, "the stale token leaves the cookie");
     }
 
-    #[test]
-    fn wrong_passwords_lock_the_profile_for_a_while() {
-        let rig = Rig::new();
-        rig.auth.set_password(MAMI, "correct horse").unwrap();
+    #[tokio::test]
+    async fn wrong_passwords_lock_the_profile_for_a_while() {
+        let rig = Rig::new().await;
+        rig.auth.set_password(MAMI, "correct horse").await.unwrap();
         for _ in 0..FREE_FAILURES {
-            assert_eq!(rig.auth.sign_in_with_password(MAMI, "wrong one", "x"), Err(Refusal::WrongPassword));
+            assert_eq!(rig.auth.sign_in_with_password(MAMI, "wrong one", "x").await, Err(Refusal::WrongPassword));
         }
-        assert_eq!(rig.auth.sign_in_with_password(MAMI, "correct horse", "x"), Err(Refusal::Throttled(60)));
-        assert!(rig.auth.sign_in_with_password(FREDERIK, "anything", "x") != Err(Refusal::Throttled(60)));
+        assert_eq!(rig.auth.sign_in_with_password(MAMI, "correct horse", "x").await, Err(Refusal::Throttled(60)));
+        assert!(rig.auth.sign_in_with_password(FREDERIK, "anything", "x").await != Err(Refusal::Throttled(60)));
         rig.pass(60);
-        assert!(rig.auth.sign_in_with_password(MAMI, "correct horse", "x").is_ok());
-        assert_eq!(rig.auth.sign_in_with_password(MAMI, "wrong one", "x"), Err(Refusal::WrongPassword));
+        assert!(rig.auth.sign_in_with_password(MAMI, "correct horse", "x").await.is_ok());
+        assert_eq!(rig.auth.sign_in_with_password(MAMI, "wrong one", "x").await, Err(Refusal::WrongPassword));
     }
 
-    #[test]
-    fn passwords_need_a_sensible_length_and_are_hashed() {
-        let rig = Rig::new();
-        assert_eq!(rig.auth.set_password(MAMI, "short"), Err(Refusal::ShortPassword));
-        assert_eq!(rig.auth.set_password(MAMI, &"x".repeat(201)), Err(Refusal::LongPassword));
+    #[tokio::test]
+    async fn passwords_need_a_sensible_length_and_are_hashed() {
+        let rig = Rig::new().await;
+        assert_eq!(rig.auth.set_password(MAMI, "short").await, Err(Refusal::ShortPassword));
+        assert_eq!(rig.auth.set_password(MAMI, &"x".repeat(201)).await, Err(Refusal::LongPassword));
         assert_eq!(
-            rig.auth.sign_in_with_password(MAMI, "anything", "x"),
+            rig.auth.sign_in_with_password(MAMI, "anything", "x").await,
             Err(Refusal::NoPassword("Mami".to_string()))
         );
-        rig.auth.set_password(MAMI, "correct horse").unwrap();
-        let stored = rig.store.profile(MAMI).unwrap().unwrap().password_hash.unwrap();
+        rig.auth.set_password(MAMI, "correct horse").await.unwrap();
+        let stored = rig.db.profile(MAMI).await.unwrap().unwrap().password_hash.unwrap();
         assert!(stored.starts_with("$argon2id$"));
         assert!(!stored.contains("correct horse"));
     }
 
-    #[test]
-    fn signing_out_ends_only_that_session() {
-        let rig = Rig::new();
-        rig.auth.set_password(MAMI, "correct horse").unwrap();
-        let phone = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPhone").unwrap();
-        let ipad = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPad").unwrap();
-        rig.auth.sign_out(&phone).unwrap();
-        assert_eq!(rig.auth.resolve(&[phone]).unwrap().active, None);
-        assert!(rig.auth.resolve(std::slice::from_ref(&ipad)).unwrap().active.is_some());
-        rig.auth.sign_out_everywhere(MAMI).unwrap();
-        assert_eq!(rig.auth.resolve(&[ipad]).unwrap().active, None);
+    #[tokio::test]
+    async fn signing_out_ends_only_that_session() {
+        let rig = Rig::new().await;
+        rig.auth.set_password(MAMI, "correct horse").await.unwrap();
+        let phone = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPhone").await.unwrap();
+        let ipad = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPad").await.unwrap();
+        rig.auth.sign_out(&phone).await.unwrap();
+        assert_eq!(rig.auth.resolve(&[phone]).await.unwrap().active, None);
+        assert!(rig.auth.resolve(std::slice::from_ref(&ipad)).await.unwrap().active.is_some());
+        rig.auth.sign_out_everywhere(MAMI).await.unwrap();
+        assert_eq!(rig.auth.resolve(&[ipad]).await.unwrap().active, None);
     }
 
-    #[test]
-    fn passkeys_only_start_on_a_known_address_for_someone_who_has_one() {
-        let rig = Rig::new();
+    #[tokio::test]
+    async fn passkeys_only_start_on_a_known_address_for_someone_who_has_one() {
+        let rig = Rig::new().await;
         assert_eq!(
-            rig.auth.start_sign_in("https://elsewhere.example.org", MAMI).unwrap_err(),
+            rig.auth.start_sign_in("https://elsewhere.example.org", MAMI).await.unwrap_err(),
             Refusal::UnknownOrigin
         );
-        assert_eq!(rig.auth.start_sign_in(ORIGIN, MAMI).unwrap_err(), Refusal::NoPasskey("Mami".to_string()));
-        let (ceremony, options) = rig.auth.start_registration(ORIGIN, MAMI).unwrap();
+        assert_eq!(rig.auth.start_sign_in(ORIGIN, MAMI).await.unwrap_err(), Refusal::NoPasskey("Mami".to_string()));
+        let (ceremony, options) = rig.auth.start_registration(ORIGIN, MAMI).await.unwrap();
         let options = serde_json::to_value(&options).unwrap();
         assert_eq!(options["publicKey"]["rp"]["id"], "tv.example.org");
         assert_eq!(options["publicKey"]["user"]["name"], "Mami");
@@ -906,41 +899,43 @@ mod tests {
         assert!(rig.auth.take(&ceremony, ORIGIN).is_err(), "a ceremony is used up by any attempt");
     }
 
-    #[test]
-    fn the_last_admin_and_oneself_stay() {
-        let rig = Rig::new();
-        assert_eq!(rig.auth.delete_profile(FREDERIK, FREDERIK), Err(Refusal::Yourself));
-        assert_eq!(rig.auth.delete_profile(MAMI, FREDERIK), Err(Refusal::LastAdmin));
-        let ramu = rig.auth.create_profile(" Ramu ", Role::Viewer).unwrap();
-        assert_eq!(ramu.name, "Ramu");
-        assert_eq!(rig.auth.create_profile("ramu", Role::Viewer), Err(Refusal::NameTaken));
-        assert_eq!(rig.auth.create_profile("", Role::Viewer), Err(Refusal::BadName));
-        rig.auth.delete_profile(FREDERIK, ramu.id).unwrap();
-        assert_eq!(rig.auth.people().unwrap().len(), 3);
+    #[tokio::test]
+    async fn the_last_admin_and_oneself_stay() {
+        let rig = Rig::new().await;
+        let before = rig.auth.people().await.unwrap().len();
+        assert_eq!(rig.auth.delete_profile(FREDERIK, FREDERIK).await, Err(Refusal::Yourself));
+        assert_eq!(rig.auth.delete_profile(MAMI, FREDERIK).await, Err(Refusal::LastAdmin));
+        let oma = rig.auth.create_profile(" Oma ", Role::Viewer).await.unwrap();
+        assert_eq!(oma.name, "Oma");
+        assert_eq!(rig.auth.create_profile("oma", Role::Viewer).await, Err(Refusal::NameTaken));
+        assert_eq!(rig.auth.create_profile("", Role::Viewer).await, Err(Refusal::BadName));
+        assert_eq!(rig.auth.people().await.unwrap().len(), before + 1);
+        rig.auth.delete_profile(FREDERIK, oma.id).await.unwrap();
+        assert_eq!(rig.auth.people().await.unwrap().len(), before);
     }
 
-    const GUEST: ProfileId = ProfileId(3);
+    const GUEST: ProfileId = ProfileId(5);
 
-    #[test]
-    fn a_guest_signs_in_without_anything_but_only_at_home() {
-        let rig = Rig::new();
-        let session = rig.auth.sign_in_as_guest(GUEST, true, "iPad").unwrap();
-        assert_eq!(rig.auth.resolve(&[session]).unwrap().person().unwrap().role, Role::Guest);
-        assert_eq!(rig.auth.sign_in_as_guest(GUEST, false, "iPad"), Err(Refusal::GuestFromAfar));
-        assert_eq!(rig.auth.sign_in_as_guest(MAMI, true, "iPad"), Err(Refusal::NotAGuest));
-        assert_eq!(rig.auth.set_password(GUEST, "correct horse"), Err(Refusal::GuestsHaveNoSignIn));
-        assert_eq!(rig.auth.start_registration(ORIGIN, GUEST).unwrap_err(), Refusal::GuestsHaveNoSignIn);
-        let choices = rig.auth.choices(ORIGIN).unwrap();
+    #[tokio::test]
+    async fn a_guest_signs_in_without_anything_but_only_at_home() {
+        let rig = Rig::new().await;
+        let session = rig.auth.sign_in_as_guest(GUEST, true, "iPad").await.unwrap();
+        assert_eq!(rig.auth.resolve(&[session]).await.unwrap().person().unwrap().role, Role::Guest);
+        assert_eq!(rig.auth.sign_in_as_guest(GUEST, false, "iPad").await, Err(Refusal::GuestFromAfar));
+        assert_eq!(rig.auth.sign_in_as_guest(MAMI, true, "iPad").await, Err(Refusal::NotAGuest));
+        assert_eq!(rig.auth.set_password(GUEST, "correct horse").await, Err(Refusal::GuestsHaveNoSignIn));
+        assert_eq!(rig.auth.start_registration(ORIGIN, GUEST).await.unwrap_err(), Refusal::GuestsHaveNoSignIn);
+        let choices = rig.auth.choices(ORIGIN).await.unwrap();
         assert!(choices.iter().any(|choice| choice.guest && choice.person.name == "Guest"));
-        assert!(!rig.auth.person(GUEST).unwrap().admin());
+        assert!(!rig.auth.person(GUEST).await.unwrap().admin());
     }
 
-    #[test]
-    fn members_show_who_can_sign_in_how() {
-        let rig = Rig::new();
-        rig.auth.set_password(MAMI, "correct horse").unwrap();
-        rig.auth.invite(Some(FREDERIK), FREDERIK).unwrap();
-        let members = rig.auth.members().unwrap();
+    #[tokio::test]
+    async fn members_show_who_can_sign_in_how() {
+        let rig = Rig::new().await;
+        rig.auth.set_password(MAMI, "correct horse").await.unwrap();
+        rig.auth.invite(Some(FREDERIK), FREDERIK).await.unwrap();
+        let members = rig.auth.members().await.unwrap();
         assert!(!members[0].password);
         assert!(members[0].invite_expires_at.is_some());
         assert!(members[1].password);

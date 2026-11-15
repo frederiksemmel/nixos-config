@@ -24,7 +24,7 @@ The Diesel version is in git history (`fb16ad4`, `70d6f69`) for comparison.
 6. [Relations and cascades](#relations-and-cascades)
 7. [Migrations](#migrations)
 8. [Raw SQL](#raw-sql)
-9. [Async inside a sync app](#async-inside-a-sync-app)
+9. [Async all the way](#async-all-the-way)
 10. [Errors](#errors)
 11. [What is nice](#what-is-nice)
 12. [What is not](#what-is-not)
@@ -350,36 +350,33 @@ Detecting the old database, checkpointing it and renaming it uses rusqlite
 directly. That needs a connection closed at a known moment, and Toasty's
 pool closes connections in background tasks.
 
-## Async inside a sync app
+## Async all the way
 
-Toasty is async only and needs Tokio. The TV app runs on Slint's event loop,
-and the HTTP API calls the store from inside its own Tokio runtime. So `Db`
-owns a one-worker runtime and turns every call into a blocking one:
+Toasty is async only and needs Tokio. Until 2026-11-15 the TV app ran on
+Slint's event loop, so `Db` owned a one-worker runtime and blocked on a channel
+for every call. That bridge is gone: the app's state now lives in one async
+core on Tokio ([ADR 3](adr/0003-core.md)), and every `Db` method is an
+`async fn` that awaits Toasty directly:
 
 ```rust
-fn wait<T>(runtime: &Runtime, work: impl Future<Output = toasty::Result<T>> + Send + 'static) -> Result<T> {
-    let (done, result) = mpsc::sync_channel(1);
-    runtime.spawn(async move { let _ = done.send(work.await); });
-    Ok(result.recv()??)
-}
-
-pub fn setting(&self, name: &str) -> Result<Option<String>> {
-    let name = name.to_string();                       // the future must be 'static
-    self.wait(|mut db| async move {
-        Ok(StoredSetting::filter_by_name(name).first().exec(&mut db).await?.map(|s| s.value))
-    })
+pub async fn setting(&self, name: &str) -> Result<Option<String>> {
+    let mut db = self.db.clone();                      // a cheap clone of the pool
+    let found = StoredSetting::filter_by_name(name.to_string()).first().exec(&mut db).await?;
+    Ok(found.map(|setting| setting.value))
 }
 ```
 
-- **Why spawn and a channel:** `Runtime::block_on` panics when called from
-  inside another runtime, and spawning onto the store's runtime doesn't.
-- **Shutting down:** `Drop` calls `shutdown_background()`, because dropping
-  a runtime from async context also panics.
-- **Cloning the handle:** `toasty::Db` is a cheap clone of the pool, so each
-  call clones it into its future.
-
-In an async-native app (axum, a worker), none of this is needed: you call
-`.exec(&mut db).await` directly.
+- **Locks:** the store keeps a path-to-id index behind a `std::sync` lock.
+  Take what the query needs from it in a block and drop the guard before the
+  first `.await`, or the future is not `Send`.
+- **What still blocks:** the command-line tools (`import`, `artwork`, the
+  downloads service) are synchronous and read `library.db` through
+  `Manifest::read`/`write`, which run the async `library_db` functions on a
+  current-thread runtime. `block_on` panics on a runtime worker, so async
+  code calls `library_db::read(..).await` instead.
+- **Drivers on plain threads** (the mpv reader, the Samsung pairing) hand
+  what they want kept to the core over a channel, or use
+  `Handle::block_on` from their own thread.
 
 ## Errors
 
@@ -452,7 +449,8 @@ if let Some(rusqlite::Error::SqliteFailure(failure, _)) = error.downcast_ref::<r
   SQL, whose `statement` does return a count).
 - **No typed constraint errors.** Unique violations need the downcast above,
   which ties the store to the SQLite driver's error type.
-- **Async only.** In a sync program you build the bridge shown above.
+- **Async only.** In a sync program you build a bridge: a runtime of the
+  store's own and a channel per call, as this app did at first.
   - Every call clones its inputs (`to_vec()`, `to_string()`) into a
     `'static` future.
   - The store is noisier than the Diesel version for it: about the same
@@ -534,7 +532,8 @@ Toasty can carry a real service today if you treat it like a young dependency:
   parents with children, and catch panics at your request boundary if one
   slipping through would be worse than an error.
 - **Prefer an async service.** Most of the friction here came from the sync
-  UI; an axum service would use Toasty as intended.
+  UI. Once the app's core moved onto Tokio the bridge, the `'static` clones
+  and the nested-runtime rules all went away.
 - **PostgreSQL is a fine backend for it.** Its Toasty driver gets the same
   CI and has typed timestamps, `jsonb` and arrays. Just don't expect it to
   fix the points above, because they are Toasty's, not SQLite's.

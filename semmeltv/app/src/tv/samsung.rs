@@ -4,7 +4,7 @@ use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, Server
 use rustls::crypto::{self, CryptoProvider};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
-use crate::db::Setting;
+use super::Token;
 use serde_json::Value;
 use std::io;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -19,11 +19,11 @@ const ANSWER_TIME: Duration = Duration::from_secs(40);
 
 pub struct Remote {
     host: String,
-    token: Setting,
+    token: Token,
 }
 
 impl Remote {
-    pub fn new(host: &str, token: Setting) -> Self {
+    pub fn new(host: &str, token: Token) -> Self {
         Self {
             host: host.to_string(),
             token,
@@ -92,7 +92,7 @@ impl Pairing for Remote {
         let saved = self.token.get();
         match self.connect(saved.as_deref())? {
             Some(token) if saved.as_ref() != Some(&token) => {
-                self.token.set(&token).map_err(|error| Failure::Unsaved(error.to_string()))
+                self.token.set(&token).map_err(Failure::Unsaved)
             }
             _ => Ok(()),
         }
@@ -175,8 +175,8 @@ mod tests {
 
     #[test]
     fn the_url_names_semmeltv_and_carries_the_saved_token() {
-        let db = crate::db::Db::memory();
-        let remote = Remote::new("192.168.1.148", db.tv_token());
+        let token = Token::memory();
+        let remote = Remote::new("192.168.1.148", token.clone());
         assert_eq!(
             remote.url(None),
             "wss://192.168.1.148:8002/api/v2/channels/samsung.remote.control?name=U2VtbWVsVFY%3D"

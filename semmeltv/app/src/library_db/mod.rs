@@ -13,51 +13,49 @@ use toasty_driver_sqlite::Sqlite;
 
 pub static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!("toasty/library");
 
-
 fn driver(path: &Path) -> Sqlite {
     Sqlite::open(path).busy_timeout(Duration::from_secs(5))
 }
 
-pub fn read(path: &Path) -> Result<Manifest, ReadError> {
+pub async fn read(path: &Path) -> Result<Manifest, ReadError> {
     if !path.exists() {
         return Err(ReadError::Unreadable(io::Error::from(io::ErrorKind::NotFound)));
     }
-    let runtime = db::runtime().map_err(|error| ReadError::Unreadable(io::Error::other(error.to_string())))?;
-    let path = path.to_path_buf();
-    db::wait(&runtime, async move {
-        let mut db = toasty::Db::builder().models(models::all()).build(driver(&path)).await?;
-        if let Some(problem) = unknown_migrations(&mut db).await? {
-            return Err(toasty::Error::from_args(format_args!("{problem}")));
-        }
-        let mut manifest = load(&mut db).await?;
-        manifest.show.sort_by_key(|show| show.id);
-        manifest.movie.sort_by_key(|movie| movie.id);
-        Ok(manifest)
-    })
-    .map_err(|error| ReadError::Invalid(error.to_string()))
+    read_stored(path).await.map_err(|error| ReadError::Invalid(error.to_string()))
 }
 
-pub fn write(path: &Path, manifest: &Manifest) -> io::Result<()> {
+async fn read_stored(path: &Path) -> toasty::Result<Manifest> {
+    let mut db = toasty::Db::builder().models(models::all()).build(driver(path)).await?;
+    if let Some(problem) = unknown_migrations(&mut db).await? {
+        return Err(toasty::Error::from_args(format_args!("{problem}")));
+    }
+    let mut manifest = load(&mut db).await?;
+    manifest.show.sort_by_key(|show| show.id);
+    manifest.movie.sort_by_key(|movie| movie.id);
+    Ok(manifest)
+}
+
+pub async fn write(path: &Path, manifest: &Manifest) -> io::Result<()> {
     let temporary = manifest::temporary(path);
     let _ = fs::remove_file(&temporary);
     if path.exists() {
         fs::copy(path, &temporary)?;
     }
-    let runtime = db::runtime().map_err(|error| io::Error::other(error.to_string()))?;
-    let wanted = manifest.clone();
-    let file = temporary.clone();
-    db::wait(&runtime, async move {
-        let mut db = toasty::Db::builder().models(models::all()).build(driver(&file)).await?;
-        if let Some(problem) = unknown_migrations(&mut db).await? {
-            return Err(toasty::Error::from_args(format_args!("{problem}")));
-        }
-        MIGRATIONS.apply(&db).await?;
-        let mut transaction = db.transaction().await?;
-        store(&mut transaction, wanted).await?;
-        transaction.commit().await
-    })
-    .map_err(|error| io::Error::other(error.to_string()))?;
+    write_stored(&temporary, manifest.clone())
+        .await
+        .map_err(|error| io::Error::other(error.to_string()))?;
     fs::rename(temporary, path)
+}
+
+async fn write_stored(file: &Path, wanted: Manifest) -> toasty::Result<()> {
+    let mut db = toasty::Db::builder().models(models::all()).build(driver(file)).await?;
+    if let Some(problem) = unknown_migrations(&mut db).await? {
+        return Err(toasty::Error::from_args(format_args!("{problem}")));
+    }
+    MIGRATIONS.apply(&db).await?;
+    let mut transaction = db.transaction().await?;
+    store(&mut transaction, wanted).await?;
+    transaction.commit().await
 }
 
 async fn unknown_migrations(db: &mut toasty::Db) -> toasty::Result<Option<String>> {
@@ -413,8 +411,8 @@ async fn load(executor: &mut dyn toasty::Executor) -> toasty::Result<Manifest> {
     })
 }
 
-pub fn toasty_cli(file: &Path, arguments: Vec<String>) -> db::Result<()> {
-    db::toasty_cli_for(file, models::all(), "toasty/library", arguments)
+pub async fn toasty_cli(file: &Path, arguments: Vec<String>) -> db::Result<()> {
+    db::toasty_cli_for(file, models::all(), "toasty/library", arguments).await
 }
 
 pub fn from_toml(toml: &Path, file: &Path) -> Result<Manifest, String> {

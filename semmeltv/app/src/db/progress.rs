@@ -263,10 +263,11 @@ fn changed<K: Ord, R: PartialEq>(stored: Vec<R>, wanted: Vec<R>, key: impl Fn(&R
 }
 
 impl Db {
-    pub fn progress(&self, profile: ProfileId) -> Result<Progress> {
-        let rows = self.wait(move |mut db| async move { load(&mut db, profile.0).await })?;
-        let index = self.inner.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-        let mut blind = self.inner.blind.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    pub async fn progress(&self, profile: ProfileId) -> Result<Progress> {
+        let mut db = self.db.clone();
+        let rows = load(&mut db, profile.0).await?;
+        let index = self.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let mut blind = self.blind.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         if index.is_empty() {
             blind.insert(profile);
         } else {
@@ -275,22 +276,22 @@ impl Db {
         Ok(assemble(&index, rows))
     }
 
-    pub fn save_progress(&self, profile: ProfileId, progress: &Progress) -> Result<()> {
+    pub async fn save_progress(&self, profile: ProfileId, progress: &Progress) -> Result<()> {
         let (wanted, known) = {
-            let index = self.inner.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let blind = self.inner.blind.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let index = self.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let blind = self.blind.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             let known = if blind.contains(&profile) { Known::default() } else { index.known() };
             (rows(&index, progress), known)
         };
-        self.wait(move |mut db| async move {
-            let mut transaction = db
-                .transaction_builder()
-                .mode(TransactionMode::Immediate)
-                .begin()
-                .await?;
-            store(&mut transaction, profile.0, wanted, known).await?;
-            transaction.commit().await
-        })
+        let mut db = self.db.clone();
+        let mut transaction = db
+            .transaction_builder()
+            .mode(TransactionMode::Immediate)
+            .begin()
+            .await?;
+        store(&mut transaction, profile.0, wanted, known).await?;
+        transaction.commit().await?;
+        Ok(())
     }
 }
 
@@ -446,8 +447,8 @@ pub mod tests {
         }
     }
 
-    fn db() -> Db {
-        let db = Db::memory();
+    async fn db() -> Db {
+        let db = Db::memory().await;
         db.set_library(&library());
         db
     }
@@ -497,34 +498,34 @@ pub mod tests {
         progress
     }
 
-    #[test]
-    fn progress_survives_a_save_and_a_load() {
-        let db = db();
+    #[tokio::test]
+    async fn progress_survives_a_save_and_a_load() {
+        let db = db().await;
         let progress = sample();
-        db.save_progress(ProfileId::FIRST, &progress).unwrap();
-        assert_eq!(db.progress(ProfileId::FIRST).unwrap(), progress);
+        db.save_progress(ProfileId::FIRST, &progress).await.unwrap();
+        assert_eq!(db.progress(ProfileId::FIRST).await.unwrap(), progress);
     }
 
-    #[test]
-    fn a_save_keeps_only_what_is_left() {
-        let db = db();
+    #[tokio::test]
+    async fn a_save_keeps_only_what_is_left() {
+        let db = db().await;
         let mut progress = sample();
-        db.save_progress(ProfileId::FIRST, &progress).unwrap();
+        db.save_progress(ProfileId::FIRST, &progress).await.unwrap();
         progress.shows.clear();
         progress.watching.leave(Kind::Movie, "up");
         progress.dismissed.clear();
         progress.finish(Path::new(DARK));
-        db.save_progress(ProfileId::FIRST, &progress).unwrap();
-        let loaded = db.progress(ProfileId::FIRST).unwrap();
+        db.save_progress(ProfileId::FIRST, &progress).await.unwrap();
+        let loaded = db.progress(ProfileId::FIRST).await.unwrap();
         assert_eq!(loaded, progress);
         assert_eq!(loaded.watching.entries().len(), 1);
     }
 
-    #[test]
-    fn places_are_kept_per_profile_and_what_a_file_is_like_is_shared() {
-        let db = db();
-        db.save_progress(ProfileId::FIRST, &sample()).unwrap();
-        let other = db.progress(ProfileId(2)).unwrap();
+    #[tokio::test]
+    async fn places_are_kept_per_profile_and_what_a_file_is_like_is_shared() {
+        let db = db().await;
+        db.save_progress(ProfileId::FIRST, &sample()).await.unwrap();
+        let other = db.progress(ProfileId(2)).await.unwrap();
         assert!(other.shows.is_empty());
         assert!(other.watching.entries().is_empty());
         assert!(other.dismissed.is_empty());
@@ -536,46 +537,46 @@ pub mod tests {
         assert!(!other.files[Path::new(UP)].finished());
     }
 
-    #[test]
-    fn a_renamed_file_and_show_keep_their_progress() {
-        let db = db();
-        db.save_progress(ProfileId::FIRST, &sample()).unwrap();
+    #[tokio::test]
+    async fn a_renamed_file_and_show_keep_their_progress() {
+        let db = db().await;
+        db.save_progress(ProfileId::FIRST, &sample()).await.unwrap();
         let mut renamed = library();
         renamed.shows[0].key = "dark-2017".to_string();
         let moved = PathBuf::from("/lib/Series/Dark (2017)/Season 1/Dark.S01E02.mkv");
         renamed.shows[0].seasons[0].episodes[0].path = moved.clone();
         db.set_library(&renamed);
-        let progress = db.progress(ProfileId::FIRST).unwrap();
+        let progress = db.progress(ProfileId::FIRST).await.unwrap();
         assert_eq!(progress.files[&moved].stopped_at(), Some(600.0));
         assert_eq!(progress.shows["dark-2017"].episode, 2);
         assert_eq!(progress.watching.last_played(Kind::Series, "dark-2017"), Some(1_800_000_100));
         assert!(!progress.files.contains_key(Path::new(DARK)));
     }
 
-    #[test]
-    fn progress_read_before_the_library_is_known_never_deletes_anything() {
+    #[tokio::test]
+    async fn progress_read_before_the_library_is_known_never_deletes_anything() {
         let file = std::env::temp_dir().join(format!("semmeltv-blind-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&file);
-        let db = Db::open(&file).unwrap();
+        let db = Db::open(&file).await.unwrap();
         db.set_library(&library());
-        db.save_progress(ProfileId::FIRST, &sample()).unwrap();
+        db.save_progress(ProfileId::FIRST, &sample()).await.unwrap();
         drop(db);
-        let blind = Db::open(&file).unwrap();
-        let empty = blind.progress(ProfileId::FIRST).unwrap();
+        let blind = Db::open(&file).await.unwrap();
+        let empty = blind.progress(ProfileId::FIRST).await.unwrap();
         assert_eq!(empty, Progress::default());
         blind.set_library(&library());
-        blind.save_progress(ProfileId::FIRST, &empty).unwrap();
-        assert_eq!(blind.progress(ProfileId::FIRST).unwrap(), sample());
+        blind.save_progress(ProfileId::FIRST, &empty).await.unwrap();
+        assert_eq!(blind.progress(ProfileId::FIRST).await.unwrap(), sample());
         let _ = std::fs::remove_file(&file);
     }
 
-    #[test]
-    fn a_title_played_again_after_finishing_is_stored_in_progress_with_its_tracks() {
-        let db = db();
+    #[tokio::test]
+    async fn a_title_played_again_after_finishing_is_stored_in_progress_with_its_tracks() {
+        let db = db().await;
         let mut progress = sample();
         progress.finish(Path::new(DARK));
-        db.save_progress(ProfileId::FIRST, &progress).unwrap();
-        assert!(db.progress(ProfileId::FIRST).unwrap().files[Path::new(DARK)].finished());
+        db.save_progress(ProfileId::FIRST, &progress).await.unwrap();
+        assert!(db.progress(ProfileId::FIRST).await.unwrap().files[Path::new(DARK)].finished());
         progress.record(
             Path::new(DARK),
             Place {
@@ -590,36 +591,52 @@ pub mod tests {
             subtitles_shown: Some(false),
         };
         progress.keep_tracks(Path::new(DARK), tracks);
-        db.save_progress(ProfileId::FIRST, &progress).unwrap();
-        let again = db.progress(ProfileId::FIRST).unwrap().files[Path::new(DARK)];
+        db.save_progress(ProfileId::FIRST, &progress).await.unwrap();
+        let again = db.progress(ProfileId::FIRST).await.unwrap().files[Path::new(DARK)];
         assert_eq!(again.viewing, Viewing::InProgress { at: 1234.0, tracks });
         assert_eq!(again.resume_at(), 1234.0);
     }
 
-    #[test]
-    fn the_database_refuses_a_place_that_is_finished_and_in_progress_at_once() {
-        let db = db();
-        let refused = |sql: &'static str| {
-            db.wait(move |mut db| async move { toasty::sql::statement(sql).exec(&mut db).await })
-                .is_err()
-        };
-        assert!(refused(
-            "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_at) VALUES (1, 'movie', 9, 'finished', 600.0)"
-        ));
-        assert!(refused(
-            "INSERT INTO video_places (profile_id, kind, video_id, viewing) VALUES (1, 'movie', 9, 'in_progress')"
-        ));
-        assert!(refused(
-            "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_audio_track) VALUES (1, 'movie', 9, 'not_started', 2)"
-        ));
-        assert!(!refused(
-            "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_at) VALUES (1, 'movie', 9, 'in_progress', 600.0)"
-        ));
+    #[tokio::test]
+    async fn the_database_refuses_a_place_that_is_finished_and_in_progress_at_once() {
+        let db = db().await;
+        async fn refused(db: &Db, sql: &'static str) -> bool {
+            let mut raw = db.db.clone();
+            toasty::sql::statement(sql).exec(&mut raw).await.is_err()
+        }
+        assert!(
+            refused(
+                &db,
+                "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_at) VALUES (1, 'movie', 9, 'finished', 600.0)"
+            )
+            .await
+        );
+        assert!(
+            refused(
+                &db,
+                "INSERT INTO video_places (profile_id, kind, video_id, viewing) VALUES (1, 'movie', 9, 'in_progress')"
+            )
+            .await
+        );
+        assert!(
+            refused(
+                &db,
+                "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_audio_track) VALUES (1, 'movie', 9, 'not_started', 2)"
+            )
+            .await
+        );
+        assert!(
+            !refused(
+                &db,
+                "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_at) VALUES (1, 'movie', 9, 'in_progress', 600.0)"
+            )
+            .await
+        );
     }
 
-    #[test]
-    fn files_the_library_does_not_know_are_left_out() {
-        let db = db();
+    #[tokio::test]
+    async fn files_the_library_does_not_know_are_left_out() {
+        let db = db().await;
         let mut progress = sample();
         progress.record(
             Path::new("/lib/Movies/Gone.mkv"),
@@ -629,7 +646,7 @@ pub mod tests {
                 credits: None,
             },
         );
-        db.save_progress(ProfileId::FIRST, &progress).unwrap();
-        assert_eq!(db.progress(ProfileId::FIRST).unwrap(), sample());
+        db.save_progress(ProfileId::FIRST, &progress).await.unwrap();
+        assert_eq!(db.progress(ProfileId::FIRST).await.unwrap(), sample());
     }
 }

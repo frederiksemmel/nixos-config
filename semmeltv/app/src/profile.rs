@@ -7,3 +7,9 @@ pub struct ProfileId(pub i64);
 impl ProfileId {
     pub const FIRST: Self = Self(1);
 }
+
+impl Default for ProfileId {
+    fn default() -> Self {
+        Self::FIRST
+    }
+}

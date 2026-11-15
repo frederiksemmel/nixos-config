@@ -396,11 +396,18 @@ impl Manifest {
     }
 
     pub fn read(path: &Path) -> Result<Self, ReadError> {
-        crate::library_db::read(path)
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(ReadError::Unreadable)?
+            .block_on(crate::library_db::read(path))
     }
 
     pub fn write(&self, path: &Path) -> io::Result<()> {
-        crate::library_db::write(path, self)
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(crate::library_db::write(path, self))
     }
 
     pub fn render(&self) -> String {

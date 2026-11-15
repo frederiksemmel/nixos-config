@@ -1,7 +1,14 @@
 use crate::audio;
+use crate::command::Command;
+use crate::library::Library;
+use crate::profile::ProfileId;
+use crate::progress::Progress;
 use crate::screen;
 use serde::Serialize;
+use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 use tokio::sync::broadcast;
 
 const BACKLOG: usize = 64;
@@ -13,6 +20,42 @@ pub enum Event {
     Playback { now_playing: Option<NowPlaying> },
     Audio(audio::View),
     Screen { screen: screen::View },
+    #[serde(skip)]
+    Home(Arc<Home>),
+    #[serde(skip)]
+    Key(Command),
+    #[serde(skip)]
+    Message(String),
+    #[serde(skip)]
+    Panel(Option<Panel>),
+}
+
+impl Event {
+    pub fn for_phones(&self) -> bool {
+        matches!(
+            self,
+            Self::Voice(_) | Self::Playback { .. } | Self::Audio(_) | Self::Screen { .. }
+        )
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Home {
+    pub library: Arc<Library>,
+    pub profile: ProfileId,
+    pub people: Vec<(ProfileId, String)>,
+    pub progress: Arc<Progress>,
+    pub offline: bool,
+    pub downloaded: Arc<HashSet<PathBuf>>,
+    pub downloading: Option<PathBuf>,
+    pub problem: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Panel {
+    pub heading: String,
+    pub status: String,
+    pub hold: Option<Duration>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -86,6 +129,7 @@ pub struct Bus {
     now_playing: Arc<Mutex<Option<NowPlaying>>>,
     audio: Arc<Mutex<Option<audio::View>>>,
     screen: Arc<Mutex<screen::View>>,
+    home: Arc<Mutex<Arc<Home>>>,
 }
 
 impl Default for Bus {
@@ -95,6 +139,7 @@ impl Default for Bus {
             now_playing: Arc::default(),
             audio: Arc::default(),
             screen: Arc::default(),
+            home: Arc::default(),
         }
     }
 }
@@ -103,6 +148,31 @@ impl Bus {
     pub fn subscribe(&self) -> (Option<NowPlaying>, broadcast::Receiver<Event>) {
         let now_playing = self.now_playing.lock().unwrap();
         (now_playing.clone(), self.events.subscribe())
+    }
+
+    pub fn home_state(&self) -> Arc<Home> {
+        self.home.lock().unwrap().clone()
+    }
+
+    pub fn home(&self, home: Home) {
+        let mut current = self.home.lock().unwrap();
+        if **current != home {
+            let home = Arc::new(home);
+            *current = home.clone();
+            let _ = self.events.send(Event::Home(home));
+        }
+    }
+
+    pub fn key(&self, command: Command) {
+        let _ = self.events.send(Event::Key(command));
+    }
+
+    pub fn message(&self, text: String) {
+        let _ = self.events.send(Event::Message(text));
+    }
+
+    pub fn panel(&self, panel: Option<Panel>) {
+        let _ = self.events.send(Event::Panel(panel));
     }
 
     pub fn now_playing(&self) -> Option<NowPlaying> {
@@ -197,7 +267,7 @@ mod tests {
         let positions: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
             .map(|event| match event {
                 Event::Playback { now_playing } => now_playing.map(|playing| playing.position),
-                Event::Voice(_) | Event::Audio(_) | Event::Screen { .. } => panic!("only playback events were sent"),
+                _ => panic!("only playback events were sent"),
             })
             .collect();
         assert_eq!(positions, [Some(10.1), Some(11.2), None]);

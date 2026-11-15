@@ -758,11 +758,7 @@ export component AppWindow inherits Window {
     property <bool> rated: root.ratings.imdb != "" || root.ratings.rt != "" || root.ratings.popcorn != "";
 
     callback key(string) -> bool;
-    callback remote-input();
-    callback voice-heard();
     callback changed();
-    callback playback-finished(bool, bool);
-    callback position-saved();
     callback resized();
 
     property <length> u: self.height / 1080;

@@ -48,7 +48,8 @@ ADR 1's objections against main:
   (Toasty's CLI, built into the app), checked in under `app/toasty/`, and
   applied at startup by `embed_migrations!`. The seed of the four profiles
   is hand-appended SQL in the first migration.
-- **Async in a sync app.** Toasty is async only, and the TV app is
+- **Async in a sync app.** (Until [ADR 3](0003-core.md), which removed the
+  bridge.) Toasty is async only, and the TV app is
   synchronous (Slint). `Db` owns a one-worker Tokio runtime and blocks on a
   channel for each call, so it works from plain threads and from inside the
   API's runtime alike.

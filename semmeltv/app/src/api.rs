@@ -1,14 +1,13 @@
 use crate::artwork;
-use crate::audio::{self, Audio};
+use crate::audio;
 use crate::bus::{Bus, Event};
+use crate::core::sound::Refusal;
+use crate::core::{Core, Outcome, Request, ScreenCommand, ScreenKind, Seek};
 use crate::details::{self, Details};
-use crate::downloads::remote::Downloads;
 use crate::heatmap;
 use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::manifest::{About, Date};
-use crate::db::Db;
-use crate::profile::ProfileId;
 use crate::auth::gate::Who;
 use crate::progress::Progress;
 use crate::seek::Direction;
@@ -17,10 +16,10 @@ use crate::screen;
 use crate::storage;
 use crate::stream;
 use crate::subfetch::{self, Match, Wanted};
-use crate::subtitles::{self, Subtitles};
+use crate::subtitles;
 use crate::tags::Tags;
 use crate::tmdb::Kind;
-use crate::tv::{self, Television};
+use crate::tv;
 use crate::watching::{self, Current};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
@@ -30,18 +29,14 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router, middleware};
 use crate::auth::{self, gate::Gate};
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, RwLock};
-use std::thread;
-use std::time::{Duration, UNIX_EPOCH};
+use std::sync::Arc;
+use std::time::UNIX_EPOCH;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::broadcast;
 
-const ANSWER_TIME: Duration = Duration::from_secs(5);
 const NEWEST: usize = 12;
 const IMAGE_CACHE: &str = "private, max-age=86400";
 const TRY_AGAIN_LATER: u16 = 1013;
@@ -50,55 +45,11 @@ pub struct Config {
     pub address: String,
     pub phone_microphone: Option<String>,
     pub library: PathBuf,
-    pub downloads: Option<Downloads>,
+    pub meta: PathBuf,
     pub stream: PathBuf,
     pub gate: Option<Gate>,
     pub feedback: PathBuf,
     pub grim: Option<String>,
-}
-
-#[derive(Debug)]
-pub enum Request {
-    Understand(String, ProfileId),
-    Play(Pick, ProfileId),
-    Control(Control),
-    PlayPause,
-    Seek(Seek),
-    Speed(f64),
-    Listen,
-    Subtitles(subtitles::Change),
-    Storage(storage::Change),
-    Dismiss(watching::Kind, String, ProfileId),
-    Mark(watching::Kind, String, Option<(u32, u32)>, watching::Mark, ProfileId),
-    Phone(stream::Report),
-    Screen(ScreenCommand, ProfileId),
-    TvProfile(ProfileId),
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(try_from = "ScreenRequest")]
-pub enum ScreenCommand {
-    Flip {
-        to: ScreenKind,
-        device: screen::Device,
-        position: Option<f64>,
-    },
-    Play {
-        device: screen::Device,
-        pick: Pick,
-    },
-    Resume {
-        device: screen::Device,
-        pick: Pick,
-        position: f64,
-    },
-    Stop {
-        device: screen::Device,
-    },
-    Failed {
-        device: screen::Device,
-        reason: String,
-    },
 }
 
 #[derive(Deserialize)]
@@ -176,149 +127,12 @@ impl TryFrom<ScreenRequest> for ScreenCommand {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ScreenKind {
-    Tv,
-    Phone,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Seek {
-    To(f64),
-    By(f64),
-    Step(Direction),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-pub struct Outcome {
-    pub message: String,
-    pub ok: bool,
-}
-
-pub struct Pending {
-    pub request: Request,
-    pub reply: oneshot::Sender<Outcome>,
-}
-
-pub type Ask = Arc<dyn Fn(Pending) + Send + Sync>;
-
-pub struct Shared {
-    subtitles: Subtitles,
-    pub storage: storage::Board,
-    library: RwLock<Arc<Library>>,
-    progress: RwLock<HashMap<ProfileId, Arc<Progress>>>,
-    tv_profile: RwLock<ProfileId>,
-    db: Option<Db>,
-    sidecars: RwLock<HashMap<PathBuf, usize>>,
-    scans: AtomicU64,
-}
-
-impl Default for Shared {
-    fn default() -> Self {
-        Self {
-            subtitles: Subtitles::default(),
-            storage: storage::Board::default(),
-            library: RwLock::default(),
-            progress: RwLock::default(),
-            tv_profile: RwLock::new(ProfileId::FIRST),
-            db: None,
-            sidecars: RwLock::default(),
-            scans: AtomicU64::default(),
-        }
-    }
-}
-
-impl Shared {
-    pub fn new(subtitles: Subtitles, db: Db) -> Self {
-        Self {
-            subtitles,
-            db: Some(db),
-            ..Self::default()
-        }
-    }
-
-    pub fn set_library(self: &Arc<Self>, library: &Library) {
-        let library = Arc::new(library.clone());
-        *self.library.write().unwrap() = library.clone();
-        let scan = self.scans.fetch_add(1, Ordering::SeqCst) + 1;
-        let shared = self.clone();
-        let spawned = thread::Builder::new().name("sidecars".to_string()).spawn(move || {
-            let mut counts = HashMap::new();
-            for path in library.paths() {
-                if shared.scans.load(Ordering::SeqCst) != scan {
-                    return;
-                }
-                counts.insert(path.clone(), sidecar::find(path).len());
-            }
-            *shared.sidecars.write().unwrap() = counts;
-        });
-        if let Err(error) = spawned {
-            eprintln!("sidecars: {error}");
-        }
-    }
-
-    fn recount(&self, video: &FsPath) {
-        let count = sidecar::find(video).len();
-        self.sidecars.write().unwrap().insert(video.to_path_buf(), count);
-    }
-
-    fn subtitle_count(&self, video: &FsPath) -> usize {
-        let sidecars = self.sidecars.read().unwrap().get(video).copied().unwrap_or(0);
-        sidecars + self.subtitles.embedded(video).unwrap_or(0)
-    }
-
-    pub fn forget_progress(&self) {
-        self.progress.write().unwrap().clear();
-    }
-
-    pub fn set_progress(&self, profile: ProfileId, progress: &Progress) {
-        self.progress.write().unwrap().insert(profile, Arc::new(progress.clone()));
-    }
-
-    pub fn set_tv_profile(&self, profile: ProfileId) {
-        *self.tv_profile.write().unwrap() = profile;
-    }
-
-    pub fn tv_profile(&self) -> ProfileId {
-        *self.tv_profile.read().unwrap()
-    }
-
-    pub(crate) fn library(&self) -> Arc<Library> {
-        self.library.read().unwrap().clone()
-    }
-
-    pub(crate) fn progress(&self, profile: ProfileId) -> Arc<Progress> {
-        if let Some(progress) = self.progress.read().unwrap().get(&profile) {
-            return progress.clone();
-        }
-        let loaded = match &self.db {
-            Some(db) => db.progress(profile).unwrap_or_else(|error| {
-                eprintln!("progress of profile {}: {error}", profile.0);
-                Progress::default()
-            }),
-            None => Progress::default(),
-        };
-        let loaded = Arc::new(loaded);
-        self.progress.write().unwrap().entry(profile).or_insert(loaded).clone()
-    }
-
-    pub(crate) fn subtitles(&self) -> &Subtitles {
-        &self.subtitles
-    }
-}
-
 #[derive(Clone)]
 struct Api {
-    shared: Arc<Shared>,
+    core: Core,
     root: PathBuf,
-    bus: Bus,
-    app: Ask,
     microphone: Option<Arc<Microphone>>,
-    television: Television,
-    audio: Option<Audio>,
     library: PathBuf,
-    downloads: Option<Downloads>,
     stream: PathBuf,
     gate: Option<Gate>,
     feedback: crate::feedback::Feedback,
@@ -335,59 +149,33 @@ struct Microphone {
     busy: tokio::sync::Mutex<()>,
 }
 
-pub fn spawn(
-    config: Config,
-    shared: Arc<Shared>,
-    root: PathBuf,
-    bus: Bus,
-    app: Ask,
-    television: Television,
-    audio: Option<Audio>,
-) {
-    let feedback = crate::feedback::Feedback::new(config.feedback, bus.clone(), config.grim);
+pub fn spawn(config: Config, core: Core) {
+    let feedback = crate::feedback::Feedback::new(config.feedback, core.bus().clone(), config.grim);
     let api = Api {
-        shared,
-        root,
-        bus,
-        app,
+        core,
+        root: config.meta,
         microphone: config.phone_microphone.map(|device| {
             Arc::new(Microphone {
                 device,
                 busy: tokio::sync::Mutex::new(()),
             })
         }),
-        television,
-        audio,
         library: config.library,
-        downloads: config.downloads,
         stream: config.stream,
         gate: config.gate,
         feedback,
     };
     let address = config.address;
-    let spawned = thread::Builder::new().name("api".to_string()).spawn(move || {
-        let runtime = tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .enable_all()
-            .build();
-        let runtime = match runtime {
-            Ok(runtime) => runtime,
-            Err(error) => return eprintln!("api: {error}"),
+    tokio::spawn(async move {
+        let listener = match TcpListener::bind(&address).await {
+            Ok(listener) => listener,
+            Err(error) => return eprintln!("api {address}: {error}"),
         };
-        runtime.block_on(async move {
-            let listener = match TcpListener::bind(&address).await {
-                Ok(listener) => listener,
-                Err(error) => return eprintln!("api {address}: {error}"),
-            };
-            eprintln!("api on http://{address}/api");
-            if let Err(error) = axum::serve(listener, router(api)).await {
-                eprintln!("api: {error}");
-            }
-        });
+        eprintln!("api on http://{address}/api");
+        if let Err(error) = axum::serve(listener, router(api)).await {
+            eprintln!("api: {error}");
+        }
     });
-    if let Err(error) = spawned {
-        eprintln!("api: {error}");
-    }
 }
 
 fn router(api: Api) -> Router {
@@ -424,17 +212,12 @@ fn router(api: Api) -> Router {
         .route("/api/audio/delay", post(delay_sound))
         .route("/api/volume/{change}", post(volume))
         .route("/api/subtitles/fetch", post(fetch_subtitles))
-        .merge(subtitles::routes(api.shared.subtitles.clone(), api.app.clone()))
-        .merge(tv::routes(api.television.clone()))
+        .merge(subtitles::routes(api.core.clone()))
+        .merge(tv::routes(api.core.television().clone()))
         .merge(crate::client_log::routes())
         .merge(crate::feedback::routes(api.feedback.clone()))
-        .merge(storage::routes(api.shared.storage.clone(), api.app.clone()))
-        .merge(stream::routes(
-            api.shared.clone(),
-            api.bus.clone(),
-            api.app.clone(),
-            api.stream.clone(),
-        ));
+        .merge(storage::routes(api.core.clone()))
+        .merge(stream::routes(api.core.clone(), api.stream.clone()));
     match gate {
         Some(gate) => routes
             .merge(auth::http::routes(gate.clone()))
@@ -559,8 +342,8 @@ struct LibraryView {
 }
 
 async fn library(State(api): State<Api>, Who(profile): Who) -> Json<LibraryView> {
-    let library = api.shared.library();
-    let progress = api.shared.progress(profile);
+    let library = api.core.library();
+    let progress = api.core.progress(profile).await;
     Json(LibraryView {
         watching: watching::current(&library, &progress)
             .iter()
@@ -599,7 +382,7 @@ async fn dismiss(State(api): State<Api>, Who(profile): Who, Json(body): Json<Dis
         CardKind::Movie => watching::Kind::Movie,
         CardKind::Show => watching::Kind::Series,
     };
-    ask_app(&api.app, Request::Dismiss(kind, body.key, profile)).await
+    ask(&api.core, Request::Dismiss(kind, body.key, profile)).await
 }
 
 #[derive(Deserialize)]
@@ -655,10 +438,10 @@ async fn mark_watched(State(api): State<Api>, Who(profile): Who, Json(body): Jso
         watching::Mark::Unwatched
     };
     let request = Request::Mark(kind, body.key.clone(), episode, mark, profile);
-    let Some(outcome) = answer(&api.app, request).await else {
+    let Some(outcome) = api.core.ask(request).await else {
         return unanswered();
     };
-    let watched = is_watched(&api.shared.library(), &api.shared.progress(profile), &body);
+    let watched = is_watched(&api.core.library(), &*api.core.progress(profile).await, &body);
     let marked = Marked {
         message: outcome.message,
         ok: outcome.ok && watched.is_some(),
@@ -678,8 +461,8 @@ struct Results {
 }
 
 async fn search(State(api): State<Api>, Who(profile): Who, Query(query): Query<SearchQuery>) -> Json<Results> {
-    let library = api.shared.library();
-    let progress = api.shared.progress(profile);
+    let library = api.core.library();
+    let progress = api.core.progress(profile).await;
     let results = intent::search(&library, &query.q)
         .into_iter()
         .map(|item| card(&api.root, &progress, &library, item))
@@ -886,11 +669,11 @@ struct MovieView {
 }
 
 async fn movie(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>) -> Response {
-    let library = api.shared.library();
+    let library = api.core.library();
     let Some(movie) = library.movies.iter().find(|movie| movie.key == key) else {
         return not_found(format!("no movie {key}"));
     };
-    let progress = api.shared.progress(profile);
+    let progress = api.core.progress(profile).await;
     let last_played = progress
         .last_played([&movie.path])
         .max(progress.watching.last_played(watching::Kind::Movie, &movie.key));
@@ -901,7 +684,7 @@ async fn movie(State(api): State<Api>, Who(profile): Who, Path(key): Path<String
             &movie.path,
             &movie.tags,
             movie.runtime,
-            api.shared.subtitle_count(&movie.path),
+            api.core.subtitle_count(&movie.path),
         ),
         about: about_view(
             &api.art(),
@@ -960,7 +743,7 @@ struct ShowView {
     played: Played,
 }
 
-fn episode_view(shared: &Shared, show: &Show, episode: &Episode, progress: &Progress) -> EpisodeView {
+fn episode_view(core: &Core, show: &Show, episode: &Episode, progress: &Progress) -> EpisodeView {
     EpisodeView {
         season: episode.season,
         episode: episode.number,
@@ -985,17 +768,17 @@ fn episode_view(shared: &Shared, show: &Show, episode: &Episode, progress: &Prog
             &episode.path,
             &episode.tags,
             episode.runtime,
-            shared.subtitle_count(&episode.path),
+            core.subtitle_count(&episode.path),
         ),
     }
 }
 
 async fn show(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>) -> Response {
-    let library = api.shared.library();
+    let library = api.core.library();
     let Some(show) = library.shows.iter().find(|show| show.key == key) else {
         return not_found(format!("no show {key}"));
     };
-    let progress = api.shared.progress(profile);
+    let progress = api.core.progress(profile).await;
     let next = progress.resume_episode(show).map(|episode| {
         let place = watch(&progress, &episode.path, &episode.tags, episode.runtime, 0);
         Next {
@@ -1019,7 +802,7 @@ async fn show(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>
             episodes: season
                 .episodes
                 .iter()
-                .map(|episode| episode_view(&api.shared, show, episode, &progress))
+                .map(|episode| episode_view(&api.core, show, episode, &progress))
                 .collect(),
         })
         .collect();
@@ -1041,7 +824,7 @@ async fn show(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>
 }
 
 async fn movie_backdrop(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
-    let library = api.shared.library();
+    let library = api.core.library();
     let id = library
         .movies
         .iter()
@@ -1054,7 +837,7 @@ async fn movie_backdrop(State(api): State<Api>, Path(key): Path<String>, headers
 }
 
 async fn show_backdrop(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
-    let library = api.shared.library();
+    let library = api.core.library();
     let id = library
         .shows
         .iter()
@@ -1067,7 +850,7 @@ async fn show_backdrop(State(api): State<Api>, Path(key): Path<String>, headers:
 }
 
 async fn movie_poster(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
-    let library = api.shared.library();
+    let library = api.core.library();
     let poster = library
         .movies
         .iter()
@@ -1080,7 +863,7 @@ async fn movie_poster(State(api): State<Api>, Path(key): Path<String>, headers: 
 }
 
 async fn show_poster(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
-    let library = api.shared.library();
+    let library = api.core.library();
     let poster = library
         .shows
         .iter()
@@ -1101,7 +884,7 @@ async fn still(
     Path((key, season, episode)): Path<(String, u32, u32)>,
     headers: HeaderMap,
 ) -> Response {
-    let library = api.shared.library();
+    let library = api.core.library();
     let show = library.shows.iter().find(|show| show.key == key);
     let id = show
         .filter(|show| show.episode(season, episode).is_some())
@@ -1147,7 +930,7 @@ struct PlayBody {
 }
 
 async fn play(State(api): State<Api>, Who(profile): Who, Json(body): Json<PlayBody>) -> Response {
-    let library = api.shared.library();
+    let library = api.core.library();
     let pick = match (body.movie, body.show) {
         (Some(key), None) if library.movies.iter().any(|movie| movie.key == key) => Pick::Movie(key),
         (None, Some(key)) if library.shows.iter().any(|show| show.key == key) => Pick::Show {
@@ -1158,7 +941,7 @@ async fn play(State(api): State<Api>, Who(profile): Who, Json(body): Json<PlayBo
         (Some(key), None) | (None, Some(key)) => return not_found(format!("{key} is not in the library")),
         _ => return problem(StatusCode::BAD_REQUEST, "give either movie or show".to_string()),
     };
-    ask(&api, Request::Play(pick, profile)).await
+    ask(&api.core, Request::Play(pick, profile)).await
 }
 
 #[derive(Deserialize)]
@@ -1167,11 +950,11 @@ struct CommandBody {
 }
 
 async fn command(State(api): State<Api>, Who(profile): Who, Json(body): Json<CommandBody>) -> Response {
-    ask(&api, Request::Understand(body.text, profile)).await
+    ask(&api.core, Request::Understand(body.text, profile)).await
 }
 
 async fn listen(State(api): State<Api>) -> Response {
-    ask(&api, Request::Listen).await
+    ask(&api.core, Request::Listen).await
 }
 
 #[derive(Serialize)]
@@ -1181,7 +964,7 @@ struct PlaybackView {
 
 async fn playback(State(api): State<Api>) -> Json<PlaybackView> {
     Json(PlaybackView {
-        now_playing: api.bus.now_playing(),
+        now_playing: api.core.now_playing(),
     })
 }
 
@@ -1195,22 +978,17 @@ async fn control(State(api): State<Api>, Path(name): Path<String>) -> Response {
         "unmute" => Request::Control(Control::Unmute),
         _ => return not_found(format!("no playback control {name}")),
     };
-    ask(&api, request).await
+    ask(&api.core, request).await
 }
 
 async fn tv_profile(State(api): State<Api>, Who(profile): Who) -> Response {
-    let shown = api.shared.tv_profile();
-    let name = api
-        .shared
-        .db
-        .as_ref()
-        .and_then(|db| crate::auth::store::AuthStore::profile(db, shown).ok().flatten())
-        .map(|found| found.name);
+    let shown = api.core.tv_profile();
+    let name = api.core.profile_name(shown).await;
     Json(serde_json::json!({ "profile": shown, "name": name, "mine": shown == profile })).into_response()
 }
 
 async fn show_my_profile(State(api): State<Api>, Who(profile): Who) -> Response {
-    ask(&api, Request::TvProfile(profile)).await
+    ask(&api.core, Request::TvProfile(profile)).await
 }
 
 async fn tv(State(api): State<Api>, Path(name): Path<String>) -> Response {
@@ -1220,7 +998,7 @@ async fn tv(State(api): State<Api>, Path(name): Path<String>) -> Response {
         "semmeltv" => Control::ShowSemmelTv,
         _ => return not_found(format!("no TV control {name}")),
     };
-    ask(&api, Request::Control(control)).await
+    ask(&api.core, Request::Control(control)).await
 }
 
 #[derive(Deserialize)]
@@ -1235,7 +1013,7 @@ async fn seek(State(api): State<Api>, Json(body): Json<SeekBody>) -> Response {
         (None, Some(by)) if by.is_finite() => Seek::By(by),
         _ => return problem(StatusCode::BAD_REQUEST, "give either to or by, in seconds".to_string()),
     };
-    ask(&api, Request::Seek(seek)).await
+    ask(&api.core, Request::Seek(seek)).await
 }
 
 #[derive(Deserialize)]
@@ -1244,7 +1022,7 @@ struct SkipBody {
 }
 
 async fn skip(State(api): State<Api>, Json(body): Json<SkipBody>) -> Response {
-    ask(&api, Request::Seek(Seek::Step(body.direction))).await
+    ask(&api.core, Request::Seek(Seek::Step(body.direction))).await
 }
 
 #[derive(Deserialize)]
@@ -1254,17 +1032,7 @@ struct SpeedBody {
 }
 
 async fn speed(State(api): State<Api>, Json(body): Json<SpeedBody>) -> Response {
-    ask(&api, Request::Speed(body.speed)).await
-}
-
-async fn ask(api: &Api, request: Request) -> Response {
-    ask_app(&api.app, request).await
-}
-
-async fn answer(app: &Ask, request: Request) -> Option<Outcome> {
-    let (reply, answer) = oneshot::channel();
-    app(Pending { request, reply });
-    tokio::time::timeout(ANSWER_TIME, answer).await.ok()?.ok()
+    ask(&api.core, Request::Speed(body.speed)).await
 }
 
 fn status(ok: bool) -> StatusCode {
@@ -1279,8 +1047,8 @@ fn unanswered() -> Response {
     problem(StatusCode::SERVICE_UNAVAILABLE, "the TV did not answer".to_string())
 }
 
-pub async fn ask_app(app: &Ask, request: Request) -> Response {
-    match answer(app, request).await {
+pub async fn ask(core: &Core, request: Request) -> Response {
+    match core.ask(request).await {
         Some(outcome) => (status(outcome.ok), Json(outcome)).into_response(),
         None => unanswered(),
     }
@@ -1356,13 +1124,13 @@ fn chosen(library: &Library, body: &FetchBody) -> Result<Chosen, Response> {
 }
 
 async fn fetch_subtitles(State(api): State<Api>, Who(profile): Who, Json(body): Json<FetchBody>) -> Response {
-    let Some(downloads) = api.downloads.clone() else {
+    let Some(downloads) = api.core.downloads().cloned() else {
         return problem(
             StatusCode::SERVICE_UNAVAILABLE,
             "This TV can't fetch subtitles".to_string(),
         );
     };
-    let library = api.shared.library();
+    let library = api.core.library();
     let chosen = match chosen(&library, &body) {
         Ok(chosen) => chosen,
         Err(response) => return response,
@@ -1375,7 +1143,7 @@ async fn fetch_subtitles(State(api): State<Api>, Who(profile): Who, Json(body): 
     };
     let asked = body
         .language
-        .or_else(|| api.shared.subtitles.settings_of(profile).languages.first().cloned())
+        .or_else(|| api.core.subtitles().settings_of(profile).languages.first().cloned())
         .unwrap_or_else(|| "en".to_string());
     let Some(language) = subtitles::language_code(&asked) else {
         return problem(StatusCode::BAD_REQUEST, format!("{asked} is not a language I know"));
@@ -1407,9 +1175,9 @@ async fn fetch_subtitles(State(api): State<Api>, Who(profile): Who, Json(body): 
         Err(error) => return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
     };
     let path = api.library.join(&fetched.file);
-    let (video, shared) = (chosen.video.clone(), api.shared.clone());
+    let (video, core) = (chosen.video.clone(), api.core.clone());
     let found = tokio::task::spawn_blocking(move || {
-        shared.recount(&video);
+        core.recount(&video);
         sidecar::find(&video)
     })
     .await
@@ -1425,16 +1193,12 @@ async fn fetch_subtitles(State(api): State<Api>, Who(profile): Who, Json(body): 
             hearing_impaired: false,
         });
     let mut shown = false;
-    if api.shared.subtitles.plays(&chosen.video) {
-        let (reply, answer) = oneshot::channel();
-        (api.app)(Pending {
-            request: Request::Subtitles(subtitles::Change::Add {
-                video: chosen.video.clone(),
-                sidecar,
-            }),
-            reply,
-        });
-        shown = matches!(tokio::time::timeout(ANSWER_TIME, answer).await, Ok(Ok(outcome)) if outcome.ok);
+    if api.core.subtitles().plays(&chosen.video) {
+        let add = subtitles::Change::Add {
+            video: chosen.video.clone(),
+            sidecar,
+        };
+        shown = api.core.ask(Request::Subtitles(add)).await.is_some_and(|outcome| outcome.ok);
     }
     let message = if shown {
         format!("{label} subtitles added")
@@ -1472,129 +1236,39 @@ struct AudioBody {
     output: audio::Output,
 }
 
-fn no_headphones() -> Response {
-    not_found("this TV has no Bluetooth headphones".to_string())
+fn unheard(refusal: Refusal) -> Response {
+    match refusal {
+        Refusal::NoHeadphones => not_found("this TV has no Bluetooth headphones".to_string()),
+        Refusal::Busy => problem(StatusCode::CONFLICT, "headphones are already being paired".to_string()),
+        Refusal::Failed(error) => problem(StatusCode::CONFLICT, error),
+    }
+}
+
+fn heard(view: Result<audio::View, Refusal>) -> Response {
+    match view {
+        Ok(view) => Json(view).into_response(),
+        Err(refusal) => unheard(refusal),
+    }
 }
 
 async fn audio_view(State(api): State<Api>) -> Response {
-    match api.audio {
-        Some(audio) => Json(audio.view()).into_response(),
-        None => no_headphones(),
-    }
-}
-
-pub fn claimed_headphones(db: &Db, except: Option<ProfileId>) -> Vec<String> {
-    let profiles = crate::auth::store::AuthStore::profiles(db).unwrap_or_else(|error| {
-        eprintln!("headphones: {error}");
-        Vec::new()
-    });
-    profiles
-        .iter()
-        .filter(|profile| Some(profile.id) != except)
-        .filter_map(|profile| db.audio_prefs(profile.id).ok()?.headphones)
-        .collect()
-}
-
-fn remember_output(api: &Api, output: audio::Output) {
-    let Some(db) = api.shared.db.clone() else {
-        return;
-    };
-    let profile = api.shared.tv_profile();
-    let mut prefs = db.audio_prefs(profile).unwrap_or_default();
-    prefs.output = match output {
-        audio::Output::Tv => crate::db::Output::Tv,
-        audio::Output::Headphones => crate::db::Output::Headphones,
-    };
-    if let Err(error) = db.save_audio_prefs(profile, &prefs) {
-        eprintln!("headphones: {error}");
-    }
+    heard(api.core.sound())
 }
 
 async fn choose_audio(State(api): State<Api>, Json(body): Json<AudioBody>) -> Response {
-    let Some(audio) = api.audio.clone() else {
-        return no_headphones();
-    };
-    let view = audio.choose(body.output);
-    let remembering = api.clone();
-    let _ = tokio::task::spawn_blocking(move || remember_output(&remembering, body.output)).await;
-    Json(view).into_response()
+    heard(api.core.choose_output(body.output).await)
 }
 
 async fn pair_headphones(State(api): State<Api>, Who(profile): Who) -> Response {
-    let Some(audio) = api.audio.clone() else {
-        return no_headphones();
-    };
-    answer(&api.app, Request::TvProfile(profile)).await;
-    match audio.pair() {
-        Ok(view) => {
-            if let Some(db) = api.shared.db.clone() {
-                tokio::spawn(keep_paired(audio, db, profile));
-            }
-            Json(view).into_response()
-        }
-        Err(audio::Busy) => problem(StatusCode::CONFLICT, "headphones are already being paired".to_string()),
-    }
-}
-
-async fn keep_paired(audio: Audio, db: Db, profile: ProfileId) {
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(120);
-    while tokio::time::Instant::now() < deadline {
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        let view = audio.view();
-        match view.pairing.as_ref().map(|pairing| pairing.state) {
-            Some(audio::Stage::Scanning | audio::Stage::Pairing) => continue,
-            Some(audio::Stage::Paired) => {
-                let Some(headphones) = view.headphones else { return };
-                let saved = tokio::task::spawn_blocking(move || {
-                    let mut prefs = db.audio_prefs(profile)?;
-                    prefs.headphones = Some(headphones.address);
-                    db.save_audio_prefs(profile, &prefs)?;
-                    audio.set_kept(claimed_headphones(&db, None));
-                    Ok::<_, crate::db::Error>(())
-                })
-                .await;
-                if let Ok(Err(error)) = saved {
-                    eprintln!("headphones: remembering the pair: {error}");
-                }
-                return;
-            }
-            _ => return,
-        }
-    }
+    heard(api.core.pair_headphones(profile).await)
 }
 
 async fn cancel_pairing(State(api): State<Api>) -> Response {
-    match api.audio {
-        Some(audio) => Json(audio.cancel_pairing()).into_response(),
-        None => no_headphones(),
-    }
+    heard(api.core.cancel_pairing().await)
 }
 
 async fn forget_headphones(State(api): State<Api>, Who(profile): Who) -> Response {
-    let Some(audio) = api.audio.clone() else {
-        return no_headphones();
-    };
-    answer(&api.app, Request::TvProfile(profile)).await;
-    let db = api.shared.db.clone();
-    let forgetting = move || {
-        let Some(db) = db else {
-            return audio.forget();
-        };
-        audio.set_kept(claimed_headphones(&db, Some(profile)));
-        let view = audio.forget();
-        let mut prefs = db.audio_prefs(profile).unwrap_or_default();
-        prefs.headphones = None;
-        prefs.output = crate::db::Output::Tv;
-        if let Err(error) = db.save_audio_prefs(profile, &prefs) {
-            eprintln!("headphones: {error}");
-        }
-        audio.set_kept(claimed_headphones(&db, None));
-        view
-    };
-    match tokio::task::spawn_blocking(forgetting).await {
-        Ok(view) => Json(view).into_response(),
-        Err(error) => problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
-    }
+    heard(api.core.forget_headphones(profile).await)
 }
 
 #[derive(Deserialize)]
@@ -1604,14 +1278,7 @@ struct DelayBody {
 }
 
 async fn delay_sound(State(api): State<Api>, Json(body): Json<DelayBody>) -> Response {
-    let Some(audio) = api.audio else {
-        return no_headphones();
-    };
-    match tokio::task::spawn_blocking(move || audio.delay_sound(body.by)).await {
-        Ok(Ok(view)) => Json(view).into_response(),
-        Ok(Err(error)) => problem(StatusCode::CONFLICT, error),
-        Err(error) => problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
-    }
+    heard(api.core.delay_sound(body.by).await)
 }
 
 async fn volume(State(api): State<Api>, Path(change): Path<String>) -> Response {
@@ -1621,18 +1288,15 @@ async fn volume(State(api): State<Api>, Path(change): Path<String>) -> Response 
         "mute" => audio::VolumeChange::Mute,
         _ => return not_found(format!("no volume change {change}")),
     };
-    if let Some(audio) = api.audio.clone() {
-        let changed = tokio::task::spawn_blocking(move || audio.change_volume(change)).await;
-        match changed {
-            Ok(Some(Ok(message))) => return (StatusCode::OK, Json(Outcome { message, ok: true })).into_response(),
-            Ok(Some(Err(message))) => {
-                return (StatusCode::UNPROCESSABLE_ENTITY, Json(Outcome { message, ok: false })).into_response();
-            }
-            Ok(None) => {}
-            Err(error) => return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    match api.core.change_volume(change).await {
+        Ok(Some(Ok(message))) => return (StatusCode::OK, Json(Outcome { message, ok: true })).into_response(),
+        Ok(Some(Err(message))) => {
+            return (StatusCode::UNPROCESSABLE_ENTITY, Json(Outcome { message, ok: false })).into_response();
         }
+        Ok(None) => {}
+        Err(refusal) => return unheard(refusal),
     }
-    let television = State(api.television);
+    let television = State(api.core.television().clone());
     match change {
         audio::VolumeChange::Up => tv::volume_up(television).await,
         audio::VolumeChange::Down => tv::volume_down(television).await,
@@ -1641,15 +1305,18 @@ async fn volume(State(api): State<Api>, Path(change): Path<String>) -> Response 
 }
 
 async fn screen_view(State(api): State<Api>) -> Json<screen::View> {
-    Json(api.bus.screen_state())
+    Json(api.core.screen())
 }
 
-async fn screen_command(State(api): State<Api>, Who(profile): Who, Json(command): Json<ScreenCommand>) -> Response {
-    ask(&api, Request::Screen(command, profile)).await
+async fn screen_command(State(api): State<Api>, Who(profile): Who, Json(request): Json<ScreenRequest>) -> Response {
+    match ScreenCommand::try_from(request) {
+        Ok(command) => ask(&api.core, Request::Screen(command, profile)).await,
+        Err(error) => problem(StatusCode::UNPROCESSABLE_ENTITY, error),
+    }
 }
 
 async fn events(State(api): State<Api>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| stream_events(socket, api.bus))
+    upgrade.on_upgrade(move |socket| stream_events(socket, api.core.bus().clone()))
 }
 
 async fn stream_events(mut socket: WebSocket, bus: Bus) {
@@ -1669,6 +1336,7 @@ async fn stream_events(mut socket: WebSocket, bus: Bus) {
     loop {
         tokio::select! {
             event = events.recv() => match event {
+                Ok(event) if !event.for_phones() => {}
                 Ok(event) => if send_event(&mut socket, &event).await.is_err() { return },
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     let now_playing = bus.now_playing();
@@ -1744,12 +1412,17 @@ mod tests {
     use crate::bus::{NowPlaying, Voice};
     use crate::import::library_from_paths;
     use crate::progress::Position;
+    use crate::profile::ProfileId;
     use serde_json::{Value, json};
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
 
     #[test]
     fn a_phone_asks_for_a_movie_or_a_show_and_never_both() {
-        let read = |body: Value| serde_json::from_value::<ScreenCommand>(body);
+        let read = |body: Value| {
+            let request = serde_json::from_value::<ScreenRequest>(body).map_err(|error| error.to_string())?;
+            ScreenCommand::try_from(request)
+        };
         let device = json!({ "id": "p1", "name": "phone" });
         let play = read(json!({ "action": "play", "device": device, "show": "dark", "season": 1, "episode": 2 }));
         assert!(matches!(
@@ -1809,8 +1482,6 @@ mod tests {
     }
 
     fn serve(root: PathBuf, microphone: Option<String>) -> Server {
-        let shared = Arc::new(Shared::default());
-        shared.set_library(&library());
         let mut progress = Progress::default();
         let position = Position {
             season: 1,
@@ -1833,36 +1504,27 @@ mod tests {
             credits: None,
         };
         progress.record(&library().movies[1].path, up);
-        shared.set_progress(ProfileId::FIRST, &progress);
-        let bus = Bus::default();
-        let (asked, received) = mpsc::channel();
-        let app: Ask = Arc::new(move |pending: Pending| {
-            let _ = asked.send(format!("{:?}", pending.request));
-            let ok = !matches!(pending.request, Request::Understand(..));
-            let _ = pending.reply.send(Outcome {
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let (core, asked) = runtime.block_on(async {
+            let (core, inbox) = Core::detached(library()).await;
+            let asked = Core::answering(inbox, |request| Outcome {
                 message: "done".to_string(),
-                ok,
+                ok: !matches!(request, Request::Understand(..)),
             });
+            (core, asked)
         });
+        core.publish_progress(ProfileId::FIRST, progress);
+        let bus = core.bus().clone();
         let api = Api {
-            shared,
+            core,
             root,
-            bus: bus.clone(),
-            app,
             microphone: microphone.map(|device| {
                 Arc::new(Microphone {
                     device,
                     busy: tokio::sync::Mutex::new(()),
                 })
             }),
-            television: Television::new(tv::Settings {
-                kind: None,
-                renderer: None,
-                token: crate::db::Db::memory().tv_token(),
-            }),
-            audio: None,
             library: PathBuf::from("/lib"),
-            downloads: None,
             stream: std::env::temp_dir().join(format!("semmeltv-api-stream-{}", std::process::id())),
             gate: None,
             feedback: crate::feedback::Feedback::new(
@@ -1875,14 +1537,13 @@ mod tests {
                 None,
             ),
         };
-        let runtime = tokio::runtime::Runtime::new().unwrap();
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         runtime.spawn(async move { axum::serve(listener, router(api)).await });
         Server {
             base,
             bus,
-            asked: received,
+            asked,
             _runtime: runtime,
         }
     }

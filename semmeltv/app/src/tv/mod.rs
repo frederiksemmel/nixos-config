@@ -1,9 +1,8 @@
 mod samsung;
 mod upnp;
 
-use crate::api::Outcome;
 use crate::cec::{self, Screen};
-use crate::db::Setting;
+use crate::core::Outcome;
 use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
@@ -46,7 +45,39 @@ impl Kind {
 pub struct Settings {
     pub kind: Option<Kind>,
     pub renderer: Option<String>,
-    pub token: Setting,
+    pub token: Token,
+}
+
+type Keep = dyn Fn(&str) -> Result<(), String> + Send + Sync;
+
+#[derive(Clone)]
+pub struct Token {
+    value: Arc<Mutex<Option<String>>>,
+    keep: Arc<Keep>,
+}
+
+impl Token {
+    pub fn new(value: Option<String>, keep: impl Fn(&str) -> Result<(), String> + Send + Sync + 'static) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(value)),
+            keep: Arc::new(keep),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn memory() -> Self {
+        Self::new(None, |_| Ok(()))
+    }
+
+    pub fn get(&self) -> Option<String> {
+        self.value.lock().unwrap().clone().filter(|value| !value.trim().is_empty())
+    }
+
+    pub fn set(&self, value: &str) -> Result<(), String> {
+        (self.keep)(value)?;
+        *self.value.lock().unwrap() = Some(value.to_string());
+        Ok(())
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -120,7 +151,7 @@ struct Backends {
     pairing: Option<Box<dyn Pairing>>,
 }
 
-fn backends(kind: Kind, renderer: Option<&upnp::Renderer>, token: &Setting) -> Backends {
+fn backends(kind: Kind, renderer: Option<&upnp::Renderer>, token: &Token) -> Backends {
     let volume = renderer.map(|renderer| Box::new(renderer.clone()) as Box<dyn Volume>);
     let pairing = match kind {
         Kind::Generic => None,
@@ -139,7 +170,7 @@ struct Inner {
     power: Box<dyn Power>,
     kind: Option<Kind>,
     renderer: Option<upnp::Renderer>,
-    token: Setting,
+    token: Token,
     chosen: Mutex<Option<Arc<Backends>>>,
 }
 
@@ -362,7 +393,7 @@ mod tests {
                 power: Box::new(NoPower),
                 kind,
                 renderer,
-                token: crate::db::Db::memory().tv_token(),
+                token: Token::memory(),
                 chosen: Mutex::new(None),
             }),
         }
@@ -398,7 +429,7 @@ mod tests {
                 power: Box::new(screen.clone()),
                 kind: None,
                 renderer: None,
-                token: crate::db::Db::memory().tv_token(),
+                token: Token::memory(),
                 chosen: Mutex::new(None),
             }),
         };
@@ -445,7 +476,7 @@ mod tests {
     #[test]
     fn only_a_samsung_with_a_renderer_pairs() {
         let renderer = upnp::Renderer::new("http://192.168.1.148:9197/dmr".to_string());
-        let token = crate::db::Db::memory().tv_token();
+        let token = Token::memory();
         let samsung = backends(Kind::Samsung, Some(&renderer), &token);
         assert!(samsung.volume.is_some() && samsung.pairing.is_some());
         let generic = backends(Kind::Generic, Some(&renderer), &token);

@@ -1,5 +1,4 @@
 mod api;
-mod app;
 mod artwork;
 mod audio;
 mod auth;
@@ -9,6 +8,7 @@ mod cache;
 mod cec;
 mod client_log;
 mod command;
+mod core;
 mod db;
 mod details;
 mod display;
@@ -44,8 +44,8 @@ mod subtitles;
 mod tags;
 mod tmdb;
 mod tv;
+mod ui;
 mod voice;
-mod watch;
 mod watching;
 mod wyoming;
 
@@ -54,6 +54,7 @@ use db::Db;
 use profile::ProfileId;
 use std::env;
 use std::fs;
+use std::future::Future;
 use std::path::{self, Path, PathBuf};
 use std::process::ExitCode;
 use std::sync::mpsc;
@@ -209,24 +210,46 @@ fn wake_word(args: &Args) -> Option<voice::WakeWord> {
     })
 }
 
-fn open_db(args: &Args) -> Result<Db, String> {
-    Db::open(&args.db).map_err(|error| format!("{}: {error}", args.db.display()))
+async fn open_db(args: &Args) -> Result<Db, String> {
+    Db::open(&args.db).await.map_err(|error| format!("{}: {error}", args.db.display()))
+}
+
+fn waiting<T>(work: impl Future<Output = T>) -> Result<T, String> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    Ok(runtime.block_on(work))
 }
 
 fn stored_progress(args: &Args) -> progress::Progress {
-    open_db(args)
-        .and_then(|db| {
-            db.set_library(&library::load_listed(&args.library, args.meta()).unwrap_or_default());
-            db.progress(ProfileId::FIRST).map_err(|error| error.to_string())
-        })
-        .unwrap_or_else(|error| {
-            eprintln!("progress: {error}");
-            progress::Progress::default()
-        })
+    let listed = library::load_listed(&args.library, args.meta()).unwrap_or_default();
+    let stored = waiting(async {
+        let db = open_db(args).await?;
+        db.set_library(&listed);
+        db.progress(ProfileId::FIRST).await.map_err(|error| error.to_string())
+    });
+    stored.and_then(|progress| progress).unwrap_or_else(|error| {
+        eprintln!("progress: {error}");
+        progress::Progress::default()
+    })
 }
 
 fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
-    let db = open_db(&args)?;
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("semmeltv-core")
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let meta = args.meta().to_path_buf();
+    let core = runtime.block_on(start_core(args, cache))?;
+    let shown = ui::run(core, &meta, runtime.handle()).map_err(|error| error.to_string());
+    runtime.shutdown_background();
+    shown
+}
+
+async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
+    let db = open_db(&args).await?;
     let capacity: Option<u64> = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
         .and_then(|bytes| bytes.parse().ok());
@@ -243,17 +266,22 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     let wake_word = wake_word(&args);
     let meta = args.meta().to_path_buf();
     let kind = env::var("SEMMELTV_TV_KIND").ok().filter(|kind| !kind.is_empty());
-    let tv = tv::Settings {
-        kind: kind.as_deref().map(tv::Kind::parse).transpose()?,
-        renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
-        token: db.tv_token(),
-    };
-    let library = args.library.clone();
     let feedback = env_path("SEMMELTV_FEEDBACK")
         .unwrap_or_else(|| args.db.parent().unwrap_or(Path::new(".")).join("feedback"));
-    let downloads = env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new);
-    let gate = if args.api.is_some() { sign_in_gate(&db)? } else { None };
-    let setup = app::Setup {
+    let gate = if args.api.is_some() { sign_in_gate(&db).await? } else { None };
+    let api = args.api.map(|address| api::Config {
+        address,
+        library: args.library.clone(),
+        meta: meta.clone(),
+        phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
+            .ok()
+            .filter(|device| !device.is_empty()),
+        stream: env_path("SEMMELTV_STREAM_DIR").unwrap_or_else(|| PathBuf::from("/dev/shm/semmeltv-stream")),
+        gate,
+        feedback,
+        grim: env_text("SEMMELTV_GRIM"),
+    });
+    let setup = core::Setup {
         store: offline::Store::new(args.library.clone(), args.vfs_cache, capacity),
         storage,
         meta,
@@ -261,37 +289,30 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         remote: env::var("SEMMELTV_REMOTE").ok().filter(|remote| !remote.is_empty()),
         cache,
         db,
-        tv,
+        tv_kind: kind.as_deref().map(tv::Kind::parse).transpose()?,
+        tv_renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
         wake_word,
         speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
         led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
         headphones: env_text("SEMMELTV_HEADPHONES").is_some_and(|value| value == "bluetooth"),
-        downloads: downloads.clone(),
-        api: args.api.map(|address| api::Config {
-            address,
-            library,
-            downloads,
-            phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
-                .ok()
-                .filter(|device| !device.is_empty()),
-            stream: env_path("SEMMELTV_STREAM_DIR").unwrap_or_else(|| PathBuf::from("/dev/shm/semmeltv-stream")),
-            gate,
-            feedback,
-            grim: env_text("SEMMELTV_GRIM"),
-        }),
+        downloads: env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new),
     };
-    app::run(setup).map_err(|error| error.to_string())
+    let core = core::Core::start(setup).await;
+    if let Some(config) = api {
+        api::spawn(config, core.clone());
+    }
+    Ok(core)
 }
 
 fn run_toasty(args: &Args) -> Result<(), String> {
     let (which, rest) = args.toasty.split_first().ok_or("toasty needs tv or library, then a migration command")?;
     let rest = rest.to_vec();
     match which.as_str() {
-        "tv" => db::toasty_cli(&args.db, rest),
+        "tv" => waiting(db::toasty_cli(&args.db, rest))?,
         "library" => {
             let file = args.manifest.clone().unwrap_or_else(|| env::temp_dir().join("semmeltv-library-scratch.db"));
-            library_db::toasty_cli(&file, rest)
+            waiting(library_db::toasty_cli(&file, rest))?
         }
         other => return Err(format!("toasty {other}: say tv or library")),
     }
@@ -400,18 +421,19 @@ fn print_card(words: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn invite(args: &Args) -> Result<(), String> {
-    let db = open_db(args)?;
+async fn invite(args: &Args) -> Result<(), String> {
+    let db = open_db(args).await?;
     let origins = env_text("SEMMELTV_ORIGINS").ok_or("invite needs SEMMELTV_ORIGINS, the addresses people sign in on")?;
-    let auth = auth::Auth::new(std::sync::Arc::new(db), &[])?;
+    let auth = auth::Auth::new(db, &[])?;
     let wanted = args.transcript.trim();
     let person = auth
         .people()
+        .await
         .map_err(|refusal| refusal.to_string())?
         .into_iter()
         .find(|person| person.name.eq_ignore_ascii_case(wanted))
         .ok_or_else(|| format!("There is no profile called {wanted}"))?;
-    let token = auth.invite(None, person.id).map_err(|refusal| refusal.to_string())?;
+    let token = auth.invite(None, person.id).await.map_err(|refusal| refusal.to_string())?;
     println!("Invite for {} ({}), open once within {} days:", person.name, person.role.name(), auth::INVITE_LIFETIME / 86400);
     for origin in origins.split(',').map(str::trim).filter(|origin| !origin.is_empty()) {
         println!("  {}/invite/{token}", origin.trim_end_matches('/'));
@@ -419,7 +441,7 @@ fn invite(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-fn sign_in_gate(db: &Db) -> Result<Option<auth::gate::Gate>, String> {
+async fn sign_in_gate(db: &Db) -> Result<Option<auth::gate::Gate>, String> {
     let Some(origins) = env_text("SEMMELTV_ORIGINS") else {
         eprintln!("api: SEMMELTV_ORIGINS is unset, so nobody signs in and anyone who reaches the API may use it");
         return Ok(None);
@@ -436,8 +458,8 @@ fn sign_in_gate(db: &Db) -> Result<Option<auth::gate::Gate>, String> {
         .filter(|token| !token.is_empty()),
         None => None,
     };
-    let auth = auth::Auth::new(std::sync::Arc::new(db.clone()), &origins)?;
-    auth.forget_expired();
+    let auth = auth::Auth::new(db.clone(), &origins)?;
+    auth.forget_expired().await;
     Ok(Some(auth::gate::Gate { auth, service }))
 }
 
@@ -549,7 +571,7 @@ fn run() -> Result<(), String> {
         }
         "library" => run_library(&args)?,
         "hear" => hear(&args)?,
-        "invite" => invite(&args)?,
+        "invite" => waiting(invite(&args))??,
         "card" => print_card(&args.toasty)?,
         _ => run_ui(args, cache)?,
     }

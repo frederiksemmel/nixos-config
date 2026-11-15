@@ -161,16 +161,11 @@ pub async fn guard(State(gate): State<Gate>, mut request: Request, next: Next) -
             rewrite: false,
         }
     } else {
-        let auth = gate.auth.clone();
-        match tokio::task::spawn_blocking(move || auth.resolve(&tokens)).await {
-            Ok(Ok(resolved)) => resolved,
-            Ok(Err(refusal)) => {
+        match gate.auth.resolve(&tokens).await {
+            Ok(resolved) => resolved,
+            Err(refusal) => {
                 eprintln!("auth: resolving a session: {refusal}");
                 return refuse(StatusCode::SERVICE_UNAVAILABLE, &refusal.to_string());
-            }
-            Err(error) => {
-                eprintln!("auth: resolving a session: {error}");
-                return refuse(StatusCode::SERVICE_UNAVAILABLE, "The TV couldn't check who you are");
             }
         }
     };

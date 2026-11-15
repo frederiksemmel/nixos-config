@@ -1,4 +1,5 @@
-use crate::app::Remote;
+use crate::core::{Core, Request};
+use crate::intent::Control;
 use crate::command::Command;
 use cec_linux::{
     CecDevice, CecEvent, CecLogAddrType, CecLogAddrs, CecLogicalAddress, CecModeFollower, CecModeInitiator, CecOpcode,
@@ -33,7 +34,7 @@ const CEC_CONNECTOR_TYPE_DRM: u32 = 1;
 static INPUT_HELD_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
 static ACTIVE_SOURCE: AtomicBool = AtomicBool::new(false);
 
-pub fn spawn(remote: Remote) {
+pub fn spawn(remote: Core) {
     for path in adapters(Path::new("/dev")) {
         let remote = remote.clone();
         thread::spawn(move || {
@@ -159,7 +160,7 @@ fn is_adapter_name(name: &str) -> bool {
         .is_some_and(|number| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()))
 }
 
-fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
+fn listen(path: &Path, remote: &Core) -> io::Result<()> {
     let device = CecDevice::open(path)?;
     device.set_mode(CecModeInitiator::Send, CecModeFollower::All)?;
     claim_address(&device)?;
@@ -221,7 +222,7 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
                 Reaction::Ignore => {}
                 Reaction::Press(command) => {
                     if let Some(command) = keys.press(command, Instant::now()) {
-                        remote.send(command);
+                        remote.send(Request::Key(command));
                     }
                 }
                 Reaction::Release => keys.release(),
@@ -238,7 +239,7 @@ fn listen(path: &Path, remote: &Remote) -> io::Result<()> {
                         "{}: {opcode:?} moved the TV to another input, stopping playback",
                         path.display()
                     );
-                    remote.stop();
+                    remote.send(Request::Control(Control::Stop));
                 }
                 Reaction::Reply(reply, status) => {
                     let sent = own_logical_address(&device)

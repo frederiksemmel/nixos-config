@@ -19,6 +19,21 @@ from the videos; it defaults to `$SEMMELTV_META`, then the library.
 library: import and artwork work on a local copy of `library.db`, which the
 `/semmeltv-incoming` skill and the downloads service upload.
 
+## How it is built
+
+One async core on Tokio owns everything the app knows and drives: the library,
+every profile's progress, the database, mpv, HDMI-CEC and the TV, headphones,
+voice, the offline cache and downloads (`src/core/`). Two frontends use it
+through one interface, the `Core` handle: typed requests in
+(`core.send`, `core.ask`), events and snapshots out (`core.subscribe`,
+`core.home()`, `core.library()` and so on).
+
+- `src/ui.rs` is the TV's screen in Slint. It keeps only the focus, the open
+  page and loaded artwork, and draws what the core sends.
+- `src/api.rs` is the HTTP and WebSocket API the web app uses.
+
+[ADR 3](../docs/adr/0003-core.md) has the reasons.
+
 ## library.db
 
 The only source of truth for what is in the library: a SQLite file on pCloud,
@@ -352,7 +367,8 @@ the [Toasty](https://github.com/tokio-rs/toasty) ORM
 stays the only source of truth for the library, and `library.last-good.db`
 stays in the cache. The models are in `src/db/models.rs`, the migrations Toasty
 generated from them in `toasty/tv/`; the app applies new ones when it starts.
-`src/db/` is the only code that touches the database.
+`src/db/` is the only code that touches the database, and its methods are
+async: the core and the API await them.
 
 | Table | Holds | Per |
 | --- | --- | --- |
