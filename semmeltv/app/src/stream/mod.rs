@@ -1,5 +1,5 @@
 mod codecs;
-mod probe;
+pub mod probe;
 mod remux;
 mod vtt;
 

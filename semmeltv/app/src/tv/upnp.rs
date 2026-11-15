@@ -2,12 +2,14 @@ use super::{Failure, Volume};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-const SERVICE: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
+const RENDERING: &str = "urn:schemas-upnp-org:service:RenderingControl:1";
+const TRANSPORT: &str = "urn:schemas-upnp-org:service:AVTransport:1";
 const TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Debug)]
 struct Description {
-    control: String,
+    rendering: String,
+    transport: Option<String>,
     manufacturer: String,
 }
 
@@ -49,9 +51,11 @@ impl Renderer {
             .call()
             .and_then(|mut response| response.body_mut().read_to_string())
             .map_err(|error| Failure::Unreachable(error.to_string()))?;
-        let path = control_path(&text).ok_or_else(|| Failure::Garbled("no RenderingControl service".to_string()))?;
+        let path = control_path(&text, RENDERING)
+            .ok_or_else(|| Failure::Garbled("no RenderingControl service".to_string()))?;
         let description = Description {
-            control: resolve(&self.description, path),
+            rendering: resolve(&self.description, path),
+            transport: control_path(&text, TRANSPORT).map(|path| resolve(&self.description, path)),
             manufacturer: element(&text, "manufacturer").unwrap_or_default().trim().to_string(),
         };
         *self.read.lock().unwrap() = Some(description.clone());
@@ -63,12 +67,36 @@ impl Renderer {
     }
 
     fn call(&self, action: &str, arguments: &str) -> Result<String, Failure> {
-        let url = self.read()?.control;
-        let body = envelope(action, arguments);
+        let url = self.read()?.rendering;
+        self.post(&url, RENDERING, action, arguments)
+    }
+
+    /// Calls an action of the renderer's AVTransport, the player in the TV.
+    pub fn transport(&self, action: &str, arguments: &str) -> Result<String, Failure> {
+        let url = self
+            .read()?
+            .transport
+            .ok_or_else(|| Failure::Garbled("no AVTransport service".to_string()))?;
+        self.post(&url, TRANSPORT, action, arguments)
+    }
+
+    pub fn set_mute(&self, muted: bool) -> Result<(), Failure> {
+        self.call(
+            "SetMute",
+            &format!(
+                "<Channel>Master</Channel><DesiredMute>{}</DesiredMute>",
+                u8::from(muted)
+            ),
+        )
+        .map(drop)
+    }
+
+    fn post(&self, url: &str, service: &str, action: &str, arguments: &str) -> Result<String, Failure> {
+        let body = envelope(service, action, arguments);
         let (status, text) = self
             .agent
-            .post(&url)
-            .header("SOAPAction", format!("\"{SERVICE}#{action}\""))
+            .post(url)
+            .header("SOAPAction", format!("\"{service}#{action}\""))
             .header("Content-Type", "text/xml; charset=\"utf-8\"")
             .header("Connection", "close")
             .send(body.as_bytes())
@@ -118,23 +146,23 @@ impl Volume for Renderer {
     }
 }
 
-fn envelope(action: &str, arguments: &str) -> String {
+fn envelope(service: &str, action: &str, arguments: &str) -> String {
     format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?><s:Envelope xmlns:s=\"http://schemas.xmlsoap.org/soap/envelope/\" \
-         s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{SERVICE}\">\
+         s:encodingStyle=\"http://schemas.xmlsoap.org/soap/encoding/\"><s:Body><u:{action} xmlns:u=\"{service}\">\
          <InstanceID>0</InstanceID>{arguments}</u:{action}></s:Body></s:Envelope>"
     )
 }
 
-fn element<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
+pub fn element<'a>(xml: &'a str, name: &str) -> Option<&'a str> {
     let open = format!("<{name}>");
     let start = xml.find(&open)? + open.len();
     let end = start + xml[start..].find(&format!("</{name}>"))?;
     Some(&xml[start..end])
 }
 
-fn control_path(description: &str) -> Option<&str> {
-    let service = description.find(SERVICE)?;
+fn control_path<'a>(description: &'a str, service: &str) -> Option<&'a str> {
+    let service = description.find(service)?;
     element(&description[service..], "controlURL").map(str::trim)
 }
 
@@ -172,17 +200,84 @@ pub mod tests {
         pub muted: Arc<Mutex<bool>>,
         pub refuse: bool,
         pub received: Arc<Mutex<Vec<String>>>,
+        pub player: Arc<Mutex<Player>>,
     }
 
-    async fn rendering_control(State(tv): State<Tv>, headers: HeaderMap, body: String) -> Response {
-        let action = headers["soapaction"]
+    /// The TV's own player as the fake renderer's AVTransport shows it.
+    #[derive(Clone, Debug, Default)]
+    pub struct Player {
+        pub uri: String,
+        pub metadata: String,
+        pub state: String,
+        pub position: u64,
+        pub duration: u64,
+    }
+
+    fn action(headers: &HeaderMap) -> String {
+        headers["soapaction"]
             .to_str()
             .unwrap()
             .rsplit('#')
             .next()
             .unwrap()
             .trim_matches('"')
-            .to_string();
+            .to_string()
+    }
+
+    pub fn clock(seconds: u64) -> String {
+        format!("{}:{:02}:{:02}", seconds / 3600, seconds / 60 % 60, seconds % 60)
+    }
+
+    async fn av_transport(State(tv): State<Tv>, headers: HeaderMap, body: String) -> Response {
+        let action = action(&headers);
+        tv.received.lock().unwrap().push(body.clone());
+        let mut player = tv.player.lock().unwrap();
+        let reply = match action.as_str() {
+            "SetAVTransportURI" => {
+                player.uri = element(&body, "CurrentURI").unwrap_or_default().to_string();
+                player.metadata = element(&body, "CurrentURIMetaData").unwrap_or_default().to_string();
+                player.state = "STOPPED".to_string();
+                player.position = 0;
+                String::new()
+            }
+            "Play" => {
+                player.state = "PLAYING".to_string();
+                String::new()
+            }
+            "Pause" => {
+                player.state = "PAUSED_PLAYBACK".to_string();
+                String::new()
+            }
+            "Stop" => {
+                player.state = "STOPPED".to_string();
+                String::new()
+            }
+            "Seek" => {
+                let target = element(&body, "Target").unwrap_or_default();
+                let parts: Vec<u64> = target.split(':').filter_map(|part| part.parse().ok()).collect();
+                player.position = parts.iter().fold(0, |total, part| total * 60 + part);
+                String::new()
+            }
+            "GetTransportInfo" => format!(
+                "<CurrentTransportState>{}</CurrentTransportState>",
+                if player.state.is_empty() {
+                    "NO_MEDIA_PRESENT"
+                } else {
+                    &player.state
+                }
+            ),
+            "GetPositionInfo" => format!(
+                "<TrackDuration>{}</TrackDuration><RelTime>{}</RelTime>",
+                clock(player.duration),
+                clock(player.position)
+            ),
+            _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        };
+        format!("<u:{action}Response>{reply}</u:{action}Response>").into_response()
+    }
+
+    async fn rendering_control(State(tv): State<Tv>, headers: HeaderMap, body: String) -> Response {
+        let action = action(&headers);
         tv.received.lock().unwrap().push(body.clone());
         if tv.refuse && action.starts_with("Set") {
             return (
@@ -227,6 +322,7 @@ pub mod tests {
         let router = Router::new()
             .route("/dmr", get(|| async { DESCRIPTION }))
             .route("/upnp/control/RenderingControl1", post(rendering_control))
+            .route("/upnp/control/AVTransport1", post(av_transport))
             .with_state(tv.clone());
         runtime.spawn(async move { axum::serve(listener, router).await });
         Fake {
@@ -238,7 +334,11 @@ pub mod tests {
 
     #[test]
     fn the_description_gives_the_control_url_and_the_manufacturer() {
-        assert_eq!(control_path(DESCRIPTION), Some("/upnp/control/RenderingControl1"));
+        assert_eq!(
+            control_path(DESCRIPTION, RENDERING),
+            Some("/upnp/control/RenderingControl1")
+        );
+        assert_eq!(control_path(DESCRIPTION, TRANSPORT), Some("/upnp/control/AVTransport1"));
         assert_eq!(
             resolve("http://192.168.1.148:9197/dmr", "/upnp/control/RenderingControl1"),
             "http://192.168.1.148:9197/upnp/control/RenderingControl1"

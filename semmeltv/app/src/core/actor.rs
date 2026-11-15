@@ -14,6 +14,7 @@ use crate::led::Led;
 use crate::library::Library;
 use crate::offline::{Source, Store};
 use crate::overlay;
+use crate::player::renderer::{self, Handoff};
 use crate::player::{self, Finish, Player};
 use crate::profile::ProfileId;
 use crate::progress::{self, Position, Progress};
@@ -57,6 +58,7 @@ pub struct Hardware {
     pub wake_word: Option<voice::WakeWord>,
     pub microphone: Option<String>,
     pub led: Option<Led>,
+    pub handoff: Option<Handoff>,
 }
 
 pub enum Found {
@@ -130,6 +132,7 @@ pub struct Actor {
     screen: screen::Screen,
     notice: Option<screen::Said>,
     pace: audio::Pace,
+    handoff: Option<Handoff>,
 }
 
 fn resume_point(progress: &Progress, file: &Path) -> f64 {
@@ -145,6 +148,7 @@ impl Actor {
             wake_word,
             microphone,
             led,
+            handoff,
         } = hardware;
         let db = core.db().clone();
         let library = core.library();
@@ -206,6 +210,7 @@ impl Actor {
             screen: screen::Screen::Tv,
             notice: None,
             pace: audio::Pace::default(),
+            handoff,
         };
         actor.apply_audio(profile).await;
         actor.refresh_people().await;
@@ -466,24 +471,54 @@ impl Actor {
             let finished = move |finish: Finish| finishing.signal(Signal::Finished(finish));
             let keys = self.core.clone();
             let dialogue = self.core.dialogue(owner).await.load(Ordering::SeqCst);
-            let started = block_in_place(|| {
-                Player::start(
-                    &source,
-                    start,
-                    tracks,
-                    self.caption(path),
-                    self.billing(path, start),
-                    self.title(path),
-                    self.subtitles.clone(),
-                    &self.audio_device(),
-                    dialogue,
-                    saved,
-                    move |command| keys.send(Request::Key(command)),
-                    finished,
-                )
-            });
+            let started = match self.tv_set_takes(&source).await {
+                Some((handoff, renderer, media)) => {
+                    let feed = renderer::feed(&media, tracks.audio);
+                    eprintln!("tv player: {} goes to the TV's own player as {feed:?}", path.display());
+                    let television = self.television.clone();
+                    let returning = self.television.clone();
+                    let prepare = move || {
+                        if let Ok(tv::Woken::TurnedOn) = television.wake() {
+                            television.wait_until_showing(TV_WAKE_WAIT);
+                        }
+                    };
+                    let finished = move |finish: Finish| {
+                        if let Err(failure) = returning.show_semmeltv() {
+                            eprintln!("TV: could not switch back to SemmelTV: {failure:?}");
+                        }
+                        finished(finish);
+                    };
+                    let start = renderer::Start {
+                        renderer,
+                        port: handoff.port,
+                        path: source.clone(),
+                        media,
+                        feed,
+                        from: start,
+                        name: self.caption(path),
+                    };
+                    Player::hand_off(start, tracks, prepare, saved, finished)
+                }
+                None => block_in_place(|| {
+                    Player::start(
+                        &source,
+                        start,
+                        tracks,
+                        self.caption(path),
+                        self.billing(path, start),
+                        self.title(path),
+                        self.subtitles.clone(),
+                        &self.audio_device(),
+                        dialogue,
+                        saved,
+                        move |command| keys.send(Request::Key(command)),
+                        finished,
+                    )
+                }),
+            };
             match started {
                 Ok(player) => {
+                    let handed_off = player.handed_off();
                     self.on_tv = Some(OnTv {
                         player,
                         shown: self.now_playing_for(path),
@@ -492,14 +527,29 @@ impl Actor {
                         hold: Hold::default(),
                     });
                     self.publish_playback();
-                    self.wake_tv();
+                    if !handed_off {
+                        self.wake_tv();
+                    }
                     self.record_start(path, owner).await;
                     self.lead = Some(path.to_path_buf());
                     self.queue_downloads(true);
                 }
-                Err(error) => self.show_message(format!("mpv did not start: {error}")),
+                Err(error) => self.show_message(format!("The video did not start: {error}")),
             }
         })
+    }
+
+    async fn tv_set_takes(&self, source: &Path) -> Option<(Handoff, tv::upnp::Renderer, stream::probe::Media)> {
+        let handoff = self.handoff.clone()?;
+        let renderer = self.television.renderer()?;
+        match stream::probe::probe(source).await {
+            Ok(media) if handoff.takes(&media) => Some((handoff, renderer, media)),
+            Ok(_) => None,
+            Err(error) => {
+                eprintln!("tv player: {}: {error}", source.display());
+                None
+            }
+        }
     }
 
     fn audio_device(&self) -> String {
@@ -1530,6 +1580,7 @@ mod tests {
             wake_word: None,
             microphone: None,
             led: None,
+            handoff: None,
         };
         let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware).await;
         tokio::spawn(actor.run(inbox));

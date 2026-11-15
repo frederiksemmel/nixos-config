@@ -154,6 +154,7 @@ pub struct Setup {
     pub led: Option<Led>,
     pub tv_kind: Option<tv::Kind>,
     pub tv_renderer: Option<String>,
+    pub handoff: Option<crate::player::renderer::Handoff>,
     pub downloads: Option<Downloads>,
     pub headphones: bool,
 }
@@ -201,6 +202,7 @@ impl Core {
             led,
             tv_kind,
             tv_renderer,
+            handoff,
             downloads,
             headphones,
         } = setup;
@@ -279,6 +281,7 @@ impl Core {
             wake_word,
             microphone,
             led,
+            handoff,
         };
         let actor = actor::Actor::new(core.clone(), profile, hardware).await;
         let running = tokio::spawn(actor.run(received));

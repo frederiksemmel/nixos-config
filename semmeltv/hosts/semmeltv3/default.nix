@@ -20,6 +20,14 @@
   services.semmeltv = {
     offlineCacheGiB = null;
     decoder = "v4l2m2m";
+    tv = {
+      renderer = "http://192.168.1.148:9197/dmr";
+      decodes = [
+        "hevc"
+        "av1"
+        "vp9"
+      ];
+    };
     headphones.enable = true;
     api.enable = true;
     web = {

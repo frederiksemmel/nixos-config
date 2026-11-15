@@ -135,7 +135,7 @@ fn parse_args() -> Result<Args, String> {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
             "ui" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
-            "toasty" | "library" | "card" | "get" => {
+            "toasty" | "library" | "card" | "get" | "tv-set" => {
                 args.toasty = raw.by_ref().collect();
                 args.mode = argument;
             }
@@ -297,6 +297,7 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
         db,
         tv_kind: kind.as_deref().map(tv::Kind::parse).transpose()?,
         tv_renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
+        handoff: handoff()?,
         wake_word,
         speech: args.speech,
         microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
@@ -500,6 +501,99 @@ fn env_text(name: &str) -> Option<String> {
     env::var(name).ok().filter(|value| !value.is_empty())
 }
 
+/// Plays one file on the TV set's own player, steered from stdin: `p` pauses,
+/// `r` resumes, a number seeks to that second, `q` stops.
+fn run_tv_set(rest: &[String]) -> Result<(), String> {
+    use player::renderer::{self, Session, Start};
+    let (file, rest) = rest
+        .split_first()
+        .ok_or("tv-set needs a file, then where to start in seconds and the audio track (from 1)")?;
+    let from = rest
+        .first()
+        .map_or(Ok(0.0), |from| from.parse())
+        .map_err(|error| format!("start: {error}"))?;
+    let audio = rest
+        .get(1)
+        .map(|track| track.parse())
+        .transpose()
+        .map_err(|error| format!("audio track: {error}"))?;
+    let renderer = env_text("SEMMELTV_TV_RENDERER").ok_or("tv-set needs SEMMELTV_TV_RENDERER")?;
+    let port = env_text("SEMMELTV_TV_PORT")
+        .map_or(Ok(8097), |port| port.parse())
+        .map_err(|error| format!("SEMMELTV_TV_PORT: {error}"))?;
+    let path = PathBuf::from(file);
+    let media = waiting(stream::probe::probe(&path))??;
+    let feed = renderer::feed(&media, audio);
+    println!("{:?} as {feed:?}", media.video);
+    let (done, finished) = std::sync::mpsc::channel();
+    let start = Start {
+        renderer: tv::upnp::Renderer::new(renderer),
+        port,
+        name: path.file_stem().unwrap_or_default().to_string_lossy().to_string(),
+        path,
+        media,
+        feed,
+        from,
+    };
+    let session = std::sync::Arc::new(
+        Session::start(
+            start,
+            || {},
+            || {},
+            move |finish| {
+                let _ = done.send(finish);
+            },
+        )
+        .map_err(|error| error.to_string())?,
+    );
+    let steering = session.clone();
+    std::thread::spawn(move || {
+        for line in std::io::stdin().lines().map_while(Result::ok) {
+            match line.trim() {
+                "p" => steering.set_paused(true),
+                "r" => steering.set_paused(false),
+                "q" => steering.key(command::Command::Back),
+                other => match other.parse() {
+                    Ok(seconds) => steering.seek_to(seconds),
+                    Err(_) => eprintln!("p, r, q or seconds"),
+                },
+            }
+        }
+    });
+    loop {
+        match finished.recv_timeout(std::time::Duration::from_secs(2)) {
+            Ok(finish) => {
+                println!("{finish:?}");
+                return Ok(());
+            }
+            Err(_) => {
+                let seen = session.seen();
+                println!(
+                    "{:>7.1} / {:.1} {}{}",
+                    seen.position,
+                    seen.duration,
+                    if seen.started { "started" } else { "opening" },
+                    if seen.paused { " paused" } else { "" }
+                );
+            }
+        }
+    }
+}
+
+fn handoff() -> Result<Option<player::renderer::Handoff>, String> {
+    let Some(codecs) = env_text("SEMMELTV_TV_DECODES") else {
+        return Ok(None);
+    };
+    let port = env_text("SEMMELTV_TV_PORT")
+        .ok_or("SEMMELTV_TV_DECODES needs SEMMELTV_TV_PORT")?
+        .parse()
+        .map_err(|error| format!("SEMMELTV_TV_PORT: {error}"))?;
+    Ok(Some(player::renderer::Handoff {
+        codecs: codecs.split(',').map(|codec| codec.trim().to_string()).collect(),
+        port,
+    }))
+}
+
 fn env_number(name: &str, default: u64) -> Result<u64, String> {
     env_text(name).map_or(Ok(default), |value| {
         value.parse().map_err(|_| format!("{name} is not a number: {value}"))
@@ -613,6 +707,7 @@ fn run() -> Result<(), String> {
         "hear" => hear(&args)?,
         "invite" => waiting(invite(&args))??,
         "card" => print_card(&args.toasty)?,
+        "tv-set" => run_tv_set(&args.toasty)?,
         _ => run_ui(args, cache)?,
     }
     Ok(())

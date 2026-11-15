@@ -59,6 +59,22 @@ pkgs.testers.runNixOSTest {
       };
     };
 
+    services.semmeltv.tv = {
+      renderer = "http://127.0.0.1:9197/dmr";
+      decodes = [ "hevc" ];
+    };
+
+    systemd.services.fake-tv = {
+      description = "A TV set's UPnP renderer, for the hand-off of titles the Pi can't decode";
+      wantedBy = [ "multi-user.target" ];
+      before = [ "cage-tty1.service" ];
+      path = [ pkgs.ffmpeg-headless ];
+      serviceConfig = {
+        RuntimeDirectory = "fake-tv";
+        ExecStart = "${pkgs.python3}/bin/python3 ${./fake-tv.py} /run/fake-tv";
+      };
+    };
+
     services.cage.environment.WLR_NO_HARDWARE_CURSORS = "1";
 
     systemd.tmpfiles.rules = [ "L+ /var/lib/semmeltv/library - - - - ${library}" ];
@@ -112,5 +128,6 @@ pkgs.testers.runNixOSTest {
   + pkgs.lib.concatMapStrings builtins.readFile [
     ./test.py
     ./stream.py
+    ./tv-set.py
   ];
 }

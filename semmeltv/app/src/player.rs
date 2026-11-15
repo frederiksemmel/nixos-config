@@ -1,4 +1,5 @@
 mod health;
+pub mod renderer;
 
 use crate::audio;
 use crate::card::{self, Billing};
@@ -574,7 +575,12 @@ fn card_command(frame: Option<&str>) -> Value {
 }
 
 pub struct Player {
-    playback: Shared,
+    backend: Backend,
+}
+
+enum Backend {
+    Mpv(Shared),
+    TvSet { session: renderer::Session, tracks: Tracks },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -661,11 +667,48 @@ impl Player {
             let _ = std::fs::remove_file(&socket_path);
             on_exit(finish);
         });
-        Ok(Self { playback })
+        Ok(Self {
+            backend: Backend::Mpv(playback),
+        })
+    }
+
+    /// Plays on the TV set's own player, which decodes what this Pi can't.
+    pub fn hand_off(
+        start: renderer::Start,
+        tracks: Tracks,
+        prepare: impl FnOnce() + Send + 'static,
+        on_save: impl Fn() + Send + 'static,
+        on_exit: impl FnOnce(Finish) + Send + 'static,
+    ) -> io::Result<Self> {
+        let session = renderer::Session::start(start, prepare, on_save, on_exit)?;
+        Ok(Self {
+            backend: Backend::TvSet { session, tracks },
+        })
+    }
+
+    pub fn handed_off(&self) -> bool {
+        matches!(self.backend, Backend::TvSet { .. })
+    }
+
+    fn mpv(&self) -> Option<&Shared> {
+        match &self.backend {
+            Backend::Mpv(playback) => Some(playback),
+            Backend::TvSet { .. } => None,
+        }
     }
 
     pub fn place(&self) -> Place {
-        let playback = self.playback.lock().unwrap();
+        let playback = match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap(),
+            Backend::TvSet { session, .. } => {
+                let seen = session.seen();
+                return Place {
+                    position: seen.position,
+                    duration: seen.duration,
+                    credits: None,
+                };
+            }
+        };
         Place {
             position: playback.position,
             duration: playback.duration,
@@ -674,15 +717,38 @@ impl Player {
     }
 
     pub fn tracks(&self) -> Tracks {
-        self.playback.lock().unwrap().tracks
+        match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap().tracks,
+            Backend::TvSet { tracks, .. } => *tracks,
+        }
     }
 
     pub fn played(&self) -> f64 {
-        self.playback.lock().unwrap().played
+        match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap().played,
+            Backend::TvSet { session, .. } => session.seen().played,
+        }
     }
 
     pub fn state(&self) -> State {
-        let playback = self.playback.lock().unwrap();
+        let playback = match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap(),
+            Backend::TvSet { session, tracks } => {
+                let seen = session.seen();
+                return State {
+                    position: seen.position,
+                    duration: seen.duration,
+                    paused: seen.paused,
+                    muted: seen.muted,
+                    speed: 1.0,
+                    subtitle: None,
+                    subtitle_delay: 0.0,
+                    audio: tracks.audio,
+                    started: seen.started,
+                    jump: seen.jump,
+                };
+            }
+        };
         let (subtitle, audio) = playback.subtitles.chosen();
         State {
             position: playback.scrub.target().unwrap_or(playback.position),
@@ -699,12 +765,19 @@ impl Player {
     }
 
     pub fn command(&self, command: Command) {
-        self.playback.lock().unwrap().command(command, Instant::now());
+        match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap().command(command, Instant::now()),
+            Backend::TvSet { session, .. } => session.key(command),
+        }
     }
 
     pub fn seek_to(&self, seconds: f64) {
         let now = Instant::now();
-        let mut playback = self.playback.lock().unwrap();
+        let playback = match &self.backend {
+            Backend::Mpv(playback) => playback,
+            Backend::TvSet { session, .. } => return session.seek_to(seconds),
+        };
+        let mut playback = playback.lock().unwrap();
         if playback.phase.playing() {
             let to = seek::within(seconds, playback.duration);
             playback.scrub.cancel();
@@ -720,36 +793,50 @@ impl Player {
     }
 
     pub fn set_paused(&self, paused: bool) {
-        self.playback
-            .lock()
-            .unwrap()
-            .send(json!(["set_property", "pause", paused]));
+        match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap().send(json!(["set_property", "pause", paused])),
+            Backend::TvSet { session, .. } => session.set_paused(paused),
+        }
     }
 
     pub fn muted(&self) -> bool {
-        self.playback.lock().unwrap().muted
+        match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap().muted,
+            Backend::TvSet { session, .. } => session.seen().muted,
+        }
     }
 
     pub fn set_muted(&self, muted: bool) {
-        let mut playback = self.playback.lock().unwrap();
+        let playback = match &self.backend {
+            Backend::Mpv(playback) => playback,
+            Backend::TvSet { session, .. } => return session.set_muted(muted),
+        };
+        let mut playback = playback.lock().unwrap();
         playback.muted = muted;
         playback.send(json!(["set_property", "mute", muted]));
     }
 
     pub fn set_audio_device(&self, device: &str) {
-        self.playback.lock().unwrap().set_audio_device(device);
+        if let Some(playback) = self.mpv() {
+            playback.lock().unwrap().set_audio_device(device);
+        }
     }
 
     pub fn set_dialogue(&self, on: bool) {
-        self.playback
-            .lock()
-            .unwrap()
-            .send(json!(["set_property", "af", sound_filter(on)]));
+        if let Some(playback) = self.mpv() {
+            playback
+                .lock()
+                .unwrap()
+                .send(json!(["set_property", "af", sound_filter(on)]));
+        }
     }
 
     pub fn set_speed(&self, speed: f64) -> f64 {
+        let Some(playback) = self.mpv() else {
+            return 1.0;
+        };
         let speed = speed_within(speed);
-        let mut playback = self.playback.lock().unwrap();
+        let mut playback = playback.lock().unwrap();
         playback.speed = speed;
         playback.send(json!(["set_property", "speed", speed]));
         speed
@@ -760,18 +847,26 @@ impl Player {
     }
 
     pub fn hide_toast(&self) {
-        self.playback.lock().unwrap().hide_toast();
+        if let Some(playback) = self.mpv() {
+            playback.lock().unwrap().hide_toast();
+        }
     }
 
     pub fn subtitles(&self, change: Change) -> Answer {
-        self.playback.lock().unwrap().change_subtitles(change, Instant::now())
+        match self.mpv() {
+            Some(playback) => playback.lock().unwrap().change_subtitles(change, Instant::now()),
+            None => Answer {
+                commands: Vec::new(),
+                message: "The TV's own player shows the subtitles: choose them with the TV's remote".to_string(),
+                ok: false,
+            },
+        }
     }
 
     pub fn toast(&self, heading: &str, message: &str, time: Duration) {
-        self.playback
-            .lock()
-            .unwrap()
-            .toast(heading, message, Instant::now() + time);
+        if let Some(playback) = self.mpv() {
+            playback.lock().unwrap().toast(heading, message, Instant::now() + time);
+        }
     }
 }
 

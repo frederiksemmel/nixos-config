@@ -1,5 +1,5 @@
 mod samsung;
-mod upnp;
+pub mod upnp;
 
 use crate::cec::{self, Screen};
 use crate::core::Outcome;
@@ -234,6 +234,10 @@ impl Television {
 
     fn paired(&self) -> bool {
         self.inner.token.get().is_some()
+    }
+
+    pub fn renderer(&self) -> Option<upnp::Renderer> {
+        self.inner.renderer.clone()
     }
 
     pub fn show_semmeltv(&self) -> Result<(), Failure> {
