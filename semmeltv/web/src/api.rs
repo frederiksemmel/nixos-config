@@ -435,23 +435,77 @@ pub struct Marks {
     pub floor: u64,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
-pub struct TitleKey {
-    pub kind: String,
-    pub key: String,
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", content = "key", rename_all = "lowercase")]
+pub enum Stored {
+    Movie(String),
+    Series(String),
+    Other(String),
+}
+
+impl Stored {
+    pub fn parse(kind: &str, key: String) -> Option<Self> {
+        match kind {
+            "movie" => Some(Self::Movie(key)),
+            "series" => Some(Self::Series(key)),
+            "other" => Some(Self::Other(key)),
+            _ => None,
+        }
+    }
+
+    pub fn kind(&self) -> &'static str {
+        match self {
+            Self::Movie(_) => "movie",
+            Self::Series(_) => "series",
+            Self::Other(_) => "other",
+        }
+    }
+
+    pub fn key(&self) -> &str {
+        match self {
+            Self::Movie(key) | Self::Series(key) | Self::Other(key) => key,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Keep {
+    Playing,
+    Watching,
+    UpNext,
+    Started,
+}
+
+impl Keep {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Playing => "Playing",
+            Self::Watching => "Currently watching",
+            Self::UpNext => "Up next",
+            Self::Started => "Started",
+        }
+    }
+
+    pub fn removable(self) -> bool {
+        match self {
+            Self::Playing | Self::UpNext => false,
+            Self::Watching | Self::Started => true,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Download {
     #[serde(flatten)]
-    pub title: TitleKey,
+    pub title: Stored,
     pub name: String,
     pub bytes: u64,
     pub complete: usize,
     pub total: usize,
     pub last_watched: Option<u64>,
     pub cached_at: u64,
-    pub keep: Option<String>,
+    pub keep: Option<Keep>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -460,7 +514,7 @@ pub struct Storage {
     pub used: u64,
     pub marks: Option<Marks>,
     pub titles: Vec<Download>,
-    pub next: Vec<TitleKey>,
+    pub next: Vec<Stored>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -693,9 +747,8 @@ impl Api {
         }
     }
 
-    pub async fn remove_download(&self, title: &TitleKey) -> (bool, String) {
-        self.answer("/api/storage/remove", json!({ "kind": title.kind, "key": title.key }))
-            .await
+    pub async fn remove_download(&self, title: &Stored) -> (bool, String) {
+        self.answer("/api/storage/remove", json!(title)).await
     }
 
     pub async fn dismiss_forgotten(&self, kind: Kind, key: &str) -> (bool, String) {

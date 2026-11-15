@@ -1,4 +1,4 @@
-use crate::api::{Api, Download, Storage, TitleKey};
+use crate::api::{Api, Download, Storage, Stored};
 use crate::layout::back;
 use std::time::{SystemTime, UNIX_EPOCH};
 use topcoat::Result;
@@ -11,7 +11,10 @@ const DAY: u64 = 86_400;
 
 #[procedure]
 pub async fn remove(cx: &Cx, kind: String, key: String) -> Result<(bool, String)> {
-    Ok(Api::of(cx).remove_download(&TitleKey { kind, key }).await)
+    match Stored::parse(&kind, key) {
+        Some(title) => Ok(Api::of(cx).remove_download(&title).await),
+        None => Ok((false, format!("There is no kind of download called {kind}"))),
+    }
 }
 
 #[component]
@@ -44,25 +47,15 @@ fn ago(now: u64, then: u64) -> String {
     }
 }
 
-fn keep_label(keep: Option<&str>) -> Option<&'static str> {
-    match keep? {
-        "playing" => Some("Playing"),
-        "watching" => Some("Currently watching"),
-        "up-next" => Some("Up next"),
-        "started" => Some("Started"),
-        _ => None,
-    }
-}
-
 fn removable(download: &Download) -> bool {
-    !matches!(download.keep.as_deref(), Some("playing" | "up-next"))
+    download.keep.is_none_or(|keep| keep.removable())
 }
 
 fn detail(download: &Download, now: u64) -> String {
-    let amount = match (download.title.kind.as_str(), download.total) {
-        ("other", _) => "Not in the library".to_string(),
-        ("series", total) => format!("{} of {total} episodes complete", download.complete),
-        (_, total) if download.complete >= total && total > 0 => "Complete".to_string(),
+    let amount = match (&download.title, download.total) {
+        (Stored::Other(_), _) => "Not in the library".to_string(),
+        (Stored::Series(_), total) => format!("{} of {total} episodes complete", download.complete),
+        (Stored::Movie(_), total) if download.complete >= total && total > 0 => "Complete".to_string(),
         _ => "Partly downloaded".to_string(),
     };
     let when = match download.last_watched {
@@ -72,7 +65,7 @@ fn detail(download: &Download, now: u64) -> String {
     format!("{amount} · {when}")
 }
 
-fn ranks(titles: &[Download], next: &[TitleKey]) -> Vec<(usize, usize)> {
+fn ranks(titles: &[Download], next: &[Stored]) -> Vec<(usize, usize)> {
     let mut by_size: Vec<usize> = (0..titles.len()).collect();
     by_size.sort_by_key(|&index| std::cmp::Reverse(titles[index].bytes));
     let mut by_age: Vec<usize> = (0..titles.len()).collect();
@@ -111,9 +104,9 @@ async fn download_row(
     let asking = signal(cx, || false);
     let gone = signal(cx, || false);
     let said = signal(cx, String::new);
-    let kind = download.title.kind.clone();
-    let key = download.title.key.clone();
-    let keep = keep_label(download.keep.as_deref());
+    let kind = download.title.kind().to_string();
+    let key = download.title.key().to_string();
+    let keep = download.keep.map(|keep| keep.label());
     Ok(view! {
         <li :class=$(if gone.get() { "storage-title gone" } else { "storage-title" })
             style=(format!("--by-age:{age};--by-size:{size}"))>
@@ -177,7 +170,7 @@ async fn download_list(cx: &Cx, storage: &Storage, now: u64) -> Result<impl View
                     </button>
                 </div>
                 <ul :class=$(if by_size.get() { "storage-titles by-size" } else { "storage-titles" })>
-                    #[key(storage.titles[index].title.key.clone())]
+                    #[key(storage.titles[index].title.key().to_string())]
                     for &index in &shown {
                         let download = &storage.titles[index];
                         let (age, size) = ranks[index];
@@ -242,13 +235,11 @@ async fn storage_page(cx: &Cx) -> Result<impl View> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::api::Keep;
 
     fn download(kind: &str, key: &str, bytes: u64, last_watched: Option<u64>, cached_at: u64) -> Download {
         Download {
-            title: TitleKey {
-                kind: kind.to_string(),
-                key: key.to_string(),
-            },
+            title: Stored::parse(kind, key.to_string()).unwrap(),
             name: key.to_string(),
             bytes,
             complete: 1,
@@ -297,10 +288,37 @@ mod tests {
     fn playing_and_up_next_titles_have_no_remove_button() {
         let mut title = download("movie", "up", 1, None, 0);
         assert!(removable(&title));
-        title.keep = Some("watching".to_string());
+        title.keep = Some(Keep::Watching);
         assert!(removable(&title));
-        title.keep = Some("up-next".to_string());
+        title.keep = Some(Keep::UpNext);
         assert!(!removable(&title));
-        assert_eq!(keep_label(Some("started")), Some("Started"));
+        title.keep = Some(Keep::Playing);
+        assert!(!removable(&title));
+    }
+
+    #[test]
+    fn the_tv_report_reads_into_kinds_and_keeps_and_refuses_unknown_ones() {
+        let report = serde_json::json!({
+            "kind": "series", "key": "dark", "name": "Dark", "bytes": 1, "complete": 1, "total": 2,
+            "last_watched": null, "cached_at": 0, "keep": "up-next"
+        });
+        let read: Download = serde_json::from_value(report.clone()).unwrap();
+        assert_eq!(read.title, Stored::Series("dark".to_string()));
+        assert_eq!(read.keep, Some(Keep::UpNext));
+        let mut odd = report.clone();
+        odd["keep"] = serde_json::json!("up_next");
+        assert!(serde_json::from_value::<Download>(odd).is_err());
+        let mut odd = report;
+        odd["kind"] = serde_json::json!("show");
+        assert!(serde_json::from_value::<Download>(odd).is_err());
+    }
+
+    #[test]
+    fn a_removal_names_the_title_as_the_tv_reads_it() {
+        assert_eq!(
+            serde_json::to_value(Stored::Movie("up".to_string())).unwrap(),
+            serde_json::json!({ "kind": "movie", "key": "up" })
+        );
+        assert_eq!(Stored::parse("show", "dark".to_string()), None);
     }
 }
