@@ -1762,7 +1762,8 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .detail-cast-section { order: 4; }
 .detail-episodes { order: 5; }
 .detail-columns .heat { order: 6; }
-.detail-links { order: 7; }
+.season-downloads { order: 7; }
+.detail-links { order: 8; }
 
 @media (min-width: 640px) {
   .detail-head { grid-template-columns: 160px minmax(0, 1fr); gap: 22px; }

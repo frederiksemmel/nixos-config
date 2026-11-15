@@ -1190,6 +1190,7 @@ with sync_playwright() as playwright:
     with scenario("an admin downloads a season the library lacks from the show page, through the usual proposal"):
         phone.goto(f"/shows/{SHOW}")
         phone.until('[...document.querySelectorAll("main .season-downloads button")].map((button) => button.textContent.trim()).join("|") === "Download season 2"')
+        assert phone.js('document.querySelector("main .season-downloads").getBoundingClientRect().top > document.querySelector("main .detail-episodes").getBoundingClientRect().bottom'), "the season buttons come after the episodes"
         assert phone.js('document.querySelector("main .season-downloads").textContent.includes("Season 3 is downloading")'), "a season already downloading has no button"
         button = phone.page.locator("main .season-downloads button", has_text="Download season 2")
         button.scroll_into_view_if_needed()
