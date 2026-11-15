@@ -297,11 +297,18 @@ in
           };
         };
 
+        boot.kernel.sysctl."net.ipv4.tcp_notsent_lowat" = 16384;
+
         services.nginx = {
           enable = true;
           recommendedProxySettings = true;
           recommendedTlsSettings = true;
           recommendedGzipSettings = true;
+          commonHttpConfig = ''
+            log_format timed '$remote_addr [$time_local] "$request" $status $body_bytes_sent '
+                             'took $request_time s, upstream headers after $upstream_header_time s '
+                             '"$http_user_agent"';
+          '';
           streamConfig = lib.mkIf (lan.forward != { }) ''
             map $ssl_preread_server_name $semmeltv_tv {
             ${
@@ -341,16 +348,18 @@ in
               ssl = true;
               proxyProtocol = true;
             };
-            extraConfig =
-              lib.optionalString (lan.forward != { }) ''
-                set_real_ip_from 127.0.0.1;
-              ''
-              + lib.optionalString (lan.relayedFrom != null) ''
-                set_real_ip_from ${lan.relayedFrom};
-              ''
-              + lib.optionalString (lan.forward != { } || lan.relayedFrom != null) ''
-                real_ip_header proxy_protocol;
-              '';
+            extraConfig = ''
+              access_log /var/log/nginx/access.log timed;
+            ''
+            + lib.optionalString (lan.forward != { }) ''
+              set_real_ip_from 127.0.0.1;
+            ''
+            + lib.optionalString (lan.relayedFrom != null) ''
+              set_real_ip_from ${lan.relayedFrom};
+            ''
+            + lib.optionalString (lan.forward != { } || lan.relayedFrom != null) ''
+              real_ip_header proxy_protocol;
+            '';
             locations."/" = {
               proxyPass = web;
               proxyWebsockets = true;

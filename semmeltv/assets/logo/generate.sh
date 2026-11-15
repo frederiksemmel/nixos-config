@@ -2,8 +2,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-if ! command -v magick potrace resvg python3 >/dev/null; then
-  exec nix shell --inputs-from ../../.. nixpkgs#imagemagick nixpkgs#potrace nixpkgs#resvg nixpkgs#python3 --command "$0"
+if ! command -v magick potrace resvg python3 pngquant >/dev/null; then
+  exec nix shell --inputs-from ../../.. nixpkgs#imagemagick nixpkgs#potrace nixpkgs#resvg nixpkgs#python3 nixpkgs#pngquant --command "$0"
 fi
 
 work=$(mktemp -d)
@@ -16,6 +16,8 @@ magick semmel-source.png -alpha off -fuzz 12% -fill none \
   -alpha extract -morphology Erode Disk:2 -blur 0x0.8 "$work/mask.png"
 magick semmel-source.png -alpha off "$work/mask.png" -compose CopyOpacity -composite -trim +repage "$work/cut.png"
 magick "$work/cut.png" -resize 480x semmel.png
+magick semmel.png -resize 140x -strip "$work/semmel-wordmark-full.png"
+pngquant --quality 85-98 --strip -o "$work/semmel-wordmark.png" "$work/semmel-wordmark-full.png"
 
 flat="$work/flat.png"
 magick "$work/cut.png" -background white -alpha remove "$flat"

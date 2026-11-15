@@ -107,7 +107,7 @@ def wordmark(semmel_png, ink):
 def main():
     work = Path(sys.argv[1])
     here = Path(__file__).parent
-    semmel_png = (here / "semmel.png").read_bytes()
+    semmel_png = (work / "semmel-wordmark.png").read_bytes()
     (here / "favicon.svg").write_text(favicon(work))
     (here / "semmeltv-dark.svg").write_text(wordmark(semmel_png, SNOW))
     (here / "semmeltv-light.svg").write_text(wordmark(semmel_png, INK))
