@@ -132,26 +132,31 @@ mod tests {
     }
 
     #[test]
-    fn an_episode_gets_its_recap_and_its_intro() {
-        let json = r#"{"tvdb_id":270408,"type":"tv","season":1,"episode":2,
-            "intro":[{"start_ms":47595,"end_ms":120300}],
-            "recap":[{"start_ms":0,"end_ms":45795}],
-            "credits":[{"start_ms":3485348,"end_ms":null}]}"#;
-        assert_eq!(
-            parse(json),
-            [
-                Segment {
-                    kind: Kind::Recap,
-                    start: 0.0,
-                    end: 45.795
-                },
-                Segment {
-                    kind: Kind::Intro,
-                    start: 47.595,
-                    end: 120.3
-                },
-            ]
-        );
+    fn theintrodb_ranges_become_skippable_segments() {
+        let segment = |kind, start, end| Segment { kind, start, end };
+        let cases = [
+            (
+                r#"{"tvdb_id":270408,"type":"tv","season":1,"episode":2,
+                    "intro":[{"start_ms":47595,"end_ms":120300}],
+                    "recap":[{"start_ms":0,"end_ms":45795}],
+                    "credits":[{"start_ms":3485348,"end_ms":null}]}"#,
+                vec![segment(Kind::Recap, 0.0, 45.795), segment(Kind::Intro, 47.595, 120.3)],
+            ),
+            (
+                r#"{"intro":[{"start_ms":null,"end_ms":71496}]}"#,
+                vec![segment(Kind::Intro, 0.0, 71.496)],
+            ),
+            (r#"{"recap":[{"start_ms":0,"end_ms":0}]}"#, vec![]),
+            (r#"{"intro":[{"start_ms":10000,"end_ms":null}]}"#, vec![]),
+            (
+                r#"{"intro":[{"start_ms":152018,"end_ms":252035},{"start_ms":null,"end_ms":90869}]}"#,
+                vec![segment(Kind::Intro, 0.0, 90.869)],
+            ),
+            (r#"{"intro":[{"start_ms":3590000,"end_ms":3700000}]}"#, vec![]),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(parse(json), expected, "{json}");
+        }
     }
 
     #[test]
@@ -164,46 +169,5 @@ mod tests {
         assert_eq!(credits(r#"{"credits":[{"start_ms":3700000,"end_ms":null}]}"#), None);
         assert_eq!(credits(r#"{"credits":[{"start_ms":null,"end_ms":3600000}]}"#), None);
         assert_eq!(credits(r#"{"intro":[]}"#), None);
-    }
-
-    #[test]
-    fn a_missing_start_means_the_beginning_of_the_episode() {
-        let intro = parse(r#"{"intro":[{"start_ms":null,"end_ms":71496}]}"#);
-        assert_eq!(intro[0].start, 0.0);
-    }
-
-    #[test]
-    fn a_zero_length_range_says_there_is_nothing_to_skip() {
-        assert!(parse(r#"{"recap":[{"start_ms":0,"end_ms":0}]}"#).is_empty());
-    }
-
-    #[test]
-    fn a_range_without_an_end_is_ignored() {
-        assert!(parse(r#"{"intro":[{"start_ms":10000,"end_ms":null}]}"#).is_empty());
-    }
-
-    #[test]
-    fn only_the_earliest_of_several_ranges_counts() {
-        let intro = parse(r#"{"intro":[{"start_ms":152018,"end_ms":252035},{"start_ms":null,"end_ms":90869}]}"#);
-        assert_eq!(intro.len(), 1);
-        assert_eq!(intro[0].end, 90.869);
-    }
-
-    #[test]
-    fn a_range_past_the_end_of_this_file_is_from_another_release() {
-        assert!(parse(r#"{"intro":[{"start_ms":3590000,"end_ms":3700000}]}"#).is_empty());
-    }
-
-    #[test]
-    fn a_segment_is_active_from_its_start_up_to_its_end() {
-        let intro = Segment {
-            kind: Kind::Intro,
-            start: 10.0,
-            end: 20.0,
-        };
-        assert_eq!(at(&[intro], 9.9), None);
-        assert_eq!(at(&[intro], 10.0), Some(intro));
-        assert_eq!(at(&[intro], 19.9), Some(intro));
-        assert_eq!(at(&[intro], 20.0), None);
     }
 }

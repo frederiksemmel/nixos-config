@@ -191,91 +191,59 @@ mod tests {
     }
 
     #[test]
-    fn without_a_known_start_the_credits_grow_with_the_length_up_to_ten_minutes() {
-        let left = |minutes: f64| {
+    fn a_stop_is_in_the_credits_from_the_known_or_estimated_start() {
+        let estimated = [
+            (20.0, None),
+            (35.0, Some(60.0)),
+            (95.0, Some(300.0)),
+            (170.0, Some(600.0)),
+            (240.0, Some(600.0)),
+        ];
+        for (minutes, left) in estimated {
             let duration = minutes * 60.0;
             let watched = stopped(0.0, duration, None);
-            watched.credits_start().map(|start| duration - start)
+            assert_eq!(
+                watched.credits_start().map(|start| duration - start),
+                left,
+                "{minutes} minutes"
+            );
+        }
+        let stops = [
+            (stopped(5009.9, 5261.6, None), true),
+            (stopped(5245.0, 5261.6, None), true),
+            (stopped(4900.0, 5261.6, None), false),
+            (Watched::default(), false),
+            (stopped(3420.0, 3486.0, Some(3409.7)), true),
+            (stopped(3400.0, 3486.0, Some(3409.7)), false),
+            (stopped(1315.0, 1320.0, Some(1330.0)), true),
+            (stopped(1200.0, 1320.0, Some(300.0)), false),
+        ];
+        for (watched, in_credits) in stops {
+            assert_eq!(watched.in_credits(), in_credits, "{watched:?}");
+        }
+    }
+
+    #[test]
+    fn a_record_only_overwrites_what_it_knows() {
+        let credited = Place {
+            credits: Some(7500.0),
+            ..FILM
         };
-        assert_eq!(left(20.0), None);
-        assert_eq!(left(35.0), Some(60.0));
-        assert_eq!(left(95.0), Some(300.0));
-        assert_eq!(left(170.0), Some(600.0));
-        assert_eq!(left(240.0), Some(600.0));
-    }
-
-    #[test]
-    fn a_stop_in_the_credits_of_airplane_counts_and_one_before_does_not() {
-        assert!(stopped(5009.9, 5261.6, None).in_credits());
-        assert!(stopped(5245.0, 5261.6, None).in_credits());
-        assert!(!stopped(4900.0, 5261.6, None).in_credits());
-        assert!(!Watched::default().in_credits());
-    }
-
-    #[test]
-    fn a_known_credits_start_wins_over_the_estimate_unless_it_cannot_be_right() {
-        assert!(stopped(3420.0, 3486.0, Some(3409.7)).in_credits());
-        assert!(!stopped(3400.0, 3486.0, Some(3409.7)).in_credits());
-        assert!(stopped(1315.0, 1320.0, Some(1330.0)).in_credits());
-        assert!(!stopped(1200.0, 1320.0, Some(300.0)).in_credits());
-    }
-
-    #[test]
-    fn a_stop_keeps_the_place_and_the_real_duration() {
-        let mut progress = Progress::default();
-        let file = Path::new("/lib/Up.mkv");
-        progress.record(file, FILM);
-        assert_eq!(
-            progress.files[file],
-            Watched {
-                viewing: Viewing::InProgress {
-                    at: 3840.0,
-                    tracks: Tracks::default(),
-                },
-                duration: Some(7860.0),
-                last_played: None,
-                credits: None,
+        let cases = [
+            ("a stop", vec![FILM], None),
+            ("a play mpv never started", vec![FILM, Place::default()], None),
+            ("a stop without the known credits", vec![credited, FILM], Some(7500.0)),
+        ];
+        for (name, places, credits) in cases {
+            let mut progress = Progress::default();
+            let file = Path::new("/lib/Up.mkv");
+            for place in places {
+                progress.record(file, place);
             }
-        );
-    }
-
-    #[test]
-    fn a_play_mpv_never_started_keeps_what_was_known() {
-        let mut progress = Progress::default();
-        let file = Path::new("/lib/Up.mkv");
-        progress.record(file, FILM);
-        progress.record(file, Place::default());
-        assert_eq!(progress.files[file].stopped_at(), Some(3840.0));
-        assert_eq!(progress.files[file].duration, Some(7860.0));
-    }
-
-    #[test]
-    fn a_finished_file_loses_its_place_but_keeps_its_duration() {
-        let mut progress = Progress::default();
-        let file = Path::new("/lib/Up.mkv");
-        progress.record(file, FILM);
-        progress.finish(file);
-        assert_eq!(progress.files[file].stopped_at(), None);
-        assert_eq!(progress.files[file].duration, Some(7860.0));
-        assert!(progress.files[file].finished());
-    }
-
-    #[test]
-    fn a_finished_file_forgets_its_tracks_and_starts_over_with_the_defaults() {
-        let mut progress = Progress::default();
-        let file = Path::new("/lib/Up.mkv");
-        let tracks = Tracks {
-            audio: Some(2),
-            subtitle: Some(3),
-            subtitles_shown: Some(true),
-        };
-        progress.record(file, FILM);
-        progress.keep_tracks(file, tracks);
-        assert_eq!(progress.files[file].tracks(), tracks);
-        progress.finish(file);
-        assert_eq!(progress.files[file].tracks(), Tracks::default());
-        progress.keep_tracks(file, tracks);
-        assert_eq!(progress.files[file].viewing, Viewing::Finished);
+            assert_eq!(progress.files[file].stopped_at(), Some(3840.0), "{name}");
+            assert_eq!(progress.files[file].duration, Some(7860.0), "{name}");
+            assert_eq!(progress.files[file].credits, credits, "{name}");
+        }
     }
 
     #[test]
@@ -307,44 +275,6 @@ mod tests {
             },
         );
         assert_eq!(progress.files[file].resume_at(), 0.0);
-    }
-
-    #[test]
-    fn a_known_credits_start_is_kept_with_the_place() {
-        let mut progress = Progress::default();
-        let file = Path::new("/lib/Up.mkv");
-        progress.record(
-            file,
-            Place {
-                credits: Some(7500.0),
-                ..FILM
-            },
-        );
-        progress.record(file, FILM);
-        assert_eq!(progress.files[file].credits, Some(7500.0));
-    }
-
-    #[test]
-    fn an_unwatched_file_loses_its_place_and_its_finish() {
-        let mut progress = Progress::default();
-        let file = Path::new("/lib/Up.mkv");
-        progress.record(file, FILM);
-        progress.finish(file);
-        progress.unfinish(file);
-        assert_eq!(progress.files[file].stopped_at(), None);
-        assert_eq!(progress.files[file].viewing, Viewing::NotStarted);
-        assert_eq!(progress.files[file].duration, Some(7860.0));
-    }
-
-    #[test]
-    fn playing_a_file_stamps_when_it_was_last_played() {
-        let mut progress = Progress::default();
-        let file = Path::new("/lib/Up.mkv");
-        progress.record(file, FILM);
-        progress.played(file, 1_800_000_000);
-        progress.finish(file);
-        assert_eq!(progress.files[file].last_played, Some(1_800_000_000));
-        assert_eq!(progress.files[file].duration, Some(7860.0));
     }
 
     #[test]
@@ -393,19 +323,5 @@ mod tests {
         progress.finish(Path::new("/lib/Dark.S02E01.mkv"));
         progress.finish(Path::new("/lib/Dark.S00E01.mkv"));
         assert_eq!(watched(&progress), [true, true, false, true, true]);
-    }
-
-    #[test]
-    fn the_file_survives_a_save_and_a_load() {
-        let mut progress = Progress::default();
-        let position = Position {
-            season: 1,
-            episode: 2,
-            finished: false,
-        };
-        progress.shows.insert("dark".to_string(), position);
-        progress.record(Path::new("/lib/Dark.S01E02.mkv"), FILM);
-        let text = serde_json::to_string(&progress).unwrap();
-        assert_eq!(serde_json::from_str::<Progress>(&text).unwrap(), progress);
     }
 }

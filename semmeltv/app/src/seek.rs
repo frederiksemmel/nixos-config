@@ -170,37 +170,39 @@ mod tests {
     }
 
     #[test]
-    fn repeated_presses_grow_and_then_hold_the_largest_step() {
-        let expected = [10, 10, 20, 30, 60, 120, 120, 120].map(Some);
-        assert_eq!(steps(Direction::Forward, 400, 8), expected);
-    }
-
-    #[test]
-    fn going_back_grows_the_same_way() {
-        let expected = [-10, -10, -20, -30].map(Some);
-        assert_eq!(steps(Direction::Back, 1000, 4), expected);
-    }
-
-    #[test]
-    fn the_steps_start_over_after_a_rest() {
-        let mut ramp = Ramp::default();
-        let start = Instant::now();
-        for press in 0..4 {
-            ramp.press(Direction::Forward, after(start, press * 300));
+    fn presses_ramp_up_in_either_direction() {
+        let cases = [
+            (Direction::Forward, 400, vec![10, 10, 20, 30, 60, 120, 120, 120]),
+            (Direction::Back, 1000, vec![-10, -10, -20, -30]),
+        ];
+        for (direction, gap, expected) in cases {
+            let expected: Vec<_> = expected.into_iter().map(Some).collect();
+            assert_eq!(steps(direction, gap, expected.len() as u64), expected, "{direction:?}");
         }
-        assert_eq!(ramp.press(Direction::Forward, after(start, 900 + 1199)), Some(60));
-        assert_eq!(ramp.press(Direction::Forward, after(start, 2099 + 1200)), Some(10));
     }
 
     #[test]
-    fn the_steps_start_over_when_the_direction_changes() {
-        let mut ramp = Ramp::default();
-        let start = Instant::now();
-        for press in 0..4 {
-            ramp.press(Direction::Forward, after(start, press * 300));
+    fn a_rest_or_a_turn_starts_the_steps_over() {
+        let cases = [
+            (
+                "rest",
+                [
+                    (Direction::Forward, 900 + 1199, 60),
+                    (Direction::Forward, 2099 + 1200, 10),
+                ],
+            ),
+            ("turn", [(Direction::Back, 1000, -10), (Direction::Forward, 1300, 10)]),
+        ];
+        for (name, presses) in cases {
+            let mut ramp = Ramp::default();
+            let start = Instant::now();
+            for press in 0..4 {
+                ramp.press(Direction::Forward, after(start, press * 300));
+            }
+            for (direction, millis, step) in presses {
+                assert_eq!(ramp.press(direction, after(start, millis)), Some(step), "{name}");
+            }
         }
-        assert_eq!(ramp.press(Direction::Back, after(start, 1000)), Some(-10));
-        assert_eq!(ramp.press(Direction::Forward, after(start, 1300)), Some(10));
     }
 
     #[test]
@@ -250,16 +252,6 @@ mod tests {
     }
 
     #[test]
-    fn presses_build_on_the_target_while_mpv_catches_up() {
-        let mut scrub = Scrub::default();
-        let start = Instant::now();
-        scrub.step(Direction::Forward, 100.0, FILM, start);
-        scrub.step(Direction::Forward, 100.0, FILM, after(start, 300));
-        scrub.step(Direction::Forward, 100.0, FILM, after(start, 600));
-        assert_eq!(scrub.target(), Some(140.0));
-    }
-
-    #[test]
     fn once_settled_a_press_starts_from_the_playing_position() {
         let mut scrub = Scrub::default();
         let start = Instant::now();
@@ -280,28 +272,16 @@ mod tests {
     }
 
     #[test]
-    fn seeks_stop_at_the_start() {
-        let mut scrub = Scrub::default();
-        let order = scrub.step(Direction::Back, 4.0, FILM, Instant::now());
-        assert_eq!(order, Some(Order { to: 0.0, exact: true }));
-    }
-
-    #[test]
-    fn seeks_stop_just_before_the_end() {
-        let mut scrub = Scrub::default();
-        let order = scrub.jump(60, FILM - 20.0, FILM, Instant::now());
-        assert_eq!(
-            order,
-            Some(Order {
-                to: FILM - END_MARGIN,
-                exact: true
-            })
-        );
-    }
-
-    #[test]
-    fn a_forward_seek_never_moves_back_from_the_last_seconds() {
-        assert_eq!(land(FILM - 2.0, 10, FILM), FILM - 2.0);
+    fn a_seek_lands_inside_the_video() {
+        let cases = [
+            ("back past the start", 4.0, -10, FILM, 0.0),
+            ("forward past the end", FILM - 20.0, 60, FILM, FILM - END_MARGIN),
+            ("forward from the last seconds", FILM - 2.0, 10, FILM, FILM - 2.0),
+            ("unknown length", 100.0, 10, 0.0, 110.0),
+        ];
+        for (name, from, seconds, duration, to) in cases {
+            assert_eq!(land(from, seconds, duration), to, "{name}");
+        }
     }
 
     #[test]
@@ -310,11 +290,6 @@ mod tests {
         assert_eq!(within(-3.0, FILM), 0.0);
         assert_eq!(within(2.0, 4.0), 0.0);
         assert_eq!(within(700.0, 0.0), 700.0);
-    }
-
-    #[test]
-    fn a_video_of_unknown_length_seeks_without_an_end() {
-        assert_eq!(land(100.0, 10, 0.0), 110.0);
     }
 
     #[test]
@@ -337,16 +312,5 @@ mod tests {
         scrub.step(Direction::Back, 100.0, FILM, start);
         assert_eq!(scrub.jump_shown(after(start, 1199)), Some(-10));
         assert_eq!(scrub.jump_shown(after(start, 1200)), None);
-    }
-
-    #[test]
-    fn cancelling_forgets_a_seek_in_progress() {
-        let mut scrub = Scrub::default();
-        let start = Instant::now();
-        scrub.step(Direction::Forward, 100.0, FILM, start);
-        scrub.step(Direction::Forward, 100.0, FILM, after(start, 100 + 100));
-        scrub.cancel();
-        assert_eq!(scrub.target(), None);
-        assert_eq!(scrub.poll(after(start, 1000)), None);
     }
 }

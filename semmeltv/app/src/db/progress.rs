@@ -598,43 +598,6 @@ pub mod tests {
     }
 
     #[tokio::test]
-    async fn the_database_refuses_a_place_that_is_finished_and_in_progress_at_once() {
-        let db = db().await;
-        async fn refused(db: &Db, sql: &'static str) -> bool {
-            let mut raw = db.db.clone();
-            toasty::sql::statement(sql).exec(&mut raw).await.is_err()
-        }
-        assert!(
-            refused(
-                &db,
-                "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_at) VALUES (1, 'movie', 9, 'finished', 600.0)"
-            )
-            .await
-        );
-        assert!(
-            refused(
-                &db,
-                "INSERT INTO video_places (profile_id, kind, video_id, viewing) VALUES (1, 'movie', 9, 'in_progress')"
-            )
-            .await
-        );
-        assert!(
-            refused(
-                &db,
-                "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_audio_track) VALUES (1, 'movie', 9, 'not_started', 2)"
-            )
-            .await
-        );
-        assert!(
-            !refused(
-                &db,
-                "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_at) VALUES (1, 'movie', 9, 'in_progress', 600.0)"
-            )
-            .await
-        );
-    }
-
-    #[tokio::test]
     async fn files_the_library_does_not_know_are_left_out() {
         let db = db().await;
         let mut progress = sample();

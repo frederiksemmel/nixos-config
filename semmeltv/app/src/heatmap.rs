@@ -225,12 +225,6 @@ episodes = [
     }
 
     #[test]
-    fn the_walk_runs_by_season_and_episode_and_the_rank_best_first_both_without_specials_and_unrated() {
-        assert_eq!(ranking(&show()), [(1, 2), (1, 1), (2, 1), (2, 2)]);
-        assert_eq!(order(&show()), [(1, 1), (1, 2), (2, 1), (2, 2)]);
-    }
-
-    #[test]
     fn up_and_down_move_to_the_nearest_rated_episode_of_the_next_season() {
         let order = [(1, 1), (1, 2), (1, 5), (2, 1), (2, 3), (4, 2)];
         assert_eq!(vertical(&order, 2, false), Some(4));

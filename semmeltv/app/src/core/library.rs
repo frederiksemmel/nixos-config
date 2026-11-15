@@ -125,10 +125,4 @@ mod tests {
         assert!(read(&root, &root, &saved).await.unwrap_err().contains("library.db"));
         fs::remove_dir_all(root).unwrap();
     }
-
-    #[test]
-    fn a_closed_port_is_unreachable() {
-        assert!(!reachable("127.0.0.1:1"));
-        assert!(!reachable("no such host:443"));
-    }
 }

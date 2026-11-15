@@ -929,17 +929,40 @@ mod tests {
     }
 
     #[test]
-    fn the_key_hides_shown_subtitles() {
-        let Answer { commands, message, .. } = playing(endless_summer(), Some(1), true).toggle(&[]);
-        assert_eq!(commands, [json!(["set_property", "sub-visibility", false])]);
-        assert_eq!(message, "Subtitles off");
-    }
-
-    #[test]
-    fn the_key_shows_the_selected_track_again() {
-        let Answer { commands, message, .. } = playing(endless_summer(), Some(3), false).toggle(&["en".to_string()]);
-        assert_eq!(commands, [json!(["set_property", "sub-visibility", true])]);
-        assert_eq!(message, "Subtitles: French");
+    fn the_subtitle_key_hides_or_shows_the_selected_track() {
+        let no_subtitles = json!([{ "id": 1, "type": "video" }, { "id": 1, "type": "audio" }]);
+        let cases = [
+            (
+                "shown",
+                playing(endless_summer(), Some(1), true),
+                vec![],
+                vec![json!(["set_property", "sub-visibility", false])],
+                "Subtitles off",
+                true,
+            ),
+            (
+                "hidden",
+                playing(endless_summer(), Some(3), false),
+                vec!["en".to_string()],
+                vec![json!(["set_property", "sub-visibility", true])],
+                "Subtitles: French",
+                true,
+            ),
+            (
+                "no subtitles",
+                playing(no_subtitles, None, true),
+                vec!["en".to_string()],
+                vec![],
+                "No subtitles in this file",
+                false,
+            ),
+        ];
+        for (name, playing, languages, commands, message, ok) in cases {
+            let answer = playing.toggle(&languages);
+            assert_eq!(answer.commands, commands, "{name}");
+            assert_eq!(answer.message, message, "{name}");
+            assert_eq!(answer.ok, ok, "{name}");
+        }
     }
 
     #[test]
@@ -962,15 +985,6 @@ mod tests {
             false,
         );
         assert_eq!(forced.preferred(&["en".to_string()]), Some(2));
-    }
-
-    #[test]
-    fn a_file_without_subtitles_says_so() {
-        let tracks = json!([{ "id": 1, "type": "video" }, { "id": 1, "type": "audio" }]);
-        let answer = playing(tracks, None, true).toggle(&["en".to_string()]);
-        assert!(answer.commands.is_empty());
-        assert!(!answer.ok);
-        assert_eq!(answer.message, "No subtitles in this file");
     }
 
     #[test]

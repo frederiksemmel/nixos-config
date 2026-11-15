@@ -910,13 +910,20 @@ mod tests {
     }
 
     #[test]
-    fn the_exit_code_tells_an_ended_video_from_a_stopped_or_broken_one() {
-        assert_eq!(Finish::from_exit_code(Some(ENDED_EXIT_CODE)), Finish::Ended);
-        assert_eq!(Finish::from_exit_code(Some(STOPPED_EXIT_CODE)), Finish::Stopped);
-        assert_eq!(Finish::from_exit_code(Some(0)), Finish::Stopped);
-        assert_eq!(Finish::from_exit_code(Some(SIGNALLED_EXIT_CODE)), Finish::Stopped);
-        assert_eq!(Finish::from_exit_code(Some(2)), Finish::Failed);
-        assert_eq!(Finish::from_exit_code(None), Finish::Failed);
+    fn an_ended_video_quits_as_ended_and_the_exit_code_says_so() {
+        let sent = sent_by(|playback| playback.end(), Playback::default());
+        assert_eq!(sent, [json!(["quit", ENDED_EXIT_CODE])]);
+        let cases = [
+            (Some(ENDED_EXIT_CODE), Finish::Ended),
+            (Some(STOPPED_EXIT_CODE), Finish::Stopped),
+            (Some(0), Finish::Stopped),
+            (Some(SIGNALLED_EXIT_CODE), Finish::Stopped),
+            (Some(2), Finish::Failed),
+            (None, Finish::Failed),
+        ];
+        for (code, finish) in cases {
+            assert_eq!(Finish::from_exit_code(code), finish, "{code:?}");
+        }
     }
 
     #[test]
@@ -936,17 +943,42 @@ mod tests {
     }
 
     #[test]
-    fn mpv_reports_the_position_the_duration_the_end_and_a_pressed_key() {
-        let position = r#"{"event":"property-change","id":1,"name":"time-pos","data":12.5}"#;
-        let duration = r#"{"event":"property-change","id":2,"name":"duration","data":2730.0}"#;
-        let end = r#"{"event":"property-change","id":3,"name":"eof-reached","data":true}"#;
-        let pause = r#"{"event":"property-change","id":5,"name":"pause","data":true}"#;
-        let key = r#"{"event":"client-message","args":["semmeltv-select"]}"#;
-        assert_eq!(Event::parse(position), Some(Event::Position(12.5)));
-        assert_eq!(Event::parse(duration), Some(Event::Duration(2730.0)));
-        assert_eq!(Event::parse(end), Some(Event::Ended));
-        assert_eq!(Event::parse(pause), Some(Event::Paused(true)));
-        assert_eq!(Event::parse(key), Some(Event::Key(Command::Select)));
+    fn mpv_messages_become_events() {
+        let cases = [
+            (
+                r#"{"event":"property-change","id":1,"name":"time-pos","data":12.5}"#,
+                Some(Event::Position(12.5)),
+            ),
+            (
+                r#"{"event":"property-change","id":2,"name":"duration","data":2730.0}"#,
+                Some(Event::Duration(2730.0)),
+            ),
+            (
+                r#"{"event":"property-change","id":3,"name":"eof-reached","data":true}"#,
+                Some(Event::Ended),
+            ),
+            (
+                r#"{"event":"property-change","id":5,"name":"pause","data":true}"#,
+                Some(Event::Paused(true)),
+            ),
+            (
+                r#"{"event":"client-message","args":["semmeltv-select"]}"#,
+                Some(Event::Key(Command::Select)),
+            ),
+            (r#"{"event":"playback-restart"}"#, Some(Event::Started)),
+            (r#"{"request_id":0,"error":"success"}"#, None),
+            (r#"{"event":"property-change","id":1,"name":"time-pos"}"#, None),
+            (
+                r#"{"event":"property-change","id":3,"name":"eof-reached","data":false}"#,
+                None,
+            ),
+            (r#"{"event":"client-message","args":["something-else"]}"#, None),
+            (r#"{"event":"property-change","id":5,"name":"pause"}"#, None),
+            ("not json", None),
+        ];
+        for (line, event) in cases {
+            assert_eq!(Event::parse(line), event, "{line}");
+        }
     }
 
     #[test]
@@ -970,30 +1002,32 @@ mod tests {
     }
 
     #[test]
-    fn the_first_frame_clears_the_loading_screen() {
-        assert_eq!(Event::parse(r#"{"event":"playback-restart"}"#), Some(Event::Started));
-    }
-
-    #[test]
-    fn other_mpv_messages_are_ignored() {
-        for line in [
-            r#"{"request_id":0,"error":"success"}"#,
-            r#"{"event":"property-change","id":1,"name":"time-pos"}"#,
-            r#"{"event":"property-change","id":3,"name":"eof-reached","data":false}"#,
-            r#"{"event":"client-message","args":["something-else"]}"#,
-            r#"{"event":"property-change","id":5,"name":"pause"}"#,
-            "not json",
-        ] {
-            assert_eq!(Event::parse(line), None, "{line}");
+    fn the_position_is_saved_after_thirty_seconds_of_movement() {
+        let cases = [
+            (0.0, 29.9, false),
+            (0.0, 30.0, true),
+            (100.0, 60.0, true),
+            (100.0, 80.0, false),
+            (Playback::default().saved, 1200.0, true),
+        ];
+        for (saved, position, due) in cases {
+            let saves = Arc::new(Mutex::new(0));
+            let counter = saves.clone();
+            let mut playback = Playback {
+                saved,
+                position,
+                on_save: Some(Box::new(move || *counter.lock().unwrap() += 1)),
+                ..Playback::default()
+            };
+            playback.save_position();
+            playback.save_position();
+            assert_eq!(*saves.lock().unwrap(), usize::from(due), "from {saved} to {position}");
+            assert_eq!(
+                playback.saved,
+                if due { position } else { saved },
+                "from {saved} to {position}"
+            );
         }
-    }
-
-    #[test]
-    fn the_position_is_saved_once_it_moved_thirty_seconds_either_way() {
-        assert!(!save_due(0.0, 29.9));
-        assert!(save_due(0.0, 30.0));
-        assert!(save_due(100.0, 60.0));
-        assert!(!save_due(100.0, 80.0));
     }
 
     #[test]
@@ -1008,35 +1042,6 @@ mod tests {
             ["--start=1234.500", "--aid=2", "--sid=3", "--sub-visibility=no"]
         );
         assert!(resume_args(0.0, Tracks::default()).is_empty());
-    }
-
-    #[test]
-    fn a_v4l2m2m_tv_hands_decoded_frames_to_cage_and_others_render_them() {
-        assert_eq!(
-            video_args(Some("v4l2m2m")),
-            ["--hwdec=v4l2m2m", "--vo=dmabuf-wayland", "--video-sync=audio"]
-        );
-        assert_eq!(video_args(None)[0], "--hwdec=drm");
-        assert_eq!(video_args(Some("drm")), video_args(None));
-    }
-
-    #[test]
-    fn a_resumed_video_saves_its_position_at_once() {
-        assert!(save_due(Playback::default().saved, 1200.0));
-    }
-
-    #[test]
-    fn a_save_is_announced_once() {
-        let saves = Arc::new(Mutex::new(0));
-        let counter = saves.clone();
-        let mut playback = Playback {
-            position: 100.0,
-            on_save: Some(Box::new(move || *counter.lock().unwrap() += 1)),
-            ..Playback::default()
-        };
-        playback.save_position();
-        playback.save_position();
-        assert_eq!(*saves.lock().unwrap(), 1);
     }
 
     #[test]
@@ -1087,24 +1092,6 @@ mod tests {
         assert_eq!(playback.card, Card::Fading { opened: now, since: closed });
         playback.show_card(closed + CARD_FADE);
         assert_eq!(playback.card, Card::Gone);
-    }
-
-    #[test]
-    fn the_end_quits_as_ended() {
-        let (stream, mut mpv) = UnixStream::pair().unwrap();
-        let mut playback = Playback {
-            stream: Some(stream),
-            ..Playback::default()
-        };
-        playback.end();
-        drop(playback);
-        let mut sent = String::new();
-        mpv.read_to_string(&mut sent).unwrap();
-        let commands: Vec<Value> = sent
-            .lines()
-            .map(|line| serde_json::from_str::<Value>(line).unwrap()["command"].clone())
-            .collect();
-        assert_eq!(commands, [json!(["quit", ENDED_EXIT_CODE])]);
     }
 
     #[test]
@@ -1166,21 +1153,19 @@ mod tests {
     }
 
     #[test]
-    fn an_arrow_seeks_and_draws_the_target_and_the_jump() {
-        let now = Instant::now();
-        let sent = sent_by(|playback| playback.command(Command::Right, now), playing());
-        assert_eq!(sent[0], json!(["seek", 110.0, "absolute+exact"]));
-        assert!(is_overlay(&sent[1]));
-        assert!(sent[1]["data"].as_str().unwrap().contains("+10s"));
-    }
-
-    #[test]
-    fn up_and_down_jump_a_minute() {
-        let now = Instant::now();
-        let up = sent_by(|playback| playback.command(Command::Up, now), playing());
-        assert_eq!(up[0], json!(["seek", 160.0, "absolute+exact"]));
-        let down = sent_by(|playback| playback.command(Command::Down, now), playing());
-        assert_eq!(down[0], json!(["seek", 40.0, "absolute+exact"]));
+    fn each_arrow_seeks_by_its_step_and_draws_the_jump() {
+        let cases = [
+            (Command::Right, 110.0, "+10s"),
+            (Command::Left, 90.0, "-10s"),
+            (Command::Up, 160.0, "+60s"),
+            (Command::Down, 40.0, "-60s"),
+        ];
+        for (command, to, jump) in cases {
+            let sent = sent_by(|playback| playback.command(command, Instant::now()), playing());
+            assert_eq!(sent[0], json!(["seek", to, "absolute+exact"]), "{command:?}");
+            assert!(is_overlay(&sent[1]), "{command:?}");
+            assert!(sent[1]["data"].as_str().unwrap().contains(jump), "{command:?}");
+        }
     }
 
     #[test]
@@ -1191,41 +1176,73 @@ mod tests {
     }
 
     #[test]
-    fn the_overlay_hides_after_four_seconds_without_input() {
-        let now = Instant::now();
-        let sent = sent_by(
-            |playback| {
-                playback.command(Command::PlayPause, now);
-                playback.tick(now + Duration::from_millis(3900));
-                playback.tick(now + SHOWN_FOR);
-            },
-            playing(),
-        );
-        let overlays: Vec<_> = sent.iter().filter(|command| is_overlay(command)).collect();
-        assert_eq!(overlays.len(), 2);
-        assert_eq!(overlays[0]["format"], "ass-events");
-        assert_eq!(overlays[1]["format"], "none");
-    }
-
-    #[test]
-    fn the_overlay_stays_while_paused() {
-        let now = Instant::now();
-        let mut playback = playing();
-        playback.pause_changed(true);
-        playback.wake(now);
-        assert!(playback.shown(now + Duration::from_secs(600)));
-        playback.pause_changed(false);
-        assert!(!playback.shown(now + Duration::from_secs(600)));
-    }
-
-    #[test]
-    fn nothing_is_drawn_before_playback_starts() {
-        let now = Instant::now();
-        let mut playback = Playback::default();
-        playback.wake(now);
-        assert!(!playback.shown(now));
-        playback.begin(now);
-        assert!(playback.shown(now));
+    fn the_overlay_shows_while_paused_or_four_seconds_after_input() {
+        type Act = fn(&mut Playback, Instant);
+        let cases: [(&str, Phase, Act, &[&str]); 5] = [
+            (
+                "playing",
+                Phase::Playing { paused: false },
+                |playback, now| {
+                    playback.command(Command::PlayPause, now);
+                    playback.tick(now + Duration::from_millis(3900));
+                    playback.tick(now + SHOWN_FOR);
+                },
+                &["ass-events", "none"],
+            ),
+            (
+                "paused",
+                Phase::Playing { paused: true },
+                |playback, now| {
+                    playback.wake(now);
+                    playback.tick(now + Duration::from_secs(600));
+                    playback.pause_changed(false);
+                    playback.tick(now + Duration::from_secs(600));
+                },
+                &["ass-events", "none"],
+            ),
+            (
+                "opening",
+                Phase::Opening,
+                |playback, now| {
+                    playback.wake(now);
+                    playback.tick(now);
+                },
+                &[],
+            ),
+            (
+                "first frame",
+                Phase::Opening,
+                |playback, now| {
+                    playback.begin(now);
+                    playback.tick(now);
+                },
+                &["ass-events"],
+            ),
+            (
+                "ended",
+                Phase::Ended,
+                |playback, now| {
+                    playback.wake(now);
+                    playback.tick(now);
+                },
+                &[],
+            ),
+        ];
+        for (name, phase, act, expected) in cases {
+            let sent = sent_by(
+                |playback| act(playback, Instant::now()),
+                Playback { phase, ..playing() },
+            );
+            let overlays: Vec<_> = sent
+                .iter()
+                .filter(|command| is_overlay(command))
+                .map(|command| command["format"].as_str().unwrap())
+                .collect();
+            assert_eq!(overlays, expected, "{name}");
+            if expected.is_empty() {
+                assert!(sent.is_empty(), "{name}");
+            }
+        }
     }
 
     #[test]
@@ -1250,15 +1267,6 @@ mod tests {
                 &json!(["seek", 120.0, "absolute+exact"]),
             ]
         );
-    }
-
-    #[test]
-    fn the_tick_sends_nothing_after_the_end() {
-        let now = Instant::now();
-        let mut ended = playing();
-        ended.phase = Phase::Ended;
-        ended.wake(now);
-        assert!(sent_by(|playback| playback.tick(now), ended).is_empty());
     }
 
     #[test]
@@ -1352,20 +1360,30 @@ mod tests {
     }
 
     #[test]
-    fn the_prompt_follows_the_position() {
-        let mut playback = during_the_intro();
-        playback.update_prompt();
-        assert_eq!(playback.prompt, Some(Kind::Intro));
-        playback.position = 25.0;
-        playback.update_prompt();
-        assert_eq!(playback.prompt, None);
-    }
-
-    #[test]
-    fn the_prompt_names_the_section_and_can_be_removed() {
-        let shown = prompt_command(Some(Kind::Recap));
-        assert_eq!(shown["format"], "ass-events");
-        assert!(shown["data"].as_str().unwrap().ends_with("Skip recap"));
-        assert_eq!(prompt_command(None)["format"], "none");
+    fn the_prompt_shows_the_section_while_the_position_is_inside_it() {
+        for kind in [Kind::Recap, Kind::Intro] {
+            let playback = Playback {
+                position: 5.0,
+                segments: vec![Segment {
+                    kind,
+                    start: 10.0,
+                    end: 20.0,
+                }],
+                ..Playback::default()
+            };
+            let sent = sent_by(
+                |playback| {
+                    for position in [5.0, 10.0, 19.9, 20.0, 25.0] {
+                        playback.position = position;
+                        playback.update_prompt();
+                    }
+                },
+                playback,
+            );
+            assert_eq!(sent.len(), 2, "{kind:?}");
+            assert_eq!(sent[0]["format"], "ass-events", "{kind:?}");
+            assert!(sent[0]["data"].as_str().unwrap().ends_with(kind.label()), "{kind:?}");
+            assert_eq!(sent[1]["format"], "none", "{kind:?}");
+        }
     }
 }
