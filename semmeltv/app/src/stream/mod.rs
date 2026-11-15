@@ -36,6 +36,8 @@ const FORGET: Duration = Duration::from_secs(12 * 3600);
 const MOST_SESSIONS: usize = 3;
 const CELLULAR_WARNING: u64 = 8_000_000;
 const PLAYLIST: &str = "application/vnd.apple.mpegurl";
+/// Seconds of subtitles in each piece of an embedded track's playlist.
+const SUBTITLE_PIECE: f64 = 30.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -70,6 +72,17 @@ struct Subtitle {
     supported: bool,
     #[serde(skip)]
     source: Option<Source>,
+}
+
+impl Subtitle {
+    /// The track inside the video this comes from, when it is a text track
+    /// there, which the remux writes out as it goes.
+    fn embedded(&self) -> Option<usize> {
+        match &self.source {
+            Some(Source::Embedded(_, track)) => Some(*track),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Serialize)]
@@ -571,6 +584,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         .filter(|at| at.is_finite() && *at >= 0.0 && *at < duration)
         .unwrap_or_else(|| resume_at(&streams.shared.progress(profile), &chosen.file, duration));
     let id = new_id();
+    let subtitles = subtitle_list(&streams, &chosen.file, &media, profile);
     let session = Session::new(
         plan,
         streams.root.join(&id),
@@ -579,15 +593,16 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
             audio: audio.map(|audio| audio.index),
             hevc,
             copy_audio: copy_audio || audio.is_none(),
+            subtitles: subtitles.iter().filter_map(|subtitle| subtitle.embedded()).collect(),
         },
     );
     session.start(start);
-    let subtitles = subtitle_list(&streams, &chosen.file, &media, profile);
     let delay = streams.shared.subtitles().file_delay(&chosen.file);
     if let Some(source) = subtitles
         .iter()
         .find(|subtitle| subtitle.default)
         .and_then(|subtitle| subtitle.source.clone())
+        .filter(|source| matches!(source, Source::Sidecar(_)))
     {
         let warming = streams.clone();
         tokio::spawn(async move {
@@ -776,10 +791,14 @@ async fn subtitles(State(streams): State<Streams>, Path((id, name)): Path<(Strin
         Ok(live) => live,
         Err(response) => return response,
     };
-    let (number, playlist) = match (name.strip_suffix(".m3u8"), name.strip_suffix(".vtt")) {
-        (Some(number), _) => (number, true),
-        (_, Some(number)) => (number, false),
+    let (stem, playlist) = match (name.strip_suffix(".m3u8"), name.strip_suffix(".vtt")) {
+        (Some(stem), _) => (stem, true),
+        (_, Some(stem)) => (stem, false),
         _ => return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}")),
+    };
+    let (number, piece) = match stem.split_once('-') {
+        Some((number, piece)) => (number, piece.parse::<usize>().ok()),
+        None => (stem, None),
     };
     let Some(subtitle) = number
         .parse::<usize>()
@@ -789,6 +808,18 @@ async fn subtitles(State(streams): State<Streams>, Path((id, name)): Path<(Strin
     else {
         return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}"));
     };
+    if let Some(track) = subtitle.embedded() {
+        if playlist {
+            return body(PLAYLIST, "no-store", plan::subtitle_pieces(live.duration, number, SUBTITLE_PIECE));
+        }
+        let Some(piece) = piece else {
+            return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}"));
+        };
+        let from = piece as f64 * SUBTITLE_PIECE;
+        let to = (from + SUBTITLE_PIECE).min(live.duration);
+        let cues = live.session.subtitles(track, from, to).await;
+        return body("text/vtt; charset=utf-8", "private, max-age=3600", vtt::render(&cues, live.delay));
+    }
     if playlist {
         return body(
             PLAYLIST,

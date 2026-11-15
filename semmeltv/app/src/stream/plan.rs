@@ -85,6 +85,22 @@ impl Plan {
     }
 }
 
+/// A subtitle playlist cut into pieces of `piece` seconds, named `{stem}-{n}.vtt`,
+/// for subtitles that are made alongside the video rather than all at once.
+pub fn subtitle_pieces(duration: f64, stem: &str, piece: f64) -> String {
+    let mut text = format!(
+        "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n",
+        piece.ceil() as u64
+    );
+    let count = (duration / piece).ceil().max(1.0) as usize;
+    for n in 0..count {
+        let length = (duration - n as f64 * piece).min(piece);
+        text.push_str(&format!("#EXTINF:{length:.6},\n{stem}-{n}.vtt\n"));
+    }
+    text.push_str("#EXT-X-ENDLIST\n");
+    text
+}
+
 pub fn subtitle_playlist(duration: f64, uri: &str) -> String {
     format!(
         "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:{}\n#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-PLAYLIST-TYPE:VOD\n#EXTINF:{duration:.6},\n{uri}\n#EXT-X-ENDLIST\n",
@@ -101,6 +117,13 @@ mod tests {
             duration,
             keyframes: keyframes.to_vec(),
         })
+    }
+
+    #[test]
+    fn subtitle_pieces_cover_the_video_to_its_end() {
+        let playlist = subtitle_pieces(75.5, "3", 30.0);
+        assert!(playlist.contains("#EXT-X-TARGETDURATION:30\n"));
+        assert!(playlist.contains("#EXTINF:30.000000,\n3-0.vtt\n#EXTINF:30.000000,\n3-1.vtt\n#EXTINF:15.500000,\n3-2.vtt\n#EXT-X-ENDLIST"));
     }
 
     #[test]

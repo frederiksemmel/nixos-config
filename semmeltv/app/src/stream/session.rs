@@ -1,5 +1,6 @@
 use super::fmp4::{self, Init};
 use super::plan::Plan;
+use super::vtt::{self, Cue};
 use crate::audio;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -24,6 +25,8 @@ pub struct Spec {
     pub audio: Option<usize>,
     pub hevc: bool,
     pub copy_audio: bool,
+    /// The embedded text subtitle tracks to write out as WebVTT while remuxing.
+    pub subtitles: Vec<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -40,6 +43,7 @@ struct Fragment {
 struct Run {
     number: u32,
     from: usize,
+    starts: f64,
     pid: Option<u32>,
     produced: f64,
     paused: bool,
@@ -55,6 +59,8 @@ struct State {
     run: Option<Run>,
     runs: u32,
     wanted: f64,
+    reach: f64,
+    covered: Vec<(f64, f64)>,
     failed: Option<String>,
     used: Option<Instant>,
 }
@@ -95,6 +101,7 @@ impl Session {
 
     pub fn rest(&self) -> bool {
         let mut state = self.state.lock().unwrap();
+        retire(&mut state);
         let busy = state.run.take().is_some() || !state.fragments.is_empty();
         for (_, fragment) in std::mem::take(&mut state.fragments) {
             let _ = std::fs::remove_file(fragment.path);
@@ -118,6 +125,7 @@ impl Session {
     }
 
     fn begin(self: &Arc<Self>, state: &mut State, segment: usize) {
+        retire(state);
         state.runs += 1;
         let number = state.runs;
         if let Err(error) = std::fs::create_dir_all(&self.dir) {
@@ -136,6 +144,7 @@ impl Session {
                 state.run = Some(Run {
                     number,
                     from: segment,
+                    starts: self.plan.start(segment),
                     pid: child.id(),
                     produced: self.plan.start(segment),
                     paused: false,
@@ -194,7 +203,13 @@ impl Session {
                 "-hls_segment_filename",
             ])
             .arg(self.dir.join(format!("run{number}-%d.m4s")))
-            .arg(self.playlist(number))
+            .arg(self.playlist(number));
+        for track in &self.spec.subtitles {
+            command
+                .args(["-map", &format!("0:s:{track}"), "-c:s", "webvtt", "-flush_packets", "1", "-f", "webvtt"])
+                .arg(self.subtitle_file(number, *track));
+        }
+        command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .kill_on_drop(true);
@@ -202,6 +217,10 @@ impl Session {
             command.stderr(log);
         }
         command
+    }
+
+    fn subtitle_file(&self, number: u32, track: usize) -> PathBuf {
+        self.dir.join(format!("run{number}-sub{track}.vtt"))
     }
 
     fn log(&self, number: u32) -> PathBuf {
@@ -232,6 +251,9 @@ impl Session {
                 let mut state = self.state.lock().unwrap();
                 if let Some(run) = state.run.as_mut().filter(|run| run.number == number) {
                     run.exited = true;
+                    if success {
+                        run.produced = self.plan.duration;
+                    }
                     if !success && listed == 0 {
                         let line = error.lines().last().unwrap_or("ffmpeg stopped").to_string();
                         eprintln!("stream: {}: {line}", self.spec.source.display());
@@ -336,18 +358,17 @@ impl Session {
 
     fn throttle(&self, number: u32) {
         let mut state = self.state.lock().unwrap();
-        let wanted = state.wanted;
+        let target = (state.wanted + AHEAD).max(state.reach);
         let Some(run) = state.run.as_mut().filter(|run| run.number == number && !run.exited) else {
             return;
         };
         let Some(pid) = run.pid else {
             return;
         };
-        let ahead = run.produced - wanted;
-        if !run.paused && ahead > AHEAD {
+        if !run.paused && run.produced > target {
             unsafe { libc::kill(pid as i32, libc::SIGSTOP) };
             run.paused = true;
-        } else if run.paused && ahead < RESUME_BELOW {
+        } else if run.paused && run.produced < target - (AHEAD - RESUME_BELOW) {
             unsafe { libc::kill(pid as i32, libc::SIGCONT) };
             run.paused = false;
         }
@@ -437,6 +458,47 @@ impl Session {
         }
     }
 
+    /// The cues of embedded subtitle `track` that start between `from` and
+    /// `to`, once the remux has passed `to` (or, after a while, whatever it has).
+    pub async fn subtitles(self: &Arc<Self>, track: usize, from: f64, to: f64) -> Vec<Cue> {
+        let deadline = Instant::now() + WAIT;
+        let runs = loop {
+            let changed = self.changed.notified();
+            let running = {
+                let mut state = self.state.lock().unwrap();
+                state.used = Some(Instant::now());
+                if covers(&coverage(&state), from, to) || Instant::now() >= deadline {
+                    state.reach = 0.0;
+                    break state.runs;
+                }
+                state.reach = state.reach.max(to);
+                if state.run.as_ref().is_none_or(|run| run.exited && run.produced < to) {
+                    self.begin(&mut state, self.plan.segment_at(from));
+                }
+                state.run.as_ref().map(|run| run.number)
+            };
+            if let Some(number) = running {
+                self.throttle(number);
+            }
+            let left = deadline.saturating_duration_since(Instant::now());
+            let _ = tokio::time::timeout(left.min(Duration::from_secs(1)), changed).await;
+        };
+        let mut seen = std::collections::HashSet::new();
+        let mut found = Vec::new();
+        for number in 1..=runs {
+            let Ok(text) = std::fs::read_to_string(self.subtitle_file(number, track)) else {
+                continue;
+            };
+            for cue in vtt::cues(&text) {
+                if cue.start >= from && cue.start < to && seen.insert(((cue.start * 1000.0).round() as i64, cue.text.join("\n"))) {
+                    found.push(cue);
+                }
+            }
+        }
+        found.sort_by(|a, b| a.start.total_cmp(&b.start));
+        found
+    }
+
     pub async fn init(self: &Arc<Self>, start: f64) -> Result<(Arc<Vec<u8>>, Option<String>), String> {
         let deadline = Instant::now() + WAIT;
         loop {
@@ -464,6 +526,39 @@ impl Session {
     }
 }
 
+/// Keeps what a run that is being replaced or stopped has remuxed.
+fn retire(state: &mut State) {
+    if let Some(run) = &state.run {
+        state.covered.push((run.starts, run.produced));
+    }
+}
+
+/// Every stretch of the video the remux has passed, in this run and before.
+fn coverage(state: &State) -> Vec<(f64, f64)> {
+    let mut stretches = state.covered.clone();
+    if let Some(run) = &state.run {
+        stretches.push((run.starts, run.produced));
+    }
+    stretches
+}
+
+/// Whether `stretches` together cover `from` to `to`.
+fn covers(stretches: &[(f64, f64)], from: f64, to: f64) -> bool {
+    let mut sorted = stretches.to_vec();
+    sorted.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut reached = from;
+    for (start, end) in sorted {
+        if start > reached + MATCH {
+            break;
+        }
+        reached = reached.max(end);
+        if reached >= to - MATCH {
+            return true;
+        }
+    }
+    reached >= to - MATCH
+}
+
 pub fn clear(root: &Path) {
     let _ = std::fs::remove_dir_all(root);
 }
@@ -471,6 +566,16 @@ pub fn clear(root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn subtitles_wait_until_the_remux_has_passed_their_piece() {
+        assert!(covers(&[(0.0, 65.0)], 30.0, 60.0));
+        assert!(!covers(&[(0.0, 45.0)], 30.0, 60.0));
+        assert!(covers(&[(0.0, 40.0), (39.9, 90.0)], 30.0, 60.0));
+        assert!(!covers(&[(0.0, 35.0), (50.0, 90.0)], 30.0, 60.0));
+        assert!(!covers(&[(32.0, 90.0)], 30.0, 60.0));
+        assert!(covers(&[(600.0, 700.0), (0.0, 61.0)], 30.0, 60.0));
+    }
     use crate::stream::index;
 
     async fn joined(session: &Arc<Session>, at: f64, order: &[usize], out: &std::path::Path) {
@@ -504,6 +609,7 @@ mod tests {
             audio: Some(0),
             hevc: true,
             copy_audio: true,
+            subtitles: Vec::new(),
         };
         let root = std::env::temp_dir().join(format!("semmeltv-session-{}", std::process::id()));
         let out = std::env::var("SEMMELTV_STREAM_OUT")

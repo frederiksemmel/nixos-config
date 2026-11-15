@@ -58,15 +58,28 @@ fn format_time(seconds: f64) -> String {
     )
 }
 
-pub fn shift(vtt: &str, delay: f64) -> String {
-    let mut out = String::from("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n");
-    let mut blocks = vtt
-        .split("\n\n")
-        .map(|block| block.trim_matches(|c| c == '\n' || c == '\r'));
-    blocks.next();
-    for block in blocks.filter(|block| !block.is_empty()) {
+/// One WebVTT cue: its identifier lines, timing and settings, and text.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cue {
+    pub start: f64,
+    pub end: f64,
+    pub settings: String,
+    pub before: Vec<String>,
+    pub text: Vec<String>,
+}
+
+/// The cues of a WebVTT file. A file that ffmpeg is still writing may end in
+/// a cue it hasn't finished, which is left out until it has.
+pub fn cues(vtt: &str) -> Vec<Cue> {
+    let vtt = vtt.replace("\r\n", "\n");
+    let mut blocks: Vec<&str> = vtt.split("\n\n").collect();
+    if !vtt.ends_with("\n\n") {
+        blocks.pop();
+    }
+    let mut found = Vec::new();
+    for block in blocks.into_iter().skip(1).map(|block| block.trim_matches('\n')) {
         let mut lines = block.lines();
-        let mut kept = Vec::new();
+        let mut before = Vec::new();
         let mut timing = None;
         for line in lines.by_ref() {
             if let Some((start, rest)) = line.split_once("-->") {
@@ -75,32 +88,55 @@ pub fn shift(vtt: &str, delay: f64) -> String {
                 timing = Some((parse_time(start), parse_time(end), settings.to_string()));
                 break;
             }
-            kept.push(line);
+            before.push(line.to_string());
         }
-        let Some((Some(start), Some(end), settings)) = timing else {
-            continue;
-        };
-        let (start, end) = (start + delay, end + delay);
+        if let Some((Some(start), Some(end), settings)) = timing {
+            found.push(Cue {
+                start,
+                end,
+                settings,
+                before,
+                text: lines.map(str::to_string).collect(),
+            });
+        }
+    }
+    found
+}
+
+/// A WebVTT file of `cues`, each moved by `delay`, leaving out those that would
+/// end before the video starts.
+pub fn render(cues: &[Cue], delay: f64) -> String {
+    let mut out = String::from("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n");
+    for cue in cues {
+        let (start, end) = (cue.start + delay, cue.end + delay);
         if end <= 0.0 {
             continue;
         }
         out.push('\n');
-        for line in kept {
+        for line in &cue.before {
             out.push_str(line);
             out.push('\n');
         }
         out.push_str(&format!("{} --> {}", format_time(start), format_time(end)));
-        if !settings.is_empty() {
+        if !cue.settings.is_empty() {
             out.push(' ');
-            out.push_str(&settings);
+            out.push_str(&cue.settings);
         }
         out.push('\n');
-        for line in lines {
+        for line in &cue.text {
             out.push_str(line);
             out.push('\n');
         }
     }
     out
+}
+
+pub fn shift(vtt: &str, delay: f64) -> String {
+    let mut whole = vtt.to_string();
+    if !whole.ends_with("\n\n") {
+        whole.push_str("\n\n");
+    }
+    render(&cues(&whole), delay)
 }
 
 #[cfg(test)]
@@ -116,6 +152,16 @@ mod tests {
         assert!(shifted.contains("00:00:00.000 --> 00:00:01.000\nHello\n"));
         assert!(shifted.contains("00:00:28.000 --> 00:00:31.500 align:start\n<i>World</i>\nagain\n"));
         assert!(!shift(FFMPEG_VTT, -3.5).contains("Hello"));
+    }
+
+    #[test]
+    fn a_cue_ffmpeg_is_still_writing_waits_for_its_end() {
+        let growing = "WEBVTT\n\n00:01.000 --> 00:03.000\nHello\n\n00:00:30.000 --> 00:00:3";
+        let found = cues(growing);
+        assert_eq!(found.len(), 1);
+        assert_eq!((found[0].start, found[0].end), (1.0, 3.0));
+        assert_eq!(found[0].text, vec!["Hello".to_string()]);
+        assert_eq!(cues(FFMPEG_VTT).len(), 2);
     }
 
     #[test]

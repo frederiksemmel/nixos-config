@@ -676,9 +676,13 @@ default }`. `subtitles` lists the subtitle files beside the video, then the
 tracks inside it, as `{ id, name, language, forced, default, supported }`.
 Picture subtitles (PGS, VobSub) are listed with `supported` false: they show
 only on the TV. The others are WebVTT renditions in the master playlist,
-moved by the file's subtitle delay. `default` is the first one in the
-subtitle languages when subtitles are on. An episode's `next` is the episode
-after it, `{ season, episode, label, title, still }`, or null. `heavy` is true above
+moved by the file's subtitle delay. A track inside the video is written out
+by the same ffmpeg that remuxes the video, as it goes, and served as
+30-second pieces once the remux has passed them, so the file is read once, at
+the pace it plays; a subtitle file beside the video is converted whole.
+`default` is the first one in the subtitle languages when subtitles are on. An
+episode's `next` is the episode after it, `{ season, episode, label, title,
+still }`, or null. `heavy` is true above
 8 Mbit/s, a hint for mobile data.
 
 The playlist cuts the video at its keyframes, read from the Matroska Cues or
