@@ -618,9 +618,7 @@ impl Player {
             connect(&mut child, &socket_path, &shared, title);
             let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
             shared.lock().unwrap().subtitles.stopped();
-            if shared.lock().unwrap().matched {
-                display::show_ui();
-            }
+            display::show_ui();
             let _ = std::fs::remove_file(&socket_path);
             on_exit(finish);
         });
