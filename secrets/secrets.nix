@@ -55,10 +55,6 @@ in
     semmeltv5
     semmeltv3
   ];
-  "wifi_joincena.age".publicKeys = [
-    frederik
-    semmeltv3
-  ];
   "semmeltv_service_token.age".publicKeys = [
     frederik
     semmeltv5
