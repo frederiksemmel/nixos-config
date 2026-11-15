@@ -508,12 +508,28 @@ line. The TV keeps the newest 300. Nothing leaves the TV. Admins see the list
 on the web app's Feedback page (Settings, then Feedback). Its "Copy for Claude"
 button copies a summary and the command that fetches the full report.
 
-From beast, triage with:
+Each report has a status, kept beside it in `<id>.status.json`:
 
-    ssh semmeltv5 'tail -n 20 /var/lib/semmeltv/feedback/index.jsonl' | jq -c '{id, when, person: .person.name, page, message}'
-    ssh semmeltv5 cat /var/lib/semmeltv/feedback/<id>.json | jq '.message, .client.trail[-40:], .tv.problems'
-    ssh semmeltv5 cat /var/lib/semmeltv/feedback/<id>.json | jq -r '.tv.app_journal[]' | tail -80
-    scp semmeltv5:/var/lib/semmeltv/feedback/<id>-tv.jpg .
+- New, until someone marks it;
+- Needs review, with why and what a person has to decide;
+- Done, with the commit that fixed it, or why nothing changes.
+
+`POST /api/feedback/<id>/status` sets the status, as an admin or with the
+service token. `GET /api/feedback?state=new|needs_review|done` filters by it.
+The Feedback page shows the statuses, filters by them and sets them by hand.
+
+Beast triages New reports on its own. The `semmeltv-feedback-watch` user timer
+asks both TVs every two minutes. When a report is New, it starts
+`semmeltv-feedback-triage`, a headless Claude run whose prompt is
+`home/hosts/beast-semmeltv/prompt.md`. The run fixes and deploys what is easy,
+and marks the rest Needs review. By hand, from beast:
+
+    semmeltv-feedback semmeltv5 list new
+    semmeltv-feedback semmeltv5 show <id> | jq '.message, .client.trail[-40:], .tv.problems'
+    semmeltv-feedback semmeltv5 show <id> | jq -r '.tv.app_journal[]' | tail -80
+    semmeltv-feedback semmeltv5 pictures <id> ./shots
+    semmeltv-feedback semmeltv5 mark <id> needs-review "why" "what to decide"
+    journalctl --user -u semmeltv-feedback-watch -u semmeltv-feedback-triage
 
 The same works for `semmeltv3`. A report's `tv.problems` lists what the TV
 couldn't collect, such as a journal it couldn't read.
