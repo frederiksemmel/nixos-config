@@ -50,33 +50,15 @@ let
     '';
   };
 
+  syncFrom = pkgs.callPackage ./sync.nix { };
+
   sync = pkgs.writeShellApplication {
     name = "semmeltv-sync";
-    runtimeInputs = [
-      pkgs.rclone
-      pkgs.coreutils
-      pkgs.findutils
-    ];
+    runtimeInputs = [ pkgs.rclone ];
     text = ''
       ${rcloneConfig}
-      umask 022
-      remote=$(rclone hashsum sha1 pcloud:SemmelTV --include /library.db --config "$config" | cut -d' ' -f1)
-      if [ -z "$remote" ]; then
-        echo "pcloud:SemmelTV/library.db not found"
-        exit 1
-      fi
-      local=$(sha1sum ${meta}/library.db 2>/dev/null | cut -d' ' -f1 || true)
-      if [ "$remote" = "$local" ] && [ -d ${meta}/Artwork ]; then
-        echo "library.db unchanged ($remote), artwork not synced"
-        exit 0
-      fi
-      echo "library.db changed (''${local:-none} -> $remote), syncing"
-      rclone copyto pcloud:SemmelTV/library.db ${meta}/.library.db.new --config "$config"
-      rclone copy pcloud:SemmelTV/Artwork ${meta}/Artwork --config "$config" --stats 0
-      mv -f ${meta}/.library.db.new ${meta}/library.db
-      rclone sync pcloud:SemmelTV/Artwork ${meta}/Artwork --config "$config" --stats 0
-      rm -f ${meta}/library.toml
-      echo "synced library.db $(sha1sum ${meta}/library.db | cut -d' ' -f1) and $(find ${meta}/Artwork -type f | wc -l) artwork files"
+      export RCLONE_CONFIG="$config"
+      exec ${lib.getExe syncFrom} pcloud:SemmelTV ${meta}
     '';
   };
 in

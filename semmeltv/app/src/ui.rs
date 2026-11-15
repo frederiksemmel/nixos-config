@@ -6,7 +6,7 @@ use crate::details::{self, Details, Ratings};
 use crate::display;
 use crate::heatmap;
 use crate::library::Item;
-use crate::loader::{self, Job, Pixels};
+use crate::loader::{self, Art, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence};
 use crate::tags::Tags;
@@ -471,20 +471,27 @@ impl Screen {
         .line()
     }
 
-    fn request(&self, page: Page, shelf: usize, card: usize, key: SharedString, art: Option<PathBuf>) {
-        if let Some(path) = art {
+    fn request(&self, page: Page, shelf: usize, card: usize, key: SharedString, art: Option<Art>) {
+        if let Some(art) = art {
             let target = Target { page, shelf, card, key };
-            let _ = self.images.send(Job { target, path });
+            let _ = self.images.send(Job { target, art });
         }
     }
 
-    fn home_card(&self, item: Item) -> (CardData, Option<PathBuf>) {
+    fn title_art(&self, kind: Kind, tmdb: Option<u64>) -> Option<Art> {
+        tmdb.map(|id| Art {
+            path: artwork::backdrop(&self.art, kind, id),
+            fallback: Some(artwork::poster(&self.art, kind, id)),
+        })
+    }
+
+    fn home_card(&self, item: Item) -> (CardData, Option<Art>) {
         let (mut card, art) = match item {
             Item::Show(index) => {
                 let show = self.nav.show(index);
                 (
                     card(&show.key, show.title.clone(), show.subtitle()),
-                    show.tmdb.map(|id| artwork::backdrop(&self.art, Kind::Tv, id)),
+                    self.title_art(Kind::Tv, show.tmdb),
                 )
             }
             Item::Movie(index) => {
@@ -492,7 +499,7 @@ impl Screen {
                 let year = movie.year.map(|year| year.to_string()).unwrap_or_default();
                 (
                     card(&movie.key, movie.title.clone(), year),
-                    movie.tmdb.map(|id| artwork::backdrop(&self.art, Kind::Movie, id)),
+                    self.title_art(Kind::Movie, movie.tmdb),
                 )
             }
         };
@@ -500,7 +507,7 @@ impl Screen {
         (card, art)
     }
 
-    fn watching_card(&self, current: &Current) -> (CardData, Option<PathBuf>) {
+    fn watching_card(&self, current: &Current) -> (CardData, Option<Art>) {
         let (mut card, art) = self.home_card(current.item);
         let episode = match (current.item, current.episode) {
             (Item::Show(index), Some((season, number))) => self.nav.show(index).episode(season, number),
@@ -579,9 +586,10 @@ impl Screen {
                         card.has_art = true;
                     }
                     None => {
-                        let art = show
-                            .tmdb
-                            .map(|id| artwork::still(&self.art, id, episode.season, episode.number));
+                        let art = show.tmdb.map(|id| Art {
+                            path: artwork::still(&self.art, id, episode.season, episode.number),
+                            fallback: None,
+                        });
                         self.request(Page::Show, shelf, position, card.key.clone(), art);
                     }
                 }
