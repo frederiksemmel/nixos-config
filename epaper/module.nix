@@ -59,11 +59,20 @@ in
 
     environment.systemPackages = [ cfg.package ];
 
+    services.udev.extraRules = ''
+      SUBSYSTEM=="spidev", KERNEL=="spidev0.0", TAG+="systemd"
+    '';
+
     systemd.services.epaper = {
       description = "Telegram bot that draws on the e-Paper HAT";
-      wantedBy = [ "multi-user.target" ];
+      wantedBy = [ "dev-spidev0.0.device" ];
+      bindsTo = [ "dev-spidev0.0.device" ];
       wants = [ "network-online.target" ];
-      after = [ "network-online.target" ];
+      after = [
+        "dev-spidev0.0.device"
+        "network-online.target"
+      ];
+      unitConfig.ConditionPathExists = "/dev/spidev0.0";
       environment = {
         EPAPER_ROTATION = toString cfg.rotation;
       }
