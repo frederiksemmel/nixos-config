@@ -33,6 +33,8 @@ pub struct Stats {
     pub progress_bytes: u64,
     pub uploaded_bytes: u64,
     pub total_bytes: u64,
+    #[serde(default)]
+    pub file_progress: Vec<u64>,
     pub finished: bool,
     pub live: Option<Live>,
 }
@@ -139,6 +141,20 @@ impl Rqbit {
         Ok(added.details)
     }
 
+    pub fn select(&self, hash: &str, only: &[usize]) -> Result<(), String> {
+        let path = format!("/torrents/{hash}/update_only_files");
+        let response = self
+            .agent
+            .post(&format!("{}{path}", self.base))
+            .header("content-type", "application/json")
+            .config()
+            .timeout_global(Some(QUICK))
+            .build()
+            .send(serde_json::json!({ "only_files": only }).to_string())
+            .map_err(|error| format!("rqbit {path}: {error}"))?;
+        self.answer(response, &path).map(drop)
+    }
+
     pub fn stats(&self, hash: &str) -> Result<Stats, String> {
         let body = self.get(&format!("/torrents/{hash}/stats/v1"))?;
         serde_json::from_str(&body).map_err(|error| format!("rqbit stats: {error}"))
@@ -168,6 +184,7 @@ mod tests {
               "upload_speed":{"mbps":0.0,"human_readable":"0 MiB/s"},"time_remaining":null}}"#;
         let stats: Stats = serde_json::from_str(json).unwrap();
         assert_eq!(stats.progress_bytes, 5);
+        assert_eq!(stats.file_progress, [5, 0]);
         assert_eq!(stats.uploaded_bytes, 0);
         assert_eq!(stats.peers(), Some(12));
         assert_eq!(stats.seen_peers(), Some(80));

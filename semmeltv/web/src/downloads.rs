@@ -14,6 +14,7 @@ use topcoat::runtime::{Event, Signal, connected, procedure, shard, signal};
 use topcoat::view::{View, component, emit, live, view};
 
 const REFRESH: Duration = Duration::from_secs(2);
+const MISSING_WAIT: Duration = Duration::from_secs(3);
 const LONGEST_REQUEST: usize = 200;
 
 #[derive(Clone)]
@@ -96,7 +97,6 @@ pub enum PartPhase {
     New,
     Checking,
     Downloading,
-    Complete,
     Done,
 }
 
@@ -160,6 +160,12 @@ struct Outcome {
     message: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct MissingSeason {
+    pub number: u32,
+    pub downloading: bool,
+}
+
 impl Downloads {
     pub fn new(base: String) -> Self {
         Self {
@@ -186,6 +192,20 @@ impl Downloads {
             .send()
             .await
             .map_err(|_| "The download service is not reachable".to_string())?;
+        response.json().await.map_err(|error| error.to_string())
+    }
+
+    pub async fn missing(&self, show: u64) -> std::result::Result<Vec<MissingSeason>, String> {
+        let response = self
+            .client
+            .get(format!("{}/api/downloads/shows/{show}/missing", self.base))
+            .timeout(MISSING_WAIT)
+            .send()
+            .await
+            .map_err(|_| "The download service is not reachable".to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("The download service answered {}", response.status()));
+        }
         response.json().await.map_err(|error| error.to_string())
     }
 
@@ -420,7 +440,7 @@ async fn searched_view(id: &str, searched: &Searched) -> Result<impl View> {
 }
 
 #[shard]
-async fn proposal_view(cx: &Cx, id: String, shown: Signal<String>) -> Result<impl View> {
+pub async fn proposal_view(cx: &Cx, id: String, shown: Signal<String>) -> Result<impl View> {
     let found = match id.strip_prefix('!') {
         Some(error) => Err(error.to_string()),
         None if id.is_empty() => Ok(None),
@@ -446,6 +466,45 @@ async fn proposal_view(cx: &Cx, id: String, shown: Signal<String>) -> Result<imp
                     }
                 </section>
             },
+        }
+    })
+}
+
+#[component]
+pub async fn season_downloads(cx: &Cx, show: u64, title: &str) -> Result<impl View> {
+    let admin = crate::auth::me(cx).is_some_and(|me| me.person.admin());
+    let missing = if admin {
+        app_context::<Downloads>(cx).missing(show).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let shown = signal(cx, String::new);
+    let busy = signal(cx, || false);
+    Ok(view! {
+        if !missing.is_empty() {
+            <section class="detail-section season-downloads">
+                <h2>"More seasons"</h2>
+                <div class="season-download-buttons">
+                    #[key(season.number)]
+                    for season in &missing {
+                        let number = i64::from(season.number);
+                        let whole_season: i64 = 0;
+                        let asked = format!("{title} season {}", season.number);
+                        if season.downloading {
+                            <p class="setting-note">(format!("Season {} is downloading", season.number))</p>
+                        } else {
+                            <button type="button" class="pill quiet" :disabled=$(busy.get()) @click=$(async |_e| {
+                                busy.set(true);
+                                let id = pick("show".to_owned(), show, number, whole_season, asked.to_owned()).await;
+                                shown.set(id);
+                                busy.set(false);
+                            })>(format!("Download season {}", season.number))</button>
+                        }
+                    }
+                </div>
+                <p class="setting-note" :hidden=$(!busy.get())>"Searching the indexers…"</p>
+                proposal_view(id: $(shown.get()), shown: shown.clone())
+            </section>
         }
     })
 }

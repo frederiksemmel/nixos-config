@@ -1,6 +1,6 @@
 use super::release::comparable;
 use crate::manifest::{Date, Manifest};
-use crate::tmdb::{Client, Found, Kind, Lookup};
+use crate::tmdb::{Client, Found, Kind, Lookup, SeasonSummary};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 
@@ -420,6 +420,24 @@ fn refusal(target: &Target, mode: Mode, have: impl Into<Have>) -> Option<String>
     }
 }
 
+pub fn missing_seasons(seasons: &[SeasonSummary], manifest: &Manifest, show: u64, today: Date) -> Vec<u32> {
+    let have = |number: u32| {
+        manifest
+            .show
+            .iter()
+            .filter(|known| known.tmdb == Some(show))
+            .flat_map(|known| &known.episodes)
+            .any(|episode| episode.season == number)
+    };
+    seasons
+        .iter()
+        .filter(|season| season.season_number > 0 && season.episode_count > 0)
+        .filter(|season| aired(season.air_date.as_deref(), today))
+        .map(|season| season.season_number)
+        .filter(|number| !have(*number))
+        .collect()
+}
+
 fn missing(manifest: &Manifest, target: &Target) -> Option<Vec<u32>> {
     let show = manifest.show.iter().find(|show| show.tmdb == Some(target.tmdb))?;
     let season = target.season?;
@@ -530,5 +548,39 @@ added = 2025-01-01
         };
         assert_eq!(missing(&manifest, &target), Some(vec![2, 3]));
         assert_eq!(target.minutes(), Some(180));
+    }
+
+    #[test]
+    fn a_season_is_missing_when_it_aired_and_the_library_has_none_of_its_episodes() {
+        let manifest = Manifest::parse(
+            r#"
+[[show]]
+title = "Foundation"
+year = 2021
+tmdb = 93740
+[[show.episodes]]
+season = 1
+episode = 4
+path = "Series/Foundation/Season 01/Foundation (2021) - S01E04.mkv"
+added = 2025-01-01
+"#,
+        )
+        .unwrap();
+        let season = |number: u32, air_date: Option<&str>, episodes: u32| SeasonSummary {
+            season_number: number,
+            air_date: air_date.map(str::to_string),
+            episode_count: episodes,
+        };
+        let seasons = [
+            season(0, Some("2021-09-01"), 5),
+            season(1, Some("2021-09-24"), 10),
+            season(2, Some("2023-07-14"), 10),
+            season(3, Some("2025-07-11"), 10),
+            season(4, Some("2027-01-01"), 10),
+            season(5, None, 0),
+        ];
+        let today = Date::parse("2026-11-15").unwrap();
+        assert_eq!(missing_seasons(&seasons, &manifest, 93740, today), [2, 3]);
+        assert_eq!(missing_seasons(&seasons, &manifest, 1, today), [1, 2, 3]);
     }
 }

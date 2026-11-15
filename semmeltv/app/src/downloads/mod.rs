@@ -24,7 +24,7 @@ use resolve::{Candidate, Mode, Resolved, Target, Wish};
 use rqbit::Rqbit;
 use score::{Choice, Part};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -35,6 +35,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const POLL: Duration = Duration::from_secs(2);
 const PROPOSAL_LIFE: u64 = 30 * 60;
+const SEASONS_LIFE: u64 = 6 * 60 * 60;
 const KEPT_LOG: usize = 60;
 const GIB: u64 = 1024 * 1024 * 1024;
 const VIDEO_EXTENSIONS: [&str; 6] = ["mkv", "mp4", "avi", "m4v", "mov", "webm"];
@@ -137,6 +138,17 @@ pub struct FileState {
     pub index: usize,
     pub path: String,
     pub size: u64,
+    pub progress: u64,
+}
+
+impl FileState {
+    fn fetched(&self) -> bool {
+        self.progress >= self.size
+    }
+
+    fn episode(&self) -> Option<String> {
+        deliver::episode_of(Path::new(&self.path)).map(|(season, episode)| format!("S{season:02}E{episode:02}"))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,18 +157,7 @@ pub enum PartPhase {
     New,
     Checking,
     Downloading,
-    Complete,
     Done,
-}
-
-impl PartPhase {
-    fn from_stats(finished: bool, initializing: bool) -> Self {
-        match (finished, initializing) {
-            (true, _) => Self::Complete,
-            (false, true) => Self::Checking,
-            (false, false) => Self::Downloading,
-        }
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -171,6 +172,27 @@ pub struct PartState {
     pub speed: f64,
     pub peers: Option<u64>,
     pub seen: Option<u64>,
+    pub asked: Option<usize>,
+}
+
+impl PartState {
+    fn next_file(&self) -> Option<&FileState> {
+        self.files.iter().find(|file| !file.fetched())
+    }
+
+    fn record(&mut self, file_progress: &[u64]) -> Vec<String> {
+        let mut fetched = Vec::new();
+        for file in self.files.iter_mut().filter(|file| !file.fetched()) {
+            if let Some(&have) = file_progress.get(file.index) {
+                file.progress = have.min(file.size);
+                if file.fetched() {
+                    fetched.push(file.path.clone());
+                }
+            }
+        }
+        self.progress = self.files.iter().map(|file| file.progress).sum();
+        fetched
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -210,6 +232,61 @@ impl Job {
             .sum()
     }
 
+    fn current(&self) -> Option<&FileState> {
+        self.parts
+            .iter()
+            .find(|part| part.phase != PartPhase::Done)
+            .and_then(PartState::next_file)
+    }
+
+    fn count(&self) -> usize {
+        self.parts
+            .iter()
+            .map(|part| part.files.len().max(part.part.episodes.len()).max(1))
+            .sum()
+    }
+
+    fn status(&self) -> String {
+        if self.parts.iter().any(|part| part.phase == PartPhase::Checking) {
+            return "Checking the pieces already downloaded".to_string();
+        }
+        let progress: u64 = self.parts.iter().map(|part| part.progress).sum();
+        let total: u64 = self.parts.iter().map(|part| part.total).sum();
+        let speed: f64 = self.parts.iter().map(|part| part.speed).sum();
+        let count = self.count();
+        let what = match self.current().and_then(FileState::episode) {
+            Some(episode) if count > 1 => format!("Downloading {episode}"),
+            _ => "Downloading".to_string(),
+        };
+        let line = if total > 0 {
+            downloading(&what, progress, total, speed)
+        } else {
+            what
+        };
+        if count > 1 {
+            format!("{line} · {} of {count} in the library", self.placed.len())
+        } else {
+            line
+        }
+    }
+
+    fn deliverable(&self) -> Result<Option<Placed>, String> {
+        for part in &self.parts {
+            for file in part.files.iter().filter(|file| file.fetched()) {
+                let destination = deliver::destination(&self.target, Path::new(&file.path), part.part.info.as_deref())
+                    .ok_or_else(|| format!("No place in the library for {}", file.path))?;
+                if !self.placed.contains(&destination) {
+                    return Ok(Some(Placed {
+                        local: Path::new(&part.folder).join(&file.path),
+                        destination,
+                        size: file.size,
+                    }));
+                }
+            }
+        }
+        Ok(None)
+    }
+
     fn held(&self) -> u64 {
         if !self.stage.active() {
             return 0;
@@ -245,6 +322,13 @@ struct Service {
     shelf: Mutex<Shelf>,
     sidecars: sidecars::Sidecars,
     deliveries: Mutex<Sender<String>>,
+    seasons: Mutex<HashMap<u64, (u64, Vec<tmdb::SeasonSummary>)>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MissingSeason {
+    pub number: u32,
+    pub downloading: bool,
 }
 
 fn now() -> u64 {
@@ -280,7 +364,7 @@ fn free_bytes(dir: &Path) -> Option<u64> {
     Some(blocks * size)
 }
 
-fn downloading(progress: u64, total: u64, speed: f64) -> String {
+fn downloading(what: &str, progress: u64, total: u64, speed: f64) -> String {
     let percent = progress as f64 * 100.0 / total as f64;
     let left = total.saturating_sub(progress) as f64 / (speed * 1024.0 * 1024.0);
     if speed > 0.0 && left.is_finite() {
@@ -290,9 +374,9 @@ fn downloading(progress: u64, total: u64, speed: f64) -> String {
         } else {
             format!("{minutes} min")
         };
-        format!("Downloading, {percent:.0}%, about {time} left")
+        format!("{what}, {percent:.0}%, about {time} left")
     } else {
-        format!("Downloading, {percent:.0}%")
+        format!("{what}, {percent:.0}%")
     }
 }
 
@@ -320,6 +404,7 @@ fn wanted_files(target: &Target, part: &Part, files: &[rqbit::File]) -> Vec<File
         index: *index,
         path: path.to_string_lossy().into_owned(),
         size: file.length,
+        progress: 0,
     };
     match (target.kind, target.season) {
         (Kind::Movie, _) | (Kind::Tv, None) => candidates
@@ -613,6 +698,7 @@ impl Service {
                     speed: 0.0,
                     peers: None,
                     seen: None,
+                    asked: None,
                 })
                 .collect(),
             placed: Vec::new(),
@@ -632,6 +718,38 @@ impl Service {
             ok: true,
             job: Some(id),
         }
+    }
+
+    fn missing_seasons(&self, show: u64) -> Result<Vec<MissingSeason>, String> {
+        let cached = self
+            .seasons
+            .lock()
+            .unwrap()
+            .get(&show)
+            .filter(|(fetched, _)| now().saturating_sub(*fetched) < SEASONS_LIFE)
+            .map(|(_, seasons)| seasons.clone());
+        let seasons = match cached {
+            Some(seasons) => seasons,
+            None => {
+                let seasons = self.tmdb.seasons(show).map_err(|error| format!("TMDB: {error}"))?;
+                self.seasons.lock().unwrap().insert(show, (now(), seasons.clone()));
+                seasons
+            }
+        };
+        let missing = resolve::missing_seasons(&seasons, &self.manifest(), show, Date::from_unix(now()));
+        let book = self.book.lock().unwrap();
+        Ok(missing
+            .into_iter()
+            .map(|number| MissingSeason {
+                number,
+                downloading: book.jobs.iter().any(|job| {
+                    job.stage.active()
+                        && job.target.kind == Kind::Tv
+                        && job.target.tmdb == show
+                        && job.target.season == Some(number)
+                }),
+            })
+            .collect())
     }
 
     fn dismiss(&self, proposal: &str) {
@@ -661,50 +779,85 @@ impl Service {
             eprintln!("stop {id}: {}: {error}", folder.display());
         }
         let mut book = self.book.lock().unwrap();
+        let kept = book
+            .jobs
+            .iter()
+            .find(|job| job.id == id)
+            .map_or(0, |job| job.placed.len());
         book.jobs.retain(|job| job.id != id);
         self.save(&book);
+        let message = match kept {
+            0 => "Stopped, and its files deleted".to_string(),
+            1 => "Stopped, and its files deleted; the episode already in the library stays".to_string(),
+            kept => format!("Stopped, and its files deleted; the {kept} episodes already in the library stay"),
+        };
         Outcome {
-            message: "Stopped, and its files deleted".to_string(),
+            message,
             ok: true,
             job: Some(id.to_string()),
         }
     }
 
+    fn begin(&self, target: &Target, part: &mut PartState) -> Result<String, String> {
+        if part.files.is_empty() {
+            let details = self
+                .rqbit
+                .files(&part.part.magnet)
+                .map_err(|error| format!("Could not read the torrent: {error}"))?;
+            part.files = wanted_files(target, &part.part, &details.files.unwrap_or_default());
+        }
+        let Some(first) = part.next_file().cloned() else {
+            return Err(format!("{} has no video file to use", part.part.name));
+        };
+        self.rqbit
+            .add(&part.part.magnet, &part.folder, &[first.index])
+            .map_err(|error| format!("rqbit did not take the torrent: {error}"))?;
+        part.asked = Some(first.index);
+        part.phase = PartPhase::Downloading;
+        part.total = part.files.iter().map(|file| file.size).sum();
+        let files: Vec<&str> = part.files.iter().map(|file| file.path.as_str()).collect();
+        Ok(format!(
+            "{}: {} files: {}; fetching {} first",
+            part.part.name,
+            files.len(),
+            files.join(", "),
+            first.path
+        ))
+    }
+
     fn check(&self, job: &Job) {
         let mut parts = job.parts.clone();
-        for part in parts.iter_mut().filter(|part| part.phase == PartPhase::New) {
-            if part.files.is_empty() {
-                let details = match self.rqbit.files(&part.part.magnet) {
-                    Ok(details) => details,
-                    Err(error) => {
-                        return self.fail(&job.id, format!("Could not read the torrent: {error}"));
-                    }
-                };
-                part.files = wanted_files(&job.target, &part.part, &details.files.unwrap_or_default());
-                if part.files.is_empty() {
-                    return self.fail(&job.id, format!("{} has no video file to use", part.part.name));
-                }
-            }
-            let only: Vec<usize> = part.files.iter().map(|file| file.index).collect();
-            if let Err(error) = self.rqbit.add(&part.part.magnet, &part.folder, &only) {
-                return self.fail(&job.id, format!("rqbit did not take the torrent: {error}"));
-            }
-            part.phase = PartPhase::Downloading;
-            part.total = part.files.iter().map(|file| file.size).sum();
-            let files: Vec<String> = part.files.iter().map(|file| file.path.clone()).collect();
-            let name = part.part.name.clone();
-            self.update(&job.id, |job| {
-                job.note(format!("{name}: {} files: {}", files.len(), files.join(", ")))
-            });
-        }
+        let Some(part) = parts.iter_mut().find(|part| part.phase == PartPhase::New) else {
+            return;
+        };
+        let note = match self.begin(&job.target, part) {
+            Ok(note) => note,
+            Err(reason) => return self.fail(&job.id, reason),
+        };
         self.update(&job.id, |job| {
+            job.note(note);
             job.parts = parts;
             job.stage = Stage::Downloading;
-            job.message = "Downloading".to_string();
+            job.message = job.status();
         });
     }
 
     fn fail(&self, id: &str, reason: String) {
+        let running: Vec<String> = {
+            let book = self.book.lock().unwrap();
+            book.jobs
+                .iter()
+                .filter(|job| job.id == id)
+                .flat_map(|job| &job.parts)
+                .filter(|part| matches!(part.phase, PartPhase::Checking | PartPhase::Downloading))
+                .map(|part| part.part.infohash.clone())
+                .collect()
+        };
+        for hash in &running {
+            if let Err(error) = self.rqbit.pause(hash) {
+                eprintln!("download {id}: {error}");
+            }
+        }
         self.update(id, |job| {
             job.stage = Stage::Failed;
             job.note(reason.clone());
@@ -712,31 +865,44 @@ impl Service {
         });
     }
 
-    fn poll(&self, job: &Job) {
-        let mut parts = job.parts.clone();
-        let mut notes = Vec::new();
-        for part in parts.iter_mut().filter(|part| part.phase != PartPhase::Done) {
-            let hash = part.part.infohash.clone();
-            let stats = match self.rqbit.stats(&hash) {
-                Ok(stats) => stats,
-                Err(error) => {
-                    notes.push(format!("{}: {error}", part.part.name));
-                    continue;
+    fn follow(&self, part: &mut PartState, notes: &mut Vec<String>) -> Vec<String> {
+        let hash = part.part.infohash.clone();
+        let stats = match self.rqbit.stats(&hash) {
+            Ok(stats) => stats,
+            Err(error) => {
+                notes.push(format!("{}: {error}", part.part.name));
+                return Vec::new();
+            }
+        };
+        let checking = stats.state == "initializing";
+        let fetched = if checking {
+            Vec::new()
+        } else {
+            part.record(&stats.file_progress)
+        };
+        part.uploaded = stats.uploaded_bytes;
+        part.speed = stats.live.as_ref().map_or(0.0, |live| live.download_speed.mbps);
+        part.peers = stats.peers();
+        part.seen = stats.seen_peers();
+        if let Some(error) = &stats.error {
+            notes.push(format!("{}: rqbit: {error}", part.part.name));
+        }
+        notes.extend(fetched.iter().map(|path| format!("fetched {path}")));
+        match part.next_file().cloned() {
+            _ if checking => part.phase = PartPhase::Checking,
+            Some(next) => {
+                part.phase = PartPhase::Downloading;
+                if part.asked != Some(next.index) {
+                    match self.rqbit.select(&hash, &[next.index]) {
+                        Ok(()) => {
+                            part.asked = Some(next.index);
+                            notes.push(format!("now fetching {}", next.path));
+                        }
+                        Err(error) => notes.push(format!("could not move on to {}: {error}", next.path)),
+                    }
                 }
-            };
-            part.phase = PartPhase::from_stats(stats.finished, stats.state == "initializing");
-            if part.phase != PartPhase::Checking {
-                part.progress = stats.progress_bytes;
             }
-            part.total = stats.total_bytes;
-            part.uploaded = stats.uploaded_bytes;
-            part.speed = stats.live.as_ref().map_or(0.0, |live| live.download_speed.mbps);
-            part.peers = stats.peers();
-            part.seen = stats.seen_peers();
-            if let Some(error) = &stats.error {
-                notes.push(format!("{}: rqbit: {error}", part.part.name));
-            }
-            if part.phase == PartPhase::Complete {
+            None => {
                 let paused = self.rqbit.pause(&hash);
                 let after = self
                     .rqbit
@@ -756,11 +922,24 @@ impl Service {
                 });
             }
         }
+        fetched
+    }
+
+    fn poll(&self, job: &Job) {
+        let mut parts = job.parts.clone();
+        let mut notes = Vec::new();
+        let mut fetched = Vec::new();
+        if let Some(part) = parts.iter_mut().find(|part| part.phase != PartPhase::Done) {
+            if part.phase == PartPhase::New {
+                match self.begin(&job.target, part) {
+                    Ok(note) => notes.push(note),
+                    Err(reason) => return self.fail(&job.id, reason),
+                }
+            } else {
+                fetched = self.follow(part, &mut notes);
+            }
+        }
         let done = parts.iter().all(|part| part.phase == PartPhase::Done);
-        let checking = parts.iter().any(|part| part.phase == PartPhase::Checking);
-        let progress: u64 = parts.iter().map(|part| part.progress).sum();
-        let total: u64 = parts.iter().map(|part| part.total).sum();
-        let speed: f64 = parts.iter().map(|part| part.speed).sum();
         self.update(&job.id, |job| {
             for note in notes {
                 job.note(note);
@@ -768,14 +947,12 @@ impl Service {
             job.parts = parts;
             if done {
                 job.stage = Stage::Uploading;
-                job.message = "Uploading to pCloud".to_string();
-            } else if checking {
-                job.message = "Checking the pieces already downloaded".to_string();
-            } else if total > 0 {
-                job.message = downloading(progress, total, speed);
+                job.message = "Adding the last files to the library".to_string();
+            } else {
+                job.message = job.status();
             }
         });
-        if done {
+        if done || !fetched.is_empty() {
             let _ = self.deliveries.lock().unwrap().send(job.id.clone());
         }
     }
@@ -799,43 +976,50 @@ impl Service {
     }
 
     fn deliver(&self, id: &str) {
-        let Some(job) = self.book.lock().unwrap().jobs.iter().find(|job| job.id == id).cloned() else {
-            return;
-        };
-        let mut placed = Vec::new();
-        for part in &job.parts {
-            for file in &part.files {
-                let local = Path::new(&part.folder).join(&file.path);
-                let Some(destination) =
-                    deliver::destination(&job.target, Path::new(&file.path), part.part.info.as_deref())
-                else {
-                    return self.fail(id, format!("No place in the library for {}", file.path));
-                };
-                placed.push(Placed {
-                    local,
-                    destination,
-                    size: file.size,
-                });
+        loop {
+            let Some(job) = self.book.lock().unwrap().jobs.iter().find(|job| job.id == id).cloned() else {
+                return;
+            };
+            if !matches!(job.stage, Stage::Downloading | Stage::Uploading) {
+                return;
+            }
+            let place = match job.deliverable() {
+                Ok(Some(place)) => place,
+                Ok(None) if job.stage == Stage::Uploading => return self.finish(&job),
+                Ok(None) => return,
+                Err(reason) => return self.fail(id, reason),
+            };
+            if let Err(reason) = self.place(&job, &place) {
+                return self.fail(id, reason);
             }
         }
+    }
+
+    fn place(&self, job: &Job, place: &Placed) -> Result<(), String> {
+        let id = job.id.as_str();
         let log = |line: String| self.update(id, |job| job.note(line));
         let shelf = self.shelf.lock().unwrap();
-        for (number, place) in placed.iter().enumerate() {
+        if job.stage == Stage::Uploading {
             self.update(id, |job| {
-                job.message = format!("Uploading to pCloud, file {} of {}", number + 1, placed.len());
+                job.message = format!("Uploading to pCloud, file {} of {}", job.placed.len() + 1, job.count());
             });
-            if let Err(error) = shelf.upload(place) {
-                return self.fail(id, format!("Upload failed: {error}"));
-            }
-            log(format!("uploaded {}", place.destination));
         }
+        shelf.upload(place).map_err(|error| format!("Upload failed: {error}"))?;
+        log(format!("uploaded {}", place.destination));
+        shelf
+            .import(&job.target, std::slice::from_ref(place), job.mode, &log)
+            .map_err(|error| format!("Import failed: {error}"))?;
+        shelf.show_in_library(std::slice::from_ref(place), &log);
         self.update(id, |job| {
-            job.placed = placed.iter().map(|place| place.destination.clone()).collect();
-            job.message = "Adding to the library".to_string();
+            job.placed.push(place.destination.clone());
+            job.note(format!("in the library: {}", place.destination));
         });
-        if let Err(error) = shelf.import(&job.target, &placed, job.mode, &log) {
-            return self.fail(id, format!("Import failed: {error}"));
-        }
+        Ok(())
+    }
+
+    fn finish(&self, job: &Job) {
+        let id = job.id.as_str();
+        let log = |line: String| self.update(id, |job| job.note(line));
         for part in &job.parts {
             match self.rqbit.delete(&part.part.infohash) {
                 Ok(()) => log(format!("deleted the local copy of {}", part.part.name)),
@@ -849,7 +1033,6 @@ impl Service {
                 Err(error) => log(format!("{}: {error}", folder.display())),
             }
         }
-        shelf.show_in_library(&placed, &log);
         let uploaded: u64 = job.parts.iter().map(|part| part.uploaded).sum();
         self.update(id, |job| {
             job.stage = Stage::Done;
@@ -992,6 +1175,14 @@ async fn stop(State(service): State<Shared>, UrlPath(id): UrlPath<String>) -> Re
     }
 }
 
+async fn missing_seasons(State(service): State<Shared>, UrlPath(show): UrlPath<u64>) -> Response {
+    match blocking(move || service.missing_seasons(show)).await {
+        Ok(Ok(missing)) => Json(missing).into_response(),
+        Ok(Err(error)) => crate::api::problem(StatusCode::BAD_GATEWAY, error),
+        Err(response) => response,
+    }
+}
+
 async fn subtitles(State(service): State<Shared>, Json(wanted): Json<crate::subfetch::Wanted>) -> Response {
     match blocking(move || service.sidecars.fetch(&wanted)).await {
         Ok(Ok(fetched)) => Json(fetched).into_response(),
@@ -1009,6 +1200,7 @@ fn router(service: Shared) -> Router {
         .route("/api/downloads/dismiss", post(dismiss))
         .route("/api/downloads/jobs/{id}/stop", post(stop))
         .route("/api/downloads/subtitles", post(subtitles))
+        .route("/api/downloads/shows/{tmdb}/missing", get(missing_seasons))
         .with_state(service)
 }
 
@@ -1056,6 +1248,7 @@ pub fn run(config: Config) -> Result<(), String> {
             sync_unit: config.sync_unit,
         }),
         deliveries: Mutex::new(send),
+        seasons: Mutex::new(HashMap::new()),
     });
     service.load();
     let waiting: Vec<String> = service
@@ -1064,7 +1257,7 @@ pub fn run(config: Config) -> Result<(), String> {
         .unwrap()
         .jobs
         .iter()
-        .filter(|job| job.stage == Stage::Uploading)
+        .filter(|job| matches!(job.stage, Stage::Downloading | Stage::Uploading))
         .map(|job| job.id.clone())
         .collect();
     for id in waiting {
@@ -1105,26 +1298,165 @@ pub fn run(config: Config) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use resolve::EpisodeInfo;
 
     #[test]
     fn the_progress_line_says_how_long_is_left() {
         let mib = 1024 * 1024;
         assert_eq!(
-            downloading(10 * 1024 * mib, 20 * 1024 * mib, 8.0),
+            downloading("Downloading", 10 * 1024 * mib, 20 * 1024 * mib, 8.0),
             "Downloading, 50%, about 22 min left"
         );
         assert_eq!(
-            downloading(0, 40 * 1024 * mib, 8.0),
-            "Downloading, 0%, about 1h 26m left"
+            downloading("Downloading S01E02", 0, 40 * 1024 * mib, 8.0),
+            "Downloading S01E02, 0%, about 1h 26m left"
         );
-        assert_eq!(downloading(5, 10, 0.0), "Downloading, 50%");
+        assert_eq!(downloading("Downloading", 5, 10, 0.0), "Downloading, 50%");
+    }
+
+    fn file(index: usize, path: &str, size: u64) -> FileState {
+        FileState {
+            index,
+            path: path.to_string(),
+            size,
+            progress: 0,
+        }
+    }
+
+    fn pack(files: Vec<FileState>) -> PartState {
+        PartState {
+            part: Part {
+                name: "Dark S01".to_string(),
+                magnet: "magnet:?xt=urn:btih:ab".to_string(),
+                infohash: "ab".to_string(),
+                size: files.iter().map(|file| file.size).sum(),
+                seeders: 10,
+                episodes: Vec::new(),
+                info: None,
+            },
+            folder: "/downloads/1/0".to_string(),
+            total: files.iter().map(|file| file.size).sum(),
+            files,
+            phase: PartPhase::Downloading,
+            progress: 0,
+            uploaded: 0,
+            speed: 0.0,
+            peers: None,
+            seen: None,
+            asked: Some(2),
+        }
+    }
+
+    fn dark(parts: Vec<PartState>) -> Job {
+        Job {
+            id: "1".to_string(),
+            label: "Dark season 1".to_string(),
+            created: 1,
+            target: Target {
+                kind: Kind::Tv,
+                tmdb: 70523,
+                imdb: None,
+                title: "Dark".to_string(),
+                original: None,
+                year: Some(2017),
+                season: Some(1),
+                episode: None,
+                runtime: None,
+                episodes: (1..=3)
+                    .map(|number| EpisodeInfo {
+                        number,
+                        name: None,
+                        runtime: Some(50),
+                    })
+                    .collect(),
+                folder: None,
+            },
+            choice: Choice {
+                label: "Dark S01".to_string(),
+                facts: String::new(),
+                why: Vec::new(),
+                score: 0.0,
+                size: 300,
+                seeders: 10,
+                parts: Vec::new(),
+            },
+            mode: Mode::Add,
+            stage: Stage::Downloading,
+            message: String::new(),
+            parts,
+            placed: Vec::new(),
+            log: Vec::new(),
+        }
+    }
+
+    fn season() -> PartState {
+        pack(vec![
+            file(2, "Dark S01/Dark.S01E01.mkv", 100),
+            file(0, "Dark S01/Dark.S01E02.mkv", 100),
+            file(3, "Dark S01/Dark.S01E03.mkv", 100),
+        ])
     }
 
     #[test]
-    fn a_part_is_checking_downloading_or_complete_and_finished_wins_over_checking() {
-        assert_eq!(PartPhase::from_stats(false, true), PartPhase::Checking);
-        assert_eq!(PartPhase::from_stats(false, false), PartPhase::Downloading);
-        assert_eq!(PartPhase::from_stats(true, true), PartPhase::Complete);
+    fn a_file_counts_as_fetched_once_rqbit_has_all_its_bytes_and_stays_fetched() {
+        let mut part = season();
+        assert_eq!(part.next_file().unwrap().index, 2);
+        assert!(part.record(&[40, 0, 99, 0]).is_empty());
+        assert_eq!(part.progress, 139);
+        assert_eq!(part.record(&[40, 0, 100, 0]), ["Dark S01/Dark.S01E01.mkv"]);
+        assert_eq!(part.next_file().unwrap().index, 0);
+        assert!(part.record(&[50, 0, 0, 0]).is_empty());
+        assert_eq!(
+            part.progress, 150,
+            "a fetched file keeps its bytes while rqbit rechecks"
+        );
+        assert!(part.record(&[]).is_empty());
+        part.record(&[100, 0, 100, 100]);
+        assert!(part.next_file().is_none());
+    }
+
+    #[test]
+    fn episodes_go_to_the_library_in_order_as_soon_as_each_is_fetched() {
+        let mut job = dark(vec![season()]);
+        assert_eq!(job.deliverable(), Ok(None));
+        job.parts[0].record(&[0, 0, 100, 0]);
+        let first = job.deliverable().unwrap().unwrap();
+        assert_eq!(first.destination, "Series/Dark/Season 01/Dark (2017) - S01E01.mkv");
+        assert_eq!(first.local, Path::new("/downloads/1/0/Dark S01/Dark.S01E01.mkv"));
+        job.placed.push(first.destination);
+        assert_eq!(job.deliverable(), Ok(None));
+        job.parts[0].record(&[100, 0, 100, 100]);
+        let second = job.deliverable().unwrap().unwrap();
+        assert_eq!(second.destination, "Series/Dark/Season 01/Dark (2017) - S01E02.mkv");
+    }
+
+    #[test]
+    fn the_status_names_the_episode_being_fetched_and_how_many_are_in_the_library() {
+        let mut job = dark(vec![season()]);
+        job.parts[0].record(&[0, 0, 100, 0]);
+        job.parts[0].speed = 0.0;
+        job.placed
+            .push("Series/Dark/Season 01/Dark (2017) - S01E01.mkv".to_string());
+        assert_eq!(job.status(), "Downloading S01E02, 33% · 1 of 3 in the library");
+        job.parts[0].phase = PartPhase::Checking;
+        assert_eq!(job.status(), "Checking the pieces already downloaded");
+        let mut movie = dark(vec![pack(vec![file(0, "Up.2009.mkv", 100)])]);
+        movie.parts[0].record(&[25]);
+        assert_eq!(movie.status(), "Downloading, 25%");
+    }
+
+    #[test]
+    fn episodes_of_separate_torrents_count_before_their_files_are_known() {
+        let mut one = pack(Vec::new());
+        one.part.episodes = vec![1];
+        let mut two = one.clone();
+        two.part.episodes = vec![2];
+        two.phase = PartPhase::New;
+        assert_eq!(dark(vec![one, two]).count(), 2);
+    }
+
+    #[test]
+    fn a_part_phase_reads_as_kebab_case() {
         assert_eq!(
             serde_json::to_value(PartPhase::Done).unwrap(),
             serde_json::json!("done")

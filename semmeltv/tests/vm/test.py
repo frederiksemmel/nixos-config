@@ -1187,6 +1187,23 @@ with sync_playwright() as playwright:
             tv_seek(phone, int(resumed_at))
             stop_everything(phone)
 
+    with scenario("an admin downloads a season the library lacks from the show page, through the usual proposal"):
+        phone.goto(f"/shows/{SHOW}")
+        phone.until('[...document.querySelectorAll("main .season-downloads button")].map((button) => button.textContent.trim()).join("|") === "Download season 2"')
+        assert phone.js('document.querySelector("main .season-downloads").textContent.includes("Season 3 is downloading")'), "a season already downloading has no button"
+        button = phone.page.locator("main .season-downloads button", has_text="Download season 2")
+        button.scroll_into_view_if_needed()
+        button.tap()
+        phone.until('!!document.querySelector("main .season-downloads .download-choice.best")')
+        assert phone.js('document.querySelector("main .season-downloads .settings h2")?.textContent === "Testserie season 2"'), "the proposal names the season"
+        phone.page.locator("main .season-downloads .download-choice.best button").tap()
+        phone.until('document.querySelector("main .season-downloads .download-choice .controls-said")?.textContent === "Downloading Testserie season 2"')
+        phone.shot("season-download")
+        phone.page.reload(wait_until="commit")
+        phone.until('!!document.querySelector("main .episode-row")')
+        phone.until('document.querySelector("main .season-downloads")?.textContent.includes("Season 2 is downloading")')
+        assert phone.js('!document.querySelector("main .season-downloads button")'), "no button once every missing season is downloading"
+
     with scenario("the remote moves the TV's subtitles half a second at a time"):
         tv_plays_film(phone)
         tv.send_key("s")
@@ -1334,6 +1351,9 @@ with sync_playwright() as playwright:
         phone.until('!!document.querySelector("main .settings")')
         assert phone.js("""!document.querySelector('main a[href="/storage"], main a[href="/downloads"], [data-post="/api/tv/pair"]')"""), "a viewer has no Storage, Downloads or TV pairing"
         assert phone.js("""!!document.querySelector('[data-post="/api/tv-profile"]')"""), "a viewer can put her profile on the TV"
+        phone.goto(f"/shows/{SHOW}")
+        phone.until('!!document.querySelector("main .episode-row")')
+        assert phone.js('!document.querySelector("main .season-downloads")'), "a viewer is offered no season downloads"
         phone.goto("/storage")
         phone.until('location.pathname === "/"')
         phone.page.locator(".profile-link").tap()

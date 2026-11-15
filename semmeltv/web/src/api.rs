@@ -198,6 +198,7 @@ pub struct About {
     pub trailer: Option<String>,
     pub imdb: Option<String>,
     pub tmdb: Option<String>,
+    pub tmdb_id: Option<u64>,
     pub cast: Vec<CastMember>,
     pub scores: MoreScores,
 }

@@ -581,6 +581,7 @@ struct AboutView {
     trailer: Option<String>,
     imdb: Option<String>,
     tmdb: Option<String>,
+    tmdb_id: Option<u64>,
     cast: Vec<CastView>,
     scores: MoreScores,
 }
@@ -629,6 +630,7 @@ fn about_view(
             .map(|key| format!("https://www.youtube.com/watch?v={key}")),
         imdb: imdb.map(|id| format!("https://www.imdb.com/title/{id}/")),
         tmdb: tmdb.map(|id| format!("https://www.themoviedb.org/{kind_path}/{id}")),
+        tmdb_id: tmdb,
         cast: about
             .cast
             .iter()
@@ -1872,6 +1874,7 @@ mod tests {
         assert_eq!(about["trailer"], "https://www.youtube.com/watch?v=n9xhJrPXop4");
         assert_eq!(about["imdb"], "https://www.imdb.com/title/tt1160419/");
         assert_eq!(about["tmdb"], "https://www.themoviedb.org/movie/438631");
+        assert_eq!(about["tmdb_id"], 438631);
         assert_eq!(about["scores"]["letterboxd"], 4.1);
         assert_eq!(
             about["cast"],

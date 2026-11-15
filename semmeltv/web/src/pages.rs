@@ -1,6 +1,7 @@
 use crate::api::{
     About, Api, Card, CastMember, Episode, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard,
 };
+use crate::downloads::season_downloads;
 use crate::layout::back;
 use crate::playing::{play_episode, play_movie, play_show, tell, tv_icon};
 use crate::public::Public;
@@ -1060,6 +1061,9 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                 </ol>
                             }
                         </section>
+                        if let Some(tmdb) = show.about.tmdb_id {
+                            season_downloads(show: tmdb, title: show.card.title.as_str())
+                        }
                         if !heat.is_empty() {
                             <section class="heat">
                                 <h2>"Episode ratings"</h2>

@@ -75,6 +75,12 @@ pkgs.testers.runNixOSTest {
       };
     };
 
+    systemd.services.fake-downloads = {
+      description = "The downloads service's answers for the show page's season buttons";
+      wantedBy = [ "multi-user.target" ];
+      serviceConfig.ExecStart = "${pkgs.python3}/bin/python3 ${./fake-downloads.py} 100001";
+    };
+
     services.cage.environment.WLR_NO_HARDWARE_CURSORS = "1";
 
     systemd.tmpfiles.rules = [ "L+ /var/lib/semmeltv/library - - - - ${library}" ];

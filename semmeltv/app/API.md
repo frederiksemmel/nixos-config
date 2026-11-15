@@ -188,7 +188,7 @@ imported:
     { tagline, plot, genres, original_title, language, released,
       first_aired, last_aired, seasons, episodes, networks, directors,
       creators, certificate: { country, rating }, trailer, imdb, tmdb,
-      cast: [ { name, character, photo } ],
+      tmdb_id, cast: [ { name, character, photo } ],
       scores: { metacritic, letterboxd, ebert } }
 
 Any field can be null, and lists can be empty. A film has `released` and
@@ -197,7 +197,8 @@ Any field can be null, and lists can be empty. A film has `released` and
 `creators`. `original_title` is set only when it differs from the title.
 `language` is the original language's English name. `certificate` is the age
 rating in Switzerland, else Germany, else the US; `rating` is the country's
-own label, such as `12` or `PG-13`. `trailer`, `imdb` and `tmdb` are links.
+own label, such as `12` or `PG-13`. `trailer`, `imdb` and `tmdb` are links;
+`tmdb_id` is the bare TMDB id.
 `cast` is the main cast, up to ten, in billing order for a film and by
 episode count for a show; `photo` is an artwork path or null.
 `scores.letterboxd` is out of 5 and `scores.ebert` (Roger Ebert) out of 4.
@@ -737,6 +738,7 @@ paths start with `/api/downloads` too.
 | POST | `/api/downloads/dismiss` | `{ proposal }` | `{ message, ok }` |
 | POST | `/api/downloads/jobs/{id}/stop` | | `{ message, ok, job }` |
 | POST | `/api/downloads/subtitles` | `{ video, imdb, season, episode, language, hash, size }` | `{ file, language, release, matched }` |
+| GET | `/api/downloads/shows/{tmdb}/missing` | | `[ { number, downloading } ]` |
 
 `text` is what was said or typed, such as "outlander season 8". A proposal is
 `{ id, asked, from, created, outcome, … }`, and `outcome` says what the rest is:
@@ -759,15 +761,25 @@ subtitles named after it to `Replaced/` beside `Movies/` on pCloud. Every job
 carries its `mode`. `semmeltv get search|fetch|jobs` is the command line for
 these, run on the TV with the downloads service's environment.
 
-A job moves through `checking` (reading the torrent's files), `downloading`,
-`uploading` (to pCloud, then the import), and ends `done`, `failed` or
-`stopped`. Each part reports its `phase`, `new` (not yet given to rqbit),
-`checking` (rqbit verifies pieces it already has), `downloading`, `complete`
-(finished, pausing it failed and is tried again) or `done` (finished and
-paused), and `progress`, `total`, `speed`, `peers` and `uploaded`, the bytes
-sent to peers. `room` is the space left for a new
+A job moves through `checking` (reading the first torrent's files),
+`downloading`, `uploading` (the last files to pCloud and into the library),
+and ends `done`, `failed` or `stopped`. It fetches one file at a time, in
+episode order: rqbit is asked for that one file only, and each finished file is
+uploaded and imported while the next one downloads, so episode 1 plays while
+the rest of the season is still coming. `placed` lists the library paths
+already imported. A job of several torrents gives them to rqbit one after the
+other. Each part reports its `phase`, `new` (not yet given to rqbit),
+`checking` (rqbit verifies pieces it already has), `downloading` or `done`
+(all its files fetched and the torrent paused), its `files` with their
+`progress`, and `progress`, `total`, `speed`, `peers` and `uploaded`, the
+bytes sent to peers. `room` is the space left for a new
 download: the quota minus running downloads, and the free disk minus what they
 still need and a reserve.
+
+`/api/downloads/shows/{tmdb}/missing` lists the seasons TMDB has for a show
+that have aired and of which the library holds no episode, with `downloading`
+set while a job fetches that season. It asks TMDB at most every six hours per
+show, and answers 502 and `{ error }` when TMDB fails.
 
 `/api/downloads/subtitles` is what `/api/subtitles/fetch` calls: `video` is
 the path under the library, `hash` and `size` the video's OpenSubtitles hash

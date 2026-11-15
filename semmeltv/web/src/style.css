@@ -1535,6 +1535,8 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 
 .download-name { color: var(--muted); font-size: 13px; }
 
+.season-download-buttons { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+
 .download-why { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .download-why li { color: var(--muted); font-size: 13px; }
 

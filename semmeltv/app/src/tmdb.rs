@@ -190,6 +190,21 @@ pub struct Season {
 }
 
 #[derive(Debug, Deserialize)]
+struct Seasons {
+    #[serde(default)]
+    seasons: Vec<SeasonSummary>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct SeasonSummary {
+    pub season_number: u32,
+    #[serde(default)]
+    pub air_date: Option<String>,
+    #[serde(default)]
+    pub episode_count: u32,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct SeasonEpisode {
     pub episode_number: u32,
     pub name: Option<String>,
@@ -510,6 +525,11 @@ impl Client {
             &[("append_to_response", extras)],
         )?;
         Ok(Found::from(&record))
+    }
+
+    pub fn seasons(&self, id: u64) -> Result<Vec<SeasonSummary>, ureq::Error> {
+        let found: Seasons = self.get(&format!("{API}/tv/{id}"), &[])?;
+        Ok(found.seasons)
     }
 
     pub fn season(&self, id: u64, season: u32) -> Result<Season, ureq::Error> {
