@@ -414,8 +414,12 @@ def scrolls(phone, where):
     phone.page.wait_for_timeout(200)
 
 
+LOADED = 'document.readyState === "complete"'
+SHEET_STILL = '[...document.querySelectorAll("#sheet, .sheet-dim")].every((element) => element.getAnimations().length === 0)'
+
+
 def at_home(phone):
-    phone.until('location.pathname === "/" && !document.querySelector("semmel-shell") && !!document.querySelector("main .shelf")')
+    phone.until(f'location.pathname === "/" && !document.querySelector("semmel-shell") && !!document.querySelector("main .shelf") && {LOADED}')
     phone.page.wait_for_timeout(500)
 
 
@@ -815,22 +819,20 @@ with sync_playwright() as playwright:
         with scenario(f"the remote opens, closes by a swipe without a reload, and a reload brings it back closed ({engine})"):
             remote = phone if engine == "chromium" else Phone(playwright, engine, device)
             remote.goto("/")
-            remote.until('!!document.querySelector(".bar-open")')
-            remote.page.wait_for_timeout(500)
+            remote.until(f'!!document.querySelector(".bar-open") && {LOADED}')
             remote.page.locator(".bar-open").tap()
             remote.until('document.documentElement.hasAttribute("data-sheet")', 3000)
-            remote.page.wait_for_timeout(800)
+            remote.until(SHEET_STILL, 3000)
             remote.page.locator(".sheet-close").tap()
             remote.until('!document.documentElement.hasAttribute("data-sheet")', 3000)
-            remote.page.wait_for_timeout(600)
+            remote.until(SHEET_STILL, 3000)
             remote.page.locator(".bar-open").tap()
             remote.until('document.documentElement.hasAttribute("data-sheet")', 3000)
             remote.page.reload(wait_until="commit")
-            remote.until('!!document.querySelector(".bar-open") && !document.documentElement.hasAttribute("data-sheet")')
-            remote.page.wait_for_timeout(1500)
+            remote.until(f'!!document.querySelector(".bar-open") && {LOADED} && !document.documentElement.hasAttribute("data-sheet")')
             remote.page.locator(".bar-open").tap()
             remote.until('document.documentElement.hasAttribute("data-sheet")', 3000)
-            remote.page.wait_for_timeout(800)
+            remote.until(SHEET_STILL, 3000)
             remote.js("window.stillHere = true")
             grip = remote.page.locator(".sheet-top").bounding_box()
             assert grip
