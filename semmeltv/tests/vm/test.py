@@ -1187,11 +1187,16 @@ with sync_playwright() as playwright:
         tv_plays_film(phone)
         resumed_at = tv_position() or 0.0
         try:
-            tv_seek(phone, 20)
+            def near_the_start():
+                phone.api("POST", "/api/playback/seek", {"to": 20})
+                time.sleep(1)
+                return 19 <= (tv_position() or 0) < 40
+
+            eventually("the TV plays from 20 s, where three skips stay far from the end", near_the_start, timeout=30, every=1)
             tv_plays_past(22)
             skipped_from = tv_position() or 0.0
             status = tv.succeed("grep -l 'state:' /proc/asound/card*/pcm*p/sub*/status").split()[0]
-            tv.succeed(f"(for i in $(seq 800); do head -1 {status}; sleep 0.005; done > /tmp/sound-states 2>&1) &")
+            tv.succeed(f"(for i in $(seq 800); do head -1 {status}; sleep 0.005; done > /tmp/sound-states 2>&1) </dev/null >/dev/null 2>&1 &")
             for _ in range(3):
                 assert phone.api("POST", "/api/playback/skip", {"direction": "forward"})["status"] == 200
                 time.sleep(0.7)
