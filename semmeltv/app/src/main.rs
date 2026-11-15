@@ -45,6 +45,7 @@ mod tags;
 mod tmdb;
 mod tv;
 mod ui;
+mod up_next;
 mod voice;
 mod watching;
 mod wyoming;

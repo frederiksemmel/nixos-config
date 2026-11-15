@@ -25,6 +25,7 @@ use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, Subtitles};
 use crate::tv::{self, Television};
+use crate::up_next::{Press, UpNext};
 use crate::voice::{self, Heard, Voice};
 use crate::watching;
 use std::collections::HashSet;
@@ -122,6 +123,7 @@ pub struct Actor {
     voice: Option<Voice>,
     ear: voice::Ear,
     queued: Option<PathBuf>,
+    up_next: Option<UpNext>,
     led: Option<Led>,
     subtitles: Subtitles,
     television: Television,
@@ -203,6 +205,7 @@ impl Actor {
             voice,
             ear: voice::Ear::Idle,
             queued: None,
+            up_next: None,
             led,
             audio,
             offer: None,
@@ -240,6 +243,9 @@ impl Actor {
                 _ = playback.tick() => {
                     self.publish_playback();
                     self.hear_sound();
+                    if self.up_next.as_ref().is_some_and(|up| up.due(Instant::now())) {
+                        self.play_up_next().await;
+                    }
                 }
                 _ = watching_screen.tick() => {
                     if self.screen != screen::Screen::Tv {
@@ -292,6 +298,20 @@ impl Actor {
         }
         if command == Command::Dialogue {
             self.toggle_dialogue().await;
+            return;
+        }
+        if self.up_next.is_some() {
+            match UpNext::press(command) {
+                Press::PlayNow => {
+                    eprintln!("up next: OK plays it now");
+                    self.play_up_next().await;
+                }
+                Press::Cancel => {
+                    eprintln!("up next: cancelled");
+                    self.cancel_up_next();
+                }
+                Press::Nothing => {}
+            }
             return;
         }
         if let Some(player) = self.player() {
@@ -447,6 +467,7 @@ impl Actor {
 
     fn play_from<'a>(&'a mut self, path: &'a Path, start: f64, owner: ProfileId) -> Boxed<'a> {
         Box::pin(async move {
+            self.cancel_up_next();
             if self.screen != screen::Screen::Tv {
                 self.screen_step(screen::Event::TvPlays, owner).await;
             }
@@ -644,13 +665,14 @@ impl Actor {
         self.record_place().await;
         let ended_play = self.on_tv.take().map(|OnTv { file, owner, .. }| (file, owner));
         self.publish_playback();
-        if let Some((file, owner)) = ended_play {
+        if let Some((file, owner)) = &ended_play {
+            let (file, owner) = (file.as_path(), *owner);
             let mut progress = (*self.progress_of(owner).await).clone();
             let changed = if ended {
-                watching::complete(&mut progress, &self.library, &file);
+                watching::complete(&mut progress, &self.library, file);
                 true
             } else {
-                watching::stopped(&mut progress, &self.library, &file)
+                watching::stopped(&mut progress, &self.library, file)
             };
             if changed {
                 self.keep(owner, progress).await;
@@ -665,6 +687,27 @@ impl Actor {
         self.tend();
         if let Some(path) = self.queued.take() {
             self.play(&path).await;
+        } else if let Some((file, owner)) = ended_play.filter(|_| ended) {
+            self.up_next = UpNext::after(&self.library, &file, owner, Instant::now());
+            if let Some(up) = &self.up_next {
+                eprintln!("up next: {} in {:?}", up.file.display(), crate::up_next::COUNTDOWN);
+                self.core.bus.up_next(Some(up.card.clone()));
+            }
+        }
+    }
+
+    async fn play_up_next(&mut self) {
+        let Some(UpNext { file, owner, .. }) = self.up_next.take() else {
+            return;
+        };
+        self.core.bus.up_next(None);
+        let start = resume_point(&*self.progress_of(owner).await, &file);
+        self.play_from(&file, start, owner).await;
+    }
+
+    fn cancel_up_next(&mut self) {
+        if self.up_next.take().is_some() {
+            self.core.bus.up_next(None);
         }
     }
 
@@ -923,6 +966,9 @@ impl Actor {
         let reason = event.describe();
         let tick = event.is_tick();
         let effects = self.screen.step(event, tv.as_ref(), Instant::now());
+        if self.screen != screen::Screen::Tv {
+            self.cancel_up_next();
+        }
         if before.summary() != self.screen.summary() {
             eprintln!("screen: {} -> {} ({reason})", before.summary(), self.screen.summary());
         } else if before == self.screen && !tick {

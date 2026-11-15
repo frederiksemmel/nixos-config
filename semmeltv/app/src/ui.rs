@@ -11,8 +11,9 @@ use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
+use crate::up_next;
 use crate::watching::{self, Current};
-use crate::{AppWindow, CardData, OfflineState, ShelfData};
+use crate::{AppWindow, CardData, OfflineState, ShelfData, UpNextData};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -23,16 +24,18 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
 
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
+const UP_NEXT_TICK: Duration = Duration::from_millis(50);
 const EMPTY_LIBRARY: &str = "The library is empty";
 
 #[derive(Clone, Copy)]
 enum Page {
     Home,
     Show,
+    UpNext,
 }
 
 struct Target {
@@ -52,6 +55,7 @@ struct Screen {
     images: Sender<Job<Target>>,
     message_timer: Timer,
     voice_timer: Timer,
+    up_next_timer: Timer,
 }
 
 pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<(), slint::PlatformError> {
@@ -97,6 +101,7 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
         images,
         message_timer: Timer::default(),
         voice_timer: Timer::default(),
+        up_next_timer: Timer::default(),
     }));
     screen.borrow_mut().present_profile();
     screen.borrow_mut().present_home();
@@ -150,6 +155,15 @@ fn show_image(ui: &AppWindow, target: Target, pixels: Pixels) {
     let shelves = match target.page {
         Page::Home => ui.get_home_shelves(),
         Page::Show => ui.get_show_shelves(),
+        Page::UpNext => {
+            let mut card = ui.get_up_next();
+            if card.key == target.key {
+                card.art = Image::from_rgb8(pixels);
+                card.has_art = true;
+                ui.set_up_next(card);
+            }
+            return;
+        }
     };
     let Some(shelf) = shelves.row_data(target.shelf) else {
         return;
@@ -242,6 +256,7 @@ impl Screen {
             Event::Key(command) => self.navigate(command),
             Event::Message(text) => self.show_message(text),
             Event::Panel(panel) => self.show_panel(panel),
+            Event::UpNext(card) => self.show_up_next(card),
             Event::Playback { now_playing } => self.playing = now_playing.is_some(),
             Event::Voice(_) | Event::Audio(_) | Event::Screen { .. } => {}
         }
@@ -381,6 +396,43 @@ impl Screen {
             }
             None => self.voice_timer.stop(),
         }
+    }
+
+    fn show_up_next(&self, card: Option<up_next::Card>) {
+        let Some(card) = card else {
+            self.up_next_timer.stop();
+            self.ui.set_up_next_open(false);
+            return;
+        };
+        let key: SharedString = format!("up-next-{}-{}-{}", card.show, card.season, card.number).into();
+        let (tint_a, tint_b) = tints(&card.show);
+        let now = Instant::now();
+        self.ui.set_up_next(UpNextData {
+            key: key.clone(),
+            show: card.show.as_str().into(),
+            episode: card.episode.as_str().into(),
+            seconds: card.seconds_left(now) as i32,
+            share: card.share_left(now),
+            tint_a,
+            tint_b,
+            ..UpNextData::default()
+        });
+        self.ui.set_up_next_open(true);
+        let art = card.tmdb.map(|id| Art {
+            path: artwork::still(&self.art, id, card.season, card.number),
+            fallback: Some(artwork::backdrop(&self.art, Kind::Tv, id)),
+        });
+        self.request(Page::UpNext, 0, 0, key, art);
+        let handle = self.ui.as_weak();
+        self.up_next_timer.start(TimerMode::Repeated, UP_NEXT_TICK, move || {
+            if let Some(ui) = handle.upgrade() {
+                let now = Instant::now();
+                let mut shown = ui.get_up_next();
+                shown.seconds = card.seconds_left(now) as i32;
+                shown.share = card.share_left(now);
+                ui.set_up_next(shown);
+            }
+        });
     }
 
     fn show_message(&self, message: String) {

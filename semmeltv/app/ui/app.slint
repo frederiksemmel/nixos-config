@@ -57,6 +57,18 @@ export struct HeatmapData {
     hint: string,
 }
 
+export struct UpNextData {
+    key: string,
+    show: string,
+    episode: string,
+    seconds: int,
+    share: float,
+    art: image,
+    has-art: bool,
+    tint-a: color,
+    tint-b: color,
+}
+
 export struct HeatFocus {
     active: bool,
     season: int,
@@ -728,6 +740,144 @@ component Toast inherits Rectangle {
     }
 }
 
+component KeyHint inherits HorizontalLayout {
+    in property <length> u;
+    in property <string> key;
+    in property <string> text;
+    in property <bool> strong;
+
+    spacing: 14 * root.u;
+    alignment: start;
+
+    Rectangle {
+        width: hint-key.preferred-width + 24 * root.u;
+        height: 40 * root.u;
+        border-radius: 10 * root.u;
+        background: root.strong ? white : transparent;
+        border-width: root.strong ? 0 : 2px;
+        border-color: #ffffff40;
+
+        hint-key := Text {
+            text: root.key;
+            color: root.strong ? #0c0c10 : #c3c7d1;
+            font-size: 22 * root.u;
+            font-weight: 700;
+            vertical-alignment: center;
+            horizontal-alignment: center;
+        }
+    }
+
+    Text {
+        text: root.text;
+        color: root.strong ? white : #a8adb8;
+        font-size: 28 * root.u;
+        font-weight: root.strong ? 600 : 500;
+        vertical-alignment: center;
+    }
+}
+
+component UpNextCard inherits Rectangle {
+    in property <length> u;
+    in property <UpNextData> data;
+
+    border-radius: 28 * root.u;
+    background: #1b1d23;
+    border-width: 1px;
+    border-color: #ffffff1f;
+    drop-shadow-blur: 48 * root.u;
+    drop-shadow-color: #000000cc;
+
+    still := Rectangle {
+        x: 36 * root.u;
+        y: 36 * root.u;
+        width: 576 * root.u;
+        height: 324 * root.u;
+        border-radius: 16 * root.u;
+        clip: true;
+        background: @linear-gradient(135deg, root.data.tint-a 0%, root.data.tint-b 100%);
+
+        if !root.data.has-art: Text {
+            x: 28 * root.u;
+            width: parent.width - 56 * root.u;
+            text: root.data.show;
+            color: white;
+            font-size: 40 * root.u;
+            font-weight: 700;
+            wrap: word-wrap;
+            vertical-alignment: center;
+        }
+
+        if root.data.has-art: Image {
+            width: 100%;
+            height: 100%;
+            source: root.data.art;
+            image-fit: cover;
+        }
+
+        Rectangle {
+            y: parent.height - 8 * root.u;
+            height: 8 * root.u;
+            background: #00000080;
+
+            Rectangle {
+                x: 0;
+                width: parent.width * (1 - root.data.share);
+                background: white;
+            }
+        }
+    }
+
+    VerticalLayout {
+        x: still.x + still.width + 44 * root.u;
+        y: still.y;
+        width: parent.width - self.x - 48 * root.u;
+        height: still.height;
+        spacing: 10 * root.u;
+
+        Text {
+            text: "Up next";
+            color: #a8adb8;
+            font-size: 28 * root.u;
+            font-weight: 600;
+        }
+
+        Text {
+            text: root.data.show;
+            color: white;
+            font-size: 52 * root.u;
+            font-weight: 700;
+            overflow: elide;
+        }
+
+        Text {
+            text: root.data.episode;
+            color: #c3c7d1;
+            font-size: 32 * root.u;
+            wrap: word-wrap;
+            overflow: elide;
+            vertical-stretch: 1;
+        }
+
+        HorizontalLayout {
+            spacing: 40 * root.u;
+            alignment: start;
+
+            KeyHint {
+                u: root.u;
+                key: "OK";
+                text: "Plays in " + root.data.seconds;
+                strong: true;
+            }
+
+            KeyHint {
+                u: root.u;
+                key: "Back";
+                text: "Cancel";
+            }
+        }
+    }
+}
+
 export component AppWindow inherits Window {
     in property <[ShelfData]> home-shelves;
     in property <int> home-row;
@@ -755,6 +905,8 @@ export component AppWindow inherits Window {
     in property <string> years;
     in property <string> details;
     in property <RatingsData> ratings;
+    in property <bool> up-next-open;
+    in property <UpNextData> up-next;
     property <bool> rated: root.ratings.imdb != "" || root.ratings.rt != "" || root.ratings.popcorn != "";
 
     callback key(string) -> bool;
@@ -996,6 +1148,19 @@ export component AppWindow inherits Window {
                 text: "This application uses TMDB and the TMDB APIs but is not endorsed, certified, or otherwise approved by TMDB.";
                 color: #6c7280;
                 font-size: 18 * root.u;
+            }
+        }
+
+        if root.up-next-open: Rectangle {
+            background: #000000b3;
+
+            UpNextCard {
+                u: root.u;
+                data: root.up-next;
+                width: min(1320 * root.u, parent.width - 192 * root.u);
+                height: 396 * root.u;
+                x: (parent.width - self.width) / 2;
+                y: (parent.height - self.height) / 2;
             }
         }
 

@@ -110,6 +110,15 @@ def tv_plays_nothing():
     eventually("the TV's player closes", lambda: mpv("get_property", "pid") is None, timeout=30)
 
 
+def tv_said(line):
+    return int(tv.succeed(f"journalctl -b -o cat | grep -c {shlex.quote(line)} || true").strip())
+
+
+def tv_episode(phone):
+    shown = phone.api("GET", "/api/playback")["body"]["now_playing"]
+    return shown and shown.get("kind") == "episode" and shown["episode"]
+
+
 def invite(name):
     out = tv.succeed(
         f"runuser -u semmeltv -- env SEMMELTV_DB=/var/lib/semmeltv/semmeltv.db SEMMELTV_ORIGINS={PHONE} {SEMMELTV} invite {name}"
@@ -586,8 +595,14 @@ with sync_playwright() as playwright:
         episode = {"show": SHOW, "season": 1, "episode": 1}
         phone.api("POST", "/api/play", episode)
         tv_starts_at()
+        counted = tv_said("^up next: /")
         tv_seek(phone, 170)
         tv_plays_nothing()
+        eventually("the TV counts down to episode 2", lambda: tv_said("^up next: /") > counted)
+        tv.send_key("esc")
+        eventually("Back cancels the countdown", lambda: tv_said("^up next: cancelled") > 0, timeout=5)
+        time.sleep(12)
+        assert mpv("get_property", "pid") is None, "after Back, episode 2 does not play by itself"
         eventually(
             "the episode counts as watched",
             lambda: phone.api("GET", f"/api/shows/{SHOW}")["body"]["seasons"][0]["episodes"][0]["watched"],
@@ -613,6 +628,36 @@ with sync_playwright() as playwright:
         assert opened["status"] == 200, opened
         assert abs(opened["body"]["start"] - resumed) < 3, f"the phone stream starts at {opened['body']['start']}, the TV stopped at {resumed}"
         phone.api("DELETE", f"/api/stream/{opened['body']['id']}")
+
+    with scenario("an episode that ends on the TV counts down to the next, OK plays it at once, and nothing follows the last"):
+        counted = tv_said("^up next: /")
+        phone.api("POST", "/api/play", {"show": SHOW, "season": 1, "episode": 1})
+        tv_starts_at()
+        tv_seek(phone, 170)
+        eventually("the TV counts down to episode 2", lambda: tv_said("^up next: /") > counted, timeout=60, every=0.3)
+        counting = time.monotonic()
+        tv.send_key("ret")
+        eventually("OK opens episode 2", lambda: mpv("get_property", "pid") is not None, timeout=30, every=0.3)
+        assert time.monotonic() - counting < 7, "OK plays the next episode without waiting for the countdown"
+        eventually("the TV plays episode 2", lambda: tv_episode(phone) == 2)
+        counted = tv_said("^up next: /")
+        tv_starts_at()
+        tv_seek(phone, 170)
+        eventually("the TV counts down to episode 3", lambda: tv_said("^up next: /") > counted, timeout=60, every=0.3)
+        counting = time.monotonic()
+        shown = tv.get_screen_text()
+        tv.screenshot("tv-up-next")
+        assert "Up next" in shown and "Plays in" in shown, f"the TV shows the Up next card: {shown!r}"
+        eventually("the countdown plays episode 3", lambda: mpv("get_property", "pid") is not None, timeout=30, every=0.3)
+        assert time.monotonic() - counting > 7, "episode 3 waits for the countdown"
+        eventually("the TV plays episode 3", lambda: tv_episode(phone) == 3)
+        counted = tv_said("^up next: /")
+        tv_starts_at()
+        tv_seek(phone, 170)
+        tv_plays_nothing()
+        time.sleep(15)
+        assert tv_said("^up next: /") == counted, "nothing counts down after the last episode"
+        assert mpv("get_property", "pid") is None, "nothing plays after the last episode"
 
     with scenario("the TV profile picker switches whose Home the TV shows"):
         phone.goto("/")

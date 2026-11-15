@@ -4,6 +4,7 @@ use crate::library::Library;
 use crate::profile::ProfileId;
 use crate::progress::Progress;
 use crate::screen;
+use crate::up_next;
 use serde::Serialize;
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -32,6 +33,8 @@ pub enum Event {
     Message(String),
     #[serde(skip)]
     Panel(Option<Panel>),
+    #[serde(skip)]
+    UpNext(Option<up_next::Card>),
 }
 
 impl Event {
@@ -177,6 +180,10 @@ impl Bus {
 
     pub fn panel(&self, panel: Option<Panel>) {
         let _ = self.events.send(Event::Panel(panel));
+    }
+
+    pub fn up_next(&self, card: Option<up_next::Card>) {
+        let _ = self.events.send(Event::UpNext(card));
     }
 
     pub fn now_playing(&self) -> Option<NowPlaying> {
