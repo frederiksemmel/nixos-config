@@ -415,8 +415,7 @@ it needs the app's models. Review the SQL it writes before committing it.
 ## Profiles
 
 Four people use the TV: Frederik, the admin, and Mami, Miriam and Ramu, who are
-viewers. A fifth profile, Guest, is for visitors: a viewer that needs no
-passkey or password at home, and an invite from anywhere else. Viewers browse, play, watch on their phone, use the remote, the
+viewers. Viewers browse, play, watch on their phone, use the remote, the
 microphone and the TV/phone switch, pair their own headphones and keep their
 own subtitle style. Only an admin downloads, removes titles from the TV's
 storage, pairs the TV for volume, and adds, invites, signs out or removes

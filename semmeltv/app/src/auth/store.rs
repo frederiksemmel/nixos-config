@@ -7,7 +7,6 @@ use std::fmt;
 pub enum Role {
     Admin,
     Viewer,
-    Guest,
 }
 
 impl Role {
@@ -15,7 +14,6 @@ impl Role {
         match self {
             Role::Admin => "admin",
             Role::Viewer => "viewer",
-            Role::Guest => "guest",
         }
     }
 }

@@ -40,7 +40,6 @@ fn role(role: Role) -> models::Role {
     match role {
         Role::Admin => models::Role::Admin,
         Role::Viewer => models::Role::Viewer,
-        Role::Guest => models::Role::Guest,
     }
 }
 
@@ -51,7 +50,6 @@ fn profile(stored: StoredProfile) -> Profile {
         role: match stored.role {
             models::Role::Admin => Role::Admin,
             models::Role::Viewer => Role::Viewer,
-            models::Role::Guest => Role::Guest,
         },
         color: stored.color,
         password_hash: stored.password_hash,
@@ -364,10 +362,9 @@ mod tests {
         let (auth, _) = auth().await;
         let people = auth.people().await.unwrap();
         let names = people.iter().map(|person| person.name.as_str()).collect::<Vec<_>>();
-        assert_eq!(names, ["Frederik", "Mami", "Miriam", "Ramu", "Guest"]);
+        assert_eq!(names, ["Frederik", "Mami", "Miriam", "Ramu"]);
         assert!(people[0].admin());
         assert!(people[1..].iter().all(|person| !person.admin()));
-        assert_eq!(people[4].role, Role::Guest);
     }
 
     #[tokio::test]

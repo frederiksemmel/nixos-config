@@ -311,7 +311,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_new_database_has_the_five_profiles_and_no_passwords() {
+    async fn a_new_database_has_the_four_profiles_and_no_passwords() {
         let mut raw = db().await.db.clone();
         let profiles = models::Profile::all()
             .order_by(models::Profile::fields().id().asc())
@@ -329,7 +329,6 @@ mod tests {
                 (2, "Mami", models::Role::Viewer, true),
                 (3, "Miriam", models::Role::Viewer, true),
                 (4, "Ramu", models::Role::Viewer, true),
-                (5, "Guest", models::Role::Guest, true),
             ]
         );
     }

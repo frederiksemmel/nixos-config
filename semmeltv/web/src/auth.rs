@@ -1,4 +1,4 @@
-use crate::api::{Api, Choice, Me, Member, Person, Role};
+use crate::api::{Api, Choice, Me, Member, Person};
 use crate::layout::back;
 use topcoat::Result;
 use topcoat::context::{Cx, try_request_context};
@@ -124,8 +124,6 @@ async fn choice_button(choice: &Choice) -> Result<impl View> {
                 data-password=(choice.password.to_string())
                 data-signed-in=(choice.signed_in.to_string())
                 data-admin=(person.admin().to_string())
-                data-guest=(choice.guest.to_string())
-                data-open=(choice.open.to_string())
                 aria-current=(if choice.active { "true" } else { "false" })>
                 avatar(person: person, size: "large")
                 <span class="profile-name">(person.name.as_str())</span>
@@ -133,10 +131,6 @@ async fn choice_button(choice: &Choice) -> Result<impl View> {
                     <small class="profile-state">"Watching now"</small>
                 } else if choice.signed_in && !person.admin() {
                     <small class="profile-state">"On this device"</small>
-                } else if choice.guest && choice.open {
-                    <small class="profile-state">"No password needed"</small>
-                } else if choice.guest {
-                    <small class="profile-state">"At home only"</small>
                 } else if !choice.password && !choice.passkey {
                     <small class="profile-state">"Not set up yet"</small>
                 }
@@ -244,22 +238,8 @@ async fn account_page(cx: &Cx) -> Result<impl View> {
             <div class="account-head">
                 avatar(person: &me.person, size: "large")
                 <h1>(me.person.name.as_str())</h1>
-                <p class="setting-note">(match me.person.role {
-                    Role::Admin => "Admin: everything, including downloads, storage and people",
-                    Role::Viewer => "Watches, plays and uses the remote",
-                    Role::Guest => "Guest: watches, plays and uses the remote, without a password, at home",
-                })</p>
+                <p class="setting-note">(if me.person.admin() { "Admin: everything, including downloads, storage and people" } else { "Watches, plays and uses the remote" })</p>
             </div>
-            if me.person.guest() {
-                <section class="settings">
-                    <div class="setting-group">
-                        <div class="setting setting-row">
-                            <span class="setting-name">"Sign out" <small>"Only on this device"</small></span>
-                            <button type="button" class="pill quiet" id="sign-out">"Sign out"</button>
-                        </div>
-                    </div>
-                </section>
-            } else {
             <p class="setting-note">"Safari, the SemmelTV app on your home screen and links opened from inside other apps each sign in on their own. Your passkey and password work in all of them."</p>
             <section class="settings">
                 <h2>"Passkeys"</h2>
@@ -307,7 +287,6 @@ async fn account_page(cx: &Cx) -> Result<impl View> {
                     </div>
                 </div>
             </section>
-            }
         </article>
     })
 }
@@ -316,14 +295,7 @@ async fn account_page(cx: &Cx) -> Result<impl View> {
 async fn member_row(member: &Member, own: bool) -> Result<impl View> {
     let person = &member.person;
     let mut facts = Vec::new();
-    facts.push(
-        match person.role {
-            Role::Admin => "Admin",
-            Role::Viewer => "Viewer",
-            Role::Guest => "Guest, no password at home",
-        }
-        .to_string(),
-    );
+    facts.push(if person.admin() { "Admin".to_string() } else { "Viewer".to_string() });
     facts.push(match member.passkeys {
         0 => "no passkey".to_string(),
         1 => "1 passkey".to_string(),

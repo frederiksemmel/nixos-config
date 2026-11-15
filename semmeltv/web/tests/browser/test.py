@@ -591,12 +591,6 @@ def profiles(page, engine):
     page.locator(".profile-choice", has_text="Mami").tap()
     until(page, engine, "and switching to her needs no password", 'location.pathname === "/" && document.querySelector(".profile-link .avatar").textContent.trim() === "M"', 8000)
     page.goto(BASE + "/profiles", wait_until="commit")
-    until(page, engine, "Guest needs no password at home", '[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Guest") && choice.textContent.includes("No password needed"))')
-    page.locator(".profile-choice", has_text="Guest").click()
-    until(page, engine, "and tapping Guest signs in at once", 'location.pathname === "/" && document.querySelector(".profile-link .avatar").textContent.trim() === "G"', 8000)
-    page.goto(BASE + "/account", wait_until="commit")
-    until(page, engine, "a guest's account offers no passkey or password", '!!document.querySelector("#sign-out") && !document.querySelector("#add-passkey") && !document.querySelector("#password-set")')
-    page.goto(BASE + "/profiles", wait_until="commit")
     sign_in(page, engine, "Frederik", "frederik-pass", "and back to Frederik")
     until(page, engine, "Frederik again", 'location.pathname === "/" && document.querySelector(".profile-link .avatar").textContent.trim() === "F"', 8000)
 

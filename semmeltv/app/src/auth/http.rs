@@ -15,7 +15,6 @@ pub fn routes<S: Clone + Send + Sync + 'static>(gate: Gate) -> Router<S> {
         .route("/api/auth/choices", get(choices))
         .route("/api/auth/me", get(me))
         .route("/api/auth/password", post(password_sign_in))
-        .route("/api/auth/guest", post(guest_sign_in))
         .route("/api/auth/passkey/start", post(start_sign_in))
         .route("/api/auth/passkey/finish", post(finish_sign_in))
         .route("/api/auth/switch", post(switch))
@@ -38,7 +37,7 @@ fn status(refusal: &Refusal) -> StatusCode {
         Refusal::InviteUsed | Refusal::InviteExpired => StatusCode::GONE,
         Refusal::Throttled(_) => StatusCode::TOO_MANY_REQUESTS,
         Refusal::NotSignedIn | Refusal::WrongPassword | Refusal::PasskeyFailed => StatusCode::UNAUTHORIZED,
-        Refusal::UnknownOrigin | Refusal::GuestFromAfar => StatusCode::FORBIDDEN,
+        Refusal::UnknownOrigin => StatusCode::FORBIDDEN,
         Refusal::Store(_) => StatusCode::SERVICE_UNAVAILABLE,
         _ => StatusCode::UNPROCESSABLE_ENTITY,
     }
@@ -120,7 +119,6 @@ async fn choices(State(gate): State<Gate>, Extension(resolved): Extension<Resolv
                 .map(|choice| {
                     let mut value = json!(choice);
                     value["active"] = json!(Some(choice.person.id) == active);
-                    value["open"] = json!(choice.guest && gate::at_home(&headers));
                     value["signed_in"] =
                         json!(Some(choice.person.id) == active || on_device.contains(&choice.person.id));
                     value
@@ -172,30 +170,6 @@ async fn password_sign_in(
     let label = label(&headers);
     let signed = async {
         let token = gate.auth.sign_in_with_password(body.profile, &body.password, &label).await?;
-        Ok::<_, Refusal>((gate.auth.person(body.profile).await?, token))
-    };
-    match signed.await {
-        Ok((person, token)) => signed_in(&gate, &resolved, person, token).await,
-        Err(refusal) => refused(refusal),
-    }
-}
-
-#[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
-struct GuestSignIn {
-    profile: ProfileId,
-}
-
-async fn guest_sign_in(
-    State(gate): State<Gate>,
-    Extension(resolved): Extension<Resolved>,
-    headers: HeaderMap,
-    Json(body): Json<GuestSignIn>,
-) -> Response {
-    let label = label(&headers);
-    let at_home = gate::at_home(&headers);
-    let signed = async {
-        let token = gate.auth.sign_in_as_guest(body.profile, at_home, &label).await?;
         Ok::<_, Refusal>((gate.auth.person(body.profile).await?, token))
     };
     match signed.await {

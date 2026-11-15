@@ -9,8 +9,7 @@ pub struct Api {
     forwarded: Vec<(reqwest::header::HeaderName, reqwest::header::HeaderValue)>,
 }
 
-const FORWARDED: [reqwest::header::HeaderName; 5] = [
-    reqwest::header::HeaderName::from_static("x-real-ip"),
+const FORWARDED: [reqwest::header::HeaderName; 4] = [
     reqwest::header::COOKIE,
     reqwest::header::ORIGIN,
     reqwest::header::USER_AGENT,
@@ -840,7 +839,6 @@ impl Api {
 pub enum Role {
     Admin,
     Viewer,
-    Guest,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -854,10 +852,6 @@ pub struct Person {
 impl Person {
     pub fn admin(&self) -> bool {
         self.role == Role::Admin
-    }
-
-    pub fn guest(&self) -> bool {
-        self.role == Role::Guest
     }
 
     pub fn initial(&self) -> String {
@@ -886,8 +880,6 @@ pub struct Me {
 pub struct Choice {
     #[serde(flatten)]
     pub person: Person,
-    pub guest: bool,
-    pub open: bool,
     pub password: bool,
     pub passkey: bool,
     pub active: bool,
