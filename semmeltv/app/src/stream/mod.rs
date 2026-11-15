@@ -232,7 +232,7 @@ struct OpenBody {
     device: Option<crate::screen::Device>,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 struct Next {
     season: u32,
     episode: u32,
@@ -241,16 +241,44 @@ struct Next {
     still: String,
 }
 
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+enum Picked {
+    Movie {
+        key: String,
+    },
+    Show {
+        key: String,
+        season: u32,
+        episode: u32,
+        next: Option<Next>,
+    },
+}
+
+impl Picked {
+    fn art(&self) -> String {
+        match self {
+            Self::Movie { key } => format!("/api/movies/{key}"),
+            Self::Show { key, .. } => format!("/api/shows/{key}"),
+        }
+    }
+
+    fn episode(&self) -> Option<(u32, u32)> {
+        match self {
+            Self::Movie { .. } => None,
+            Self::Show { season, episode, .. } => Some((*season, *episode)),
+        }
+    }
+}
+
 #[derive(Serialize)]
 struct Opened {
     id: String,
     playlist: String,
-    kind: &'static str,
-    key: String,
+    #[serde(flatten)]
+    picked: Picked,
     title: String,
     caption: String,
-    season: Option<u32>,
-    episode: Option<u32>,
     poster: String,
     backdrop: String,
     start: f64,
@@ -261,21 +289,16 @@ struct Opened {
     subtitles: Vec<Subtitle>,
     subtitle_delay: f64,
     credits: Option<f64>,
-    next: Option<Next>,
     bitrate: Option<u64>,
     heavy: bool,
 }
 
 struct Chosen {
     file: PathBuf,
-    kind: &'static str,
-    key: String,
+    picked: Picked,
     title: String,
     caption: String,
-    season: Option<u32>,
-    episode: Option<u32>,
     tmdb: Option<u64>,
-    next: Option<Next>,
 }
 
 fn choose(streams: &Streams, body: &OpenBody, profile: ProfileId) -> Result<Chosen, Response> {
@@ -291,14 +314,10 @@ fn choose(streams: &Streams, body: &OpenBody, profile: ProfileId) -> Result<Chos
                 .ok_or_else(|| missing(key))?;
             Ok(Chosen {
                 file: movie.path.clone(),
-                kind: "movie",
-                key: movie.key.clone(),
+                picked: Picked::Movie { key: movie.key.clone() },
                 title: movie.title.clone(),
                 caption: movie.year.map(|year| year.to_string()).unwrap_or_default(),
-                season: None,
-                episode: None,
                 tmdb: movie.tmdb,
-                next: None,
             })
         }
         (None, Some(key)) => {
@@ -321,20 +340,21 @@ fn choose(streams: &Streams, body: &OpenBody, profile: ProfileId) -> Result<Chos
             let still = |season: u32, number: u32| format!("/api/shows/{}/episodes/{season}/{number}/still", show.key);
             Ok(Chosen {
                 file: episode.path.clone(),
-                kind: "show",
-                key: show.key.clone(),
+                picked: Picked::Show {
+                    key: show.key.clone(),
+                    season: episode.season,
+                    episode: episode.number,
+                    next: show.episode_after(episode.season, episode.number).map(|next| Next {
+                        season: next.season,
+                        episode: next.number,
+                        label: next.short_label(),
+                        title: next.title.clone(),
+                        still: still(next.season, next.number),
+                    }),
+                },
                 title: show.title.clone(),
                 caption: episode.label(),
-                season: Some(episode.season),
-                episode: Some(episode.number),
                 tmdb: show.tmdb,
-                next: show.episode_after(episode.season, episode.number).map(|next| Next {
-                    season: next.season,
-                    episode: next.number,
-                    label: next.short_label(),
-                    title: next.title.clone(),
-                    still: still(next.season, next.number),
-                }),
             })
         }
         _ => Err(problem(
@@ -455,6 +475,37 @@ mod resume_tests {
     }
 }
 
+#[cfg(test)]
+mod picked_tests {
+    use super::{Next, Picked};
+    use serde_json::json;
+
+    #[test]
+    fn a_movie_opens_without_an_episode_and_an_episode_with_its_place_and_what_follows() {
+        let movie = Picked::Movie {
+            key: "dune-2021".to_string(),
+        };
+        assert_eq!(serde_json::to_value(&movie).unwrap(), json!({ "kind": "movie", "key": "dune-2021" }));
+        assert_eq!((movie.art(), movie.episode()), ("/api/movies/dune-2021".to_string(), None));
+        let episode = Picked::Show {
+            key: "dark".to_string(),
+            season: 1,
+            episode: 10,
+            next: Some(Next {
+                season: 2,
+                episode: 1,
+                label: "S2 E1".to_string(),
+                title: None,
+                still: "/still".to_string(),
+            }),
+        };
+        let json = serde_json::to_value(&episode).unwrap();
+        assert_eq!((&json["kind"], &json["season"], &json["episode"]), (&json!("show"), &json!(1), &json!(10)));
+        assert_eq!(json["next"]["season"], 2);
+        assert_eq!((episode.art(), episode.episode()), ("/api/shows/dark".to_string(), Some((1, 10))));
+    }
+}
+
 async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Json<OpenBody>) -> Response {
     let chosen = match choose(&streams, &body, profile) {
         Ok(chosen) => chosen,
@@ -564,7 +615,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         delay,
         title: chosen.tmdb.map(|tmdb| Title {
             tmdb,
-            episode: chosen.season.zip(chosen.episode),
+            episode: chosen.picked.episode(),
         }),
         chapter_credits: media.credits,
         marks: OnceCell::new(),
@@ -579,16 +630,13 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         if copy_audio { "copied" } else { "converted" }
     );
     streams.live.lock().unwrap().insert(id.clone(), live);
-    let art = format!("/api/{}s/{}", chosen.kind, chosen.key);
+    let art = chosen.picked.art();
     Json(Opened {
         playlist: format!("/api/stream/{id}/main.m3u8"),
         id,
-        kind: chosen.kind,
-        key: chosen.key,
+        picked: chosen.picked,
         title: chosen.title,
         caption: chosen.caption,
-        season: chosen.season,
-        episode: chosen.episode,
         poster: format!("{art}/poster"),
         backdrop: format!("{art}/backdrop"),
         start,
@@ -599,7 +647,6 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         subtitles,
         subtitle_delay: delay,
         credits,
-        next: chosen.next,
         bitrate,
         heavy: bitrate.is_some_and(|rate| rate > CELLULAR_WARNING),
     })

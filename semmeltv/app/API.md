@@ -662,9 +662,12 @@ picks up again on the next request, and is forgotten after 12 hours.
 
 The answer is
 
-    { id, playlist, kind, key, title, caption, season, episode, poster,
+    { id, playlist, kind, key, …, title, caption, poster,
       backdrop, start, duration, audio, audio_index, converted_audio,
-      subtitles, subtitle_delay, credits, next, bitrate, heavy }
+      subtitles, subtitle_delay, credits, bitrate, heavy }
+
+`kind` is `"movie"`, with only `key`, or `"show"`, with `key`, `season`,
+`episode` and `next`.
 
 `audio` lists the tracks as `{ index, codec, channels, language, name,
 default }`. `subtitles` lists the subtitle files beside the video, then the
@@ -672,8 +675,8 @@ tracks inside it, as `{ id, name, language, forced, default, supported }`.
 Picture subtitles (PGS, VobSub) are listed with `supported` false: they show
 only on the TV. The others are WebVTT renditions in the master playlist,
 moved by the file's subtitle delay. `default` is the first one in the
-subtitle languages when subtitles are on. `next` is the episode after it,
-`{ season, episode, label, title, still }`, or null. `heavy` is true above
+subtitle languages when subtitles are on. An episode's `next` is the episode
+after it, `{ season, episode, label, title, still }`, or null. `heavy` is true above
 8 Mbit/s, a hint for mobile data.
 
 The playlist cuts the video at its keyframes, read from the Matroska Cues or
