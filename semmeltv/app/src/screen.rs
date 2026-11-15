@@ -1,10 +1,19 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
 pub const MOVING_FOR: Duration = Duration::from_secs(20);
 pub const STARTING_FOR: Duration = Duration::from_secs(30);
 pub const LOST_AFTER: Duration = Duration::from_secs(45);
+
+/// Which run of the app this is: a phone that sees it change knows the app
+/// restarted, rather than someone moving or stopping what it played.
+static BOOT: LazyLock<u64> = LazyLock::new(|| {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis() as u64)
+});
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -84,6 +93,10 @@ pub enum Event {
         device: Device,
         place: Place,
     },
+    Resume {
+        device: Device,
+        place: Place,
+    },
     Started {
         device: Device,
         session: String,
@@ -150,6 +163,9 @@ impl Event {
             },
             Self::Flip { to: Target::Phone(device), .. } => format!("flip to {}", device.name),
             Self::Play { device, place } => format!("{} plays {} from {:.0} s", device.name, place.name, place.position),
+            Self::Resume { device, place } => {
+                format!("{} resumes {} at {:.0} s after the app restarted", device.name, place.name, place.position)
+            }
             Self::Started { device, session, position } => {
                 format!("{} started stream {} at {position:.0} s", device.name, short(session))
             }
@@ -275,6 +291,27 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
             (Tv, vec![Effect::PlayTv(place)])
         }
         (Phone { play: None, .. }, Event::Flip { to: Target::Tv, .. }) => (Tv, vec![]),
+
+        (Tv, Event::Resume { device, place }) if tv.is_none() => (
+            Phone {
+                device,
+                play: Some(PhonePlay::Starting { place, since: now }),
+            },
+            vec![],
+        ),
+        (
+            Phone {
+                device: current,
+                play: None,
+            },
+            Event::Resume { device, place },
+        ) if current == device => (
+            Phone {
+                device,
+                play: Some(PhonePlay::Starting { place, since: now }),
+            },
+            vec![],
+        ),
 
         (_, Event::Play { device, place }) => {
             let effects = if tv.is_some() { vec![Effect::StopTv] } else { vec![] };
@@ -505,6 +542,7 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct View {
     pub kind: &'static str,
+    pub boot: u64,
     pub device: Option<Device>,
     pub play: Option<PlayView>,
     pub notice: Option<Said>,
@@ -563,6 +601,7 @@ impl View {
         };
         Self {
             kind,
+            boot: *BOOT,
             device,
             play,
             notice,
@@ -953,6 +992,52 @@ mod tests {
         let mut screen = Screen::Tv;
         screen.step(report(&iphone, 352.0), None, later);
         assert_eq!(screen, Screen::Tv);
+    }
+
+    #[test]
+    fn a_phone_resumes_after_a_restart_only_where_nothing_else_plays() {
+        let now = Instant::now();
+        let iphone = phone("a");
+        let resume = |device: &Device| Event::Resume {
+            device: device.clone(),
+            place: place(1234.5),
+        };
+        let mut screen = Screen::Tv;
+        assert_eq!(screen.step(resume(&iphone), None, now), vec![]);
+        assert!(matches!(
+            &screen,
+            Screen::Phone { device, play: Some(PhonePlay::Starting { place, .. }) } if *device == iphone && place.position == 1234.5
+        ));
+
+        let mut screen = Screen::Phone {
+            device: iphone.clone(),
+            play: None,
+        };
+        screen.step(resume(&iphone), None, now);
+        assert!(matches!(&screen, Screen::Phone { play: Some(_), .. }));
+
+        let mut screen = Screen::Tv;
+        assert_eq!(screen.step(resume(&iphone), Some(&place(10.0)), now), vec![]);
+        assert_eq!(screen, Screen::Tv);
+
+        let mut screen = playing(&phone("b"), "s2", 40.0, now);
+        screen.step(resume(&iphone), None, now);
+        assert_eq!(screen, playing(&phone("b"), "s2", 40.0, now));
+
+        let mut screen = Screen::Phone {
+            device: phone("b"),
+            play: None,
+        };
+        screen.step(resume(&iphone), None, now);
+        assert!(matches!(&screen, Screen::Phone { device, play: None } if *device == phone("b")));
+    }
+
+    #[test]
+    fn the_view_says_which_run_of_the_app_it_comes_from() {
+        let first = View::of(&Screen::Tv, None);
+        assert!(first.boot > 0);
+        assert_eq!(View::of(&Screen::Tv, None).boot, first.boot);
+        assert!(serde_json::to_value(&first).unwrap()["boot"].is_u64());
     }
 
     #[test]

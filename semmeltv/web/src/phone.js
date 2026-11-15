@@ -5,6 +5,9 @@ const HIDE_AFTER = 3200;
 const HIDE_AFTER_MOUSE = 1500;
 const RESUME_KEY = "semmeltv.resume";
 const RESUME_WITHIN = 15000;
+const GIVE_UP = 120000;
+const FIRST_RETRY = 1000;
+const LONGEST_RETRY = 8000;
 const COUNTDOWN = 10;
 const JUMP = 10;
 const FLICK = 0.5;
@@ -36,6 +39,7 @@ let screen = { kind: "tv", device: null, play: null, notice: null };
 let seenNotice = undefined;
 let socket = null;
 let pending = null;
+let boot = null;
 let reloaded = takeResume();
 
 function takeResume() {
@@ -201,7 +205,17 @@ function paintSwitch() {
   if (button.getAttribute("aria-pressed") !== pressed) button.setAttribute("aria-pressed", pressed);
 }
 
+function sleep(milliseconds) {
+  return new Promise((done) => setTimeout(done, milliseconds));
+}
+
+function transient(error) {
+  return !error.status || error.status >= 500;
+}
+
 function adopt(view) {
+  const restarted = boot !== null && view.boot !== undefined && view.boot !== boot;
+  if (view.boot !== undefined) boot = view.boot;
   screen = view;
   const notice = view.notice;
   if (seenNotice === undefined) {
@@ -211,6 +225,7 @@ function adopt(view) {
     toast(notice.text, notice.tone === "error" ? "error" : "info");
   }
   render();
+  if (restarted && player && !player.closed && player.resumeHere()) return;
   reconcile();
 }
 
@@ -228,7 +243,7 @@ function reconcile() {
   }
   const wanted = ours(view) && play && ["moving", "starting", "playing"].includes(play.state);
   if (!wanted) {
-    if (player && !player.closed && !player.fresh()) {
+    if (player && !player.closed && !player.fresh() && !player.resuming && !player.awaiting) {
       const why = `screen is ${view.kind}${view.device ? ` on ${view.device.name}` : ""}${play ? `, ${play.state}` : ", nothing playing"}${view.notice ? `; last notice: ${view.notice.text}` : ""}`;
       if (ours(view) && view.kind === "phone" && !play) {
         if (player.playing()) {
@@ -528,7 +543,7 @@ class Player {
       this.mediaState("paused");
     });
     video.addEventListener("ended", () => this.ended());
-    video.addEventListener("error", () => { if (!this.recover()) this.failed(video.error && video.error.message); });
+    video.addEventListener("error", () => this.trouble(video.error && video.error.message));
 
     this.reportTimer = setInterval(() => {
       if (this.started && !this.idling) this.report(video.paused ? "paused" : "playing");
@@ -851,6 +866,10 @@ class Player {
     try {
       session = await request("POST", "/api/stream/open", body);
     } catch (error) {
+      if (transient(error) && !this.closed) {
+        this.awaitTv(`opening the stream failed: ${error.message}`);
+        return;
+      }
       command({ action: "failed", reason: error.message });
       this.failed(error.message);
       return;
@@ -895,7 +914,7 @@ class Player {
       if (this.closed || this.session !== session) return;
       const hls = new Hls({ startPosition: session.start, maxBufferLength: 30, backBufferLength: 30 });
       this.hls = hls;
-      hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal && !this.recover()) this.failed(data.details); });
+      hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) this.trouble(data.details); });
       hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => this.blocked(session)));
       hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => this.applyDefaultSubtitles(session));
       hls.loadSource(source);
@@ -1088,7 +1107,89 @@ class Player {
     const body = { position: this.position(session), played: this.played, state };
     try {
       await request("POST", `/api/stream/${session.id}/progress`, body, { keepalive });
-    } catch {}
+    } catch (error) {
+      const gone = error.status === 404 || transient(error);
+      if (gone && !keepalive && session === this.session && !this.closed) this.awaitTv(`progress: ${error.message}`);
+    }
+  }
+
+  trouble(detail) {
+    if (this.resuming || this.awaiting || this.closed) return;
+    if (!this.session) {
+      this.failed(detail);
+      return;
+    }
+    this.awaitTv(detail || "the video stopped loading");
+  }
+
+  // Asks the TV what it plays, again and again while it doesn't answer. A TV
+  // app that restarted has a new boot, which adopt() answers by resuming
+  // here; a TV that never restarted gets the stream reopened instead.
+  async awaitTv(why) {
+    if (this.awaiting || this.resuming || this.closed) return;
+    this.awaiting = true;
+    note("lost the TV's stream, asking the TV", why);
+    let delay = FIRST_RETRY;
+    const until = Date.now() + GIVE_UP;
+    while (!this.closed && Date.now() < until) {
+      let view = null;
+      try {
+        view = await request("GET", "/api/screen");
+      } catch {
+        await sleep(delay);
+        delay = Math.min(delay * 2, LONGEST_RETRY);
+        continue;
+      }
+      this.awaiting = false;
+      const before = boot;
+      adopt(view);
+      if (this.closed || this.resuming || boot !== before) return;
+      if (this.session && ours(view) && view.play && !this.recover()) this.failed(why);
+      return;
+    }
+    this.awaiting = false;
+    if (!this.closed) this.failed("The TV isn't answering");
+  }
+
+  // The TV app restarted under this phone, so its stream and its place on the
+  // screen are gone: play the same title here again from where the video is,
+  // unless something else plays by now.
+  resumeHere() {
+    if (this.resuming) return true;
+    if (!this.pick || this.idling || this.closed || this.root.classList.contains("pp-failed")) return false;
+    const session = this.session;
+    const position = this.video.currentTime > 1 ? this.video.currentTime : session ? session.start : 0;
+    const pick = this.pick;
+    this.resuming = true;
+    this.session = null;
+    this.started = false;
+    this.waiting = true;
+    this.waitingSince = Date.now();
+    note(`the TV app restarted; ${clock(position)} plays on here`, JSON.stringify(pick));
+    (async () => {
+      let delay = FIRST_RETRY;
+      const until = Date.now() + GIVE_UP;
+      while (!this.closed) {
+        try {
+          await request("POST", "/api/screen", { action: "resume", ...pick, position, device });
+          this.resuming = false;
+          adopt(await request("GET", "/api/screen"));
+          return;
+        } catch (error) {
+          if (!transient(error) || Date.now() > until) {
+            note("playing on here after the restart was refused", error.message);
+            this.resuming = false;
+            this.waiting = false;
+            request("GET", "/api/screen").then(adopt).catch(() => this.close(false));
+            return;
+          }
+          await sleep(delay);
+          delay = Math.min(delay * 2, LONGEST_RETRY);
+        }
+      }
+      this.resuming = false;
+    })();
+    return true;
   }
 
   continueOnTv() {

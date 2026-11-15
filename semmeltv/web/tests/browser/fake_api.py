@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 from aiohttp import web
@@ -18,7 +19,8 @@ fetched = set()
 marked = {}
 audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
-screen = {"kind": "tv", "device": None, "play": None, "notice": None}
+screen = {"kind": "tv", "boot": 1, "device": None, "play": None, "notice": None}
+outage = {"until": 0.0}
 screen_answers = {"delay": 0.0, "refuse": False}
 tv = {"on": True}
 opens = []
@@ -72,6 +74,8 @@ def profile_of(request):
 @web.middleware
 async def gate(request, handler):
     path = request.path
+    if path.startswith("/api/") and time.monotonic() < outage["until"] and not request.headers.get("x-fake-harness"):
+        return web.Response(status=502, text="Bad Gateway")
     if not path.startswith("/api/") or path.startswith(OPEN) or path.startswith("/api/stream/") and path != "/api/stream/open":
         return await handler(request)
     if request.headers.get("x-fake-harness") or path == "/api/events" and request.headers.get("authorization") == f"Bearer {SERVICE}":
@@ -387,7 +391,22 @@ async def screen_command(request):
         screen.update(kind="phone", device=body["device"], play=place_of(body, "starting"))
     elif action in ("failed", "stop"):
         screen.update(play=None)
+    elif action == "resume":
+        free = (screen["kind"] == "tv" and not tv["on"]) or (
+            screen["kind"] == "phone" and screen["device"]["id"] == body["device"]["id"] and not screen["play"])
+        if not free:
+            return web.json_response({"message": "Something else plays now", "ok": False}, status=422)
+        screen.update(kind="phone", device=body["device"], play={**place_of(body, "starting"), "position": body["position"]})
     return web.json_response({"message": "done", "ok": True})
+
+
+async def restart(request):
+    body = await request.json()
+    ended.update(streams)
+    screen.update(kind="tv", boot=screen["boot"] + 1, device=None, play=None, notice=None)
+    tv["on"] = body.get("tv", False)
+    outage["until"] = time.monotonic() + body.get("down", 3)
+    return web.json_response(screen)
 
 
 async def set_screen_answers(request):
@@ -504,6 +523,7 @@ app.router.add_get("/fake/opens", fake_opens)
 app.router.add_post("/fake/reset-screen", reset_screen)
 app.router.add_post("/fake/drop-play", drop_play)
 app.router.add_post("/fake/tv", set_tv)
+app.router.add_post("/fake/restart", restart)
 app.router.add_get("/fake/progress-log", fake_progress_log)
 app.router.add_get("/fake/screen-log", fake_screen_log)
 app.router.add_get("/api/stream/{tail:.*}", stream_slow)

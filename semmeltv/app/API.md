@@ -582,13 +582,15 @@ the screen, and every front end shows what it says.
 | GET | `/api/screen` | the screen, see below |
 | POST | `/api/screen` | a command, see below → `{ message, ok }` |
 
-The screen is `{ kind, device, play, notice }`. `kind` is `tv` (Play goes to
+The screen is `{ kind, boot, device, play, notice }`. `kind` is `tv` (Play goes to
 the TV, whether or not it plays), `moving` (the TV is paused while a phone
 starts the same video at the same place) or `phone` (Play goes to `device`).
 `device` is `{ id, name }`, a browser's own random id and a name such as
 "iPhone". `play` is null or what the phone plays: `{ state, kind, movie, show,
 season, episode, name, caption, position, session, paused }`, where `state` is
-`moving`, `starting` or `playing`. `notice` is the last thing worth saying,
+`moving`, `starting` or `playing`. `boot` names this run of the app: it changes
+whenever the app restarts, and the screen then starts over on the TV with nothing
+playing. `notice` is the last thing worth saying,
 `{ id, text, tone }` with `tone` `quiet` or `error`; a new `id` means a new
 notice.
 
@@ -605,6 +607,11 @@ Commands carry `action` and the sending `device`:
   "season"?, "episode"? }`: this phone plays it, from where it last stopped.
   A TV that plays stops. Any other phone loses the screen.
 - `{ "action": "failed", "reason": text }`: this phone could not play.
+- `{ "action": "resume", "movie": key, "position": 1234.5 }` (or `show`,
+  `season`, `episode`): this phone plays it again from `position`, after the app
+  restarted under it. It is taken only while nothing else plays: the screen is
+  on the TV and the TV plays nothing, or this phone has the screen and plays
+  nothing. Otherwise it answers 422 "Something else plays now".
 - `{ "action": "stop" }`: this phone's player closed. What it was starting or
   playing stops; during a handoff to it the TV carries on at once.
 

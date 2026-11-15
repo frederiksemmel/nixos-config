@@ -12,6 +12,11 @@ why. Every request is logged with its time, status, latency and size.
 --cookie is a curl cookie jar or a file holding `semmeltv_session=...`.
 --quiet-at/--quiet-for drop the progress reports for a while, as an iPhone
 whose requests fail with "Load failed" does.
+
+When the TV app restarts under it (a deploy, a crash), the screen's `boot`
+changes; like phone.js, it then asks the TV to `resume` the title here from its
+playhead, retrying with a backoff while the API is down, and logs how long the
+picture was gone.
 """
 
 import argparse
@@ -26,6 +31,9 @@ from urllib.parse import urljoin, urlparse
 import aiohttp
 
 REPORT_EVERY = 10.0
+FIRST_RETRY = 1.0
+LONGEST_RETRY = 8.0
+GIVE_UP = 120.0
 CLIENT = {"hevc": True, "eac3": True, "ac3": True}
 began = time.monotonic()
 
@@ -67,6 +75,10 @@ class Phone:
         self.stalled_since = None
         self.stops = []
         self.opening = False
+        self.boot = None
+        self.resuming = False
+        self.awaiting = False
+        self.lost_at = None
         self.quiet = (args.quiet_at, args.quiet_at + args.quiet_for) if args.quiet_at is not None else None
 
     async def request(self, method, path, body=None, quiet=False):
@@ -97,6 +109,15 @@ class Phone:
         return bool(view and view.get("device") and view["device"]["id"] == self.device["id"])
 
     def adopt(self, view, source):
+        restarted = self.boot is not None and view.get("boot") is not None and view["boot"] != self.boot
+        if view.get("boot") is not None:
+            self.boot = view["boot"]
+        if restarted:
+            log("restart", f"{source}: the TV app restarted (boot {view['boot']})")
+            if self.session or self.playing:
+                self.screen = view
+                asyncio.ensure_future(self.resume())
+                return
         before = self.screen
         self.screen = view
         if before is None or (before.get("kind"), before.get("play") and before["play"]["state"],
@@ -112,6 +133,8 @@ class Phone:
         play = view.get("play")
         wanted = self.ours(view) and play and play["state"] in ("moving", "starting", "playing")
         if not wanted:
+            if self.resuming or self.awaiting:
+                return
             if self.session and self.playing:
                 if self.ours(view) and view.get("kind") == "phone" and not play:
                     why = f"phone.js idles here (pauses, 'Stopped at {self.playhead:.0f}'): the TV dropped the play"
@@ -144,6 +167,9 @@ class Phone:
             self.stop(f"stream/open answered {status}")
             return
         self.session = session
+        if self.lost_at is not None:
+            log("restart", f"playing again {time.monotonic() - self.lost_at:.1f} s after the stream was lost")
+            self.lost_at = None
         log("stream", f"opened {session['id'][:8]} at {session['start']:.0f} of {session['duration']:.0f} s, "
                       f"{session['bitrate'] / 1e6:.1f} Mbit/s, heavy {session['heavy']}, audio converted {session['converted_audio']}")
         _, master = await self.request("GET", session["playlist"])
@@ -186,6 +212,8 @@ class Phone:
                 self.next_segment += 1
                 self.buffered_to = start + duration
             else:
+                if status is None or status == 404 or status >= 500:
+                    asyncio.ensure_future(self.await_tv(f"segment answered {status}"))
                 await asyncio.sleep(1)
 
     async def clock(self):
@@ -222,6 +250,51 @@ class Phone:
                                          {"position": self.playhead, "played": self.played, "state": state}, quiet=True)
         if status != 200:
             log("progress", f"{state} at {self.playhead:.0f} answered {status}: {answer}")
+            if status is None or status == 404 or status >= 500:
+                asyncio.ensure_future(self.await_tv(f"progress answered {status}"))
+
+    async def await_tv(self, why):
+        if self.awaiting or self.resuming or not self.session:
+            return
+        self.awaiting = True
+        self.lost_at = self.lost_at or time.monotonic()
+        log("lost", f"{why}; asking the TV with a backoff")
+        delay, until = FIRST_RETRY, time.monotonic() + GIVE_UP
+        while time.monotonic() < until:
+            status, view = await self.json("GET", "/api/screen", quiet=True)
+            if status == 200 and view:
+                self.awaiting = False
+                self.adopt(view, "back")
+                return
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, LONGEST_RETRY)
+        self.awaiting = False
+        self.stop("the TV did not come back within 2 minutes")
+
+    async def resume(self):
+        if self.resuming:
+            return
+        self.resuming = True
+        self.lost_at = self.lost_at or time.monotonic()
+        position = self.playhead
+        self.session = None
+        body = {"action": "resume", "movie": self.args.movie, "position": position, "device": self.device}
+        delay, until = FIRST_RETRY, time.monotonic() + GIVE_UP
+        while True:
+            status, answer = await self.json("POST", "/api/screen", body)
+            if status == 200:
+                log("restart", f"the TV took it back at {position:.0f} s")
+                self.resuming = False
+                _, view = await self.json("GET", "/api/screen")
+                if view:
+                    self.adopt(view, "after resume")
+                return
+            if (status is not None and status < 500) or time.monotonic() > until:
+                self.resuming = False
+                self.stop(f"resume refused: {status} {answer}")
+                return
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, LONGEST_RETRY)
 
     async def reporter(self):
         while True:

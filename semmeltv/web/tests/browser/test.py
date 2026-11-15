@@ -691,6 +691,64 @@ AWAY = """(away) => {
 }"""
 
 
+def restart_fake(down, tv_plays):
+    import json
+    request = urllib.request.Request(FAKE + "/fake/restart", data=json.dumps({"down": down, "tv": tv_plays}).encode(),
+                                     headers={"content-type": "application/json"}, method="POST")
+    urllib.request.urlopen(request).close()
+
+
+def restarts(p):
+    engine = "restart"
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.set_default_timeout(8000)
+    page.route("**/api/**", forward)
+    stub_hls(page)
+    fake("/fake/reset-screen")
+    tv_power(False)
+
+    def watch():
+        page.goto(BASE + "/movies/the-endless-summer-1966", wait_until="commit")
+        if page.evaluate("location.pathname") == "/profiles":
+            sign_in(page, engine, "Frederik", "frederik-pass", "restarts")
+        until(page, engine, "the film page is there", '!!document.querySelector("main button.play[data-play-movie]")', 8000)
+        until(page, engine, "and the TV plays nothing", '!document.querySelector(".now-state")', 8000)
+        page.wait_for_timeout(800)
+        if page.evaluate('document.querySelector("#mode").dataset.mode') == "tv":
+            page.click("#mode")
+            until(page, engine, "the switch moves to the laptop", 'document.querySelector("#mode").dataset.mode === "phone"', 5000)
+        page.click("main button.play[data-play-movie]")
+        until(page, engine, "the film plays on the laptop", '!!document.querySelector(".pp") && !document.querySelector(".pp-loading")', 8000)
+        page.wait_for_timeout(500)
+        page.evaluate(PLAYING)
+        page.evaluate('Object.defineProperty(document.querySelector(".pp-video"), "currentTime", { get: () => 754, set() {}, configurable: true })')
+        fake_until(page, engine, "and the TV knows", lambda: (fake_get("/api/screen")["play"] or {}).get("state") == "playing")
+
+    watch()
+    before = len(fake_get("/fake/opens"))
+    restart_fake(down=3, tv_plays=False)
+    fake_until(page, engine, "after the TV app restarts, the laptop plays the film on from where it was",
+               lambda: (lambda opens: len(opens) > before and opens[-1].get("start") == 754)(fake_get("/fake/opens")), timeout=30)
+    check(engine, "without the player closing or pausing", page.evaluate('!!document.querySelector(".pp") && !playerPaused() && !document.querySelector(".pp-failed")'))
+    fake_until(page, engine, "and the TV knows it plays there again",
+               lambda: (lambda screen: screen["kind"] == "phone" and (screen["play"] or {}).get("state") in ("starting", "playing"))(fake_get("/api/screen")))
+
+    restart_fake(down=2, tv_plays=True)
+    fake_until(page, engine, "a restart after which the TV plays something leaves the TV alone",
+               lambda: not page.evaluate('!!document.querySelector(".pp")'), timeout=30)
+    check(engine, "and the TV still plays", fake_get("/api/playback")["now_playing"] is not None and fake_get("/api/screen")["kind"] == "tv")
+
+    fake("/fake/reset-screen")
+    tv_power(False)
+    watch()
+    page.evaluate('document.querySelector(".pp-tv").click()')
+    until(page, engine, "Continue on TV still closes the player", '!document.querySelector(".pp")', 5000)
+    page.wait_for_timeout(12000)
+    check(engine, "and the laptop doesn't take the film back", page.evaluate('!document.querySelector(".pp")') and fake_get("/api/screen")["kind"] == "tv")
+    browser.close()
+
+
 def stale_tv(p, engine, device):
     browser = getattr(p, "webkit" if engine == "webkit" else "chromium").launch()
     page = browser.new_context(**p.devices[device]).new_page()
@@ -857,6 +915,7 @@ with sync_playwright() as p:
     laptop_player(p)
     stale_tv(p, "webkit", "iPhone 15")
     stale_tv(p, "chromium", "Pixel 7")
+    restarts(p)
     invite(p)
 
 print("PASS" if not failures else "FAIL: " + ", ".join(failures))

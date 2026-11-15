@@ -88,6 +88,14 @@ pub enum ScreenCommand {
         season: Option<u32>,
         episode: Option<u32>,
     },
+    Resume {
+        device: screen::Device,
+        movie: Option<String>,
+        show: Option<String>,
+        season: Option<u32>,
+        episode: Option<u32>,
+        position: f64,
+    },
     Stop {
         device: screen::Device,
     },

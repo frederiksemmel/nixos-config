@@ -1314,34 +1314,41 @@ impl App {
                 season,
                 episode,
             } => {
-                let pick = match (movie, show) {
-                    (Some(key), None) => intent::Pick::Movie(key),
-                    (None, Some(key)) => intent::Pick::Show { key, season, episode },
-                    _ => {
-                        return Outcome {
-                            message: "Give either movie or show".to_string(),
-                            ok: false,
-                        };
-                    }
-                };
-                let path = match intent::choose(&pick, self.nav.library(), &self.progress) {
-                    Action::Play(path) => path,
-                    other => {
-                        return Outcome {
-                            message: self.describe(&other),
-                            ok: false,
-                        };
-                    }
-                };
-                let Some(place) = self.place_of(&path, self.resume_point(&path)) else {
-                    return Outcome {
-                        message: "That is not in the library".to_string(),
-                        ok: false,
-                    };
+                let place = match self.screen_place(movie, show, season, episode, None) {
+                    Ok(place) => place,
+                    Err(refusal) => return refusal,
                 };
                 let message = format!("Playing {} on {}", place.name, device.name);
                 self.screen_step(screen::Event::Play { device, place });
                 done(message)
+            }
+            api::ScreenCommand::Resume {
+                device,
+                movie,
+                show,
+                season,
+                episode,
+                position,
+            } => {
+                let place = match self.screen_place(movie, show, season, episode, Some(position)) {
+                    Ok(place) => place,
+                    Err(refusal) => return refusal,
+                };
+                let message = format!("Playing {} on {} again", place.name, device.name);
+                self.screen_step(screen::Event::Resume {
+                    device: device.clone(),
+                    place,
+                });
+                match &self.screen {
+                    screen::Screen::Phone {
+                        device: holder,
+                        play: Some(screen::PhonePlay::Starting { .. }),
+                    } if *holder == device => done(message),
+                    _ => Outcome {
+                        message: "Something else plays now".to_string(),
+                        ok: false,
+                    },
+                }
             }
             api::ScreenCommand::Stop { device } => {
                 self.screen_step(screen::Event::Stop { device });
@@ -1352,6 +1359,31 @@ impl App {
                 done("Noted".to_string())
             }
         }
+    }
+
+    fn screen_place(
+        &self,
+        movie: Option<String>,
+        show: Option<String>,
+        season: Option<u32>,
+        episode: Option<u32>,
+        position: Option<f64>,
+    ) -> Result<screen::Place, Outcome> {
+        let refuse = |message: String| Outcome { message, ok: false };
+        let pick = match (movie, show) {
+            (Some(key), None) => intent::Pick::Movie(key),
+            (None, Some(key)) => intent::Pick::Show { key, season, episode },
+            _ => return Err(refuse("Give either movie or show".to_string())),
+        };
+        let path = match intent::choose(&pick, self.nav.library(), &self.progress) {
+            Action::Play(path) => path,
+            other => return Err(refuse(self.describe(&other))),
+        };
+        let position = position
+            .filter(|position| position.is_finite() && *position >= 0.0)
+            .unwrap_or_else(|| self.resume_point(&path));
+        self.place_of(&path, position)
+            .ok_or_else(|| refuse("That is not in the library".to_string()))
     }
 
     fn phone(&mut self, report: stream::Report) -> Outcome {
