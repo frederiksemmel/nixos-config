@@ -44,7 +44,7 @@ state=${XDG_STATE_HOME:-$HOME/.local/state}/semmeltv-deploy
 mkdir -p "$state"
 ssh_opts=(-o "UserKnownHostsFile=$state/semmeltv3_known" -o StrictHostKeyChecking=accept-new -o BatchMode=yes -J frederik@semmeltv5 -i "$HOME/.ssh/id_semmeltv")
 pi3() {
-  ssh "${ssh_opts[@]}" frederik@192.168.1.173 "$@"
+  ssh "${ssh_opts[@]}" frederik@192.168.1.230 "$@"
 }
 
 restart() {
@@ -59,5 +59,5 @@ for _ in $(seq 60); do
   sleep 1
 done
 nix run "$flake#deploy-rs" -- "$flake#semmeltv3" --skip-checks \
-  --hostname 192.168.1.173 --magic-rollback false --ssh-opts "${ssh_opts[*]}" \
+  --hostname 192.168.1.230 --magic-rollback false --ssh-opts "${ssh_opts[*]}" \
   -- --builders "$builders" --max-jobs 0
