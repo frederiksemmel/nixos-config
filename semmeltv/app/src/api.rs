@@ -647,12 +647,12 @@ fn watch(progress: &Progress, file: &std::path::Path, tags: &Tags, runtime: Opti
             episode: None,
             tags: Some(tags),
             duration,
-            stopped_at: watched.stopped_at,
+            stopped_at: watched.stopped_at(),
             download: "",
         }
         .line(),
         runtime_minutes: runtime,
-        stopped_at: watched.stopped_at,
+        stopped_at: watched.stopped_at(),
         duration,
         tags: TagsView::from(tags),
         subtitles,
@@ -1760,7 +1760,7 @@ mod tests {
             television: Television::new(tv::Settings {
                 kind: None,
                 renderer: None,
-                token: crate::db::Db::memory(FsPath::new("/lib")).tv_token(),
+                token: crate::db::Db::memory().tv_token(),
             }),
             audio: None,
             library: PathBuf::from("/lib"),

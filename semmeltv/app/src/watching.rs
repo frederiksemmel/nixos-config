@@ -57,14 +57,14 @@ pub struct Current {
 
 impl Current {
     pub fn fraction(&self) -> f32 {
-        match (self.watched.stopped_at, self.watched.duration) {
+        match (self.watched.stopped_at(), self.watched.duration) {
             (Some(at), Some(duration)) if duration > 0.0 => (at / duration).clamp(0.0, 1.0) as f32,
             _ => 0.0,
         }
     }
 
     pub fn remaining(&self) -> Option<f64> {
-        let (at, duration) = (self.watched.stopped_at?, self.watched.duration?);
+        let (at, duration) = (self.watched.stopped_at()?, self.watched.duration?);
         (duration > at).then_some(duration - at)
     }
 }
@@ -253,7 +253,7 @@ pub fn mark(
 }
 
 pub fn movie_finished(progress: &Progress, movie: &Movie) -> bool {
-    progress.files.get(&movie.path).is_some_and(|watched| watched.finished)
+    progress.files.get(&movie.path).is_some_and(crate::progress::Watched::finished)
 }
 
 pub fn show_finished(progress: &Progress, show: &Show) -> bool {
@@ -301,8 +301,8 @@ struct Started {
 
 fn started_movie(progress: &Progress, index: usize, movie: &Movie) -> Option<Started> {
     let watched = *progress.files.get(&movie.path)?;
-    let (at, duration) = (watched.stopped_at?, watched.duration?);
-    if watched.finished || watched.in_credits() || duration <= 0.0 || at <= 0.0 {
+    let (at, duration) = (watched.stopped_at()?, watched.duration?);
+    if watched.finished() || watched.in_credits() || duration <= 0.0 || at <= 0.0 {
         return None;
     }
     let entry = progress.watching.last_played(Kind::Movie, &movie.key);
@@ -744,7 +744,7 @@ mod tests {
         stop(&mut progress, up, 3000.0, 6000.0, Some(NOW - 30 * DAY));
         assert!(dismiss(&mut progress, &library, Kind::Movie, "up", NOW - DAY));
         assert!(forgotten_keys(&library, &progress).is_empty());
-        assert_eq!(progress.files[up].stopped_at, Some(3000.0));
+        assert_eq!(progress.files[up].stopped_at(), Some(3000.0));
         progress.played(up, NOW);
         assert_eq!(forgotten_keys(&library, &progress), ["up"]);
         assert!(!dismiss(&mut progress, &library, Kind::Movie, "gone", NOW));
@@ -774,8 +774,8 @@ mod tests {
         stop(&mut progress, up, 5009.9, AIRPLANE, Some(NOW));
         assert!(stopped(&mut progress, &library, up));
         assert!(progress.watching.entries.is_empty());
-        assert!(progress.files[up].finished);
-        assert_eq!(progress.files[up].stopped_at, None);
+        assert!(progress.files[up].finished());
+        assert_eq!(progress.files[up].stopped_at(), None);
         assert!(forgotten_keys(&library, &progress).is_empty());
     }
 
@@ -788,8 +788,8 @@ mod tests {
         stop(&mut progress, up, 4900.0, AIRPLANE, Some(NOW));
         assert!(!stopped(&mut progress, &library, up));
         assert_eq!(keys(&progress), ["up"]);
-        assert_eq!(progress.files[up].stopped_at, Some(4900.0));
-        assert!(!progress.files[up].finished);
+        assert_eq!(progress.files[up].stopped_at(), Some(4900.0));
+        assert!(!progress.files[up].finished());
     }
 
     #[test]
@@ -838,7 +838,7 @@ mod tests {
         assert_eq!(marked, Some(vec![up.to_path_buf()]));
         assert!(movie_finished(&progress, &library.movies[0]));
         assert!(progress.watching.entries.is_empty());
-        assert_eq!(progress.files[up].stopped_at, None);
+        assert_eq!(progress.files[up].stopped_at(), None);
         mark(&mut progress, &library, Kind::Movie, "up", None, Mark::Unwatched);
         assert!(!movie_finished(&progress, &library.movies[0]));
         assert!(forgotten_keys(&library, &progress).is_empty());
@@ -857,7 +857,7 @@ mod tests {
         stop(&mut progress, up, 3000.0, 6000.0, Some(NOW));
         mark(&mut progress, &library, Kind::Movie, "up", None, Mark::Unwatched);
         assert!(progress.watching.entries.is_empty());
-        assert_eq!(progress.files[up].stopped_at, None);
+        assert_eq!(progress.files[up].stopped_at(), None);
     }
 
     #[test]

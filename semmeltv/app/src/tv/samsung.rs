@@ -175,7 +175,7 @@ mod tests {
 
     #[test]
     fn the_url_names_semmeltv_and_carries_the_saved_token() {
-        let db = crate::db::Db::memory(std::path::Path::new("/lib"));
+        let db = crate::db::Db::memory();
         let remote = Remote::new("192.168.1.148", db.tv_token());
         assert_eq!(
             remote.url(None),

@@ -730,7 +730,7 @@ impl App {
         self.subtitles.set_owner(self.profile);
         self.apply_audio(self.profile);
         let tracks = match self.progress.files.get(path) {
-            Some(watched) if start > 0.0 => watched.tracks,
+            Some(watched) if start > 0.0 => watched.tracks(),
             _ => progress::Tracks::default(),
         };
         match Player::start(
@@ -2039,7 +2039,7 @@ impl App {
             episode,
             tags: Some(tags),
             duration: watched.duration.or(runtime),
-            stopped_at: watched.stopped_at,
+            stopped_at: watched.stopped_at(),
             download,
         }
         .line()

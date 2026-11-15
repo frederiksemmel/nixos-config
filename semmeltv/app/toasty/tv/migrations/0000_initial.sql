@@ -1,35 +1,7 @@
-CREATE TABLE "sessions" (
-    "token_hash" BLOB NOT NULL,
-    "profile_id" BIGINT NOT NULL,
-    "created_at" BIGINT NOT NULL,
-    "last_seen_at" BIGINT NOT NULL,
-    "expires_at" BIGINT NOT NULL,
-    "label" TEXT NOT NULL,
-    PRIMARY KEY ("token_hash")
-);
--- #[toasty::breakpoint]
-CREATE INDEX "index_sessions_by_profile_id" ON "sessions" ("profile_id");
--- #[toasty::breakpoint]
-CREATE TABLE "show_places" (
-    "profile_id" BIGINT NOT NULL,
-    "show_key" TEXT NOT NULL,
-    "season" BIGINT NOT NULL,
-    "episode" BIGINT NOT NULL,
-    "finished" BOOLEAN NOT NULL,
-    PRIMARY KEY ("profile_id", "show_key")
-);
--- #[toasty::breakpoint]
-CREATE TABLE "dismissed" (
-    "profile_id" BIGINT NOT NULL,
-    "path" TEXT NOT NULL,
-    "at" BIGINT NOT NULL,
-    PRIMARY KEY ("profile_id", "path")
-);
--- #[toasty::breakpoint]
-CREATE TABLE "subtitle_settings" (
-    "profile_id" BIGINT NOT NULL,
-    "settings" TEXT NOT NULL,
-    PRIMARY KEY ("profile_id")
+CREATE TABLE "settings" (
+    "name" TEXT NOT NULL,
+    "value" TEXT NOT NULL,
+    PRIMARY KEY ("name")
 );
 -- #[toasty::breakpoint]
 CREATE TABLE "audio_prefs" (
@@ -37,52 +9,6 @@ CREATE TABLE "audio_prefs" (
     "output" TEXT NOT NULL CHECK ("output" IN ('tv', 'headphones')),
     "headphones_address" TEXT,
     PRIMARY KEY ("profile_id")
-);
--- #[toasty::breakpoint]
-CREATE TABLE "files" (
-    "path" TEXT NOT NULL,
-    "duration" REAL,
-    "credits" REAL,
-    "subtitle_delay" REAL NOT NULL,
-    "embedded_subtitles" BIGINT,
-    PRIMARY KEY ("path")
-);
--- #[toasty::breakpoint]
-CREATE TABLE "settings" (
-    "name" TEXT NOT NULL,
-    "value" TEXT NOT NULL,
-    PRIMARY KEY ("name")
-);
--- #[toasty::breakpoint]
-CREATE TABLE "watching" (
-    "profile_id" BIGINT NOT NULL,
-    "kind" TEXT NOT NULL CHECK ("kind" IN ('series', 'movie')),
-    "title_key" TEXT NOT NULL,
-    "last_played" BIGINT NOT NULL,
-    PRIMARY KEY ("profile_id", "kind", "title_key")
-);
--- #[toasty::breakpoint]
-CREATE TABLE "profiles" (
-    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
-    "name" TEXT NOT NULL,
-    "role" TEXT NOT NULL CHECK ("role" IN ('admin', 'viewer')),
-    "password_hash" TEXT,
-    "color" TEXT,
-    "created_at" BIGINT NOT NULL
-);
--- #[toasty::breakpoint]
-CREATE UNIQUE INDEX "index_profiles_by_name" ON "profiles" ("name");
--- #[toasty::breakpoint]
-CREATE TABLE "file_places" (
-    "profile_id" BIGINT NOT NULL,
-    "path" TEXT NOT NULL,
-    "stopped_at" REAL,
-    "last_played" BIGINT,
-    "finished" BOOLEAN NOT NULL,
-    "audio_track" BIGINT,
-    "subtitle_track" BIGINT,
-    "subtitles_shown" BOOLEAN,
-    PRIMARY KEY ("profile_id", "path")
 );
 -- #[toasty::breakpoint]
 CREATE TABLE "passkeys" (
@@ -113,6 +39,85 @@ CREATE TABLE "invites" (
 CREATE INDEX "index_invites_by_profile_id" ON "invites" ("profile_id");
 -- #[toasty::breakpoint]
 CREATE INDEX "index_invites_by_created_by" ON "invites" ("created_by");
+-- #[toasty::breakpoint]
+CREATE TABLE "started" (
+    "profile_id" BIGINT NOT NULL,
+    "kind" TEXT NOT NULL CHECK ("kind" IN ('series', 'movie')),
+    "title_id" BIGINT NOT NULL,
+    "last_played" BIGINT NOT NULL,
+    PRIMARY KEY ("profile_id", "kind", "title_id")
+);
+-- #[toasty::breakpoint]
+CREATE TABLE "video_facts" (
+    "kind" TEXT NOT NULL CHECK ("kind" IN ('episode', 'movie')),
+    "video_id" BIGINT NOT NULL,
+    "duration" REAL,
+    "credits" REAL,
+    "subtitle_delay" REAL NOT NULL,
+    "embedded_subtitles" BIGINT,
+    PRIMARY KEY ("kind", "video_id")
+);
+-- #[toasty::breakpoint]
+CREATE TABLE "subtitle_settings" (
+    "profile_id" BIGINT NOT NULL,
+    "settings" TEXT NOT NULL,
+    PRIMARY KEY ("profile_id")
+);
+-- #[toasty::breakpoint]
+CREATE TABLE "video_places" (
+    "profile_id" BIGINT NOT NULL,
+    "kind" TEXT NOT NULL CHECK ("kind" IN ('episode', 'movie')),
+    "video_id" BIGINT NOT NULL,
+    "viewing" TEXT NOT NULL CHECK ("viewing" IN ('not_started', 'in_progress', 'finished')),
+    "viewing_at" REAL,
+    "viewing_audio_track" BIGINT,
+    "viewing_subtitle_track" BIGINT,
+    "viewing_subtitles_shown" BOOLEAN,
+    "last_played" BIGINT,
+    PRIMARY KEY ("profile_id", "kind", "video_id"),
+    CHECK (("viewing" = 'in_progress') = ("viewing_at" IS NOT NULL)),
+    CHECK ("viewing" = 'in_progress' OR ("viewing_audio_track" IS NULL AND "viewing_subtitle_track" IS NULL AND "viewing_subtitles_shown" IS NULL))
+);
+-- #[toasty::breakpoint]
+CREATE TABLE "sessions" (
+    "token_hash" BLOB NOT NULL,
+    "profile_id" BIGINT NOT NULL,
+    "created_at" BIGINT NOT NULL,
+    "last_seen_at" BIGINT NOT NULL,
+    "expires_at" BIGINT NOT NULL,
+    "label" TEXT NOT NULL,
+    PRIMARY KEY ("token_hash")
+);
+-- #[toasty::breakpoint]
+CREATE INDEX "index_sessions_by_profile_id" ON "sessions" ("profile_id");
+-- #[toasty::breakpoint]
+CREATE TABLE "profiles" (
+    "id" INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+    "name" TEXT NOT NULL,
+    "role" TEXT NOT NULL CHECK ("role" IN ('admin', 'viewer')),
+    "password_hash" TEXT,
+    "color" TEXT,
+    "created_at" BIGINT NOT NULL
+);
+-- #[toasty::breakpoint]
+CREATE UNIQUE INDEX "index_profiles_by_name" ON "profiles" ("name");
+-- #[toasty::breakpoint]
+CREATE TABLE "series_places" (
+    "profile_id" BIGINT NOT NULL,
+    "show_id" BIGINT NOT NULL,
+    "season" BIGINT NOT NULL,
+    "episode" BIGINT NOT NULL,
+    "finished" BOOLEAN NOT NULL,
+    PRIMARY KEY ("profile_id", "show_id")
+);
+-- #[toasty::breakpoint]
+CREATE TABLE "dismissed_videos" (
+    "profile_id" BIGINT NOT NULL,
+    "kind" TEXT NOT NULL CHECK ("kind" IN ('episode', 'movie')),
+    "video_id" BIGINT NOT NULL,
+    "at" BIGINT NOT NULL,
+    PRIMARY KEY ("profile_id", "kind", "video_id")
+);
 -- #[toasty::breakpoint]
 INSERT INTO "profiles" ("id", "name", "role", "created_at") VALUES
     (1, 'Frederik', 'admin', unixepoch()),

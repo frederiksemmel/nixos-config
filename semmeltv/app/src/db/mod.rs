@@ -1,6 +1,5 @@
 mod auth;
 mod index;
-mod legacy;
 mod models;
 mod progress;
 
@@ -21,7 +20,6 @@ use toasty_driver_sqlite::{JournalMode, Sqlite, Synchronous};
 
 static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!("toasty/tv");
 const TV_TOKEN: &str = "tv_token";
-const KEYED_BY_LIBRARY: &str = "keyed_by_library";
 
 pub type Error = Box<dyn std::error::Error + Send + Sync>;
 pub type Result<T> = std::result::Result<T, Error>;
@@ -34,7 +32,6 @@ pub struct Db {
 struct Inner {
     db: toasty::Db,
     runtime: Option<Runtime>,
-    library: PathBuf,
     index: RwLock<Index>,
     blind: Mutex<HashSet<ProfileId>>,
 }
@@ -79,6 +76,45 @@ pub(crate) fn wait<T: Send + 'static>(
     Ok(result.recv().map_err(|_| "the database task stopped")??)
 }
 
+fn set_aside_unknown(file: &Path) -> Result<()> {
+    if !file.exists() || fs::metadata(file)?.len() == 0 {
+        return Ok(());
+    }
+    let known: HashSet<i64> = MIGRATIONS.migrations().iter().map(|migration| migration.id() as i64).collect();
+    let applied: Vec<i64> = {
+        let connection = rusqlite::Connection::open(file)?;
+        let tracked: bool = connection.query_row(
+            "SELECT EXISTS (SELECT 1 FROM sqlite_master WHERE name = '__toasty_migrations')",
+            [],
+            |row| row.get(0),
+        )?;
+        if !tracked {
+            return Ok(());
+        }
+        let mut statement = connection.prepare("SELECT id FROM __toasty_migrations")?;
+        statement.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?
+    };
+    if applied.iter().all(|id| known.contains(id)) {
+        return Ok(());
+    }
+    for suffix in ["", "-wal", "-shm"] {
+        let mut from = file.as_os_str().to_owned();
+        from.push(suffix);
+        let mut to = file.as_os_str().to_owned();
+        to.push(".replaced");
+        to.push(suffix);
+        if Path::new(&from).exists() {
+            fs::rename(&from, &to)?;
+        }
+    }
+    eprintln!(
+        "database: {} has a schema this build does not know; it was moved to {}.replaced and a new one started",
+        file.display(),
+        file.display()
+    );
+    Ok(())
+}
+
 fn private(file: &Path) -> Result<()> {
     for suffix in ["", "-wal", "-shm"] {
         let mut name = file.as_os_str().to_owned();
@@ -92,27 +128,28 @@ fn private(file: &Path) -> Result<()> {
 }
 
 impl Db {
-    pub fn open(file: &Path, library: &Path) -> Result<Self> {
+    pub fn open(file: &Path) -> Result<Self> {
         if let Some(dir) = file.parent() {
             fs::create_dir_all(dir)?;
         }
+        set_aside_unknown(file)?;
         let runtime = runtime()?;
         fs::OpenOptions::new().create(true).append(true).mode(0o600).open(file)?;
         let driver = Sqlite::open(file)
             .journal_mode(JournalMode::Wal)
             .synchronous(Synchronous::Normal)
             .busy_timeout(Duration::from_secs(5));
-        let db = Self::ready(runtime, driver, library)?;
+        let db = Self::ready(runtime, driver)?;
         private(file)?;
         Ok(db)
     }
 
     #[cfg(test)]
-    pub fn memory(library: &Path) -> Self {
-        Self::ready(runtime().unwrap(), Sqlite::in_memory(), library).unwrap()
+    pub fn memory() -> Self {
+        Self::ready(runtime().unwrap(), Sqlite::in_memory()).unwrap()
     }
 
-    fn ready(runtime: Runtime, driver: Sqlite, library: &Path) -> Result<Self> {
+    fn ready(runtime: Runtime, driver: Sqlite) -> Result<Self> {
         let db = wait(&runtime, async move {
             let db = toasty::Db::builder().models(models::all()).build(driver).await?;
             MIGRATIONS.apply(&db).await?;
@@ -122,7 +159,6 @@ impl Db {
             inner: Arc::new(Inner {
                 db,
                 runtime: Some(runtime),
-                library: library.to_path_buf(),
                 index: RwLock::default(),
                 blind: Mutex::default(),
             }),
@@ -139,27 +175,10 @@ impl Db {
     }
 
     pub fn set_library(&self, library: &Library) -> bool {
-        let (was_empty, index) = {
-            let mut index = self.inner.index.write().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let was_empty = index.is_empty();
-            index.add(library);
-            (was_empty, index.clone())
-        };
-        if index.is_empty() {
-            return false;
-        }
-        let root = self.inner.library.clone();
-        match self.wait(move |db| legacy::convert(db, root, index)) {
-            Ok(0) => {}
-            Ok(moved) => {
-                eprintln!("database: keyed {moved} rows of progress by library id");
-                if let Err(error) = self.set_setting(KEYED_BY_LIBRARY, Some("yes")) {
-                    eprintln!("database: {error}");
-                }
-            }
-            Err(error) => eprintln!("database: keying progress by library id: {error}"),
-        }
-        was_empty
+        let mut index = self.inner.index.write().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let was_empty = index.is_empty();
+        index.add(library);
+        was_empty && !index.is_empty()
     }
 
     fn video(&self, file: &Path) -> Option<Video> {
@@ -345,7 +364,7 @@ mod tests {
     use super::*;
 
     fn db() -> Db {
-        let db = Db::memory(Path::new("/lib"));
+        let db = Db::memory();
         db.set_library(&progress::tests::library());
         db
     }
@@ -406,13 +425,13 @@ mod tests {
 
         let gone = db.progress(ProfileId(4)).unwrap();
         assert!(gone.shows.is_empty() && gone.watching.entries().is_empty());
-        assert_eq!(gone.files[Path::new("/lib/Movies/Up/Up.mkv")].stopped_at, None);
+        assert_eq!(gone.files[Path::new("/lib/Movies/Up/Up.mkv")].stopped_at(), None);
         assert_eq!(gone.files[Path::new("/lib/Movies/Up/Up.mkv")].duration, Some(5760.0));
         assert_eq!(db.subtitle_settings(ProfileId(4)).unwrap(), None);
         assert_eq!(db.audio_prefs(ProfileId(4)).unwrap(), AudioPrefs::default());
         assert_eq!(db.invite(&[9]).unwrap().unwrap().created_by, None);
         let kept = db.progress(ProfileId(3)).unwrap();
-        assert_eq!(kept.files[Path::new("/lib/Movies/Up/Up.mkv")].stopped_at, Some(60.0));
+        assert_eq!(kept.files[Path::new("/lib/Movies/Up/Up.mkv")].stopped_at(), Some(60.0));
         assert_eq!(db.audio_prefs(ProfileId(3)).unwrap().output, Output::Headphones);
         assert!(!db.delete_profile(ProfileId(4)).unwrap());
     }
@@ -440,12 +459,12 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("semmeltv-db-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let file = dir.join("state/semmeltv.db");
-        let db = Db::open(&file, Path::new("/lib")).unwrap();
+        let db = Db::open(&file).unwrap();
         db.set_setting("x", Some("1")).unwrap();
         drop(db);
         let mode = fs::metadata(&file).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
-        let again = Db::open(&file, Path::new("/lib")).unwrap();
+        let again = Db::open(&file).unwrap();
         assert_eq!(again.setting("x").unwrap().as_deref(), Some("1"));
         fs::remove_dir_all(dir).unwrap();
     }
@@ -490,33 +509,26 @@ mod tests {
     }
 
     #[test]
-    fn progress_kept_by_path_moves_to_library_ids_once() {
-        let db = Db::memory(Path::new("/lib"));
-        db.wait(|mut db| async move {
-            for sql in [
-                "INSERT INTO legacy_files VALUES ('Movies/Up/Up.mkv', 5760.0, NULL, 0.5, 2)",
-                "INSERT INTO legacy_file_places VALUES (1, 'Movies/Up/Up.mkv', 600.0, 1800000000, 0, 1, 3, 1)",
-                "INSERT INTO legacy_file_places VALUES (1, 'Movies/Gone.mkv', 10.0, 1, 0, NULL, NULL, NULL)",
-                "INSERT INTO legacy_show_places VALUES (2, 'dark', 1, 2, 1)",
-                "INSERT INTO legacy_watching VALUES (1, 'movie', 'up', 1800000000)",
-                "INSERT INTO legacy_dismissed VALUES (1, 'Series/Dark/S01/Dark.S01E02.mkv', 1700000000)",
-            ] {
-                toasty::sql::statement(sql).exec(&mut db).await?;
-            }
-            Ok(())
-        })
+    fn a_database_from_an_older_schema_is_set_aside_and_started_fresh() {
+        let dir = std::env::temp_dir().join(format!("semmeltv-replaced-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("semmeltv.db");
+        let old = rusqlite::Connection::open(&file).unwrap();
+        old.execute_batch(
+            "CREATE TABLE __toasty_migrations (id INTEGER PRIMARY KEY, name TEXT NOT NULL, applied_at TEXT NOT NULL);
+             INSERT INTO __toasty_migrations VALUES (42, '0000_initial.sql', '2026-11-14');
+             CREATE TABLE profiles (id INTEGER PRIMARY KEY, name TEXT);",
+        )
         .unwrap();
-        db.set_library(&progress::tests::library());
-        let first = db.progress(ProfileId::FIRST).unwrap();
-        let up = first.files[Path::new(progress::tests::UP)];
-        assert_eq!((up.stopped_at, up.duration, up.tracks.subtitles_shown), (Some(600.0), Some(5760.0), Some(true)));
-        assert_eq!(first.watching.entries()[0].key, "up");
-        assert_eq!(first.dismissed[0].file, Path::new(progress::tests::DARK));
-        assert_eq!(db.progress(ProfileId(2)).unwrap().shows["dark"].episode, 2);
-        assert_eq!(db.subtitle_files().unwrap()[Path::new(progress::tests::UP)].delay, 0.5);
-        assert_eq!(db.setting(KEYED_BY_LIBRARY).unwrap().as_deref(), Some("yes"));
-        db.set_library(&progress::tests::library());
-        assert_eq!(db.progress(ProfileId::FIRST).unwrap(), first);
+        drop(old);
+        let db = Db::open(&file).unwrap();
+        assert!(dir.join("semmeltv.db.replaced").exists());
+        db.set_setting("x", Some("1")).unwrap();
+        drop(db);
+        let again = Db::open(&file).unwrap();
+        assert_eq!(again.setting("x").unwrap().as_deref(), Some("1"));
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]

@@ -19,6 +19,18 @@ pub enum VideoKind {
     Movie,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, toasty::Embed)]
+pub enum Viewing {
+    NotStarted,
+    InProgress {
+        at: f64,
+        audio_track: Option<i64>,
+        subtitle_track: Option<i64>,
+        subtitles_shown: Option<bool>,
+    },
+    Finished,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, toasty::Embed)]
 pub enum Output {
     Tv,
@@ -128,12 +140,8 @@ pub struct VideoPlace {
     pub video_id: i64,
     #[belongs_to(key = profile_id, references = id)]
     pub profile: Deferred<Profile>,
-    pub stopped_at: Option<f64>,
+    pub viewing: Viewing,
     pub last_played: Option<i64>,
-    pub finished: bool,
-    pub audio_track: Option<i64>,
-    pub subtitle_track: Option<i64>,
-    pub subtitles_shown: Option<bool>,
 }
 
 #[derive(Debug, toasty::Model)]

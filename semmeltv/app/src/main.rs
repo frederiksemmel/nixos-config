@@ -209,7 +209,7 @@ fn wake_word(args: &Args) -> Option<voice::WakeWord> {
 }
 
 fn open_db(args: &Args) -> Result<Db, String> {
-    Db::open(&args.db, &args.library).map_err(|error| format!("{}: {error}", args.db.display()))
+    Db::open(&args.db).map_err(|error| format!("{}: {error}", args.db.display()))
 }
 
 fn stored_progress(args: &Args) -> progress::Progress {
@@ -532,11 +532,11 @@ fn run() -> Result<(), String> {
         "progress" => {
             let mut files: Vec<_> = stored_progress(&args).files.into_iter().collect();
             files.sort_by(|a, b| a.0.cmp(&b.0));
-            for (file, watched) in files.iter().filter(|(_, watched)| watched.stopped_at.is_some() || watched.finished) {
+            for (file, watched) in files.iter().filter(|(_, watched)| watched.stopped_at().is_some() || watched.finished()) {
                 println!(
                     "{:>8.1} {:>8} {:>8.1}  {}",
-                    watched.stopped_at.unwrap_or(0.0),
-                    if watched.finished { "finished" } else { "" },
+                    watched.stopped_at().unwrap_or(0.0),
+                    if watched.finished() { "finished" } else { "" },
                     watched.resume_at(),
                     file.strip_prefix(&args.library).unwrap_or(file).display()
                 );

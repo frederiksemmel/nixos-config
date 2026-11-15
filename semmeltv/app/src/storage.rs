@@ -292,7 +292,7 @@ pub fn titles(
         if let Some(played) = watched.and_then(|watched| watched.last_played) {
             titles[index].last_watched = titles[index].last_watched.max(Some(played));
         }
-        if watched.is_some_and(|watched| watched.stopped_at.is_some()) {
+        if watched.is_some_and(|watched| watched.stopped_at().is_some()) {
             keep(owner.title.clone(), Keep::Started, &mut titles);
         }
         let titles_now = &mut titles[index];
@@ -321,7 +321,7 @@ pub fn titles(
             } else if progress
                 .files
                 .get(&file.path)
-                .is_some_and(|watched| watched.stopped_at.is_some())
+                .is_some_and(|watched| watched.stopped_at().is_some())
             {
                 Keep::Started
             } else {
@@ -711,7 +711,10 @@ mod tests {
             files: [(
                 PathBuf::from("/lib/Movies/Gone/Gone.mkv"),
                 Watched {
-                    stopped_at: Some(60.0),
+                    viewing: crate::progress::Viewing::InProgress {
+                        at: 60.0,
+                        tracks: crate::progress::Tracks::default(),
+                    },
                     ..Watched::default()
                 },
             )]

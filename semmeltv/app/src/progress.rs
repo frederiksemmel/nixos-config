@@ -23,19 +23,43 @@ pub struct Tracks {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub enum Viewing {
+    #[default]
+    NotStarted,
+    InProgress {
+        at: f64,
+        tracks: Tracks,
+    },
+    Finished,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Watched {
-    pub stopped_at: Option<f64>,
+    pub viewing: Viewing,
     pub duration: Option<f64>,
-    pub last_played: Option<u64>,
-    #[serde(default)]
-    pub finished: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credits: Option<f64>,
-    #[serde(default)]
-    pub tracks: Tracks,
+    pub last_played: Option<u64>,
 }
 
 impl Watched {
+    pub fn stopped_at(&self) -> Option<f64> {
+        match self.viewing {
+            Viewing::InProgress { at, .. } => Some(at),
+            _ => None,
+        }
+    }
+
+    pub fn finished(&self) -> bool {
+        self.viewing == Viewing::Finished
+    }
+
+    pub fn tracks(&self) -> Tracks {
+        match self.viewing {
+            Viewing::InProgress { tracks, .. } => tracks,
+            _ => Tracks::default(),
+        }
+    }
+
     pub fn credits_start(&self) -> Option<f64> {
         let duration = self.duration.filter(|duration| *duration > 0.0)?;
         let found = self.credits.filter(|start| (duration / 2.0..duration).contains(start));
@@ -44,7 +68,7 @@ impl Watched {
     }
 
     pub fn in_credits(&self) -> bool {
-        match (self.stopped_at, self.credits_start()) {
+        match (self.stopped_at(), self.credits_start()) {
             (Some(at), Some(start)) => at >= start,
             _ => false,
         }
@@ -54,7 +78,7 @@ impl Watched {
         if self.in_credits() {
             return 0.0;
         }
-        self.stopped_at.unwrap_or(0.0)
+        self.stopped_at().unwrap_or(0.0)
     }
 }
 
@@ -79,7 +103,10 @@ impl Progress {
     pub fn record(&mut self, file: &Path, place: Place) {
         let watched = self.files.entry(file.to_path_buf()).or_default();
         if place.position > 0.0 {
-            watched.stopped_at = Some(place.position);
+            watched.viewing = Viewing::InProgress {
+                at: place.position,
+                tracks: watched.tracks(),
+            };
         }
         if place.duration > 0.0 {
             watched.duration = Some(place.duration);
@@ -90,7 +117,13 @@ impl Progress {
     }
 
     pub fn keep_tracks(&mut self, file: &Path, tracks: Tracks) {
-        self.files.entry(file.to_path_buf()).or_default().tracks = tracks;
+        if let Some(Watched {
+            viewing: Viewing::InProgress { tracks: kept, .. },
+            ..
+        }) = self.files.get_mut(file)
+        {
+            *kept = tracks;
+        }
     }
 
     pub fn played(&mut self, file: &Path, now: u64) {
@@ -98,22 +131,17 @@ impl Progress {
     }
 
     pub fn finish(&mut self, file: &Path) {
-        let watched = self.files.entry(file.to_path_buf()).or_default();
-        watched.stopped_at = None;
-        watched.tracks = Tracks::default();
-        watched.finished = true;
+        self.files.entry(file.to_path_buf()).or_default().viewing = Viewing::Finished;
     }
 
     pub fn unfinish(&mut self, file: &Path) {
         if let Some(watched) = self.files.get_mut(file) {
-            watched.stopped_at = None;
-            watched.tracks = Tracks::default();
-            watched.finished = false;
+            watched.viewing = Viewing::NotStarted;
         }
     }
 
     pub fn watched(&self, show: &Show, episode: &Episode) -> bool {
-        let finished = self.files.get(&episode.path).is_some_and(|watched| watched.finished);
+        let finished = self.files.get(&episode.path).is_some_and(Watched::finished);
         let passed = self.shows.get(&show.key).is_some_and(|position| {
             let place = (position.season, position.episode);
             let this = (episode.season, episode.number);
@@ -152,7 +180,10 @@ mod tests {
 
     fn stopped(position: f64, duration: f64, credits: Option<f64>) -> Watched {
         Watched {
-            stopped_at: Some(position),
+            viewing: Viewing::InProgress {
+                at: position,
+                tracks: Tracks::default(),
+            },
             duration: Some(duration),
             credits,
             ..Watched::default()
@@ -197,12 +228,13 @@ mod tests {
         assert_eq!(
             progress.files[file],
             Watched {
-                stopped_at: Some(3840.0),
+                viewing: Viewing::InProgress {
+                    at: 3840.0,
+                    tracks: Tracks::default(),
+                },
                 duration: Some(7860.0),
                 last_played: None,
-                finished: false,
                 credits: None,
-                tracks: Tracks::default(),
             }
         );
     }
@@ -213,7 +245,7 @@ mod tests {
         let file = Path::new("/lib/Up.mkv");
         progress.record(file, FILM);
         progress.record(file, Place::default());
-        assert_eq!(progress.files[file].stopped_at, Some(3840.0));
+        assert_eq!(progress.files[file].stopped_at(), Some(3840.0));
         assert_eq!(progress.files[file].duration, Some(7860.0));
     }
 
@@ -223,9 +255,9 @@ mod tests {
         let file = Path::new("/lib/Up.mkv");
         progress.record(file, FILM);
         progress.finish(file);
-        assert_eq!(progress.files[file].stopped_at, None);
+        assert_eq!(progress.files[file].stopped_at(), None);
         assert_eq!(progress.files[file].duration, Some(7860.0));
-        assert!(progress.files[file].finished);
+        assert!(progress.files[file].finished());
     }
 
     #[test]
@@ -239,9 +271,11 @@ mod tests {
         };
         progress.record(file, FILM);
         progress.keep_tracks(file, tracks);
-        assert_eq!(progress.files[file].tracks, tracks);
+        assert_eq!(progress.files[file].tracks(), tracks);
         progress.finish(file);
-        assert_eq!(progress.files[file].tracks, Tracks::default());
+        assert_eq!(progress.files[file].tracks(), Tracks::default());
+        progress.keep_tracks(file, tracks);
+        assert_eq!(progress.files[file].viewing, Viewing::Finished);
     }
 
     #[test]
@@ -263,7 +297,7 @@ mod tests {
                 ..episode
             },
         );
-        assert!(progress.files[file].finished);
+        assert!(!progress.files[file].finished());
         assert_eq!(progress.files[file].resume_at(), 3887.0);
         progress.record(
             file,
@@ -297,8 +331,8 @@ mod tests {
         progress.record(file, FILM);
         progress.finish(file);
         progress.unfinish(file);
-        assert_eq!(progress.files[file].stopped_at, None);
-        assert!(!progress.files[file].finished);
+        assert_eq!(progress.files[file].stopped_at(), None);
+        assert_eq!(progress.files[file].viewing, Viewing::NotStarted);
         assert_eq!(progress.files[file].duration, Some(7860.0));
     }
 

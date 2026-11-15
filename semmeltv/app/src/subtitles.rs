@@ -1015,7 +1015,7 @@ mod tests {
 
     #[test]
     fn settings_survive_a_restart_and_belong_to_one_profile() {
-        let db = Db::memory(Path::new("/lib"));
+        let db = Db::memory();
         let subtitles = Subtitles::load(&db, ProfileId::FIRST);
         assert_eq!(subtitles.settings(), Settings::default());
         let bigger = Settings {
@@ -1029,7 +1029,7 @@ mod tests {
 
     #[test]
     fn each_profile_keeps_its_own_style_and_the_video_takes_its_owners() {
-        let db = Db::memory(Path::new("/lib"));
+        let db = Db::memory();
         let subtitles = Subtitles::load(&db, ProfileId::FIRST);
         let big = Settings {
             size: 2.0,
@@ -1076,7 +1076,7 @@ mod tests {
     }
 
     fn serve() -> Server {
-        let db = Db::memory(Path::new("/lib"));
+        let db = Db::memory();
         let subtitles = Subtitles::load(&db, ProfileId::FIRST);
         subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
         subtitles.observe(Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap());
@@ -1238,7 +1238,7 @@ mod tests {
 
     #[test]
     fn the_delay_applies_live_and_is_remembered_for_the_file() {
-        let db = Db::memory(Path::new("/lib"));
+        let db = Db::memory();
         db.set_library(&crate::db::test_library());
         let film = Path::new("/lib/Movies/Up/Up.mkv");
         let subtitles = Subtitles::load(&db, ProfileId::FIRST);

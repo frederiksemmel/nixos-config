@@ -257,8 +257,8 @@ columns = [{ column = { table = 3, index = 2 }, op = "Eq", scope = "Partition" }
 
 [[schema.tables]]
 id = 4
-name = "file_places"
-primary_key = { columns = [{ table = 4, index = 0 }, { table = 4, index = 1 }], index = { table = 4, index = 0 } }
+name = "video_places"
+primary_key = { columns = [{ table = 4, index = 0 }, { table = 4, index = 1 }, { table = 4, index = 2 }], index = { table = 4, index = 0 } }
 
 [[schema.tables.columns]]
 id = { table = 4, index = 0 }
@@ -268,62 +268,68 @@ storage_ty = { Integer = 8 }
 
 [[schema.tables.columns]]
 id = { table = 4, index = 1 }
-name = "path"
+name = "kind"
 ty = "String"
-storage_ty = "Text"
+storage_ty = { Enum = { name = "video_kind", variants = [{ name = "episode" }, { name = "movie" }] } }
 
 [[schema.tables.columns]]
 id = { table = 4, index = 2 }
-name = "stopped_at"
+name = "video_id"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 4, index = 3 }
+name = "viewing"
+ty = "String"
+storage_ty = { Enum = { name = "viewing", variants = [{ name = "not_started" }, { name = "in_progress" }, { name = "finished" }] } }
+
+[[schema.tables.columns]]
+id = { table = 4, index = 4 }
+name = "viewing_at"
 ty = "F64"
 storage_ty = { Float = 8 }
 nullable = true
 
 [[schema.tables.columns]]
-id = { table = 4, index = 3 }
-name = "last_played"
-ty = "I64"
-storage_ty = { Integer = 8 }
-nullable = true
-
-[[schema.tables.columns]]
-id = { table = 4, index = 4 }
-name = "finished"
-ty = "Bool"
-storage_ty = "Boolean"
-
-[[schema.tables.columns]]
 id = { table = 4, index = 5 }
-name = "audio_track"
+name = "viewing_audio_track"
 ty = "I64"
 storage_ty = { Integer = 8 }
 nullable = true
 
 [[schema.tables.columns]]
 id = { table = 4, index = 6 }
-name = "subtitle_track"
+name = "viewing_subtitle_track"
 ty = "I64"
 storage_ty = { Integer = 8 }
 nullable = true
 
 [[schema.tables.columns]]
 id = { table = 4, index = 7 }
-name = "subtitles_shown"
+name = "viewing_subtitles_shown"
 ty = "Bool"
 storage_ty = "Boolean"
 nullable = true
 
+[[schema.tables.columns]]
+id = { table = 4, index = 8 }
+name = "last_played"
+ty = "I64"
+storage_ty = { Integer = 8 }
+nullable = true
+
 [[schema.tables.indices]]
 id = { table = 4, index = 0 }
-name = "index_file_places_by_profile_id_and_path"
+name = "index_video_places_by_profile_id_and_kind_and_video_id"
 on = 4
-columns = [{ column = { table = 4, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 4, index = 1 }, op = "Eq", scope = "Local" }]
+columns = [{ column = { table = 4, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 4, index = 1 }, op = "Eq", scope = "Local" }, { column = { table = 4, index = 2 }, op = "Eq", scope = "Local" }]
 unique = true
 primary_key = true
 
 [[schema.tables]]
 id = 5
-name = "show_places"
+name = "series_places"
 primary_key = { columns = [{ table = 5, index = 0 }, { table = 5, index = 1 }], index = { table = 5, index = 0 } }
 
 [[schema.tables.columns]]
@@ -334,9 +340,9 @@ storage_ty = { Integer = 8 }
 
 [[schema.tables.columns]]
 id = { table = 5, index = 1 }
-name = "show_key"
-ty = "String"
-storage_ty = "Text"
+name = "show_id"
+ty = "I64"
+storage_ty = { Integer = 8 }
 
 [[schema.tables.columns]]
 id = { table = 5, index = 2 }
@@ -358,7 +364,7 @@ storage_ty = "Boolean"
 
 [[schema.tables.indices]]
 id = { table = 5, index = 0 }
-name = "index_show_places_by_profile_id_and_show_key"
+name = "index_series_places_by_profile_id_and_show_id"
 on = 5
 columns = [{ column = { table = 5, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 5, index = 1 }, op = "Eq", scope = "Local" }]
 unique = true
@@ -366,7 +372,7 @@ primary_key = true
 
 [[schema.tables]]
 id = 6
-name = "watching"
+name = "started"
 primary_key = { columns = [{ table = 6, index = 0 }, { table = 6, index = 1 }, { table = 6, index = 2 }], index = { table = 6, index = 0 } }
 
 [[schema.tables.columns]]
@@ -383,9 +389,9 @@ storage_ty = { Enum = { name = "kind", variants = [{ name = "series" }, { name =
 
 [[schema.tables.columns]]
 id = { table = 6, index = 2 }
-name = "title_key"
-ty = "String"
-storage_ty = "Text"
+name = "title_id"
+ty = "I64"
+storage_ty = { Integer = 8 }
 
 [[schema.tables.columns]]
 id = { table = 6, index = 3 }
@@ -395,7 +401,7 @@ storage_ty = { Integer = 8 }
 
 [[schema.tables.indices]]
 id = { table = 6, index = 0 }
-name = "index_watching_by_profile_id_and_kind_and_title_key"
+name = "index_started_by_profile_id_and_kind_and_title_id"
 on = 6
 columns = [{ column = { table = 6, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 6, index = 1 }, op = "Eq", scope = "Local" }, { column = { table = 6, index = 2 }, op = "Eq", scope = "Local" }]
 unique = true
@@ -403,8 +409,8 @@ primary_key = true
 
 [[schema.tables]]
 id = 7
-name = "dismissed"
-primary_key = { columns = [{ table = 7, index = 0 }, { table = 7, index = 1 }], index = { table = 7, index = 0 } }
+name = "dismissed_videos"
+primary_key = { columns = [{ table = 7, index = 0 }, { table = 7, index = 1 }, { table = 7, index = 2 }], index = { table = 7, index = 0 } }
 
 [[schema.tables.columns]]
 id = { table = 7, index = 0 }
@@ -414,21 +420,27 @@ storage_ty = { Integer = 8 }
 
 [[schema.tables.columns]]
 id = { table = 7, index = 1 }
-name = "path"
+name = "kind"
 ty = "String"
-storage_ty = "Text"
+storage_ty = { Enum = { name = "video_kind", variants = [{ name = "episode" }, { name = "movie" }] } }
 
 [[schema.tables.columns]]
 id = { table = 7, index = 2 }
+name = "video_id"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 7, index = 3 }
 name = "at"
 ty = "I64"
 storage_ty = { Integer = 8 }
 
 [[schema.tables.indices]]
 id = { table = 7, index = 0 }
-name = "index_dismissed_by_profile_id_and_path"
+name = "index_dismissed_videos_by_profile_id_and_kind_and_video_id"
 on = 7
-columns = [{ column = { table = 7, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 7, index = 1 }, op = "Eq", scope = "Local" }]
+columns = [{ column = { table = 7, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 7, index = 1 }, op = "Eq", scope = "Local" }, { column = { table = 7, index = 2 }, op = "Eq", scope = "Local" }]
 unique = true
 primary_key = true
 
@@ -491,37 +503,43 @@ primary_key = true
 
 [[schema.tables]]
 id = 10
-name = "files"
-primary_key = { columns = [{ table = 10, index = 0 }], index = { table = 10, index = 0 } }
+name = "video_facts"
+primary_key = { columns = [{ table = 10, index = 0 }, { table = 10, index = 1 }], index = { table = 10, index = 0 } }
 
 [[schema.tables.columns]]
 id = { table = 10, index = 0 }
-name = "path"
+name = "kind"
 ty = "String"
-storage_ty = "Text"
+storage_ty = { Enum = { name = "video_kind", variants = [{ name = "episode" }, { name = "movie" }] } }
 
 [[schema.tables.columns]]
 id = { table = 10, index = 1 }
+name = "video_id"
+ty = "I64"
+storage_ty = { Integer = 8 }
+
+[[schema.tables.columns]]
+id = { table = 10, index = 2 }
 name = "duration"
 ty = "F64"
 storage_ty = { Float = 8 }
 nullable = true
 
 [[schema.tables.columns]]
-id = { table = 10, index = 2 }
+id = { table = 10, index = 3 }
 name = "credits"
 ty = "F64"
 storage_ty = { Float = 8 }
 nullable = true
 
 [[schema.tables.columns]]
-id = { table = 10, index = 3 }
+id = { table = 10, index = 4 }
 name = "subtitle_delay"
 ty = "F64"
 storage_ty = { Float = 8 }
 
 [[schema.tables.columns]]
-id = { table = 10, index = 4 }
+id = { table = 10, index = 5 }
 name = "embedded_subtitles"
 ty = "I64"
 storage_ty = { Integer = 8 }
@@ -529,9 +547,9 @@ nullable = true
 
 [[schema.tables.indices]]
 id = { table = 10, index = 0 }
-name = "index_files_by_path"
+name = "index_video_facts_by_kind_and_video_id"
 on = 10
-columns = [{ column = { table = 10, index = 0 }, op = "Eq", scope = "Partition" }]
+columns = [{ column = { table = 10, index = 0 }, op = "Eq", scope = "Partition" }, { column = { table = 10, index = 1 }, op = "Eq", scope = "Local" }]
 unique = true
 primary_key = true
 

@@ -345,11 +345,10 @@ impl AuthStore for Db {
 mod tests {
     use super::*;
     use crate::auth::Auth;
-    use std::path::Path;
     use std::sync::Arc;
 
     fn auth() -> (Auth, Db) {
-        let db = Db::memory(Path::new("/library"));
+        let db = Db::memory();
         let auth = Auth::new(Arc::new(db.clone()), &["https://tv.example.org".to_string()]).unwrap();
         (auth, db)
     }

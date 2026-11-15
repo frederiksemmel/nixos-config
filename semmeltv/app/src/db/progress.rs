@@ -2,7 +2,7 @@ use super::index::{self, Index, Known, Video};
 use super::models::{self, Dismissal as StoredDismissal, SeriesPlace, Started as StoredStarted, VideoFact, VideoPlace};
 use super::{Db, Result};
 use crate::profile::ProfileId;
-use crate::progress::{Position, Progress, Tracks, Watched};
+use crate::progress::{Position, Progress, Tracks, Viewing, Watched};
 use crate::watching::{Dismissal, Entry, Watching};
 use std::collections::BTreeMap;
 use toasty::Executor;
@@ -18,12 +18,41 @@ struct Facts {
 #[derive(Clone, Debug, PartialEq)]
 struct Spot {
     video: Video,
-    stopped_at: Option<f64>,
+    viewing: Viewing,
     last_played: Option<i64>,
-    finished: bool,
-    audio_track: Option<i64>,
-    subtitle_track: Option<i64>,
-    subtitles_shown: Option<bool>,
+}
+
+fn to_stored(viewing: Viewing) -> models::Viewing {
+    match viewing {
+        Viewing::NotStarted => models::Viewing::NotStarted,
+        Viewing::InProgress { at, tracks } => models::Viewing::InProgress {
+            at,
+            audio_track: tracks.audio,
+            subtitle_track: tracks.subtitle,
+            subtitles_shown: tracks.subtitles_shown,
+        },
+        Viewing::Finished => models::Viewing::Finished,
+    }
+}
+
+fn from_stored(stored: models::Viewing) -> Viewing {
+    match stored {
+        models::Viewing::NotStarted => Viewing::NotStarted,
+        models::Viewing::InProgress {
+            at,
+            audio_track,
+            subtitle_track,
+            subtitles_shown,
+        } => Viewing::InProgress {
+            at,
+            tracks: Tracks {
+                audio: audio_track,
+                subtitle: subtitle_track,
+                subtitles_shown,
+            },
+        },
+        models::Viewing::Finished => Viewing::Finished,
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -97,12 +126,8 @@ async fn load(executor: &mut dyn Executor, profile: i64) -> toasty::Result<Rows>
                     kind: place.kind,
                     id: place.video_id,
                 },
-                stopped_at: place.stopped_at,
+                viewing: from_stored(place.viewing),
                 last_played: place.last_played,
-                finished: place.finished,
-                audio_track: place.audio_track,
-                subtitle_track: place.subtitle_track,
-                subtitles_shown: place.subtitles_shown,
             })
             .collect(),
         shows: shows
@@ -148,12 +173,8 @@ async fn store(executor: &mut dyn Executor, profile: i64, wanted: Rows, known: K
     let (spots, gone) = changed(stored.spots, wanted.spots, |row| row.video);
     for row in spots {
         VideoPlace::upsert_by_profile_id_and_kind_and_video_id(profile, row.video.kind, row.video.id)
-            .stopped_at(row.stopped_at)
+            .viewing(to_stored(row.viewing))
             .last_played(row.last_played)
-            .finished(row.finished)
-            .audio_track(row.audio_track)
-            .subtitle_track(row.subtitle_track)
-            .subtitles_shown(row.subtitles_shown)
             .exec(executor)
             .await?;
     }
@@ -286,19 +307,11 @@ fn rows(index: &Index, progress: &Progress) -> Rows {
                 credits: watched.credits,
             });
         }
-        let untouched = watched.stopped_at.is_none()
-            && watched.last_played.is_none()
-            && !watched.finished
-            && watched.tracks == Tracks::default();
-        if !untouched {
+        if watched.viewing != Viewing::NotStarted || watched.last_played.is_some() {
             rows.spots.push(Spot {
                 video,
-                stopped_at: watched.stopped_at,
+                viewing: watched.viewing,
                 last_played: watched.last_played.map(|at| at as i64),
-                finished: watched.finished,
-                audio_track: watched.tracks.audio,
-                subtitle_track: watched.tracks.subtitle,
-                subtitles_shown: watched.tracks.subtitles_shown,
             });
         }
     }
@@ -351,14 +364,8 @@ fn assemble(index: &Index, rows: Rows) -> Progress {
             continue;
         };
         let watched: &mut Watched = progress.files.entry(path.clone()).or_default();
-        watched.stopped_at = spot.stopped_at;
+        watched.viewing = spot.viewing;
         watched.last_played = spot.last_played.and_then(|at| u64::try_from(at).ok());
-        watched.finished = spot.finished;
-        watched.tracks = Tracks {
-            audio: spot.audio_track,
-            subtitle: spot.subtitle_track,
-            subtitles_shown: spot.subtitles_shown,
-        };
     }
     for show in rows.shows {
         let (Some(key), Ok(season), Ok(episode)) = (
@@ -440,7 +447,7 @@ pub mod tests {
     }
 
     fn db() -> Db {
-        let db = Db::memory(Path::new("/lib"));
+        let db = Db::memory();
         db.set_library(&library());
         db
     }
@@ -522,11 +529,11 @@ pub mod tests {
         assert!(other.watching.entries().is_empty());
         assert!(other.dismissed.is_empty());
         let dark = other.files[Path::new(DARK)];
-        assert_eq!(dark.stopped_at, None);
-        assert_eq!(dark.tracks, Tracks::default());
+        assert_eq!(dark.stopped_at(), None);
+        assert_eq!(dark.tracks(), Tracks::default());
         assert_eq!(dark.duration, Some(2700.0));
         assert_eq!(dark.credits, Some(2600.0));
-        assert!(!other.files[Path::new(UP)].finished);
+        assert!(!other.files[Path::new(UP)].finished());
     }
 
     #[test]
@@ -539,7 +546,7 @@ pub mod tests {
         renamed.shows[0].seasons[0].episodes[0].path = moved.clone();
         db.set_library(&renamed);
         let progress = db.progress(ProfileId::FIRST).unwrap();
-        assert_eq!(progress.files[&moved].stopped_at, Some(600.0));
+        assert_eq!(progress.files[&moved].stopped_at(), Some(600.0));
         assert_eq!(progress.shows["dark-2017"].episode, 2);
         assert_eq!(progress.watching.last_played(Kind::Series, "dark-2017"), Some(1_800_000_100));
         assert!(!progress.files.contains_key(Path::new(DARK)));
@@ -549,17 +556,65 @@ pub mod tests {
     fn progress_read_before_the_library_is_known_never_deletes_anything() {
         let file = std::env::temp_dir().join(format!("semmeltv-blind-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&file);
-        let db = Db::open(&file, Path::new("/lib")).unwrap();
+        let db = Db::open(&file).unwrap();
         db.set_library(&library());
         db.save_progress(ProfileId::FIRST, &sample()).unwrap();
         drop(db);
-        let blind = Db::open(&file, Path::new("/lib")).unwrap();
+        let blind = Db::open(&file).unwrap();
         let empty = blind.progress(ProfileId::FIRST).unwrap();
         assert_eq!(empty, Progress::default());
         blind.set_library(&library());
         blind.save_progress(ProfileId::FIRST, &empty).unwrap();
         assert_eq!(blind.progress(ProfileId::FIRST).unwrap(), sample());
         let _ = std::fs::remove_file(&file);
+    }
+
+    #[test]
+    fn a_title_played_again_after_finishing_is_stored_in_progress_with_its_tracks() {
+        let db = db();
+        let mut progress = sample();
+        progress.finish(Path::new(DARK));
+        db.save_progress(ProfileId::FIRST, &progress).unwrap();
+        assert!(db.progress(ProfileId::FIRST).unwrap().files[Path::new(DARK)].finished());
+        progress.record(
+            Path::new(DARK),
+            Place {
+                position: 1234.0,
+                duration: 2700.0,
+                credits: None,
+            },
+        );
+        let tracks = Tracks {
+            audio: Some(2),
+            subtitle: None,
+            subtitles_shown: Some(false),
+        };
+        progress.keep_tracks(Path::new(DARK), tracks);
+        db.save_progress(ProfileId::FIRST, &progress).unwrap();
+        let again = db.progress(ProfileId::FIRST).unwrap().files[Path::new(DARK)];
+        assert_eq!(again.viewing, Viewing::InProgress { at: 1234.0, tracks });
+        assert_eq!(again.resume_at(), 1234.0);
+    }
+
+    #[test]
+    fn the_database_refuses_a_place_that_is_finished_and_in_progress_at_once() {
+        let db = db();
+        let refused = |sql: &'static str| {
+            db.wait(move |mut db| async move { toasty::sql::statement(sql).exec(&mut db).await })
+                .is_err()
+        };
+        assert!(refused(
+            "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_at) VALUES (1, 'movie', 9, 'finished', 600.0)"
+        ));
+        assert!(refused(
+            "INSERT INTO video_places (profile_id, kind, video_id, viewing) VALUES (1, 'movie', 9, 'in_progress')"
+        ));
+        assert!(refused(
+            "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_audio_track) VALUES (1, 'movie', 9, 'not_started', 2)"
+        ));
+        assert!(!refused(
+            "INSERT INTO video_places (profile_id, kind, video_id, viewing, viewing_at) VALUES (1, 'movie', 9, 'in_progress', 600.0)"
+        ));
     }
 
     #[test]

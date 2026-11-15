@@ -330,7 +330,6 @@ async fn act(
 mod tests {
     use super::*;
     use serde_json::Value;
-    use std::path::Path;
     use tokio::net::TcpListener;
 
     struct NoPower;
@@ -363,7 +362,7 @@ mod tests {
                 power: Box::new(NoPower),
                 kind,
                 renderer,
-                token: crate::db::Db::memory(Path::new("/lib")).tv_token(),
+                token: crate::db::Db::memory().tv_token(),
                 chosen: Mutex::new(None),
             }),
         }
@@ -399,7 +398,7 @@ mod tests {
                 power: Box::new(screen.clone()),
                 kind: None,
                 renderer: None,
-                token: crate::db::Db::memory(Path::new("/lib")).tv_token(),
+                token: crate::db::Db::memory().tv_token(),
                 chosen: Mutex::new(None),
             }),
         };
@@ -446,7 +445,7 @@ mod tests {
     #[test]
     fn only_a_samsung_with_a_renderer_pairs() {
         let renderer = upnp::Renderer::new("http://192.168.1.148:9197/dmr".to_string());
-        let token = crate::db::Db::memory(Path::new("/lib")).tv_token();
+        let token = crate::db::Db::memory().tv_token();
         let samsung = backends(Kind::Samsung, Some(&renderer), &token);
         assert!(samsung.volume.is_some() && samsung.pairing.is_some());
         let generic = backends(Kind::Generic, Some(&renderer), &token);
