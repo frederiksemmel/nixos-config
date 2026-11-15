@@ -14,6 +14,13 @@ pub struct Wish {
     pub episode: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Mode {
+    Add,
+    Replace,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EpisodeInfo {
     pub number: u32,
@@ -259,9 +266,19 @@ pub fn resolve(client: &Client, wish: &Wish, manifest: &Manifest, today: Date) -
             });
         }
     };
-    target(client, kind, &found, wish.season, wish.episode, manifest, today)
+    target(
+        client,
+        kind,
+        &found,
+        wish.season,
+        wish.episode,
+        manifest,
+        today,
+        Mode::Add,
+    )
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn resolve_id(
     client: &Client,
     kind: Kind,
@@ -270,9 +287,10 @@ pub fn resolve_id(
     episode: Option<u32>,
     manifest: &Manifest,
     today: Date,
+    mode: Mode,
 ) -> Result<Resolved, String> {
     let found = client.details(kind, id).map_err(|error| format!("TMDB: {error}"))?;
-    target(client, kind, &found, season, episode, manifest, today)
+    target(client, kind, &found, season, episode, manifest, today, mode)
 }
 
 fn show_folder(manifest: &Manifest, id: u64) -> Option<String> {
@@ -292,6 +310,7 @@ fn aired(date: Option<&str>, today: Date) -> bool {
     date.and_then(Date::parse).is_some_and(|date| date <= today)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn target(
     client: &Client,
     kind: Kind,
@@ -300,6 +319,7 @@ fn target(
     episode: Option<u32>,
     manifest: &Manifest,
     today: Date,
+    mode: Mode,
 ) -> Result<Resolved, String> {
     let imdb = client.imdb(kind, found.id).map_err(|error| format!("TMDB: {error}"))?;
     let mut target = Target {
@@ -321,11 +341,8 @@ fn target(
                 .details(Kind::Movie, found.id)
                 .map_err(|error| format!("TMDB: {error}"))?;
             target.runtime = details.runtime;
-            if in_library(manifest, Kind::Movie, found.id) {
-                return Ok(Resolved::Refused(format!(
-                    "{} is already in the library",
-                    target.label()
-                )));
+            if let Some(refusal) = refusal(&target, mode, in_library(manifest, Kind::Movie, found.id)) {
+                return Ok(Resolved::Refused(refusal));
             }
         }
         Kind::Tv => {
@@ -361,17 +378,46 @@ fn target(
                 )));
             }
             target.folder = show_folder(manifest, found.id);
-            if let Some(missing) = missing(manifest, &target)
-                && missing.is_empty()
-            {
-                return Ok(Resolved::Refused(format!(
-                    "{} is already in the library",
-                    target.label()
-                )));
+            let wanted = target
+                .episodes
+                .iter()
+                .filter(|known| episode.is_none_or(|wanted| wanted == known.number))
+                .count();
+            let have = missing(manifest, &target).map_or(Have::None, |missing| match missing.len() {
+                0 => Have::All,
+                gone if gone == wanted => Have::None,
+                _ => Have::Some,
+            });
+            if let Some(refusal) = refusal(&target, mode, have) {
+                return Ok(Resolved::Refused(refusal));
             }
         }
     }
     Ok(Resolved::Target(target))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Have {
+    None,
+    Some,
+    All,
+}
+
+impl From<bool> for Have {
+    fn from(have: bool) -> Self {
+        if have { Self::All } else { Self::None }
+    }
+}
+
+fn refusal(target: &Target, mode: Mode, have: impl Into<Have>) -> Option<String> {
+    match (mode, have.into()) {
+        (Mode::Add, Have::All) => Some(format!("{} is already in the library", target.label())),
+        (Mode::Replace, Have::None) => Some(format!(
+            "{} is not in the library, so there is nothing to replace",
+            target.label()
+        )),
+        _ => None,
+    }
 }
 
 fn missing(manifest: &Manifest, target: &Target) -> Option<Vec<u32>> {
@@ -401,6 +447,42 @@ mod tests {
     fn a_dropped_article_still_names_the_title() {
         assert_eq!(without_article("The Bear"), without_article("bear"));
         assert_ne!(without_article("Little Bear"), without_article("bear"));
+    }
+
+    #[test]
+    fn adding_needs_something_missing_and_replacing_needs_something_there() {
+        let target = Target {
+            kind: Kind::Movie,
+            tmdb: 368239,
+            imdb: None,
+            title: "View from a Blue Moon".to_string(),
+            original: None,
+            year: Some(2015),
+            season: None,
+            episode: None,
+            runtime: Some(58),
+            episodes: Vec::new(),
+            folder: None,
+        };
+        let cases = [
+            (Mode::Add, Have::None, None),
+            (Mode::Add, Have::Some, None),
+            (
+                Mode::Add,
+                Have::All,
+                Some("View from a Blue Moon (2015) is already in the library"),
+            ),
+            (
+                Mode::Replace,
+                Have::None,
+                Some("View from a Blue Moon (2015) is not in the library, so there is nothing to replace"),
+            ),
+            (Mode::Replace, Have::Some, None),
+            (Mode::Replace, Have::All, None),
+        ];
+        for (mode, have, want) in cases {
+            assert_eq!(refusal(&target, mode, have).as_deref(), want, "{mode:?} {have:?}");
+        }
     }
 
     #[test]

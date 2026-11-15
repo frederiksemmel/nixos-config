@@ -1,3 +1,4 @@
+pub mod cli;
 mod deliver;
 pub mod release;
 pub mod remote;
@@ -19,7 +20,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use deliver::{Placed, Shelf};
-use resolve::{Candidate, Resolved, Target, Wish};
+use resolve::{Candidate, Mode, Resolved, Target, Wish};
 use rqbit::Rqbit;
 use score::{Choice, Part};
 use serde::{Deserialize, Serialize};
@@ -179,6 +180,7 @@ pub struct Job {
     pub created: u64,
     pub target: Target,
     pub choice: Choice,
+    pub mode: Mode,
     pub stage: Stage,
     pub message: String,
     pub parts: Vec<PartState>,
@@ -510,6 +512,7 @@ impl Service {
                 pick.episode,
                 &manifest,
                 today,
+                Mode::Add,
             );
             return self.propose(asked, from, resolved);
         }
@@ -526,17 +529,47 @@ impl Service {
     }
 
     fn confirm(&self, proposal: &str, choice: usize) -> Outcome {
-        let book = self.book.lock().unwrap();
-        let Some(index) = book.proposals.iter().position(|known| known.id == proposal) else {
-            return Outcome::no("That search has expired; search again");
+        let picked = {
+            let book = self.book.lock().unwrap();
+            let Some(known) = book.proposals.iter().find(|known| known.id == proposal) else {
+                return Outcome::no("That search has expired; search again");
+            };
+            let Answer::Searched(Searched { target, choices, .. }) = &known.answer else {
+                return Outcome::no("Nothing to download in that search");
+            };
+            choices.get(choice).cloned().map(|picked| (target.clone(), picked))
         };
-        let Answer::Searched(Searched { target, choices, .. }) = book.proposals[index].answer.clone() else {
+        let Some((target, picked)) = picked else {
             return Outcome::no("Nothing to download in that search");
         };
-        let Some(picked) = choices.get(choice).cloned() else {
-            return Outcome::no("Nothing to download in that search");
-        };
-        let duplicate = book.jobs.iter().any(|job| {
+        let outcome = self.start(target, picked, Mode::Add);
+        if outcome.ok {
+            self.dismiss(proposal);
+        }
+        outcome
+    }
+
+    fn fetch(&self, body: FetchBody) -> Outcome {
+        let FetchBody { pick, offer, mode } = body;
+        let resolved = resolve::resolve_id(
+            &self.tmdb,
+            pick.kind,
+            pick.tmdb,
+            pick.season,
+            pick.episode,
+            &self.manifest(),
+            Date::from_unix(now()),
+            mode,
+        );
+        match resolved {
+            Ok(Resolved::Target(target)) => self.start(target, score::by_hand(&offer), mode),
+            Ok(Resolved::Refused(message)) | Err(message) => Outcome::no(&message),
+            Ok(Resolved::Question { text, .. }) => Outcome::no(&text),
+        }
+    }
+
+    fn start(&self, target: Target, picked: Choice, mode: Mode) -> Outcome {
+        let duplicate = self.book.lock().unwrap().jobs.iter().any(|job| {
             job.stage.active()
                 && job
                     .parts
@@ -546,7 +579,6 @@ impl Service {
         if duplicate {
             return Outcome::no("That is already downloading");
         }
-        drop(book);
         let room = self.room();
         if picked.size > room {
             return Outcome::no(&format!(
@@ -563,6 +595,7 @@ impl Service {
             created: now(),
             target,
             choice: picked.clone(),
+            mode,
             stage: Stage::Checking,
             message: "Finding the files".to_string(),
             parts: picked
@@ -585,14 +618,17 @@ impl Service {
             placed: Vec::new(),
             log: Vec::new(),
         };
-        job.note(format!("confirmed: {} ({})", picked.label, picked.facts));
+        let verb = match mode {
+            Mode::Add => "Downloading",
+            Mode::Replace => "Downloading a replacement for",
+        };
+        job.note(format!("confirmed: {} ({}), {mode:?}", picked.label, picked.facts));
         let label = job.label.clone();
         let mut book = self.book.lock().unwrap();
-        book.proposals.retain(|known| known.id != proposal);
         book.jobs.push(job);
         self.save(&book);
         Outcome {
-            message: format!("Downloading {label}"),
+            message: format!("{verb} {label}"),
             ok: true,
             job: Some(id),
         }
@@ -797,7 +833,7 @@ impl Service {
             job.placed = placed.iter().map(|place| place.destination.clone()).collect();
             job.message = "Adding to the library".to_string();
         });
-        if let Err(error) = shelf.import(&job.target, &placed, &log) {
+        if let Err(error) = shelf.import(&job.target, &placed, job.mode, &log) {
             return self.fail(id, format!("Import failed: {error}"));
         }
         for part in &job.parts {
@@ -863,6 +899,13 @@ struct ConfirmBody {
     choice: usize,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct FetchBody {
+    pub pick: Pick,
+    pub offer: torznab::Offer,
+    pub mode: Mode,
+}
+
 #[derive(Deserialize)]
 struct DismissBody {
     proposal: String,
@@ -925,6 +968,13 @@ async fn confirm(State(service): State<Shared>, Json(body): Json<ConfirmBody>) -
     }
 }
 
+async fn fetch(State(service): State<Shared>, Json(body): Json<FetchBody>) -> Response {
+    match blocking(move || service.fetch(body)).await {
+        Ok(outcome) => Json(outcome).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn dismiss(State(service): State<Shared>, Json(body): Json<DismissBody>) -> Response {
     service.dismiss(&body.proposal);
     Json(Outcome {
@@ -955,6 +1005,7 @@ fn router(service: Shared) -> Router {
         .route("/api/downloads", get(overview))
         .route("/api/downloads/search", post(search))
         .route("/api/downloads/confirm", post(confirm))
+        .route("/api/downloads/fetch", post(fetch))
         .route("/api/downloads/dismiss", post(dismiss))
         .route("/api/downloads/jobs/{id}/stop", post(stop))
         .route("/api/downloads/subtitles", post(subtitles))

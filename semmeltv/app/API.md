@@ -733,6 +733,7 @@ paths start with `/api/downloads` too.
 | GET | `/api/downloads` | | `{ proposals, jobs, room, quota, free }` |
 | POST | `/api/downloads/search` | `{ text }`, or `{ pick: { kind, tmdb, season, episode } }` | a proposal |
 | POST | `/api/downloads/confirm` | `{ proposal, choice }` | `{ message, ok, job }` |
+| POST | `/api/downloads/fetch` | `{ pick: { kind, tmdb, season, episode }, offer, mode }` | `{ message, ok, job }` |
 | POST | `/api/downloads/dismiss` | `{ proposal }` | `{ message, ok }` |
 | POST | `/api/downloads/jobs/{id}/stop` | | `{ message, ok, job }` |
 | POST | `/api/downloads/subtitles` | `{ video, imdb, season, episode, language, hash, size }` | `{ file, language, release, matched }` |
@@ -747,6 +748,16 @@ all of which are sent back as `pick`; or `searched` with the `label`, the
 `parts`, `dropped`, the number of releases the checks removed, and `problems`
 from the indexers. A search with no `choices` found nothing that passed. Nothing
 downloads until a choice is confirmed. Proposals expire after 30 minutes.
+
+`/api/downloads/fetch` starts a job for one release chosen elsewhere, with no
+proposal and no scoring: `offer` is `{ name, size, seeders, peers, infohash,
+magnet, indexer }`, a line of `semmeltv get search`. `mode` is `add`, refused
+for a title already in the library, or `replace`, refused for one that is not.
+A replacing job takes over the library entry of the film, or of each episode,
+with its id, so watch progress stays, and moves the old video and the
+subtitles named after it to `Replaced/` beside `Movies/` on pCloud. Every job
+carries its `mode`. `semmeltv get search|fetch|jobs` is the command line for
+these, run on the TV with the downloads service's environment.
 
 A job moves through `checking` (reading the torrent's files), `downloading`,
 `uploading` (to pCloud, then the import), and ends `done`, `failed` or

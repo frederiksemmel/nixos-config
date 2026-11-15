@@ -1,9 +1,10 @@
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
 const TIMEOUT: Duration = Duration::from_secs(40);
 const TORZNAB: &str = "http://torznab.com/schemas/2015/feed";
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Offer {
     pub name: String,
     pub size: u64,

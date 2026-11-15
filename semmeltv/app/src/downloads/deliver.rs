@@ -1,11 +1,11 @@
 use super::release::{Coverage, Release};
-use super::resolve::Target;
+use super::resolve::{Mode, Target};
 use crate::artwork;
 use crate::import::{self, Identity, Query};
 use crate::library::normalize;
 use crate::manifest::{self, Date, Manifest};
 use crate::mdblist;
-use crate::parse;
+use crate::parse::{self, FileEntry};
 use crate::tmdb::{Client, Kind};
 use std::fs;
 use std::io;
@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const ATTEMPTS: usize = 3;
+pub const REPLACED: &str = "Replaced";
 
 pub struct Shelf {
     pub remote: String,
@@ -121,6 +122,66 @@ pub fn folders(placed: &[Placed]) -> Vec<String> {
     folders
 }
 
+fn swap(path: &mut String, facts: [&mut Option<String>; 3], new: &str) -> Option<String> {
+    if path == new {
+        return None;
+    }
+    for fact in facts {
+        *fact = None;
+    }
+    Some(std::mem::replace(path, new.to_string()))
+}
+
+pub fn repoint(manifest: &mut Manifest, target: &Target, placed: &[Placed]) -> Vec<String> {
+    let mut old = Vec::new();
+    match target.kind {
+        Kind::Movie => {
+            let movie = manifest.movie.iter_mut().find(|movie| movie.tmdb == Some(target.tmdb));
+            if let (Some(movie), Some(place)) = (movie, placed.first()) {
+                let facts = [&mut movie.video, &mut movie.resolution, &mut movie.audio];
+                old.extend(swap(&mut movie.path, facts, &place.destination));
+            }
+        }
+        Kind::Tv => {
+            let Some(show) = manifest.show.iter_mut().find(|show| show.tmdb == Some(target.tmdb)) else {
+                return old;
+            };
+            for place in placed {
+                let Some(number) = episode_of(Path::new(&place.destination)) else {
+                    continue;
+                };
+                let found = show
+                    .episodes
+                    .iter_mut()
+                    .find(|episode| (episode.season, episode.episode) == number);
+                if let Some(episode) = found {
+                    let facts = [&mut episode.video, &mut episode.resolution, &mut episode.audio];
+                    old.extend(swap(&mut episode.path, facts, &place.destination));
+                }
+            }
+        }
+    }
+    old
+}
+
+pub fn companions(video: &str, files: &[FileEntry]) -> Vec<String> {
+    let path = Path::new(video);
+    let (Some(folder), Some(stem)) = (path.parent(), path.file_stem()) else {
+        return Vec::new();
+    };
+    let prefix = format!("{}.", stem.to_string_lossy());
+    files
+        .iter()
+        .filter(|file| file.path.parent() == Some(folder) && !parse::is_video(&file.path))
+        .filter(|file| {
+            file.path
+                .file_name()
+                .is_some_and(|name| name.to_string_lossy().starts_with(&prefix))
+        })
+        .filter_map(|file| file.path.to_str().map(str::to_string))
+        .collect()
+}
+
 fn run(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(args)
@@ -209,10 +270,10 @@ impl Shelf {
         upload_to(&self.remote, placed)
     }
 
-    pub fn import(&self, target: &Target, placed: &[Placed], log: &dyn Fn(String)) -> Result<(), String> {
+    pub fn import(&self, target: &Target, placed: &[Placed], mode: Mode, log: &dyn Fn(String)) -> Result<(), String> {
         for attempt in 1..=ATTEMPTS {
             let before = self.manifest_hash()?;
-            let manifest = self.prepare(target, placed, log)?;
+            let (manifest, retired) = self.prepare(target, placed, mode, log)?;
             let after = self.manifest_hash()?;
             if after != before {
                 log(format!(
@@ -239,12 +300,29 @@ impl Shelf {
                 &["copyto", &manifest.to_string_lossy(), &self.remote(manifest::FILE_NAME)],
             )?;
             log("library.db uploaded".to_string());
+            self.retire(&retired, log);
             return Ok(());
         }
         Err(format!("library.db kept changing on pCloud; tried {ATTEMPTS} times"))
     }
 
-    fn prepare(&self, target: &Target, placed: &[Placed], log: &dyn Fn(String)) -> Result<PathBuf, String> {
+    fn retire(&self, retired: &[String], log: &dyn Fn(String)) {
+        for path in retired {
+            let kept = format!("{REPLACED}/{path}");
+            match run("rclone", &["moveto", &self.remote(path), &self.remote(&kept)]) {
+                Ok(_) => log(format!("moved the replaced {path} to {kept}")),
+                Err(error) => log(format!("could not move the replaced {path} aside: {error}")),
+            }
+        }
+    }
+
+    fn prepare(
+        &self,
+        target: &Target,
+        placed: &[Placed],
+        mode: Mode,
+        log: &dyn Fn(String),
+    ) -> Result<(PathBuf, Vec<String>), String> {
         let _ = fs::remove_dir_all(&self.work);
         fs::create_dir_all(&self.work).map_err(|error| format!("{}: {error}", self.work.display()))?;
         let manifest_path = self.work.join(manifest::FILE_NAME);
@@ -276,7 +354,23 @@ impl Shelf {
             ],
         )?;
         let files = parse::read_listing(&listing)?;
-        let existing = Manifest::read(&manifest_path).map_err(|_| "library.db on pCloud is unreadable".to_string())?;
+        let mut existing =
+            Manifest::read(&manifest_path).map_err(|_| "library.db on pCloud is unreadable".to_string())?;
+        let retired: Vec<String> = match mode {
+            Mode::Add => Vec::new(),
+            Mode::Replace => repoint(&mut existing, target, placed)
+                .into_iter()
+                .flat_map(|video| {
+                    log(format!("replaces {video}"));
+                    let companions = companions(&video, &files);
+                    std::iter::once(video).chain(companions)
+                })
+                .collect(),
+        };
+        let files: Vec<FileEntry> = files
+            .into_iter()
+            .filter(|file| !retired.iter().any(|path| file.path == Path::new(path)))
+            .collect();
         let parsed = parse::build(&files);
         let identity = Identity {
             id: target.tmdb,
@@ -330,7 +424,7 @@ impl Shelf {
             summary.rated,
             summary.problems.len()
         ));
-        Ok(manifest_path)
+        Ok((manifest_path, retired))
     }
 
     pub fn show_in_library(&self, placed: &[Placed], log: &dyn Fn(String)) {
@@ -468,5 +562,95 @@ mod tests {
         let tags = crate::tags::from_path(paths[0]);
         assert_eq!(tags.video.as_deref(), Some("HEVC 10-bit"));
         assert_eq!(tags.resolution.as_deref(), Some("1080p"));
+    }
+
+    #[test]
+    fn a_replacement_takes_over_the_entry_and_its_id_and_drops_the_old_facts() {
+        let mut manifest = Manifest::parse(
+            r#"
+[[movie]]
+title = "View from a Blue Moon"
+year = 2015
+tmdb = 368239
+path = "Movies/View From A Blue Moon (2015)/View.From.A.Blue.Moon.2015.1080p.BluRay.x264-[YTS.AG].mp4"
+added = 2021-10-01
+video = "H.264"
+resolution = "1080p"
+
+[[show]]
+title = "Outlander"
+year = 2014
+tmdb = 56570
+[[show.episodes]]
+season = 8
+episode = 1
+path = "Series/Outlander/Season 08/Outlander.S08E01.720p.mkv"
+added = 2025-01-01
+resolution = "720p"
+"#,
+        )
+        .unwrap();
+        manifest.movie[0].id = Some(79);
+        manifest.show[0].episodes[0].id = Some(7);
+        let place = |destination: &str| Placed {
+            local: PathBuf::new(),
+            destination: destination.to_string(),
+            size: 1,
+        };
+        let film = Target {
+            kind: Kind::Movie,
+            tmdb: 368239,
+            title: "View from a Blue Moon".to_string(),
+            year: Some(2015),
+            ..outlander()
+        };
+        let new_film = "Movies/View from a Blue Moon (2015)/View from a Blue Moon (2015) (1080p BluRay x264-OFT).mkv";
+        assert_eq!(
+            repoint(&mut manifest, &film, &[place(new_film)]),
+            ["Movies/View From A Blue Moon (2015)/View.From.A.Blue.Moon.2015.1080p.BluRay.x264-[YTS.AG].mp4"]
+        );
+        let movie = &manifest.movie[0];
+        assert_eq!(
+            (movie.id, movie.path.as_str(), &movie.video),
+            (Some(79), new_film, &None)
+        );
+        assert!(repoint(&mut manifest, &film, &[place(new_film)]).is_empty());
+
+        let new_episodes = [
+            place("Series/Outlander/Season 08/Outlander (2014) - S08E01 (1080p).mkv"),
+            place("Series/Outlander/Season 08/Outlander (2014) - S08E02 (1080p).mkv"),
+        ];
+        assert_eq!(
+            repoint(&mut manifest, &outlander(), &new_episodes),
+            ["Series/Outlander/Season 08/Outlander.S08E01.720p.mkv"]
+        );
+        let episode = &manifest.show[0].episodes[0];
+        assert_eq!(
+            (episode.id, episode.path.as_str(), &episode.resolution),
+            (Some(7), new_episodes[0].destination.as_str(), &None)
+        );
+    }
+
+    #[test]
+    fn subtitles_named_after_a_replaced_video_go_with_it() {
+        let entries: Vec<FileEntry> = [
+            "Movies/Up (2009)/Up.2009.mp4",
+            "Movies/Up (2009)/Up.2009.en.srt",
+            "Movies/Up (2009)/Up.2009.de.srt",
+            "Movies/Up (2009)/WWW.YTS.AG.jpg",
+            "Movies/Up (2009)/Up.2009.Extended.mp4",
+            "Movies/Other/Up.2009.en.srt",
+        ]
+        .iter()
+        .map(|path| FileEntry {
+            path: path.into(),
+            size: 1,
+            modified: Date::default(),
+        })
+        .collect();
+        assert_eq!(
+            companions("Movies/Up (2009)/Up.2009.mp4", &entries),
+            ["Movies/Up (2009)/Up.2009.en.srt", "Movies/Up (2009)/Up.2009.de.srt"]
+        );
     }
 }

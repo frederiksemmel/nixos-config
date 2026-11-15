@@ -63,7 +63,7 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|toasty tv|library ARGS…|library show|library from-toml FILE|card SECONDS TITLE LINE…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|toasty tv|library ARGS…|library show|library from-toml FILE|card SECONDS TITLE LINE…|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -135,7 +135,7 @@ fn parse_args() -> Result<Args, String> {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
             "ui" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
-            "toasty" | "library" | "card" => {
+            "toasty" | "library" | "card" | "get" => {
                 args.toasty = raw.by_ref().collect();
                 args.mode = argument;
             }
@@ -591,6 +591,7 @@ fn run() -> Result<(), String> {
         "artwork" => run_artwork(&args)?,
         "import" => run_import(&args)?,
         "downloads" => run_downloads(&args)?,
+        "get" => downloads::cli::run(&args.toasty)?,
         "toasty" => run_toasty(&args)?,
         "progress" => {
             let mut files: Vec<_> = stored_progress(&args).files.into_iter().collect();

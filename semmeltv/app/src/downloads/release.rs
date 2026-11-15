@@ -37,6 +37,12 @@ static DUBBED: LazyLock<Regex> = LazyLock::new(|| {
 static INFO_START: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?i)(?:^|[^a-z0-9])((?:2160|1080|720|576|480)[pi]|[xh]\.?26[45]|hevc|av1)(?:[^a-z0-9]|$)").unwrap()
 });
+static DOLBY_VISION: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(?:dv|dovi|dolby vision)\b").unwrap());
+static HDR10_PLUS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)hdr10(?:\+|plus)").unwrap());
+static HDR: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\b(?:hdr|hdr10|uhd hdr)\b").unwrap());
+static HLG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\bhlg\b").unwrap());
+static GROUP: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"-\s*([A-Za-z0-9]+)\s*(?:\[[^\]]*\]\s*)?(?:\.(?:mkv|mp4|avi))?$").unwrap());
 static DECIMAL_DOT: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(\d)\.(\d)").unwrap());
 static SITE_TAG: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\[[^\]\s]*\.[A-Za-z]{2,}[^\]\s]*\]").unwrap());
 
@@ -107,6 +113,29 @@ impl Release {
         let found = normalize(&deunicode::deunicode(&self.title));
         titles.iter().any(|title| *title == found)
     }
+}
+
+pub fn hdr(name: &str) -> Option<String> {
+    let words = normalize(name);
+    let dolby = DOLBY_VISION.is_match(&words);
+    let base = if HDR10_PLUS.is_match(name) {
+        Some("HDR10+")
+    } else if HDR.is_match(&words) {
+        Some("HDR10")
+    } else if HLG.is_match(&words) {
+        Some("HLG")
+    } else {
+        None
+    };
+    match (dolby, base) {
+        (true, Some(base)) => Some(format!("DV {base}")),
+        (true, None) => Some("DV".to_string()),
+        (false, base) => base.map(str::to_string),
+    }
+}
+
+pub fn group(name: &str) -> Option<String> {
+    GROUP.captures(name.trim()).map(|found| found[1].to_string())
 }
 
 pub fn comparable(title: &str) -> String {
@@ -311,6 +340,43 @@ mod tests {
                 release.info.as_deref(),
             );
             assert_eq!(got, (tags, source, [dubbed, bad_source, sample], info), "{name}");
+        }
+    }
+
+    #[test]
+    fn hdr_formats_and_release_groups_come_from_the_name() {
+        let cases = [
+            (
+                "View.From.A.Blue.Moon.2015.1080p.BluRay.x264-OBiTS[EtHD]",
+                None,
+                Some("OBiTS"),
+            ),
+            ("View from a Blue Moon 2015 1080p BluRay x264-OFT", None, Some("OFT")),
+            ("View from a Blue Moon (2015) 1080p BRRip x264 -YTS", None, Some("YTS")),
+            (
+                "Dune.Part.Two.2024.2160p.UHD.BluRay.REMUX.DV.HDR.HEVC.TrueHD.7.1.Atmos-FGT",
+                Some("DV HDR10"),
+                Some("FGT"),
+            ),
+            (
+                "Dune.Part.Two.2024.2160p.WEB-DL.DoVi.H.265-FLUX.mkv",
+                Some("DV"),
+                Some("FLUX"),
+            ),
+            (
+                "Dune Part Two 2024 2160p AMZN WEB-DL HDR10+ DDP5.1 x265",
+                Some("HDR10+"),
+                None,
+            ),
+            ("Planet.Earth.II.2016.2160p.BluRay.HLG.x265", Some("HLG"), None),
+            ("Dune Part Two (2024) [2160p] [4K] [WEB] [5.1] [YTS.MX]", None, None),
+        ];
+        for (name, want_hdr, want_group) in cases {
+            assert_eq!(
+                (hdr(name).as_deref(), group(name).as_deref()),
+                (want_hdr, want_group),
+                "{name}"
+            );
         }
     }
 

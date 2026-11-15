@@ -99,7 +99,28 @@ pub fn rank(offers: &[Offer], target: &Target, room: u64) -> Ranking {
     ranking
 }
 
-fn merge(offers: &[Offer]) -> Vec<Offer> {
+pub fn by_hand(offer: &Offer) -> Choice {
+    let release = Release::parse(&offer.name);
+    Choice {
+        label: offer.name.clone(),
+        facts: facts(&release, offer.size, offer.seeders),
+        why: vec!["picked by hand".to_string()],
+        score: 0.0,
+        size: offer.size,
+        seeders: offer.seeders,
+        parts: vec![Part {
+            name: offer.name.clone(),
+            magnet: offer.magnet.clone(),
+            infohash: offer.infohash.to_lowercase(),
+            size: offer.size,
+            seeders: offer.seeders,
+            episodes: Vec::new(),
+            info: release.info,
+        }],
+    }
+}
+
+pub fn merge(offers: &[Offer]) -> Vec<Offer> {
     let mut by_hash: BTreeMap<String, Offer> = BTreeMap::new();
     for offer in offers {
         let key = offer.infohash.to_lowercase();

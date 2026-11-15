@@ -139,7 +139,7 @@ pub fn read_listing(text: &str) -> Result<Vec<FileEntry>, String> {
     Ok(entries)
 }
 
-fn is_video(path: &Path) -> bool {
+pub fn is_video(path: &Path) -> bool {
     path.extension()
         .and_then(|extension| extension.to_str())
         .is_some_and(|extension| VIDEO_EXTENSIONS.contains(&extension.to_lowercase().as_str()))
