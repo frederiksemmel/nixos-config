@@ -163,10 +163,7 @@ impl Actor {
             if sound::claimed(&db, None).await.is_empty()
                 && let Some(headphones) = audio.headphones()
             {
-                let prefs = db::AudioPrefs {
-                    headphones: Some(headphones.address.clone()),
-                    ..db::AudioPrefs::default()
-                };
+                let prefs = db::AudioPrefs::Unpaired.pairing(headphones.address.clone());
                 if let Err(error) = db.save_audio_prefs(ProfileId::FIRST, &prefs).await {
                     eprintln!("headphones: {error}");
                 }
@@ -1453,14 +1450,14 @@ impl Actor {
             db::AudioPrefs::default()
         });
         block_in_place(|| {
-            let headphones = prefs.headphones.as_deref().and_then(|address| audio.bonded(address));
+            let headphones = prefs.headphones().and_then(|address| audio.bonded(address));
             let have = headphones.is_some();
             audio.select(headphones);
             let connected = audio
                 .view()
                 .headphones
                 .is_some_and(|headphones| headphones.state == audio::Link::Connected);
-            if prefs.output == db::Output::Headphones && have && connected {
+            if prefs.output() == db::Output::Headphones && have && connected {
                 audio.choose(audio::Output::Headphones);
             }
         });

@@ -24,9 +24,9 @@ pub(super) async fn claimed(db: &Db, except: Option<ProfileId>) -> Vec<String> {
     let mut claimed = Vec::new();
     for profile in profiles.iter().filter(|profile| Some(profile.id) != except) {
         if let Ok(prefs) = db.audio_prefs(profile.id).await
-            && let Some(headphones) = prefs.headphones
+            && let Some(headphones) = prefs.headphones()
         {
-            claimed.push(headphones);
+            claimed.push(headphones.to_string());
         }
     }
     claimed
@@ -48,8 +48,7 @@ async fn keep_paired(audio: Audio, db: Db, profile: ProfileId) {
             Some(audio::Stage::Paired) => {
                 let Some(headphones) = view.headphones else { return };
                 let saved = async {
-                    let mut prefs = db.audio_prefs(profile).await?;
-                    prefs.headphones = Some(headphones.address);
+                    let prefs = db.audio_prefs(profile).await?.pairing(headphones.address);
                     db.save_audio_prefs(profile, &prefs).await?;
                     audio.set_kept(claimed(&db, None).await);
                     Ok::<_, db::Error>(())
@@ -77,11 +76,10 @@ impl Core {
         let audio = self.headphones()?;
         let view = blocking(move || audio.choose(output)).await?;
         let profile = self.tv_profile();
-        let mut prefs = self.db().audio_prefs(profile).await.unwrap_or_default();
-        prefs.output = match output {
+        let prefs = self.db().audio_prefs(profile).await.unwrap_or_default().choosing(match output {
             audio::Output::Tv => db::Output::Tv,
             audio::Output::Headphones => db::Output::Headphones,
-        };
+        });
         if let Err(error) = self.db().save_audio_prefs(profile, &prefs).await {
             eprintln!("headphones: {error}");
         }
@@ -111,10 +109,7 @@ impl Core {
         audio.set_kept(claimed(db, Some(profile)).await);
         let forgetting = audio.clone();
         let view = blocking(move || forgetting.forget()).await?;
-        let mut prefs = db.audio_prefs(profile).await.unwrap_or_default();
-        prefs.headphones = None;
-        prefs.output = db::Output::Tv;
-        if let Err(error) = db.save_audio_prefs(profile, &prefs).await {
+        if let Err(error) = db.save_audio_prefs(profile, &db::AudioPrefs::Unpaired).await {
             eprintln!("headphones: {error}");
         }
         audio.set_kept(claimed(db, None).await);

@@ -36,9 +36,41 @@ pub enum Output {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct AudioPrefs {
-    pub output: Output,
-    pub headphones: Option<String>,
+pub enum AudioPrefs {
+    #[default]
+    Unpaired,
+    Paired {
+        address: String,
+        output: Output,
+    },
+}
+
+impl AudioPrefs {
+    pub fn headphones(&self) -> Option<&str> {
+        match self {
+            Self::Unpaired => None,
+            Self::Paired { address, .. } => Some(address),
+        }
+    }
+
+    pub fn output(&self) -> Output {
+        match self {
+            Self::Unpaired => Output::Tv,
+            Self::Paired { output, .. } => *output,
+        }
+    }
+
+    pub fn choosing(self, output: Output) -> Self {
+        match self {
+            Self::Unpaired => Self::Unpaired,
+            Self::Paired { address, .. } => Self::Paired { address, output },
+        }
+    }
+
+    pub fn pairing(self, address: String) -> Self {
+        let output = self.output();
+        Self::Paired { address, output }
+    }
 }
 
 fn set_aside_unknown(file: &Path) -> Result<()> {
@@ -215,27 +247,29 @@ impl Db {
     pub async fn audio_prefs(&self, profile: ProfileId) -> Result<AudioPrefs> {
         let mut db = self.db.clone();
         let stored = StoredAudioPrefs::filter_by_profile_id(profile.0).first().exec(&mut db).await?;
-        Ok(stored.map_or_else(AudioPrefs::default, |stored| AudioPrefs {
-            output: match stored.output {
-                models::Output::Tv => Output::Tv,
-                models::Output::Headphones => Output::Headphones,
+        Ok(stored.map_or_else(AudioPrefs::default, |stored| match stored.headphones {
+            models::Headphones::Unpaired => AudioPrefs::Unpaired,
+            models::Headphones::Paired { address, listening } => AudioPrefs::Paired {
+                address,
+                output: if listening { Output::Headphones } else { Output::Tv },
             },
-            headphones: stored.headphones_address,
         }))
     }
 
     pub async fn save_audio_prefs(&self, profile: ProfileId, prefs: &AudioPrefs) -> Result<()> {
-        let output = match prefs.output {
-            Output::Tv => models::Output::Tv,
-            Output::Headphones => models::Output::Headphones,
+        let headphones = match prefs {
+            AudioPrefs::Unpaired => models::Headphones::Unpaired,
+            AudioPrefs::Paired { address, output } => models::Headphones::Paired {
+                address: address.clone(),
+                listening: *output == Output::Headphones,
+            },
         };
         let mut db = self.db.clone();
         if models::Profile::filter_by_id(profile.0).first().exec(&mut db).await?.is_none() {
             return Err(toasty::Error::record_not_found(format!("profile {}", profile.0)).into());
         }
         StoredAudioPrefs::upsert_by_profile_id(profile.0)
-            .output(output)
-            .headphones_address(prefs.headphones.clone())
+            .headphones(headphones)
             .exec(&mut db)
             .await?;
         Ok(())
@@ -313,7 +347,8 @@ mod tests {
             progress.shows.insert("dark".to_string(), crate::progress::Position { season: 1, episode: 1, finished: false });
             db.save_progress(profile, &progress).await.unwrap();
             db.save_subtitle_settings(profile, &subtitles::Settings::default()).await.unwrap();
-            db.save_audio_prefs(profile, &AudioPrefs { output: Output::Headphones, headphones: None }).await.unwrap();
+            let prefs = AudioPrefs::Paired { address: format!("AA:{}", profile.0), output: Output::Headphones };
+            db.save_audio_prefs(profile, &prefs).await.unwrap();
         }
         let invite = Invite {
             token_hash: vec![9],
@@ -336,7 +371,7 @@ mod tests {
         assert_eq!(db.invite(&[9]).await.unwrap().unwrap().created_by, None);
         let kept = db.progress(ProfileId(3)).await.unwrap();
         assert_eq!(kept.files[Path::new("/lib/Movies/Up/Up.mkv")].stopped_at(), Some(60.0));
-        assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap().output, Output::Headphones);
+        assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap().output(), Output::Headphones);
         assert!(!db.delete_profile(ProfileId(4)).await.unwrap());
     }
 
@@ -430,11 +465,47 @@ mod tests {
     async fn audio_prefs_default_to_the_tv() {
         let db = db().await;
         assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), AudioPrefs::default());
-        let prefs = AudioPrefs {
+        let prefs = AudioPrefs::Paired {
+            address: "AA:BB:CC:DD:EE:FF".to_string(),
             output: Output::Headphones,
-            headphones: Some("AA:BB:CC:DD:EE:FF".to_string()),
         };
         db.save_audio_prefs(ProfileId(3), &prefs).await.unwrap();
         assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), prefs);
+        let on_tv = prefs.choosing(Output::Tv);
+        db.save_audio_prefs(ProfileId(3), &on_tv).await.unwrap();
+        assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), on_tv);
+        db.save_audio_prefs(ProfileId(3), &AudioPrefs::Unpaired).await.unwrap();
+        assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), AudioPrefs::Unpaired);
+    }
+
+    #[test]
+    fn without_headphones_the_sound_stays_on_the_tv_and_new_headphones_keep_the_choice() {
+        let unpaired = AudioPrefs::Unpaired.choosing(Output::Headphones);
+        assert_eq!((unpaired.headphones(), unpaired.output()), (None, Output::Tv));
+        let listening = unpaired.pairing("AA".to_string()).choosing(Output::Headphones);
+        assert_eq!((listening.headphones(), listening.output()), (Some("AA"), Output::Headphones));
+        let replaced = listening.pairing("BB".to_string());
+        assert_eq!((replaced.headphones(), replaced.output()), (Some("BB"), Output::Headphones));
+    }
+
+    #[tokio::test]
+    async fn the_table_refuses_an_address_without_headphones_and_headphones_without_one() {
+        let dir = std::env::temp_dir().join(format!("semmeltv-audio-prefs-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let file = dir.join("semmeltv.db");
+        Db::open(&file).await.unwrap();
+        let connection = rusqlite::Connection::open(&file).unwrap();
+        let insert = |headphones: &str, address: Option<&str>, listening: Option<bool>| {
+            connection.execute(
+                "INSERT OR REPLACE INTO audio_prefs (profile_id, headphones, headphones_address, headphones_listening) VALUES (3, ?1, ?2, ?3)",
+                rusqlite::params![headphones, address, listening],
+            )
+        };
+        assert!(insert("paired", Some("AA"), Some(true)).is_ok());
+        assert!(insert("unpaired", None, None).is_ok());
+        assert!(insert("paired", None, Some(true)).is_err());
+        assert!(insert("unpaired", Some("AA"), Some(false)).is_err());
+        drop(connection);
+        fs::remove_dir_all(dir).unwrap();
     }
 }

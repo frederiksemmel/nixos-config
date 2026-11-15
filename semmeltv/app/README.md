@@ -379,7 +379,7 @@ async: the core and the API await them.
 | `started` | Currently watching, newest first | profile |
 | `dismissed_videos` | episodes and films taken off Started and Forgotten | profile |
 | `subtitle_settings` | the subtitle settings, as JSON | profile |
-| `audio_prefs` | TV or headphones, and which headphones | profile |
+| `audio_prefs` | no headphones, or the paired headphones and whether the sound goes to them | profile |
 | `video_facts` | an episode's or film's real duration, where its credits start, its subtitle delay and how many subtitle tracks it carries | video |
 | `settings` | one value per key, such as the Samsung pairing `tv_token` | TV |
 

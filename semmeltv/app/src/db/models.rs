@@ -32,10 +32,10 @@ pub enum Viewing {
     Finished,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, toasty::Embed)]
-pub enum Output {
-    Tv,
-    Headphones,
+#[derive(Debug, Clone, PartialEq, Eq, toasty::Embed)]
+pub enum Headphones {
+    Unpaired,
+    Paired { address: String, listening: bool },
 }
 
 #[derive(Debug, toasty::Model)]
@@ -199,8 +199,7 @@ pub struct AudioPrefs {
     pub profile_id: i64,
     #[belongs_to(key = profile_id, references = id)]
     pub profile: Deferred<Profile>,
-    pub output: Output,
-    pub headphones_address: Option<String>,
+    pub headphones: Headphones,
 }
 
 #[derive(Debug, toasty::Model)]

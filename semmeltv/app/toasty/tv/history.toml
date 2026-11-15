@@ -9,3 +9,13 @@ snapshot_name = "0000_snapshot.toml"
 id = 1865641288925483135
 name = "0001_guest.sql"
 snapshot_name = "0001_snapshot.toml"
+
+[[migrations]]
+id = 3578277923706225050
+name = "0002_drop-audio-prefs.sql"
+snapshot_name = "0002_snapshot.toml"
+
+[[migrations]]
+id = 3047939808443668280
+name = "0003_audio-prefs-headphones.sql"
+snapshot_name = "0003_snapshot.toml"
