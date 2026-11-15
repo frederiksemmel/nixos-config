@@ -1,6 +1,7 @@
 const api = document.documentElement.dataset.api || "";
 const HLS_JS = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
 const REPORT_EVERY = 10000;
+const CUES_EVERY = 20000;
 const HIDE_AFTER = 3200;
 const HIDE_AFTER_MOUSE = 1500;
 const RESUME_KEY = "semmeltv.resume";
@@ -258,11 +259,11 @@ function reconcile() {
       const why = `screen is ${view.kind}${view.device ? ` on ${view.device.name}` : ""}${play ? `, ${play.state}` : ", nothing playing"}${view.notice ? `; last notice: ${view.notice.text}` : ""}`;
       if (ours(view) && view.kind === "phone" && !play) {
         if (player.playing()) {
-          note(`the TV dropped this phone's play at ${clock(player.video.currentTime)}; it keeps playing and reports`, why);
+          note(`the TV dropped this phone's play at ${clock(player.now())}; it keeps playing and reports`, why);
           player.report("playing");
           return;
         }
-        note(`player stops at ${clock(player.video.currentTime)}: the TV dropped this phone's play`, why);
+        note(`player stops at ${clock(player.now())}: the TV dropped this phone's play`, why);
         player.idle();
       } else {
         note("player closes: the screen moved away", why);
@@ -360,7 +361,7 @@ function flip() {
     if (pick) openPlayer(pick, { waiting: true });
     switchTo("phone", { action: "flip", to: "phone" });
   } else {
-    const position = player && !player.closed && ours(screen) && player.video.currentTime > 0 ? player.video.currentTime : undefined;
+    const position = player && !player.closed && ours(screen) && player.placed() ? player.now() : undefined;
     switchTo("tv", { action: "flip", to: "tv", position });
   }
 }
@@ -392,6 +393,10 @@ class Player {
     html.classList.add("pp-open");
     this.session = null;
     this.hls = null;
+    this.base = 0;
+    this.ready = false;
+    this.subtitleTracks = new Map();
+    this.cuesAdded = new Map();
     this.played = 0;
     this.lastTime = null;
     this.started = false;
@@ -483,7 +488,7 @@ class Player {
     this.skip.addEventListener("click", () => {
       const target = Number(this.skip.dataset.to);
       if (this.skip.dataset.next) this.playNext();
-      else if (Number.isFinite(target)) video.currentTime = target;
+      else if (Number.isFinite(target)) this.seekTo(target);
     });
     if (window.WebKitPlaybackTargetAvailabilityEvent) {
       video.addEventListener("webkitplaybacktargetavailabilitychanged", (event) => {
@@ -503,12 +508,12 @@ class Player {
     this.scrub.addEventListener("change", () => {
       this.scrubbing = false;
       this.bubble.classList.remove("pp-shown");
-      video.currentTime = Number(this.scrub.value);
+      this.seekTo(Number(this.scrub.value));
       this.show();
     });
 
     video.addEventListener("timeupdate", () => {
-      const now = video.currentTime;
+      const now = this.now();
       if (this.lastTime !== null && !video.seeking && !video.paused) {
         const step = now - this.lastTime;
         if (step > 0 && step < 2) this.played += step;
@@ -522,7 +527,7 @@ class Player {
     video.addEventListener("waiting", () => {
       this.root.classList.add("pp-loading");
       clearTimeout(this.waitingTimer);
-      const at = video.currentTime;
+      const at = this.now();
       this.waitingTimer = setTimeout(() => {
         const ranges = Array.from({ length: video.buffered.length }, (_, index) => `${clock(video.buffered.start(index))}-${clock(video.buffered.end(index))}`).join(" ");
         note(`video has waited 8 s for data at ${clock(at)}`, `buffered ${ranges || "nothing"}, network state ${video.networkState}, ready state ${video.readyState}`);
@@ -543,7 +548,7 @@ class Player {
       this.mediaState("playing");
     });
     video.addEventListener("pause", () => {
-      if (!this.pausing && this.started && !video.ended && !this.closed) note(`video paused by the browser at ${clock(video.currentTime)}`, `page ${document.visibilityState}`);
+      if (!this.pausing && this.started && !video.ended && !this.closed) note(`video paused by the browser at ${clock(this.now())}`, `page ${document.visibilityState}`);
       this.pausing = false;
       for (const each of [this.playButton, this.miniPlay]) {
         each.innerHTML = icons.play;
@@ -776,7 +781,7 @@ class Player {
 
   paint() {
     const duration = this.duration();
-    const at = this.video.currentTime || 0;
+    const at = this.now();
     this.scrub.max = String(duration || 1);
     this.scrub.value = String(at);
     const done = `${duration ? (at / duration) * 100 : 0}%`;
@@ -787,8 +792,36 @@ class Player {
   }
 
   duration() {
-    const own = this.video.duration;
-    return Number.isFinite(own) && own > 0 ? own : (this.session ? this.session.duration : 0);
+    return this.session ? this.session.duration : 0;
+  }
+
+  // The place in the file. The stream starts at session.offset in the file,
+  // where the video's own clock reads `base`.
+  now() {
+    const session = this.session;
+    const at = this.video.currentTime || 0;
+    return session ? session.offset + at - this.base : at;
+  }
+
+  mediaTime(at) {
+    return at - this.session.offset + this.base;
+  }
+
+  // A place the remux has passed is a seek in the video; anywhere else opens
+  // the stream again from there.
+  seekTo(at) {
+    const session = this.session;
+    if (!session) return;
+    const target = Math.max(0, Math.min(this.duration() - 1, at));
+    const time = this.mediaTime(target);
+    const seekable = this.video.seekable;
+    const end = seekable.length ? seekable.end(seekable.length - 1) : 0;
+    if (this.ready && time >= this.base && time <= end - 1) {
+      this.video.currentTime = time;
+      return;
+    }
+    note(`seeks to ${clock(target)}, outside what the stream has, so it opens there`, `stream from ${clock(session.offset)} to ${clock(session.offset + end - this.base)}`);
+    this.open(this.pickOf(session), { start: target, audio: session.audio_index ?? undefined });
   }
 
   toggle() {
@@ -806,8 +839,7 @@ class Player {
   }
 
   jump(seconds, side = 0) {
-    const video = this.video;
-    video.currentTime = Math.max(0, Math.min(this.duration() - 1, video.currentTime + seconds));
+    this.seekTo(this.now() + seconds);
     if (side) {
       this.ripple.textContent = `${side < 0 ? "−" : "+"}${Math.abs(seconds)}`;
       this.ripple.dataset.side = side < 0 ? "left" : "right";
@@ -834,7 +866,7 @@ class Player {
     this.root.classList.remove("pp-loading");
     this.root.classList.add("pp-failed");
     this.message.innerHTML = "";
-    this.message.append(element("p", "", { text: `Stopped at ${clock(this.video.currentTime)}` }));
+    this.message.append(element("p", "", { text: `Stopped at ${clock(this.now())}` }));
     const row = element("div", "pp-row");
     const resume = element("button", "pp-pill pp-strong", { type: "button", text: "Resume" });
     resume.addEventListener("click", () => {
@@ -890,6 +922,7 @@ class Player {
       return;
     }
     this.session = session;
+    this.ready = false;
     this.played = 0;
     this.started = false;
     this.lastTime = null;
@@ -909,9 +942,16 @@ class Player {
   load(session) {
     const video = this.video;
     const source = `${api}${session.playlist}`;
+    this.base = 0;
+    this.clearSubtitles();
     const begin = () => {
-      if (session.start > 1 && Math.abs(video.currentTime - session.start) > 2) video.currentTime = session.start;
-      this.applyDefaultSubtitles(session);
+      if (this.session !== session) return;
+      this.base = video.seekable.length ? video.seekable.start(0) : 0;
+      this.ready = true;
+      if (Math.abs(this.now() - session.start) > 2) video.currentTime = this.mediaTime(session.start);
+      const kept = this.chosen && samePick(this.chosen.pick, this.pick) ? this.chosen.id : undefined;
+      if (kept !== undefined) this.chooseSubtitle(kept);
+      else this.applyDefaultSubtitles(session);
       video.play().catch(() => this.blocked(session));
     };
     if (this.hls) { this.hls.destroy(); this.hls = null; }
@@ -923,18 +963,56 @@ class Player {
     }
     loadHls().then((Hls) => {
       if (this.closed || this.session !== session) return;
-      const hls = new Hls({ startPosition: session.start, maxBufferLength: 30, backBufferLength: 30 });
+      const hls = new Hls({ startPosition: Math.max(0, session.start - session.offset), maxBufferLength: 30, backBufferLength: 30 });
       this.hls = hls;
       hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) this.trouble(data.details); });
-      hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(() => this.blocked(session)));
-      hls.on(Hls.Events.SUBTITLE_TRACKS_UPDATED, () => this.applyDefaultSubtitles(session));
+      video.addEventListener("loadedmetadata", begin, { once: true });
       hls.loadSource(source);
       hls.attachMedia(video);
     }).catch(() => this.failed("The player library didn't load"));
   }
 
-  textTracks() {
-    return Array.from(this.video.textTracks || []).filter((track) => track.kind === "subtitles" || track.kind === "captions" || track.kind === "forced");
+  clearSubtitles() {
+    clearTimeout(this.cueTimer);
+    for (const track of this.subtitleTracks.values()) {
+      track.mode = "hidden";
+      for (const cue of Array.from(track.cues || [])) track.removeCue(cue);
+      track.mode = "disabled";
+    }
+    this.cuesAdded = new Map();
+  }
+
+  // The text track for a subtitle's name and language, the same one for
+  // every stream this player opens.
+  subtitleTrack(subtitle) {
+    const key = `${subtitle.name}\n${subtitle.language || ""}`;
+    let track = this.subtitleTracks.get(key);
+    if (!track) {
+      track = this.video.addTextTrack("subtitles", subtitle.name, subtitle.language || "");
+      track.mode = "disabled";
+      this.subtitleTracks.set(key, track);
+    }
+    return track;
+  }
+
+  // Adds the cues the TV has for this subtitle, in the video's own time, and
+  // asks again while a track inside the video is still being written out.
+  async fetchCues(session, subtitle, track) {
+    let answer = null;
+    try {
+      answer = await request("GET", `/api/stream/${session.id}/subtitles/${subtitle.id}`);
+    } catch {}
+    if (this.session !== session || this.subtitle !== subtitle.id) return;
+    if (answer) {
+      const added = this.cuesAdded.get(subtitle.id) || 0;
+      for (const cue of answer.cues.slice(added)) {
+        const end = this.mediaTime(cue.end);
+        if (end > 0) track.addCue(new VTTCue(Math.max(0, this.mediaTime(cue.start)), end, cue.text));
+      }
+      this.cuesAdded.set(subtitle.id, answer.cues.length);
+      if (answer.complete) return;
+    }
+    this.cueTimer = setTimeout(() => this.fetchCues(session, subtitle, track), CUES_EVERY);
   }
 
   applyDefaultSubtitles(session) {
@@ -943,23 +1021,25 @@ class Player {
     this.chooseSubtitle(wanted.id);
   }
 
+  // A subtitle the viewer picked stays picked when the stream opens again for
+  // the same title.
+  pickSubtitle(id) {
+    this.chosen = { pick: this.pick, id };
+    this.chooseSubtitle(id);
+  }
+
   chooseSubtitle(id) {
     const session = this.session;
-    const wanted = id === null ? null : session.subtitles.find((subtitle) => subtitle.id === id);
+    const wanted = id === null ? null : session.subtitles.find((subtitle) => subtitle.id === id && subtitle.supported);
     this.subtitle = wanted ? wanted.id : null;
-    if (this.hls) {
-      const index = wanted ? this.hls.subtitleTracks.findIndex((track) => track.name === wanted.name || track.url?.endsWith(`/${wanted.id}.m3u8`)) : -1;
-      this.hls.subtitleTrack = index;
-      this.hls.subtitleDisplay = index >= 0;
-      return;
+    clearTimeout(this.cueTimer);
+    const chosen = wanted ? this.subtitleTrack(wanted) : null;
+    for (const track of this.subtitleTracks.values()) {
+      if (track !== chosen) track.mode = "disabled";
     }
-    const tracks = this.textTracks();
-    const supported = session.subtitles.filter((subtitle) => subtitle.supported);
-    for (const track of tracks) {
-      const position = tracks.indexOf(track);
-      const matches = wanted && (track.label === wanted.name || (supported[position] && supported[position].id === wanted.id && !tracks.some((other) => other.label === wanted.name)));
-      track.mode = matches ? "showing" : "disabled";
-    }
+    if (!chosen) return;
+    chosen.mode = "showing";
+    this.fetchCues(session, wanted, chosen);
   }
 
   openSheet() {
@@ -975,19 +1055,19 @@ class Player {
       const choice = element("button", "pp-choice", { type: "button", text: track.name, "aria-pressed": String(track.index === session.audio_index) });
       choice.addEventListener("click", () => {
         this.sheet.hidden = true;
-        if (track.index !== session.audio_index) this.open(this.pickOf(session), { audio: track.index, start: this.video.currentTime });
+        if (track.index !== session.audio_index) this.open(this.pickOf(session), { audio: track.index, start: this.now() });
       });
       audio.append(choice);
     }
     const subtitles = element("section", "");
     subtitles.append(element("h3", "", { text: "Subtitles" }));
     const off = element("button", "pp-choice", { type: "button", text: "Off", "aria-pressed": String(this.subtitle == null) });
-    off.addEventListener("click", () => { this.chooseSubtitle(null); this.sheet.hidden = true; });
+    off.addEventListener("click", () => { this.pickSubtitle(null); this.sheet.hidden = true; });
     subtitles.append(off);
     for (const subtitle of session.subtitles) {
       const choice = element("button", "pp-choice", { type: "button", text: subtitle.name, "aria-pressed": String(this.subtitle === subtitle.id) });
       choice.disabled = !subtitle.supported;
-      choice.addEventListener("click", () => { this.chooseSubtitle(subtitle.id); this.sheet.hidden = true; });
+      choice.addEventListener("click", () => { this.pickSubtitle(subtitle.id); this.sheet.hidden = true; });
       subtitles.append(choice);
     }
     if (session.subtitle_delay) subtitles.append(element("p", "pp-quiet", { text: `Shifted ${session.subtitle_delay > 0 ? "later" : "earlier"} by ${Math.abs(session.subtitle_delay).toFixed(1)} s, as on the TV` }));
@@ -1099,15 +1179,20 @@ class Player {
 
   async blocked(session) {
     if (this.session !== session || this.closed) return;
-    note("autoplay was blocked, waiting for a tap", `at ${clock(this.video.currentTime)}`);
+    note("autoplay was blocked, waiting for a tap", `at ${clock(this.now())}`);
     this.show(true);
     await this.begin();
     if (this.session === session && this.video.paused) this.report("paused");
   }
 
+  // Whether the video's clock says where it is: it reads 0 until it loads.
+  placed() {
+    return this.ready || (this.video.currentTime || 0) > 0;
+  }
+
   position(session) {
-    const at = this.video.currentTime || 0;
-    return at < 0.5 && session.start > at ? session.start : at;
+    const current = session === this.session || this.session === null;
+    return this.placed() && current ? session.offset + (this.video.currentTime || 0) - this.base : session.start;
   }
 
   async report(state, keepalive = false) {
@@ -1117,7 +1202,11 @@ class Player {
   async reportFor(session, state, keepalive = false) {
     const body = { position: this.position(session), played: this.played, state };
     try {
-      await request("POST", `/api/stream/${session.id}/progress`, body, { keepalive });
+      const answer = await request("POST", `/api/stream/${session.id}/progress`, body, { keepalive });
+      if (answer && answer.reopen && session === this.session && !this.closed && ["playing", "paused"].includes(state)) {
+        note(`the sound setting changed; the stream opens again at ${clock(this.now())}`, answer.reopen);
+        this.open(this.pickOf(session), { start: this.now(), audio: session.audio_index ?? undefined });
+      }
     } catch (error) {
       const gone = error.status === 404 || transient(error);
       if (gone && !keepalive && session === this.session && !this.closed) this.awaitTv(`progress: ${error.message}`);
@@ -1169,7 +1258,7 @@ class Player {
     if (this.resuming) return true;
     if (!this.pick || this.idling || this.closed || this.root.classList.contains("pp-failed")) return false;
     const session = this.session;
-    const position = this.video.currentTime > 1 ? this.video.currentTime : session ? session.start : 0;
+    const position = session ? this.position(session) : 0;
     const pick = this.pick;
     this.resuming = true;
     this.session = null;
@@ -1205,7 +1294,7 @@ class Player {
 
   continueOnTv() {
     this.pause();
-    command({ action: "flip", to: "tv", position: this.video.currentTime || undefined });
+    command({ action: "flip", to: "tv", position: this.placed() ? this.now() : undefined });
   }
 
   fullscreen() {
@@ -1236,7 +1325,7 @@ class Player {
       pause: () => this.pause(),
       seekbackward: (details) => this.jump(-(details.seekOffset || JUMP)),
       seekforward: (details) => this.jump(details.seekOffset || JUMP),
-      seekto: (details) => { this.video.currentTime = details.seekTime; },
+      seekto: (details) => this.seekTo(details.seekTime),
       nexttrack: session.next ? () => this.playNext() : null,
     };
     for (const [action, handler] of Object.entries(handlers)) {
@@ -1256,7 +1345,7 @@ class Player {
     const duration = this.duration();
     if (!duration) return;
     try {
-      navigator.mediaSession.setPositionState({ duration, position: Math.min(this.video.currentTime, duration), playbackRate: this.video.playbackRate || 1 });
+      navigator.mediaSession.setPositionState({ duration, position: Math.max(0, Math.min(this.now(), duration)), playbackRate: this.video.playbackRate || 1 });
     } catch {}
   }
 
@@ -1264,8 +1353,7 @@ class Player {
     const session = this.session;
     if (!session || this.closed || Date.now() - (this.recovered || 0) < 30000) return false;
     this.recovered = Date.now();
-    const at = this.video.currentTime > 1 ? this.video.currentTime : session.start;
-    this.open(this.pickOf(session), { start: at, audio: session.audio_index ?? undefined });
+    this.open(this.pickOf(session), { start: this.position(session), audio: session.audio_index ?? undefined });
     return true;
   }
 
@@ -1322,6 +1410,7 @@ class Player {
     window.removeEventListener("pointercancel", this.onDragEnd);
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     this.pause();
+    clearTimeout(this.cueTimer);
     if (this.hls) this.hls.destroy();
     this.video.removeAttribute("src");
     this.video.load();

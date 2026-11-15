@@ -59,6 +59,8 @@ craneLib.buildPackage (
   // {
     inherit cargoArtifacts;
 
+    nativeCheckInputs = [ ffmpeg-headless ];
+
     dontPatchELF = true;
 
     postInstall = ''

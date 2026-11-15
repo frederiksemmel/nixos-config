@@ -1,8 +1,6 @@
-mod fmp4;
-mod index;
-mod plan;
+mod codecs;
 mod probe;
-mod session;
+mod remux;
 mod vtt;
 
 use crate::api::{self, problem};
@@ -17,28 +15,23 @@ use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router};
-use index::Index;
-use plan::Plan;
 use probe::{Client, Media, Verdict};
+use remux::{Remux, Spec};
 use serde::{Deserialize, Serialize};
-use session::{Session, Spec};
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::io::Read;
 use std::path::PathBuf;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::{OnceCell, watch};
-use vtt::Source;
+use vtt::{Cue, Source};
 
 const REST: Duration = Duration::from_secs(180);
-const FORGET: Duration = Duration::from_secs(12 * 3600);
 const MOST_SESSIONS: usize = 3;
 const CELLULAR_WARNING: u64 = 8_000_000;
 const PLAYLIST: &str = "application/vnd.apple.mpegurl";
-/// Seconds of subtitles in each piece of an embedded track's playlist.
-const SUBTITLE_PIECE: f64 = 30.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -80,7 +73,7 @@ impl Subtitle {
     /// there, which the remux writes out as it goes.
     fn embedded(&self) -> Option<usize> {
         match &self.source {
-            Some(Source::Embedded(_, track)) => Some(*track),
+            Some(Source::Embedded(track)) => Some(*track),
             _ => None,
         }
     }
@@ -102,7 +95,8 @@ struct Marks {
 
 struct Live {
     id: String,
-    session: Arc<Session>,
+    remux: Remux,
+    dialogue: Arc<AtomicBool>,
     profile: ProfileId,
     device: Option<crate::screen::Device>,
     file: PathBuf,
@@ -129,22 +123,28 @@ impl Live {
         }
         .credits_start()
     }
+
+    /// Whether the profile switched dialogue mode since this stream started
+    /// converting its sound, so it has to start again to follow.
+    fn sound_changed(&self) -> bool {
+        !self.remux.spec.copy_audio && self.dialogue.load(Ordering::SeqCst) != self.remux.spec.dialogue
+    }
 }
 
 type Converted = Option<Result<Arc<String>, String>>;
-type Captions = HashMap<(Source, i64), watch::Receiver<Converted>>;
+type Captions = HashMap<PathBuf, watch::Receiver<Converted>>;
 
 #[derive(Clone)]
 struct Streams {
     core: Core,
     root: PathBuf,
     live: Arc<Mutex<HashMap<String, Arc<Live>>>>,
-    probes: Arc<Mutex<HashMap<PathBuf, (Media, Index)>>>,
+    probes: Arc<Mutex<HashMap<PathBuf, Media>>>,
     captions: Arc<Mutex<Captions>>,
 }
 
 pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Router<S> {
-    session::clear(&root);
+    remux::clear(&root);
     let streams = Streams {
         core,
         root,
@@ -158,45 +158,33 @@ pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Ro
         .route("/api/stream/{id}", delete(close))
         .route("/api/stream/{id}/main.m3u8", get(master))
         .route("/api/stream/{id}/video.m3u8", get(media_playlist))
-        .route("/api/stream/{id}/init.mp4", get(init))
-        .route("/api/stream/{id}/segment/{name}", get(segment))
-        .route("/api/stream/{id}/subtitles/{name}", get(subtitles))
+        .route("/api/stream/{id}/subtitles/{number}", get(subtitles))
         .route("/api/stream/{id}/marks", get(marks))
         .route("/api/stream/{id}/progress", post(progress))
+        .route("/api/stream/{id}/{name}", get(file))
         .with_state(streams)
 }
 
 async fn reap(streams: Streams) {
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
-        let (resting, gone): (Vec<Arc<Live>>, Vec<Arc<Live>>) = {
+        let gone: Vec<Arc<Live>> = {
             let mut live = streams.live.lock().unwrap();
-            let forgotten: Vec<String> = live
+            let idle: Vec<String> = live
                 .iter()
-                .filter(|(_, live)| live.session.idle() > FORGET)
+                .filter(|(_, live)| live.remux.idle() > REST)
                 .map(|(id, _)| id.clone())
                 .collect();
-            let gone = forgotten.iter().filter_map(|id| live.remove(id)).collect();
-            let resting = live
-                .values()
-                .filter(|live| live.session.idle() > REST)
-                .cloned()
-                .collect();
-            (resting, gone)
+            idle.iter().filter_map(|id| live.remove(id)).collect()
         };
-        for live in resting {
-            if live.session.rest() {
-                eprintln!(
-                    "stream {}: rested after {} s without a request from {}",
-                    short(&live.id),
-                    live.session.idle().as_secs(),
-                    device_name(live.device.as_ref())
-                );
-            }
-        }
         for live in gone {
-            eprintln!("stream {}: forgotten", short(&live.id));
-            live.session.close();
+            eprintln!(
+                "stream {}: ended after {} s without a request from {}",
+                short(&live.id),
+                live.remux.idle().as_secs(),
+                device_name(live.device.as_ref())
+            );
+            live.remux.close();
         }
     }
 }
@@ -295,6 +283,8 @@ struct Opened {
     poster: String,
     backdrop: String,
     start: f64,
+    /// The file time at which the stream's own timeline starts.
+    offset: f64,
     duration: f64,
     audio: Vec<probe::Audio>,
     audio_index: Option<usize>,
@@ -376,23 +366,13 @@ fn choose(streams: &Streams, body: &OpenBody, progress: &crate::progress::Progre
     }
 }
 
-async fn examine(streams: &Streams, file: &PathBuf) -> Result<(Media, Index), String> {
+async fn examine(streams: &Streams, file: &PathBuf) -> Result<Media, String> {
     if let Some(found) = streams.probes.lock().unwrap().get(file) {
         return Ok(found.clone());
     }
-    let reading = file.clone();
-    let index = tokio::task::spawn_blocking(move || index::read(&reading));
     let media = probe::probe(file).await?;
-    let index = index
-        .await
-        .map_err(|error| error.to_string())?
-        .map_err(|error| format!("This file can't be streamed: {error}"))?;
-    streams
-        .probes
-        .lock()
-        .unwrap()
-        .insert(file.clone(), (media.clone(), index.clone()));
-    Ok((media, index))
+    streams.probes.lock().unwrap().insert(file.clone(), media.clone());
+    Ok(media)
 }
 
 fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profile: ProfileId) -> Vec<Subtitle> {
@@ -426,9 +406,7 @@ fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profi
             forced: embedded.forced,
             default: false,
             supported: embedded.is_text(),
-            source: embedded
-                .is_text()
-                .then(|| Source::Embedded(file.to_path_buf(), embedded.index)),
+            source: embedded.is_text().then_some(Source::Embedded(embedded.index)),
         });
     }
     if settings.shown {
@@ -539,16 +517,23 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         Ok(chosen) => chosen,
         Err(response) => return response,
     };
-    let (media, index) = match examine(&streams, &chosen.file).await {
-        Ok(found) => found,
-        Err(error) => {
-            eprintln!(
-                "stream: {} can't open {}: {error}",
-                device_name(body.device.as_ref()),
-                file_name(&chosen.file)
-            );
-            return problem(StatusCode::UNPROCESSABLE_ENTITY, error);
-        }
+    let refused = |status: StatusCode, reason: String| {
+        eprintln!(
+            "stream: {} can't open {}: {reason}",
+            device_name(body.device.as_ref()),
+            file_name(&chosen.file)
+        );
+        problem(status, reason)
+    };
+    let media = match examine(&streams, &chosen.file).await {
+        Ok(media) => media,
+        Err(error) => return refused(StatusCode::UNPROCESSABLE_ENTITY, error),
+    };
+    let Some(duration) = media.duration.filter(|duration| *duration > 0.0) else {
+        return refused(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "This file has no length to stream".to_string(),
+        );
     };
     let audio_index = body
         .audio
@@ -557,92 +542,86 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         .or((!media.audio.is_empty()).then_some(0));
     let audio = audio_index.and_then(|index| media.audio.get(index));
     let dialogue = streams.core.dialogue(profile).await;
+    let dialogue_on = dialogue.load(Ordering::SeqCst);
     let (hevc, copy_audio) = match probe::verdict(&media, audio, body.client) {
-        Verdict::Plays { hevc, copy_audio } => (hevc, copy_audio && !dialogue.load(Ordering::SeqCst)),
-        Verdict::Refused(reason) => {
-            eprintln!(
-                "stream: {} can't open {}: {reason}",
-                device_name(body.device.as_ref()),
-                file_name(&chosen.file)
-            );
-            return problem(StatusCode::UNPROCESSABLE_ENTITY, reason);
-        }
+        Verdict::Plays { hevc, copy_audio } => (hevc, copy_audio && !dialogue_on),
+        Verdict::Refused(reason) => return refused(StatusCode::UNPROCESSABLE_ENTITY, reason),
     };
     let handed_here = match (streams.core.screen().on, body.device.as_ref()) {
         (crate::screen::OnScreen::Moving { device: to, .. }, Some(asking)) => to.id == asking.id,
         _ => false,
     };
     let tv_playing = streams.core.now_playing().is_some() && !handed_here;
-    {
+    let (ended, full) = {
         let mut live = streams.live.lock().unwrap();
+        let mut ended = Vec::new();
         if let Some(replaced) = body.replaces.as_ref().and_then(|id| live.remove(id)) {
             eprintln!("stream {}: ended, replaced by a new one", short(&replaced.id));
-            replaced.session.close();
+            ended.push(replaced);
         }
         if let Some(device) = &body.device {
-            live.retain(|_, other| {
-                let same = other.device.as_ref().is_some_and(|other| other.id == device.id);
-                if same {
+            let same: Vec<String> = live
+                .iter()
+                .filter(|(_, other)| other.device.as_ref().is_some_and(|other| other.id == device.id))
+                .map(|(id, _)| id.clone())
+                .collect();
+            for id in same {
+                if let Some(other) = live.remove(&id) {
                     eprintln!("stream {}: ended, {} opened another", short(&other.id), device.name);
-                    other.session.close();
+                    ended.push(other);
                 }
-                !same
-            });
+            }
         }
         let limit = if tv_playing { 1 } else { MOST_SESSIONS };
-        let watching = live.values().filter(|live| live.session.idle() < REST).count();
-        if watching >= limit {
-            let reason = if tv_playing {
-                "The TV is playing, so only one phone can watch at a time"
-            } else {
-                "Three phones are already watching"
-            };
-            eprintln!(
-                "stream: {} can't open {}: {reason}",
-                device_name(body.device.as_ref()),
-                file_name(&chosen.file)
-            );
-            return problem(StatusCode::TOO_MANY_REQUESTS, reason.to_string());
-        }
+        (ended, live.len() >= limit)
+    };
+    for other in ended {
+        other.remux.close();
     }
-    let plan = Plan::new(&index);
-    let duration = plan.duration;
+    if full {
+        let reason = if tv_playing {
+            "The TV is playing, so only one phone can watch at a time"
+        } else {
+            "Three phones are already watching"
+        };
+        return refused(StatusCode::TOO_MANY_REQUESTS, reason.to_string());
+    }
     let start = body
         .start
         .filter(|at| at.is_finite() && *at >= 0.0 && *at < duration)
         .unwrap_or_else(|| resume_at(&progress, &chosen.file, duration));
     let id = new_id();
     let subtitles = subtitle_list(&streams, &chosen.file, &media, profile);
-    let session = Session::new(
-        plan,
-        streams.root.join(&id),
-        Spec {
-            source: chosen.file.clone(),
-            audio: audio.map(|audio| audio.index),
-            hevc,
-            copy_audio: copy_audio || audio.is_none(),
-            dialogue: dialogue.clone(),
-            subtitles: subtitles.iter().filter_map(|subtitle| subtitle.embedded()).collect(),
-        },
-    );
-    session.start(start);
-    let delay = streams.core.subtitles().file_delay(&chosen.file);
-    if let Some(source) = subtitles
+    let spec = Spec {
+        source: chosen.file.clone(),
+        audio: audio.map(|audio| audio.index),
+        hevc,
+        copy_audio: copy_audio || audio.is_none(),
+        dialogue: dialogue_on,
+        subtitles: subtitles.iter().filter_map(Subtitle::embedded).collect(),
+    };
+    if let Some(Source::Sidecar(path)) = subtitles
         .iter()
         .find(|subtitle| subtitle.default)
         .and_then(|subtitle| subtitle.source.clone())
-        .filter(|source| matches!(source, Source::Sidecar(_)))
     {
         let warming = streams.clone();
         tokio::spawn(async move {
-            let _ = caption(&warming, source, delay).await;
+            let _ = caption(&warming, path).await;
         });
     }
+    let remux = match Remux::start(streams.root.join(&id), spec, start).await {
+        Ok(remux) => remux,
+        Err(error) => return refused(StatusCode::UNPROCESSABLE_ENTITY, error),
+    };
+    let delay = streams.core.subtitles().file_delay(&chosen.file);
     let video = media.video.as_ref();
     let bitrate = media.bitrate;
+    let offset = remux.offset;
     let live = Arc::new(Live {
         id: id.clone(),
-        session,
+        remux,
+        dialogue,
         profile,
         device: body.device.clone(),
         file: chosen.file.clone(),
@@ -663,12 +642,12 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     });
     let credits = live.credits();
     eprintln!(
-        "stream {}: opened {} for {} at {start:.0} s, {}, audio {}",
+        "stream {}: opened {} for {} at {start:.0} s (from {offset:.1} s), {}, audio {}",
         short(&id),
         file_name(&live.file),
         device_name(live.device.as_ref()),
         if hevc { "HEVC" } else { "H.264" },
-        match (copy_audio, dialogue.load(Ordering::SeqCst)) {
+        match (copy_audio, dialogue_on) {
             (true, _) => "copied",
             (false, true) => "converted, dialogue mode",
             (false, false) => "converted",
@@ -685,6 +664,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         poster: format!("{art}/poster"),
         backdrop: format!("{art}/backdrop"),
         start,
+        offset,
         duration,
         audio: media.audio.clone(),
         audio_index,
@@ -714,188 +694,120 @@ fn body(kind: &'static str, cache: &'static str, bytes: impl Into<axum::body::Bo
 }
 
 async fn close(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
-    if let Some(live) = streams.live.lock().unwrap().remove(&id) {
+    let closed = streams.live.lock().unwrap().remove(&id);
+    if let Some(live) = closed {
         eprintln!("stream {}: closed by {}", short(&id), device_name(live.device.as_ref()));
-        live.session.close();
+        live.remux.close();
     }
     StatusCode::NO_CONTENT.into_response()
 }
 
-fn quoted(text: &str) -> String {
-    text.replace('"', "'")
-}
-
-async fn master(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
-    let live = match find(&streams, &id, "the playlist") {
-        Ok(live) => live,
-        Err(response) => return response,
-    };
-    let codecs = match live.session.init(live.start).await {
-        Ok((_, codecs)) => codecs,
-        Err(error) => return problem(StatusCode::UNPROCESSABLE_ENTITY, error),
-    };
+/// The master playlist: one variant, named with its codecs so a player knows
+/// what it gets before it loads a segment.
+fn master_playlist(bandwidth: u64, resolution: Option<(u32, u32)>, codecs: Option<&str>) -> String {
     let mut text = String::from("#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-INDEPENDENT-SEGMENTS\n");
-    let supported: Vec<&Subtitle> = live.subtitles.iter().filter(|subtitle| subtitle.supported).collect();
-    let mut names: Vec<String> = Vec::new();
-    for subtitle in &supported {
-        let mut name = quoted(&subtitle.name);
-        let base = name.clone();
-        let mut copy = 2;
-        while names.contains(&name) {
-            name = format!("{base} {copy}");
-            copy += 1;
-        }
-        names.push(name.clone());
-        let _ = write!(
-            text,
-            "#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID=\"subs\",NAME=\"{name}\",{}DEFAULT={},AUTOSELECT={},FORCED={},URI=\"subtitles/{}.m3u8\"\n",
-            subtitle
-                .language
-                .as_ref()
-                .map(|language| format!("LANGUAGE=\"{}\",", quoted(language)))
-                .unwrap_or_default(),
-            if subtitle.default { "YES" } else { "NO" },
-            if subtitle.default || subtitle.forced {
-                "YES"
-            } else {
-                "NO"
-            },
-            if subtitle.forced { "YES" } else { "NO" },
-            subtitle.id
-        );
-    }
-    let _ = write!(text, "#EXT-X-STREAM-INF:BANDWIDTH={}", live.bandwidth * 6 / 5);
-    if let Some((width, height)) = live.resolution {
+    let _ = write!(text, "#EXT-X-STREAM-INF:BANDWIDTH={}", bandwidth * 6 / 5);
+    if let Some((width, height)) = resolution {
         let _ = write!(text, ",RESOLUTION={width}x{height}");
     }
     if let Some(codecs) = codecs {
         let _ = write!(text, ",CODECS=\"{codecs}\"");
     }
-    if !supported.is_empty() {
-        text.push_str(",SUBTITLES=\"subs\"");
-    }
     text.push_str("\nvideo.m3u8\n");
-    body(PLAYLIST, "no-store", text)
+    text
 }
 
-async fn media_playlist(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
-    match find(&streams, &id, "the video playlist") {
-        Ok(live) => body(PLAYLIST, "no-store", live.session.plan.media_playlist(live.start)),
+async fn master(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
+    match find(&streams, &id, "the playlist") {
+        Ok(live) => {
+            live.remux.touch();
+            body(
+                PLAYLIST,
+                "no-store",
+                master_playlist(live.bandwidth, live.resolution, live.remux.codecs.as_deref()),
+            )
+        }
         Err(response) => response,
     }
 }
 
-async fn init(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
-    let live = match find(&streams, &id, "the init segment") {
+async fn media_playlist(State(streams): State<Streams>, Path(id): Path<String>) -> Response {
+    let live = match find(&streams, &id, "the video playlist") {
         Ok(live) => live,
         Err(response) => return response,
     };
-    match live.session.init(live.start).await {
-        Ok((bytes, _)) => body("video/mp4", "private, max-age=3600", bytes.as_ref().clone()),
-        Err(error) => {
-            eprintln!("stream {}: the init segment failed: {error}", short(&id));
-            problem(StatusCode::UNPROCESSABLE_ENTITY, error)
+    match live.remux.playlist(live.start).await {
+        Some(text) => body(PLAYLIST, "no-store", text),
+        None => problem(StatusCode::NOT_FOUND, "the video playlist is gone".to_string()),
+    }
+}
+
+async fn file(State(streams): State<Streams>, Path((id, name)): Path<(String, String)>) -> Response {
+    let live = match find(&streams, &id, &name) {
+        Ok(live) => live,
+        Err(response) => return response,
+    };
+    match live.remux.file(&name).await {
+        Some(bytes) if name.ends_with(".mp4") => body("video/mp4", "private, max-age=3600", bytes),
+        Some(bytes) => body("video/iso.segment", "private, max-age=3600", bytes),
+        None => {
+            eprintln!("stream {}: {name} isn't there", short(&id));
+            problem(StatusCode::NOT_FOUND, format!("no {name}"))
         }
     }
 }
 
-async fn segment(State(streams): State<Streams>, Path((id, name)): Path<(String, String)>) -> Response {
-    let live = match find(&streams, &id, &format!("segment {name}")) {
-        Ok(live) => live,
-        Err(response) => return response,
-    };
-    let Some(number) = name
-        .strip_suffix(".m4s")
-        .and_then(|number| number.parse::<usize>().ok())
-    else {
-        return problem(StatusCode::NOT_FOUND, format!("no segment {name}"));
-    };
-    match live.session.segment(number).await {
-        Ok(bytes) => body("video/iso.segment", "private, max-age=3600", bytes),
-        Err(error) => {
-            eprintln!("stream {}: segment {number} failed: {error}", short(&id));
-            problem(StatusCode::SERVICE_UNAVAILABLE, error)
-        }
-    }
+#[derive(Serialize)]
+struct Cues {
+    cues: Vec<Cue>,
+    /// Whether these are all the track's cues, or more follow as the remux
+    /// reads on.
+    complete: bool,
 }
 
-async fn subtitles(State(streams): State<Streams>, Path((id, name)): Path<(String, String)>) -> Response {
-    let live = match find(&streams, &id, &format!("subtitles {name}")) {
+async fn subtitles(State(streams): State<Streams>, Path((id, number)): Path<(String, String)>) -> Response {
+    let live = match find(&streams, &id, &format!("subtitles {number}")) {
         Ok(live) => live,
         Err(response) => return response,
     };
-    let (stem, playlist) = match (name.strip_suffix(".m3u8"), name.strip_suffix(".vtt")) {
-        (Some(stem), _) => (stem, true),
-        (_, Some(stem)) => (stem, false),
-        _ => return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}")),
-    };
-    let (number, piece) = match stem.split_once('-') {
-        Some((number, piece)) => (number, piece.parse::<usize>().ok()),
-        None => (stem, None),
-    };
-    let Some(subtitle) = number
+    let Some(source) = number
         .parse::<usize>()
         .ok()
         .and_then(|number| live.subtitles.get(number))
         .filter(|subtitle| subtitle.supported)
+        .and_then(|subtitle| subtitle.source.clone())
     else {
-        return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}"));
+        return problem(StatusCode::NOT_FOUND, format!("no subtitles {number}"));
     };
-    if let Some(track) = subtitle.embedded() {
-        if playlist {
-            return body(
-                PLAYLIST,
-                "no-store",
-                plan::subtitle_pieces(live.duration, number, SUBTITLE_PIECE),
-            );
-        }
-        let Some(piece) = piece else {
-            return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}"));
-        };
-        let from = piece as f64 * SUBTITLE_PIECE;
-        let to = (from + SUBTITLE_PIECE).min(live.duration);
-        let cues = live.session.subtitles(track, from, to).await;
-        return body(
-            "text/vtt; charset=utf-8",
-            "private, max-age=3600",
-            vtt::render(&cues, live.delay),
-        );
-    }
-    if playlist {
-        return body(
-            PLAYLIST,
-            "no-store",
-            plan::subtitle_playlist(live.duration, &format!("{}.vtt", subtitle.id)),
-        );
-    }
-    let Some(source) = subtitle.source.clone() else {
-        return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}"));
+    let (cues, complete) = match source {
+        Source::Embedded(track) => live.remux.cues(track).await,
+        Source::Sidecar(path) => match caption(&streams, path).await {
+            Ok(text) => (vtt::all_cues(&text), true),
+            Err(error) => return problem(StatusCode::UNPROCESSABLE_ENTITY, error),
+        },
     };
-    let text = match caption(&streams, source, live.delay).await {
-        Ok(text) => text,
-        Err(error) => return problem(StatusCode::UNPROCESSABLE_ENTITY, error),
-    };
-    body(
-        "text/vtt; charset=utf-8",
-        "private, max-age=3600",
-        text.as_ref().clone(),
-    )
+    Json(Cues {
+        cues: vtt::shifted(cues, live.delay),
+        complete,
+    })
+    .into_response()
 }
 
-async fn caption(streams: &Streams, source: Source, delay: f64) -> Result<Arc<String>, String> {
-    let key = (source.clone(), (delay * 1000.0).round() as i64);
+/// A subtitle file beside the video as WebVTT, converted once however many
+/// requests ask for it meanwhile.
+async fn caption(streams: &Streams, path: PathBuf) -> Result<Arc<String>, String> {
     let mut converted = {
         let mut captions = streams.captions.lock().unwrap();
-        match captions.get(&key) {
+        match captions.get(&path) {
             Some(converted) => converted.clone(),
             None => {
                 let (done, converted) = watch::channel(None);
-                captions.insert(key.clone(), converted.clone());
+                captions.insert(path.clone(), converted.clone());
                 let captions = streams.captions.clone();
                 tokio::spawn(async move {
-                    let result = vtt::convert(&source, delay).await.map(Arc::new);
+                    let result = vtt::convert(&path).await.map(Arc::new);
                     if result.is_err() {
-                        captions.lock().unwrap().remove(&key);
+                        captions.lock().unwrap().remove(&path);
                     }
                     let _ = done.send(Some(result));
                 });
@@ -970,7 +882,7 @@ async fn progress(
         Ok(live) => live,
         Err(response) => return response,
     };
-    live.session.keep_alive();
+    live.remux.touch();
     if !report.position.is_finite() || !report.played.is_finite() {
         return problem(
             StatusCode::BAD_REQUEST,
@@ -990,7 +902,12 @@ async fn progress(
         moment: report.state,
     });
     let answer = api::ask(&streams.core, request).await;
-    if ends && let Some(live) = streams.live.lock().unwrap().remove(&id) {
+    let removed = if ends {
+        streams.live.lock().unwrap().remove(&id)
+    } else {
+        None
+    };
+    if let Some(live) = removed {
         eprintln!(
             "stream {}: ended, {} reported {:?} at {:.0} s",
             short(&id),
@@ -998,7 +915,16 @@ async fn progress(
             report.state,
             report.position
         );
-        live.session.close();
+        live.remux.close();
+        return answer;
+    }
+    if answer.status().is_success() && live.sound_changed() {
+        eprintln!(
+            "stream {}: dialogue mode changed, asking {} to reopen",
+            short(&id),
+            device_name(live.device.as_ref())
+        );
+        return Json(serde_json::json!({ "ok": true, "reopen": "sound" })).into_response();
     }
     answer
 }

@@ -296,9 +296,9 @@ Matrix, the gap between a dialogue scene and the lobby shootout drops from
 9.4 LU to 3 LU, and the loudness range of a dialogue scene from 21 LU to 12 LU.
 The green key on the remote, or D on a keyboard, switches it for whoever's
 video the TV plays, at once during a video; the web app has a switch in
-Settings and in the player sheet. A stream picks it up at the next segment it
-makes, and an E-AC-3 stream to Safari changes to converted AAC with the next
-video, since its codec can't change mid-stream.
+Settings and in the player sheet. A phone stream whose sound is converted opens
+again where it is within 10 s, through the other chain; an E-AC-3 stream to
+Safari changes to converted AAC with the next video.
 
 ## Subtitles
 

@@ -646,8 +646,9 @@ segments, instead of playing it on the TV.
 | --- | --- | --- |
 | POST | `/api/stream/open` | `{ movie }` or `{ show, season?, episode? }`, plus `client`, `device?`, `audio?`, `start?`, `replaces?` → a session |
 | GET | `/api/stream/{id}/main.m3u8` | the master playlist, to give the `<video>` or hls.js |
+| GET | `/api/stream/{id}/subtitles/{n}` | `{ cues: [{ start, end, text }], complete }` for subtitle `n` |
 | GET | `/api/stream/{id}/marks` | `{ segments, credits }`: TheIntroDB's recap and intro, and where the credits start |
-| POST | `/api/stream/{id}/progress` | `{ position, played, state }` → `{ message, ok }` |
+| POST | `/api/stream/{id}/progress` | `{ position, played, state }` → `{ message, ok }`, or `{ ok, reopen }` |
 | DELETE | `/api/stream/{id}` | ends the session |
 
 `client` says what the browser decodes: `{ hevc, eac3, ac3 }`, all booleans.
@@ -655,25 +656,37 @@ The video is never converted, since the Pi has no video encoder: H.264 (8-bit)
 and HEVC are copied, and a title in anything else is refused with 422 and a
 reason, as is HEVC for a browser without `hevc`. The audio is copied when the
 browser plays it (AAC always; E-AC-3 and AC-3 when `client` says so), and
-otherwise converted to stereo AAC. `audio` picks an audio track by its `index`
-in the answer, else the file's default track plays. A show without `season`
-and `episode` plays where it carries on. `start` is in seconds; without it,
-the video starts where the TV or a phone last stopped it, or at the beginning
-once it was finished or stopped in its credits. `replaces` ends that session
-first, for the next episode or another audio track. Opening a session also
-ends the other sessions of the same `device`, such as the one a reloaded page
-left behind.
+otherwise converted to stereo AAC, through the dialogue-mode chain when the
+profile has it on. `audio` picks an audio track by its `index` in the answer,
+else the file's default track plays. A show without `season` and `episode`
+plays where it carries on. `start` is in seconds; without it, the video starts
+where the TV or a phone last stopped it, or at the beginning once it was
+finished or stopped in its credits. `replaces` ends that session first, for the
+next episode, another audio track or a seek. Opening a session also ends the
+other sessions of the same `device`, such as the one a reloaded page left
+behind.
+
+A session is one ffmpeg run with ffmpeg's own HLS muxer: it copies the file
+from the keyframe at or before `start` to the end, at twice the playback pace
+after a minute's head start, into an EVENT playlist that lists each 6-second
+segment once it is written and ends with `#EXT-X-ENDLIST`. The open answers
+once the first segment is there. The segments carry the file's own times, and
+the stream's clock starts at `offset`, the file time of its first frame, so a
+player's position in the file is `offset` plus how far it has played. A seek
+the playlist doesn't reach yet, or before `offset`, opens a new session there.
+When the profile switches dialogue mode while its sound is converted, the next
+progress report answers `reopen`, and the phone opens the stream again where it
+is.
 
 At most three sessions play at once, and only one while the TV plays; the
 others get 429. A handoff doesn't count as the TV playing for the phone it
-moves to. Three minutes after its last request a session stops its
-ffmpeg and drops its segments, and no longer counts towards that limit; it
-picks up again on the next request, and is forgotten after 12 hours.
+moves to. Three minutes after its last request a session ends, stopping its
+ffmpeg and deleting its segments; a phone that comes back opens it again.
 
 The answer is
 
     { id, playlist, kind, key, …, title, caption, poster,
-      backdrop, start, duration, audio, audio_index, converted_audio,
+      backdrop, start, offset, duration, audio, audio_index, converted_audio,
       subtitles, subtitle_delay, credits, bitrate, heavy }
 
 `kind` is `"movie"`, with only `key`, or `"show"`, with `key`, `season`,
@@ -683,21 +696,14 @@ The answer is
 default }`. `subtitles` lists the subtitle files beside the video, then the
 tracks inside it, as `{ id, name, language, forced, default, supported }`.
 Picture subtitles (PGS, VobSub) are listed with `supported` false: they show
-only on the TV. The others are WebVTT renditions in the master playlist,
-moved by the file's subtitle delay. A track inside the video is written out
-by the same ffmpeg that remuxes the video, as it goes, and served as
-30-second pieces once the remux has passed them, so the file is read once, at
-the pace it plays; a subtitle file beside the video is converted whole.
-`default` is the first one in the subtitle languages when subtitles are on. An
-episode's `next` is the episode after it, `{ season, episode, label, title,
-still }`, or null. `heavy` is true above
-8 Mbit/s, a hint for mobile data.
-
-The playlist cuts the video at its keyframes, read from the Matroska Cues or
-the MP4 sample table, about every 6 seconds, so any point can be sought at
-once. ffmpeg copies the video from the segment asked for, keeps up to a
-minute ahead of the player and pauses beyond that. A file without a keyframe
-index is refused.
+only on the TV. The phone adds the others' cues to the video itself, from
+`/subtitles/{n}`: cues in file time, moved by the file's subtitle delay. A track
+inside the video is written out by the same ffmpeg as it goes, so its answer
+has the cues so far and `complete` false until the remux has finished; a
+subtitle file beside the video is converted whole. `default` is the first one
+in the subtitle languages when subtitles are on. An episode's `next` is the
+episode after it, `{ season, episode, label, title, still }`, or null. `heavy`
+is true above 8 Mbit/s, a hint for mobile data.
 
 `progress` records the place exactly as the TV does: `state` is `start`,
 `playing`, `paused`, `stopped` or `ended`, `position` is in seconds and

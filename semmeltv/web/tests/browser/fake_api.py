@@ -421,7 +421,7 @@ async def stream_open(request):
     opens.append(body)
     id = f"fake-session-{len(opens)}"
     streams[id] = body
-    common = {"id": id, "playlist": f"/api/stream/{id}/main.m3u8", "backdrop": "", "start": 0, "audio": [],
+    common = {"id": id, "playlist": f"/api/stream/{id}/main.m3u8", "backdrop": "", "start": 0, "offset": 0, "audio": [],
               "audio_index": None, "converted_audio": False, "subtitles": [], "subtitle_delay": 0, "credits": None,
               "bitrate": 4000000, "heavy": False}
     if body.get("show"):

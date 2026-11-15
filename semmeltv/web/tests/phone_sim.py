@@ -174,21 +174,11 @@ class Phone:
                       f"{session['bitrate'] / 1e6:.1f} Mbit/s, heavy {session['heavy']}, audio converted {session['converted_audio']}")
         _, master = await self.request("GET", session["playlist"])
         variant = next(line for line in master.decode().splitlines() if line and not line.startswith("#"))
-        media_url = urljoin(self.base + session["playlist"], variant)
-        _, media = await self.request("GET", media_url)
+        self.media_url = urljoin(self.base + session["playlist"], variant)
         self.segments = []
-        at = 0.0
-        init = None
-        duration = None
-        for line in media.decode().splitlines():
-            if line.startswith("#EXT-X-MAP:"):
-                init = urljoin(media_url, re.search(r'URI="([^"]+)"', line).group(1))
-            elif line.startswith("#EXTINF:"):
-                duration = float(line[8:].split(",")[0])
-            elif line and not line.startswith("#"):
-                self.segments.append((at, duration, urljoin(media_url, line)))
-                at += duration
-        log("stream", f"{len(self.segments)} segments over {at:.0f} s")
+        self.complete = False
+        init = await self.read_playlist()
+        log("stream", f"{len(self.segments)} segments from {session['offset']:.0f} s so far")
         if init:
             await self.request("GET", init)
         self.playhead = session["start"]
@@ -196,10 +186,41 @@ class Phone:
         self.buffered_to = self.segments[self.next_segment][0]
         self.playing = True
 
+    async def read_playlist(self):
+        """Reads the stream's EVENT playlist, which grows as the TV remuxes,
+        appends the segments it lists beyond those known, in file time, and
+        returns the init segment's URL."""
+        session = self.session
+        _, media = await self.request("GET", self.media_url, quiet=True)
+        if session is not self.session or media is None:
+            return None
+        at = session["offset"]
+        init = None
+        duration = None
+        listed = 0
+        for line in media.decode().splitlines():
+            if line.startswith("#EXT-X-MAP:"):
+                init = urljoin(self.media_url, re.search(r'URI="([^"]+)"', line).group(1))
+            elif line.startswith("#EXTINF:"):
+                duration = float(line[8:].split(",")[0])
+            elif line == "#EXT-X-ENDLIST":
+                self.complete = True
+            elif line and not line.startswith("#"):
+                if listed >= len(self.segments):
+                    self.segments.append((at, duration, urljoin(self.media_url, line)))
+                listed += 1
+                at += duration
+        return init
+
     async def fetcher(self):
         while True:
             await asyncio.sleep(0.2)
-            if not self.playing or not self.session or self.next_segment >= len(self.segments):
+            if not self.playing or not self.session:
+                continue
+            if self.next_segment >= len(self.segments):
+                if not self.complete:
+                    await self.read_playlist()
+                    await asyncio.sleep(2)
                 continue
             if self.buffered_to - self.playhead >= self.args.buffer:
                 continue

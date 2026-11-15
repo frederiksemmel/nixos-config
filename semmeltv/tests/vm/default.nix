@@ -68,5 +68,6 @@ pkgs.testers.runNixOSTest {
     os.environ["PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS"] = "true"
     os.environ["FONTCONFIG_FILE"] = "${pkgs.makeFontsConf { fontDirectories = [ pkgs.inter ]; }}"
   ''
-  + builtins.readFile ./test.py;
+  + builtins.readFile ./test.py
+  + builtins.readFile ./stream.py;
 }

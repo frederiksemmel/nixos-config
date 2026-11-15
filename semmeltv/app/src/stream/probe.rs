@@ -10,6 +10,7 @@ pub struct Media {
     pub audio: Vec<Audio>,
     pub subtitles: Vec<Embedded>,
     pub bitrate: Option<u64>,
+    pub duration: Option<f64>,
     pub credits: Option<f64>,
 }
 
@@ -169,6 +170,10 @@ pub fn parse(value: &Value) -> Media {
         .get("format")
         .and_then(|format| text(format, "bit_rate"))
         .and_then(|rate| rate.parse().ok());
+    media.duration = value
+        .get("format")
+        .and_then(|format| text(format, "duration"))
+        .and_then(|duration| duration.parse().ok());
     media.credits = value
         .get("chapters")
         .and_then(Value::as_array)
@@ -243,7 +248,7 @@ mod tests {
                 {"start_time": "0.000000", "tags": {"title": "Opening"}},
                 {"start_time": "5321.400000", "tags": {"title": "End Credits"}}
             ],
-            "format": {"bit_rate": "4769403"}
+            "format": {"bit_rate": "4769403", "duration": "5480.250000"}
         })
     }
 
@@ -261,6 +266,7 @@ mod tests {
         assert!(media.subtitles[1].forced && !media.subtitles[1].is_text());
         assert_eq!(media.credits, Some(5321.4));
         assert_eq!(media.bitrate, Some(4_769_403));
+        assert_eq!(media.duration, Some(5480.25));
     }
 
     #[test]
