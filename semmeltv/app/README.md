@@ -511,23 +511,36 @@ button copies a summary and the command that fetches the full report.
 Each report has a status, kept beside it in `<id>.status.json`:
 
 - New, until someone marks it;
+- Reopened, when a person comments on a report that was settled; it keeps the
+  status it had before;
 - Needs review, with why and what a person has to decide;
 - Done, with the commit that fixed it, or why nothing changes.
 
-`POST /api/feedback/<id>/status` sets the status, as an admin or with the
-service token. `GET /api/feedback?state=new|needs_review|done` filters by it.
-The Feedback page shows the statuses, filters by them and sets them by hand.
+Each report also has a thread of comments in `<id>.comments.jsonl`. A comment
+is signed by the person who wrote it, or by Claude when the service token sent
+it. Only a person's comment reopens a report.
 
-Beast triages New reports on its own. The `semmeltv-feedback-watch` user timer
-asks both TVs every two minutes. When a report is New, it starts
+`POST /api/feedback/<id>/status` sets the status, and
+`POST /api/feedback/<id>/comments` adds a comment. Both work for an admin or
+with the service token. `GET /api/feedback?state=new|reopened|needs_review|done`
+filters by status. The Feedback page shows the statuses and threads, filters
+by status, and has a comment box and a status editor under each report.
+
+Beast triages New and Reopened reports on its own. The
+`semmeltv-feedback-watch` user timer asks both TVs every two minutes. When a
+report is New or Reopened, it starts
 `semmeltv-feedback-triage`, a headless Claude run whose prompt is
 `home/hosts/beast-semmeltv/prompt.md`. The run fixes and deploys what is easy,
-and marks the rest Needs review. By hand, from beast:
+and marks the rest Needs review. For a reopened report, the person's newest
+comments are its instruction, such as the option to build. Every run answers
+in the thread. By hand, from beast:
 
     semmeltv-feedback semmeltv5 list new
     semmeltv-feedback semmeltv5 show <id> | jq '.message, .client.trail[-40:], .tv.problems'
     semmeltv-feedback semmeltv5 show <id> | jq -r '.tv.app_journal[]' | tail -80
     semmeltv-feedback semmeltv5 pictures <id> ./shots
+    semmeltv-feedback semmeltv5 thread <id>
+    semmeltv-feedback semmeltv5 comment <id> "what Claude did"
     semmeltv-feedback semmeltv5 mark <id> needs-review "why" "what to decide"
     journalctl --user -u semmeltv-feedback-watch -u semmeltv-feedback-triage
 

@@ -8,17 +8,17 @@ fi
 
 fresh=()
 for host in semmeltv5 semmeltv3; do
-  if ! reports=$(semmeltv-feedback "$host" list new 2>"$state/$host.error"); then
+  if ! reports=$(semmeltv-feedback "$host" list new 2>"$state/$host.error" && semmeltv-feedback "$host" list reopened 2>>"$state/$host.error"); then
     echo "$host: $(tail -n 1 "$state/$host.error")"
     continue
   fi
-  while read -r id marked; do
+  while read -r id marked kind; do
     [[ -n $id ]] || continue
-    key="$host $id $marked"
+    key="$host $id $marked $kind"
     if (($(grep -cxF "$key" "$state/handed" || true) < 2)); then
       fresh+=("$key")
     fi
-  done < <(jq -r '"\(.id) \(.marked_at // 0)"' <<<"$reports")
+  done < <(jq -r '"\(.id) \(.marked_at // 0) \(.status.state)"' <<<"$reports")
 done
 
 ((${#fresh[@]})) || exit 0

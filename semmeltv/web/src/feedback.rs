@@ -1,4 +1,4 @@
-use crate::api::{Api, FeedbackStatus, FeedbackSummary, Resolution};
+use crate::api::{Api, CommentAuthor, FeedbackComment, FeedbackStatus, FeedbackSummary, Resolution};
 use crate::auth::admin;
 use crate::layout::back;
 use crate::public::Public;
@@ -36,7 +36,7 @@ fn age(at: u64, now: u64) -> String {
 
 fn stage(status: &FeedbackStatus) -> &'static str {
     match status {
-        FeedbackStatus::New => "new",
+        FeedbackStatus::New | FeedbackStatus::Reopened { .. } => "new",
         FeedbackStatus::NeedsReview { .. } => "needs_review",
         FeedbackStatus::Done { .. } => "done",
     }
@@ -45,6 +45,7 @@ fn stage(status: &FeedbackStatus) -> &'static str {
 fn badge(status: &FeedbackStatus) -> String {
     match status {
         FeedbackStatus::New => "New".to_string(),
+        FeedbackStatus::Reopened { .. } => "Reopened".to_string(),
         FeedbackStatus::NeedsReview { .. } => "Needs review".to_string(),
         FeedbackStatus::Done {
             resolution: Resolution::Fixed { commit, .. },
@@ -58,6 +59,10 @@ fn badge(status: &FeedbackStatus) -> String {
 fn explanation(status: &FeedbackStatus) -> String {
     match status {
         FeedbackStatus::New => String::new(),
+        FeedbackStatus::Reopened { was } => match explanation(was) {
+            before if before.is_empty() => format!("A comment reopened it. Before: {}.", badge(was)),
+            before => format!("A comment reopened it. Before: {}.\n\n{before}", badge(was)),
+        },
         FeedbackStatus::NeedsReview { why, decide } => format!("{why}\n\nTo decide: {decide}"),
         FeedbackStatus::Done {
             resolution: Resolution::Fixed { what, .. },
@@ -85,6 +90,36 @@ fn chosen(choice: &str, first: String, second: String) -> Option<FeedbackStatus>
             resolution: Resolution::NoChange { why: first },
         },
         _ => return None,
+    })
+}
+
+fn author(comment: &FeedbackComment) -> (&'static str, String) {
+    match &comment.author {
+        CommentAuthor::Person { name } => ("comment person", name.clone()),
+        CommentAuthor::Claude => ("comment claude", "Claude".to_string()),
+    }
+}
+
+fn thread_after(earlier: &str, text: &str) -> String {
+    let text = text.trim();
+    if earlier.is_empty() {
+        text.to_string()
+    } else {
+        format!("{earlier}\n\n{text}")
+    }
+}
+
+#[procedure]
+pub async fn say(cx: &Cx, id: String, text: String, earlier: String) -> Result<(bool, String, String, String, String)> {
+    Ok(match Api::of(cx).comment_feedback(&id, &text).await {
+        Ok(status) => (
+            true,
+            stage(&status).to_string(),
+            badge(&status),
+            explanation(&status),
+            thread_after(&earlier, &text),
+        ),
+        Err(problem) => (false, problem, String::new(), String::new(), earlier),
     })
 }
 
@@ -160,6 +195,18 @@ async fn report_row(
     let first = signal(cx, String::new);
     let second = signal(cx, String::new);
     let said = signal(cx, String::new);
+    let words = signal(cx, String::new);
+    let mine = signal(cx, String::new);
+    let answer = signal(cx, String::new);
+    let thread: Vec<(&'static str, String, String, &str)> = report
+        .comments
+        .iter()
+        .map(|comment| {
+            let (class, name) = author(comment);
+            (class, name, age(comment.at, now), comment.text.as_str())
+        })
+        .collect();
+    let speaker = id.clone();
     Ok(view! {
         <li class="report" :hidden=$(if shown.get() == "all" { false } else { shown.get() != status.get() })>
             <p class="report-who">
@@ -183,6 +230,39 @@ async fn report_row(
                 <span :hidden=$(by.get().is_empty())>$(by.get())</span>
             </div>
             <p class="report-note" :hidden=$(note.get().is_empty())>$(note.get())</p>
+            <ol class="report-thread">
+                #[key(index)]
+                for (index, (class, name, when, text)) in thread.iter().enumerate() {
+                    <li class=(*class) data-index=(index.to_string())>
+                        <p class="comment-who"><b>(name.as_str())</b> <time>(when.as_str())</time></p>
+                        <p class="comment-text">(*text)</p>
+                    </li>
+                }
+                <li class="comment person" :hidden=$(mine.get().is_empty())>
+                    <p class="comment-who"><b>"You"</b> <time>"just now"</time></p>
+                    <p class="comment-text">$(mine.get())</p>
+                </li>
+            </ol>
+            <form class="report-say" @submit=$(async |e: Event| {
+                e.prevent_default();
+                let reply = say(speaker.to_owned(), words.get(), mine.get()).await;
+                if reply.0 {
+                    status.set(reply.1);
+                    label.set(reply.2);
+                    note.set(reply.3);
+                    mine.set(reply.4);
+                    words.set("".to_owned());
+                    answer.set("".to_owned());
+                } else {
+                    answer.set(reply.1);
+                }
+            })>
+                <textarea rows="2" maxlength="4000" placeholder="Reply, or answer the question" aria-label="Comment"
+                    :value=$(words.get())
+                    @input=$(|e: Event| words.set(e.target.value))></textarea>
+                <p class="controls-said" aria-live="polite" :hidden=$(answer.get().is_empty())>$(answer.get())</p>
+                <button type="submit" class="pill" :disabled=$(words.get().trim().is_empty())>"Comment"</button>
+            </form>
             <pre class="report-copy" id=(copy.as_str()) hidden=(true)>(for_claude(report, dir))</pre>
             <div class="report-actions" :hidden=$(editing.get())>
                 <button type="button" class="pill quiet" data-copy=(copy.as_str())>"Copy for Claude"</button>
@@ -319,6 +399,7 @@ mod tests {
             status: FeedbackStatus::New,
             marked_at: None,
             marked_by: None,
+            comments: Vec::new(),
         };
         let text = for_claude(&report, "/var/lib/semmeltv/feedback");
         assert!(text.starts_with("SemmelTV feedback 20261115-131211-ab12 from Frederik on iPhone 1a2b"));
@@ -341,5 +422,25 @@ mod tests {
             "Done, no change"
         );
         assert_eq!(chosen("later", String::new(), String::new()), None);
+    }
+
+    #[test]
+    fn a_reopened_report_shows_what_it_was_and_a_thread_grows_from_the_page() {
+        let was = chosen("needs_review", "Two ways".to_string(), "a or b".to_string()).unwrap();
+        let reopened = FeedbackStatus::Reopened { was: Box::new(was) };
+        assert_eq!(stage(&reopened), "new");
+        assert_eq!(badge(&reopened), "Reopened");
+        assert_eq!(
+            explanation(&reopened),
+            "A comment reopened it. Before: Needs review.\n\nTwo ways\n\nTo decide: a or b"
+        );
+        assert_eq!(thread_after("", " 1a "), "1a");
+        assert_eq!(thread_after("1a", "and hurry"), "1a\n\nand hurry");
+        let claude = FeedbackComment {
+            at: 0,
+            author: CommentAuthor::Claude,
+            text: "Built option a".to_string(),
+        };
+        assert_eq!(author(&claude), ("comment claude", "Claude".to_string()));
     }
 }

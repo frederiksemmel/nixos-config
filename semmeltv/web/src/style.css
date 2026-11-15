@@ -2125,6 +2125,17 @@ html[data-feedback] .feedback-open { background: var(--text); color: var(--bg); 
 .report-choices .track { min-height: 44px; place-content: center; text-align: center; padding: 0 8px; }
 .report-edit textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; resize: vertical; }
 .report-edit textarea[hidden] { display: none; }
+.report-thread { display: grid; gap: 8px; width: 100%; margin: 0; padding: 0; list-style: none; }
+.report-thread:not(:has(.comment:not([hidden]))) { display: none; }
+.comment { display: grid; gap: 2px; padding: 8px 12px; border-radius: 12px; background: var(--bg); }
+.comment[hidden] { display: none; }
+.comment.claude { border-left: 3px solid var(--accent); }
+.comment-who { font-size: 13px; color: var(--muted); }
+.comment-who b { color: var(--text); }
+.comment-text { font-size: 15px; line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.report-say { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; width: 100%; }
+.report-say textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; resize: vertical; }
+.report-say .controls-said { grid-column: 1 / -1; }
 
 @media (max-width: 389px) {
   .top { gap: 5px; }

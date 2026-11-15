@@ -1,12 +1,17 @@
 usage() {
   cat >&2 <<'EOF'
-usage: semmeltv-feedback HOST list [new|needs_review|done]
+usage: semmeltv-feedback HOST list [new|reopened|needs_review|done]
        semmeltv-feedback HOST show ID
+       semmeltv-feedback HOST thread ID
+       semmeltv-feedback HOST comment ID TEXT
        semmeltv-feedback HOST pictures ID DIR
        semmeltv-feedback HOST mark ID new
        semmeltv-feedback HOST mark ID needs-review WHY DECIDE
        semmeltv-feedback HOST mark ID fixed COMMIT WHAT
        semmeltv-feedback HOST mark ID no-change WHY
+
+A comment from this tool is signed "Claude" and never reopens a report; a
+person's comment on the admin page reopens a settled one.
 
 HOST is semmeltv5 or semmeltv3. Talks to the TV's API on 127.0.0.1 over ssh
 with the TV's service token, which never leaves the TV.
@@ -45,16 +50,26 @@ case $command in
     query=""
     if (($# == 1)); then
       case $1 in
-        new | needs_review | done) query="?state=$1" ;;
+        new | reopened | needs_review | done) query="?state=$1" ;;
         *) usage ;;
       esac
     fi
     api GET "/api/feedback$query" |
-      jq -c '.reports[] | {id, when, status, marked_at, marked_by, person: .person.name, device, page, message, screenshot, tv_screenshot}'
+      jq -c '.reports[] | {id, when, status, marked_at, marked_by, person: .person.name, device, page, message, screenshot, tv_screenshot, comments: (.comments | length)}'
     ;;
   show)
     (($# == 1)) || usage
     api GET "/api/feedback/$1"
+    ;;
+  thread)
+    (($# == 1)) || usage
+    api GET "/api/feedback/$1" |
+      jq -r '.comments[] | "\(.at | todate) \(if .author.kind == "claude" then "Claude" else .author.name end): \(.text)"'
+    ;;
+  comment)
+    (($# == 2)) || usage
+    api POST "/api/feedback/$1/comments" "$(jq -nc --arg text "$2" '{text: $text}')"
+    echo
     ;;
   pictures)
     (($# == 2)) || usage

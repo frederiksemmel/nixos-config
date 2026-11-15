@@ -815,6 +815,36 @@ with sync_playwright() as playwright:
             report.querySelector(".report-status b").textContent.startsWith("Fixed") || report.querySelector(".report-status b").textContent.startsWith("Done"))
             && [...document.querySelectorAll(".report")].some((report) => !report.hidden && report.querySelector(".report-copy").textContent.includes({by_token!r}))""")
 
+    with scenario("Claude answers in a report's thread, and a person's comment reopens it for triage"):
+        settled = json.loads(tv.succeed(f"tail -n 2 {FEEDBACK}/index.jsonl").splitlines()[0])
+        tv.succeed(
+            "curl -sf -H @/tmp/service-header -H 'content-type: application/json' "
+            f"""-d '{{"text": "Fixed in abc1234; the list keeps its place."}}' http://127.0.0.1:8090/api/feedback/{settled['id']}/comments"""
+        )
+        phone.goto("/feedback")
+        row = phone.page.locator(".report").filter(has=phone.page.locator(".report-message", has_text=settled["message"]))
+        assert row.locator(".report-status b").inner_text().startswith("Fixed"), "Claude's comment leaves the status alone"
+        assert row.locator(".comment.claude .comment-who b").inner_text() == "Claude"
+        field = row.get_by_role("textbox", name="Comment")
+        assert phone.js('parseFloat(getComputedStyle(document.querySelector(".report-say textarea")).fontSize) >= 16'), "16 px, so iOS doesn't zoom"
+        field.fill("Still jumps on the second visit")
+        row.get_by_role("button", name="Comment").tap()
+        phone.until(f"""[...document.querySelectorAll(".report")].some((report) =>
+            report.querySelector(".report-copy").textContent.includes({settled['id']!r})
+            && report.querySelector(".report-status b").textContent === "Reopened"
+            && report.querySelector(".comment.person:not([hidden]) .comment-text")?.textContent === "Still jumps on the second visit")""")
+        reopened = json.loads(tv.succeed("curl -sf -H @/tmp/service-header 'http://127.0.0.1:8090/api/feedback?state=reopened'"))["reports"]
+        assert [report["id"] for report in reopened] == [settled["id"]], reopened
+        assert reopened[0]["status"]["was"]["resolution"]["commit"] == "abc1234", reopened[0]["status"]
+        assert [(comment["author"]["kind"], comment["text"]) for comment in reopened[0]["comments"]] == [
+            ("claude", "Fixed in abc1234; the list keeps its place."),
+            ("person", "Still jumps on the second visit"),
+        ], reopened[0]["comments"]
+        phone.goto("/feedback")
+        phone.until(f"""[...document.querySelectorAll(".report")].some((report) =>
+            report.querySelector(".report-copy").textContent.includes({settled['id']!r})
+            && [...report.querySelectorAll(".comment:not([hidden]) .comment-who b")].map((name) => name.textContent).join() === "Claude,Frederik")""")
+
     for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
         with scenario(f"the remote opens, closes by a swipe without a reload, and a reload brings it back closed ({engine})"):
             remote = phone if engine == "chromium" else Phone(playwright, engine, device)

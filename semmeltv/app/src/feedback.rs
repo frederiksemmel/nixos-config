@@ -16,6 +16,7 @@ use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -84,6 +85,7 @@ pub struct Summary {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Status {
     New,
+    Reopened { was: Box<Status> },
     NeedsReview { why: String, decide: String },
     Done { resolution: Resolution },
 }
@@ -99,8 +101,28 @@ pub enum Resolution {
 #[serde(rename_all = "snake_case")]
 enum Stage {
     New,
+    Reopened,
     NeedsReview,
     Done,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Author {
+    Person { name: String },
+    Claude,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Comment {
+    at: u64,
+    author: Author,
+    text: String,
+}
+
+#[derive(Deserialize)]
+struct Said {
+    text: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -117,6 +139,13 @@ struct Listed {
     status: Status,
     marked_at: Option<u64>,
     marked_by: Option<String>,
+    comments: Vec<Comment>,
+}
+
+fn now() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 fn note(text: &str, what: &str) -> Result<String, String> {
@@ -131,6 +160,7 @@ impl Status {
     fn stage(&self) -> Stage {
         match self {
             Status::New => Stage::New,
+            Status::Reopened { .. } => Stage::Reopened,
             Status::NeedsReview { .. } => Stage::NeedsReview,
             Status::Done { .. } => Stage::Done,
         }
@@ -139,6 +169,7 @@ impl Status {
     fn checked(self) -> Result<Status, String> {
         Ok(match self {
             Status::New => Status::New,
+            Status::Reopened { .. } => return Err("A report reopens when a person comments on it".to_string()),
             Status::NeedsReview { why, decide } => Status::NeedsReview {
                 why: note(&why, "why it needs a review")?,
                 decide: note(&decide, "what a person has to decide")?,
@@ -165,6 +196,13 @@ impl Status {
                 },
             },
         })
+    }
+
+    fn reopened_by_a_comment(self) -> Status {
+        match self {
+            settled @ (Status::NeedsReview { .. } | Status::Done { .. }) => Status::Reopened { was: Box::new(settled) },
+            waiting @ (Status::New | Status::Reopened { .. }) => waiting,
+        }
     }
 }
 
@@ -227,6 +265,7 @@ fn new_id(seconds: u64) -> String {
     format!("{}-{:02x}{:02x}", civil(seconds).0, bytes[0], bytes[1])
 }
 
+#[derive(Debug)]
 enum Refused {
     Unknown,
     Invalid(String),
@@ -235,6 +274,10 @@ enum Refused {
 
 fn status_file(id: &str) -> String {
     format!("{id}.status.json")
+}
+
+fn comments_file(id: &str) -> String {
+    format!("{id}.comments.jsonl")
 }
 
 fn valid_id(id: &str) -> bool {
@@ -452,31 +495,99 @@ impl Feedback {
 
     async fn listed(&self, summary: Summary) -> Listed {
         let marked = self.marked(&summary.id).await;
+        let summary_id = summary.id.clone();
         Listed {
             summary,
             status: marked.as_ref().map_or(Status::New, |marked| marked.status.clone()),
             marked_at: marked.as_ref().map(|marked| marked.at),
             marked_by: marked.map(|marked| marked.by),
+            comments: self.comments(&summary_id).await,
         }
+    }
+
+    async fn comments(&self, id: &str) -> Vec<Comment> {
+        let text = tokio::fs::read_to_string(self.dir.join(comments_file(id)))
+            .await
+            .unwrap_or_default();
+        text.lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
+    }
+
+    async fn known(&self, id: &str) -> bool {
+        valid_id(id)
+            && tokio::fs::try_exists(self.dir.join(format!("{id}.json")))
+                .await
+                .unwrap_or(false)
     }
 
     async fn mark(&self, id: &str, status: Status, by: String) -> Result<Marked, Refused> {
         let status = status.checked().map_err(Refused::Invalid)?;
         let _writing = self.writing.lock().await;
-        if !valid_id(id)
-            || !tokio::fs::try_exists(self.dir.join(format!("{id}.json")))
-                .await
-                .unwrap_or(false)
-        {
+        if !self.known(id).await {
             return Err(Refused::Unknown);
         }
-        let marked = Marked {
-            status,
-            at: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |since| since.as_secs()),
-            by,
+        self.write_marked(id, Marked { status, at: now(), by }).await
+    }
+
+    async fn comment(&self, id: &str, author: Author, text: &str) -> Result<(Comment, Marked), Refused> {
+        let text = note(text, "something first").map_err(Refused::Invalid)?;
+        let _writing = self.writing.lock().await;
+        if !self.known(id).await {
+            return Err(Refused::Unknown);
+        }
+        let comment = Comment {
+            at: now(),
+            author,
+            text,
         };
+        let mut line = serde_json::to_string(&comment).map_err(|error| Refused::Failed(error.to_string()))?;
+        line.push('\n');
+        let mut file = tokio::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.dir.join(comments_file(id)))
+            .await
+            .map_err(|error| Refused::Failed(format!("saving the comment: {error}")))?;
+        file.write_all(line.as_bytes())
+            .await
+            .map_err(|error| Refused::Failed(format!("saving the comment: {error}")))?;
+        let current = self.marked(id).await;
+        let Author::Person { name } = &comment.author else {
+            return Ok((
+                comment,
+                current.unwrap_or(Marked {
+                    status: Status::New,
+                    at: 0,
+                    by: String::new(),
+                }),
+            ));
+        };
+        let status = current.as_ref().map_or(Status::New, |marked| marked.status.clone());
+        let reopened = status.clone().reopened_by_a_comment();
+        let marked = match current {
+            Some(current) if reopened == status => current,
+            None => Marked {
+                status: Status::New,
+                at: 0,
+                by: String::new(),
+            },
+            Some(_) => {
+                self.write_marked(
+                    id,
+                    Marked {
+                        status: reopened,
+                        at: comment.at,
+                        by: name.clone(),
+                    },
+                )
+                .await?
+            }
+        };
+        Ok((comment, marked))
+    }
+
+    async fn write_marked(&self, id: &str, marked: Marked) -> Result<Marked, Refused> {
         let body = serde_json::to_vec_pretty(&marked).map_err(|error| Refused::Failed(error.to_string()))?;
         let temporary = self.dir.join(format!("{}.new", status_file(id)));
         let written = tokio::fs::write(&temporary, body).await;
@@ -501,6 +612,7 @@ impl Feedback {
             let files = [
                 Some(format!("{}.json", old.id)),
                 Some(status_file(&old.id)),
+                Some(comments_file(&old.id)),
                 old.screenshot,
                 old.tv_screenshot,
             ];
@@ -592,6 +704,53 @@ async fn set_status(
     }
 }
 
+fn refused(id: &str, refusal: Refused) -> Response {
+    match refusal {
+        Refused::Unknown => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "There is no such report" })),
+        )
+            .into_response(),
+        Refused::Invalid(problem) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "error": problem }))).into_response()
+        }
+        Refused::Failed(problem) => {
+            eprintln!("feedback: {id}: {problem}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": problem }))).into_response()
+        }
+    }
+}
+
+async fn add_comment(
+    State(feedback): State<Feedback>,
+    caller: Option<Extension<Caller>>,
+    Path(id): Path<String>,
+    Json(said): Json<Said>,
+) -> Response {
+    let author = match caller {
+        Some(Extension(Caller::Person(person))) => Author::Person { name: person.name },
+        Some(Extension(Caller::Service)) => Author::Claude,
+        None => Author::Person {
+            name: "someone".to_string(),
+        },
+    };
+    match feedback.comment(&id, author, &said.text).await {
+        Ok((comment, marked)) => {
+            eprintln!(
+                "feedback: {id} has a comment from {:?}, now {:?}",
+                comment.author,
+                marked.status.stage()
+            );
+            (
+                StatusCode::CREATED,
+                Json(json!({ "id": id, "comment": comment, "status": marked.status, "marked_at": (marked.at > 0).then_some(marked.at), "marked_by": (!marked.by.is_empty()).then_some(marked.by) })),
+            )
+                .into_response()
+        }
+        Err(refusal) => refused(&id, refusal),
+    }
+}
+
 async fn one(State(feedback): State<Feedback>, Path(id): Path<String>) -> Response {
     if !valid_id(&id) {
         return StatusCode::NOT_FOUND.into_response();
@@ -606,6 +765,7 @@ async fn one(State(feedback): State<Feedback>, Path(id): Path<String>) -> Respon
     report["status"] = json!(marked.as_ref().map_or(Status::New, |marked| marked.status.clone()));
     report["marked_at"] = json!(marked.as_ref().map(|marked| marked.at));
     report["marked_by"] = json!(marked.map(|marked| marked.by));
+    report["comments"] = json!(feedback.comments(&id).await);
     Json(report).into_response()
 }
 
@@ -637,6 +797,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(feedback: Feedback) -> Router<S>
         .route("/api/feedback", get(list).post(send))
         .route("/api/feedback/{id}", get(one))
         .route("/api/feedback/{id}/status", post(set_status))
+        .route("/api/feedback/{id}/comments", post(add_comment))
         .route("/api/feedback/files/{name}", get(file))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(feedback)
@@ -732,5 +893,52 @@ mod tests {
         };
         assert!(silent.checked().is_err());
         assert!(serde_json::from_value::<Status>(json!({ "state": "needs_review", "why": "x" })).is_err());
+    }
+
+    #[test]
+    fn only_a_person_reopens_a_settled_report_and_claude_answers_in_the_thread() {
+        let dir = std::env::temp_dir().join(format!("semmeltv-feedback-thread-{}", std::process::id()));
+        let feedback = Feedback::new(dir.clone(), Bus::default(), None);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let sent = Sent {
+            message: "The sheet reopens".to_string(),
+            page: None,
+            client: json!({}),
+            screenshot: None,
+        };
+        let id = runtime.block_on(feedback.store(None, sent)).unwrap().id;
+        let frederik = Author::Person {
+            name: "Frederik".to_string(),
+        };
+
+        let (_, marked) = runtime
+            .block_on(feedback.comment(&id, frederik.clone(), "Still there"))
+            .unwrap();
+        assert_eq!(marked.status, Status::New);
+
+        let done = Status::Done {
+            resolution: Resolution::NoChange {
+                why: "Works as meant".to_string(),
+            },
+        };
+        runtime
+            .block_on(feedback.mark(&id, done.clone(), "the service token".to_string()))
+            .unwrap();
+        let (_, marked) = runtime
+            .block_on(feedback.comment(&id, Author::Claude, "Nothing to do"))
+            .unwrap();
+        assert_eq!(marked.status, done);
+
+        let (_, marked) = runtime.block_on(feedback.comment(&id, frederik, "It is not")).unwrap();
+        assert_eq!(marked.status, Status::Reopened { was: Box::new(done) });
+        assert_eq!(marked.by, "Frederik");
+        let thread: Vec<(Author, String)> = runtime
+            .block_on(feedback.comments(&id))
+            .into_iter()
+            .map(|comment| (comment.author, comment.text))
+            .collect();
+        assert_eq!(thread.len(), 3);
+        assert_eq!(thread[1], (Author::Claude, "Nothing to do".to_string()));
+        let _ = std::fs::remove_dir_all(dir);
     }
 }

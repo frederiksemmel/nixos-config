@@ -1706,6 +1706,73 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_comment_joins_the_thread_and_reopens_a_settled_report() {
+        let server = serve(no_root(), None);
+        let (_, sent) = post(&server, "/api/feedback", json!({ "message": "The sheet reopens" }));
+        let id = sent["id"].as_str().unwrap();
+        let review = json!({ "state": "needs_review", "why": "Two ways", "decide": "a) close it, b) keep it" });
+        assert_eq!(
+            post(&server, &format!("/api/feedback/{id}/status"), review.clone()).0,
+            200
+        );
+
+        let (status, answer) = post(
+            &server,
+            &format!("/api/feedback/{id}/comments"),
+            json!({ "text": " 1a " }),
+        );
+        assert_eq!(status, 201, "{answer}");
+        assert_eq!(answer["comment"]["text"], "1a");
+        assert_eq!(
+            answer["comment"]["author"],
+            json!({ "kind": "person", "name": "someone" })
+        );
+        assert_eq!(answer["status"], json!({ "state": "reopened", "was": review }));
+
+        let (_, reopened) = get(&server, "/api/feedback?state=reopened");
+        assert_eq!(reopened["reports"][0]["id"], id);
+        assert_eq!(reopened["reports"][0]["comments"][0]["text"], "1a");
+        assert_eq!(get(&server, "/api/feedback?state=needs_review").1["reports"], json!([]));
+        let (_, report) = get(&server, &format!("/api/feedback/{id}"));
+        assert_eq!(report["comments"].as_array().unwrap().len(), 1);
+
+        let (_, again) = post(
+            &server,
+            &format!("/api/feedback/{id}/comments"),
+            json!({ "text": "and hurry" }),
+        );
+        assert_eq!(again["status"]["state"], "reopened");
+        assert_eq!(again["status"]["was"], review);
+        assert_eq!(
+            post(
+                &server,
+                &format!("/api/feedback/{id}/comments"),
+                json!({ "text": "  " })
+            )
+            .0,
+            422
+        );
+        assert_eq!(
+            post(
+                &server,
+                "/api/feedback/20200101-000000-0000/comments",
+                json!({ "text": "x" })
+            )
+            .0,
+            404
+        );
+        assert_eq!(
+            post(
+                &server,
+                &format!("/api/feedback/{id}/status"),
+                json!({ "state": "reopened", "was": { "state": "new" } })
+            )
+            .0,
+            422
+        );
+    }
+
     fn no_root() -> PathBuf {
         PathBuf::from("/nonexistent")
     }

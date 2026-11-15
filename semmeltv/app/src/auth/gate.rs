@@ -58,7 +58,7 @@ pub fn access(method: &Method, path: &str) -> Access {
         ["api", "stream", id, ..] if *id != "open" => Access::Stream,
         ["api", "events"] if method == Method::GET => Access::Service,
         ["api", "feedback", ..] if method == Method::GET => Access::AdminOrService,
-        ["api", "feedback", _, "status"] => Access::AdminOrService,
+        ["api", "feedback", _, "status" | "comments"] => Access::AdminOrService,
         ["api", "storage", ..] | ["api", "tv", "pair"] | ["api", "auth", "members", ..] | ["api", "downloads", ..] => {
             Access::Admin
         }
@@ -228,6 +228,11 @@ mod tests {
             (
                 &post,
                 "/api/feedback/20261115-131211-ab12/status",
+                Access::AdminOrService,
+            ),
+            (
+                &post,
+                "/api/feedback/20261115-131211-ab12/comments",
                 Access::AdminOrService,
             ),
         ];

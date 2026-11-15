@@ -1,6 +1,6 @@
 state=${XDG_STATE_HOME:-$HOME/.local/state}/semmeltv-feedback
 name="semmeltv-feedback-triage-$(date +%Y%m%d-%H%M)"
-reports=$(awk '{ print "- " $2 " on " $1 }' "$state/pending")
+reports=$(awk '{ print "- " $2 " on " $1 ($4 == "reopened" ? ", reopened by a comment" : ", new") }' "$state/pending")
 
 cd "$HOME/repos/nixos-config"
 echo "$name: triaging"
