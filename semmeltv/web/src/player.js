@@ -8,9 +8,6 @@ let returnFocus = null;
 let shownKey = null;
 let drag = null;
 let dragged = false;
-let closing = false;
-let pendingLink = null;
-let passLink = false;
 
 const sheet = () => document.getElementById("sheet");
 const isOpen = () => root.hasAttribute("data-sheet");
@@ -33,32 +30,15 @@ function setOpen(open) {
 }
 
 function openSheet() {
-  if (isOpen()) return;
-  history.pushState({ ...(history.state || {}), sheet: true }, "");
   setOpen(true);
 }
 
 function closeSheet() {
-  if (!isOpen() || closing) return;
-  if (history.state && history.state.sheet) {
-    closing = true;
-    history.back();
-  } else {
-    setOpen(false);
-  }
+  setOpen(false);
 }
 
-window.addEventListener("popstate", () => {
-  closing = false;
-  if (pendingLink) {
-    const link = pendingLink;
-    pendingLink = null;
-    passLink = true;
-    link.click();
-    passLink = false;
-  }
-  setOpen(Boolean(history.state && history.state.sheet));
-});
+window.addEventListener("pagehide", () => setOpen(false));
+window.addEventListener("pageshow", () => setOpen(false));
 
 let posts = 0;
 
@@ -126,16 +106,7 @@ document.addEventListener("click", (event) => {
 });
 
 window.addEventListener("click", (event) => {
-  const link = event.target.closest && event.target.closest("#sheet a[href]");
-  if (!link || passLink || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  if (history.state && history.state.sheet && !closing) {
-    event.preventDefault();
-    pendingLink = link;
-    closing = true;
-    history.back();
-  } else {
-    setOpen(false);
-  }
+  if (event.target.closest && event.target.closest("#sheet a[href]")) setOpen(false);
 }, true);
 
 document.addEventListener("keydown", (event) => {
@@ -420,5 +391,4 @@ for (const name of ["touchend", "touchcancel"]) {
   });
 }
 
-if (history.state && history.state.sheet) setOpen(true);
 markChoices();

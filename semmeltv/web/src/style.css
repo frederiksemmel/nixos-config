@@ -921,7 +921,7 @@ html[data-sheet] .sheet { transform: none; }
 
 .sheet.dragging,
 .sheet-dim.dragging { transition: none !important; }
-html[data-sheet] body { overflow: hidden; }
+html[data-sheet], html[data-sheet] body { overflow: hidden; overscroll-behavior: none; }
 
 .sheet-scroll {
   height: 100%;
