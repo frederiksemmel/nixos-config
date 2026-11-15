@@ -189,6 +189,7 @@ in
 
     services.udev.extraRules = ''
       ACTION=="add", SUBSYSTEM=="drm", KERNEL=="card[0-9]*-HDMI-A-[0-9]*", RUN+="${pkgs.coreutils}/bin/chgrp video /sys%p/status", RUN+="${pkgs.coreutils}/bin/chmod g+w /sys%p/status"
+      SUBSYSTEM=="input", KERNEL=="event*", SUBSYSTEMS=="rc", ENV{LIBINPUT_IGNORE_DEVICE}="1"
     '';
   };
 }
