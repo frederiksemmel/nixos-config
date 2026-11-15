@@ -18,4 +18,8 @@ runCommand "semmeltv-blank-cursor" { nativeBuildInputs = [ xcursorgen ]; } ''
     help crosshair move all-scroll not-allowed col-resize row-resize ew-resize ns-resize; do
     ln -s default $theme/cursors/$name
   done
+
+  mkdir -p $out/share/icons/default
+  echo '[Icon Theme]' > $out/share/icons/default/index.theme
+  echo 'Inherits=blank' >> $out/share/icons/default/index.theme
 ''

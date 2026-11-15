@@ -146,14 +146,16 @@ in
         }}";
         XCURSOR_THEME = "blank";
         WLR_LIBINPUT_NO_DEVICES = "1";
-        XCURSOR_PATH = "${blankCursor}/share/icons";
         SEMMELTV_DECODER = cfg.decoder;
       }
       // lib.optionalAttrs (cfg.tv.kind != null) { SEMMELTV_TV_KIND = cfg.tv.kind; }
       // lib.optionalAttrs (cfg.tv.renderer != null) { SEMMELTV_TV_RENDERER = cfg.tv.renderer; };
     };
 
-    environment.systemPackages = [ pkgs.sqlite ];
+    environment.systemPackages = [
+      pkgs.sqlite
+      blankCursor
+    ];
 
     environment.etc."semmeltv/revision" = lib.mkIf (config.system.configurationRevision != null) {
       text = config.system.configurationRevision;
