@@ -218,37 +218,66 @@ impl Pace {
     }
 }
 
+struct Known {
+    device: Device,
+    wire: Wire,
+    volume: Option<Level>,
+    audio_delay: Option<i32>,
+}
+
+impl Known {
+    fn new(device: Device, wire: Wire) -> Self {
+        Self {
+            device,
+            wire,
+            volume: None,
+            audio_delay: None,
+        }
+    }
+}
+
 #[derive(Default)]
 struct State {
-    headphones: Option<Device>,
-    wire: Wire,
+    headphones: Option<Known>,
     video: bool,
     error: Option<String>,
     attempt: u64,
     pairing: Option<PairingView>,
     pair_attempt: u64,
-    volume: Option<Level>,
-    audio_delay: Option<i32>,
 }
 
 impl State {
+    fn wire(&self) -> Wire {
+        self.headphones.as_ref().map_or(Wire::Idle, |known| known.wire)
+    }
+
+    fn set_wire(&mut self, wire: Wire) {
+        if let Some(known) = self.headphones.as_mut() {
+            known.wire = wire;
+        }
+    }
+
+    fn device(&self) -> Option<&Device> {
+        self.headphones.as_ref().map(|known| &known.device)
+    }
+
     fn pairing(&mut self, state: Stage, message: String) {
         self.pairing = Some(PairingView { state, message });
     }
 
     fn output(&self) -> Output {
-        match self.wire {
+        match self.wire() {
             Wire::Connected(Sound::Untested | Sound::Trying(_) | Sound::Headphones) => Output::Headphones,
             _ => Output::Tv,
         }
     }
 
     fn connected(&self) -> bool {
-        matches!(self.wire, Wire::Connected(_))
+        matches!(self.wire(), Wire::Connected(_))
     }
 
     fn shown(&self) -> (Output, Link) {
-        match self.wire {
+        match self.wire() {
             Wire::Idle => (Output::Tv, Link::Disconnected),
             Wire::Connecting { .. } | Wire::Connected(Sound::Trying(_)) => (Output::Tv, Link::Connecting),
             Wire::Connected(Sound::Tv) => (Output::Tv, Link::Connected),
@@ -289,7 +318,7 @@ impl Audio {
     }
 
     fn new(radio: Box<dyn Radio>, bus: Bus, mover: Mover, timing: Timing) -> Self {
-        let headphones = radio.paired();
+        let headphones = radio.paired().map(|device| Known::new(device, Wire::Idle));
         let audio = Self {
             inner: Arc::new(Inner {
                 state: Mutex::new(State {
@@ -313,7 +342,7 @@ impl Audio {
 
     pub fn device(&self) -> String {
         let state = self.inner.state.lock().unwrap();
-        device_for(state.output(), state.headphones.as_ref())
+        device_for(state.output(), state.device())
     }
 
     pub fn choose(&self, output: Output) -> View {
@@ -322,17 +351,17 @@ impl Audio {
         let mut route = None;
         let mut connect = None;
         let mut disconnect = None;
-        match (output, state.headphones.clone()) {
+        match (output, state.device().cloned()) {
             (Output::Headphones, None) => state.error = Some(NONE_PAIRED.to_string()),
-            (Output::Headphones, Some(headphones)) => match state.wire {
+            (Output::Headphones, Some(headphones)) => match state.wire() {
                 Wire::Connected(Sound::Untested | Sound::Trying(_) | Sound::Headphones) => {}
-                Wire::Connecting { .. } => state.wire = Wire::Connecting { take_sound: true },
+                Wire::Connecting { .. } => state.set_wire(Wire::Connecting { take_sound: true }),
                 Wire::Connected(Sound::Tv) => {
-                    state.wire = Wire::Connected(Sound::Untested);
+                    state.set_wire(Wire::Connected(Sound::Untested));
                     route = Some(Output::Headphones);
                 }
                 Wire::Idle => {
-                    state.wire = Wire::Connecting { take_sound: true };
+                    state.set_wire(Wire::Connecting { take_sound: true });
                     state.attempt += 1;
                     connect = Some((state.attempt, headphones.address));
                 }
@@ -341,13 +370,13 @@ impl Audio {
                 if state.output() == Output::Headphones {
                     route = Some(Output::Tv);
                 }
-                match state.wire {
+                match state.wire() {
                     Wire::Connecting { .. } => {
-                        state.wire = Wire::Idle;
+                        state.set_wire(Wire::Idle);
                         state.attempt += 1;
                     }
                     Wire::Connected(_) => {
-                        state.wire = Wire::Connected(Sound::Tv);
+                        state.set_wire(Wire::Connected(Sound::Tv));
                         disconnect = headphones.map(|headphones| headphones.address);
                     }
                     Wire::Idle => {}
@@ -356,7 +385,7 @@ impl Audio {
         }
         self.publish(&state);
         let view = view_of(&state);
-        let headphones = state.headphones.clone();
+        let headphones = state.device().cloned();
         drop(state);
         if let Some(output) = route {
             self.route(output, headphones.as_ref());
@@ -415,26 +444,23 @@ impl Audio {
     }
 
     pub fn headphones(&self) -> Option<Device> {
-        self.inner.state.lock().unwrap().headphones.clone()
+        self.inner.state.lock().unwrap().device().cloned()
     }
 
     pub fn select(&self, headphones: Option<Device>) {
         let mut state = self.inner.state.lock().unwrap();
-        let same = state.headphones.as_ref().map(|known| &known.address) == headphones.as_ref().map(|new| &new.address);
+        let same = state.device().map(|known| &known.address) == headphones.as_ref().map(|new| &new.address);
         if same {
             return;
         }
-        let old = state.headphones.clone();
+        let old = state.device().cloned();
         let route = state.output() == Output::Headphones;
         let disconnect = old
             .as_ref()
-            .filter(|_| state.wire != Wire::Idle)
+            .filter(|_| state.wire() != Wire::Idle)
             .map(|old| old.address.clone());
-        state.headphones = headphones.clone();
-        state.wire = Wire::Idle;
+        state.headphones = headphones.clone().map(|device| Known::new(device, Wire::Idle));
         state.attempt += 1;
-        state.volume = None;
-        state.audio_delay = None;
         state.error = None;
         self.publish(&state);
         drop(state);
@@ -455,7 +481,7 @@ impl Audio {
     pub fn heard(&self, flow: Flow, now: Instant) {
         let mut state = self.inner.state.lock().unwrap();
         let video = flow != Flow::Idle;
-        let next = match (state.wire, flow) {
+        let next = match (state.wire(), flow) {
             (Wire::Connected(Sound::Untested), Flow::Flowing) => Some(Sound::Trying(now)),
             (Wire::Connected(Sound::Trying(since)), Flow::Flowing) if now.duration_since(since) >= TRIAL => {
                 Some(Sound::Headphones)
@@ -472,8 +498,8 @@ impl Audio {
             }
             return;
         };
-        state.wire = Wire::Connected(next);
-        let headphones = state.headphones.clone();
+        state.set_wire(Wire::Connected(next));
+        let headphones = state.device().cloned();
         if next == Sound::Tv {
             let name = headphones.as_ref().map_or("The headphones", |headphones| &headphones.name);
             state.error = Some(format!("{name} didn't play. The sound is back on the TV."));
@@ -488,9 +514,8 @@ impl Audio {
     pub fn forget(&self) -> View {
         let mut state = self.inner.state.lock().unwrap();
         state.error = None;
-        let forgotten = state.headphones.take();
         let route = state.output() == Output::Headphones;
-        state.wire = Wire::Idle;
+        let forgotten = state.headphones.take().map(|known| known.device);
         state.attempt += 1;
         if state
             .pairing
@@ -523,7 +548,7 @@ impl Audio {
                 return;
             }
             if let Some(device) = radio.found() {
-                let earlier = self.inner.state.lock().unwrap().headphones.clone();
+                let earlier = self.inner.state.lock().unwrap().device().cloned();
                 if forgotten || earlier.is_none_or(|earlier| earlier.address != device.address) {
                     break Some(device);
                 }
@@ -553,9 +578,11 @@ impl Audio {
             return;
         }
         let mut state = self.inner.state.lock().unwrap();
-        let replaced = state.headphones.replace(device.clone());
         let route = state.output() == Output::Headphones;
-        state.wire = Wire::Connecting { take_sound: false };
+        let replaced = state
+            .headphones
+            .replace(Known::new(device.clone(), Wire::Connecting { take_sound: false }))
+            .map(|known| known.device);
         state.attempt += 1;
         let connect = state.attempt;
         state.pairing(Stage::Paired, format!("Paired with {}.", device.name));
@@ -603,12 +630,12 @@ impl Audio {
                     }
                     return;
                 }
-                let Wire::Connecting { take_sound } = state.wire else {
+                let Wire::Connecting { take_sound } = state.wire() else {
                     return;
                 };
                 if connected.is_err() || Instant::now() >= deadline {
-                    state.wire = Wire::Idle;
-                    let name = state.headphones.as_ref().map_or("The headphones", |headphones| &headphones.name);
+                    state.set_wire(Wire::Idle);
+                    let name = state.device().map_or("The headphones", |headphones| &headphones.name);
                     if take_sound {
                         state.error = Some(format!(
                             "{name} didn't connect. Open the case near the TV and try again."
@@ -631,27 +658,28 @@ impl Audio {
             None
         };
         let mut state = self.inner.state.lock().unwrap();
-        let Some(headphones) = state.headphones.clone().filter(|headphones| headphones.address == address) else {
+        let had_sound = state.output() == Output::Headphones;
+        let Some(known) = state.headphones.as_mut().filter(|known| known.device.address == address) else {
             return;
         };
+        let headphones = known.device.clone();
         let mut route = None;
         if level.is_some() {
-            state.volume = level;
+            known.volume = level;
         }
         if let Some(adjustment) = adjustment {
-            state.audio_delay = Some(-adjustment);
+            known.audio_delay = Some(-adjustment);
         }
-        match (present, state.wire) {
+        match (present, known.wire) {
             (true, Wire::Connecting { take_sound: true }) => {
-                state.wire = Wire::Connected(Sound::Untested);
+                known.wire = Wire::Connected(Sound::Untested);
                 route = Some(Output::Headphones);
             }
-            (true, Wire::Connecting { take_sound: false } | Wire::Idle) => state.wire = Wire::Connected(Sound::Tv),
+            (true, Wire::Connecting { take_sound: false } | Wire::Idle) => known.wire = Wire::Connected(Sound::Tv),
             (true, Wire::Connected(_)) => {}
             (false, Wire::Connecting { .. }) => {}
             (false, _) => {
-                let had_sound = state.output() == Output::Headphones;
-                state.wire = Wire::Idle;
+                known.wire = Wire::Idle;
                 if had_sound {
                     state.error = Some(format!(
                         "{} disconnected. The sound is back on the TV.",
@@ -674,7 +702,8 @@ impl Audio {
             if state.output() != Output::Headphones {
                 return None;
             }
-            (state.headphones.clone()?, state.volume)
+            let known = state.headphones.as_ref()?;
+            (known.device.clone(), known.volume)
         };
         let level = level
             .or_else(|| self.inner.radio.volume(&headphones.address))
@@ -712,7 +741,7 @@ impl Audio {
         let (headphones, delay) = {
             let state = self.inner.state.lock().unwrap();
             match &state.headphones {
-                Some(headphones) if state.connected() => (headphones.clone(), state.audio_delay.unwrap_or(0)),
+                Some(known) if state.connected() => (known.device.clone(), known.audio_delay.unwrap_or(0)),
                 _ => return Err("The headphones aren't connected".to_string()),
             }
         };
@@ -722,21 +751,27 @@ impl Audio {
             format!("{} didn't take the timing change", headphones.name)
         })?;
         let mut state = self.inner.state.lock().unwrap();
-        state.audio_delay = Some(delay);
+        if let Some(known) = state
+            .headphones
+            .as_mut()
+            .filter(|known| known.device.address == headphones.address)
+        {
+            known.audio_delay = Some(delay);
+        }
         self.publish(&state);
         Ok(view_of(&state))
     }
 
     fn volume_changed(&self, address: &str, level: Level) {
         let mut state = self.inner.state.lock().unwrap();
-        if state.headphones.as_ref().is_some_and(|headphones| headphones.address == address) {
-            state.volume = Some(level);
+        if let Some(known) = state.headphones.as_mut().filter(|known| known.device.address == address) {
+            known.volume = Some(level);
             self.publish(&state);
         }
     }
 
     fn sinks_listed(&self, sinks: &[String]) {
-        let current = self.inner.state.lock().unwrap().headphones.clone();
+        let current = self.inner.state.lock().unwrap().device().cloned();
         if let Some(headphones) = current {
             self.sink(&headphones.address, sinks.contains(&headphones.address));
         }
@@ -802,15 +837,15 @@ fn view_of(state: &State) -> View {
     let (output, link) = state.shown();
     View {
         output,
-        headphones: state.headphones.as_ref().map(|headphones| HeadphonesView {
-            name: headphones.name.clone(),
-            address: headphones.address.clone(),
+        headphones: state.headphones.as_ref().map(|known| HeadphonesView {
+            name: known.device.name.clone(),
+            address: known.device.address.clone(),
             state: link,
-            volume: state.volume.filter(|_| link == Link::Connected).map(|level| VolumeView {
+            volume: known.volume.filter(|_| link == Link::Connected).map(|level| VolumeView {
                 level: level.percent(),
                 muted: level.muted,
             }),
-            audio_delay: state.audio_delay.filter(|_| link == Link::Connected),
+            audio_delay: known.audio_delay.filter(|_| link == Link::Connected),
         }),
         pairing: state.pairing.clone(),
         error: state.error.clone(),
@@ -1092,6 +1127,27 @@ mod tests {
     use super::*;
     use crate::bus::Event;
     use std::sync::mpsc;
+
+    #[test]
+    fn without_headphones_there_is_no_wire_volume_or_delay() {
+        let mut state = State::default();
+        state.set_wire(Wire::Connected(Sound::Headphones));
+        assert_eq!(state.wire(), Wire::Idle);
+        assert_eq!(state.shown(), (Output::Tv, Link::Disconnected));
+        assert_eq!(view_of(&state).headphones, None);
+        let device = Device {
+            address: "AA".to_string(),
+            name: "AirPods".to_string(),
+        };
+        state.headphones = Some(Known {
+            volume: Some(Level { value: 64, muted: false }),
+            audio_delay: Some(40),
+            ..Known::new(device, Wire::Connected(Sound::Headphones))
+        });
+        assert_eq!(state.shown(), (Output::Headphones, Link::Connected));
+        state.headphones = None;
+        assert_eq!((state.wire(), state.output()), (Wire::Idle, Output::Tv));
+    }
 
     const AIRPODS: &str = "34:0E:22:67:03:38";
     const OTHER: &str = "00:11:22:33:44:55";
