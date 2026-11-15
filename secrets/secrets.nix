@@ -41,6 +41,10 @@ in
     frederik
     semmeltv5
   ];
+  "epaper_telegram_token.age".publicKeys = [
+    frederik
+    semmeltv3
+  ];
   "mullvad_wireguard_semmeltv3.age".publicKeys = [
     frederik
     semmeltv3
