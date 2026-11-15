@@ -768,6 +768,52 @@ with sync_playwright() as playwright:
             if remote is not phone:
                 remote.close()
 
+    with scenario("an iPhone back from the background shows the remote closed, and a swipe closes it after the live connection restarts"):
+        iphone = Phone(playwright, "webkit", "iPhone 15")
+        film_page(iphone)
+        tv_plays_film(iphone)
+        iphone.page.locator(".bar-open").tap()
+        iphone.until('document.documentElement.hasAttribute("data-sheet")', 3000)
+        iphone.page.wait_for_timeout(800)
+        skipped_from = tv_position() or 0.0
+        iphone.page.locator('.skip[data-skip="forward"]').tap()
+        eventually("the skip reaches the TV", lambda: (tv_position() or 0) > skipped_from + 3)
+        iphone.js("document.getElementById('sheet').dataset.rendered = 'before'")
+        iphone.page.evaluate(
+            """async () => {
+              const show = (state) => {
+                Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+                Object.defineProperty(document, "hidden", { configurable: true, get: () => state === "hidden" });
+                document.dispatchEvent(new Event("visibilitychange"));
+              };
+              show("hidden");
+              await new Promise((done) => setTimeout(done, 5000));
+              show("visible");
+            }"""
+        )
+        iphone.until('!document.getElementById("sheet").dataset.rendered', 10000)
+        assert iphone.js('!document.documentElement.hasAttribute("data-sheet")'), "the page comes back without the remote"
+        iphone.page.locator(".bar-open").tap()
+        iphone.until('document.documentElement.hasAttribute("data-sheet")', 3000)
+        iphone.page.wait_for_timeout(800)
+        iphone.js("document.getElementById('sheet').dataset.rendered = 'before'")
+        iphone.js('window.dispatchEvent(new Event("online"))')
+        iphone.until('!document.getElementById("sheet").dataset.rendered', 10000)
+        iphone.page.wait_for_timeout(500)
+        assert iphone.js('document.documentElement.hasAttribute("data-sheet") && !document.getElementById("sheet").inert'), "the re-rendered remote stays open and takes touches"
+        grip = iphone.page.locator(".sheet-top").bounding_box()
+        assert grip
+        x, y = grip["x"] + grip["width"] / 2, grip["y"] + grip["height"] / 2
+        iphone.page.mouse.move(x, y)
+        iphone.page.mouse.down()
+        for step in range(1, 13):
+            iphone.page.mouse.move(x, y + 40 * step)
+        assert iphone.js('document.documentElement.hasAttribute("data-sheet-drag")'), "the remote follows the finger"
+        iphone.page.mouse.up()
+        iphone.until('!document.documentElement.hasAttribute("data-sheet")', 3000)
+        stop_everything(iphone)
+        iphone.close()
+
     with scenario("Back after a reload folds the laptop's player into the bar, and stopping it stays on the film"):
         laptop = Phone(playwright, device=None, viewport={"width": 1280, "height": 800})
         film_page(laptop)

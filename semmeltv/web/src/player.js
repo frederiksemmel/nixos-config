@@ -39,6 +39,9 @@ function closeSheet() {
 
 window.addEventListener("pagehide", () => setOpen(false));
 window.addEventListener("pageshow", () => setOpen(false));
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") setOpen(false);
+});
 
 let posts = 0;
 
@@ -243,6 +246,8 @@ document.addEventListener("click", (event) => {
 
 new MutationObserver((records) => {
   if (!records.some((record) => record.type === "childList" || record.target.classList?.contains("now-state"))) return;
+  const element = sheet();
+  if (element && element.inert === isOpen()) element.inert = !isOpen();
   const state = document.querySelector(".now-state");
   const key = state ? state.dataset.key : null;
   if (key !== shownKey) {
