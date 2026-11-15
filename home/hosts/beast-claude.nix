@@ -68,6 +68,35 @@ let
     text = builtins.readFile ./beast-session-end.sh;
   };
 
+  claudeBg = lib.hiPrio (
+    pkgs.writeShellApplication {
+      name = "claude";
+      runtimeInputs = [
+        pkgs.coreutils
+        pkgs.git
+      ];
+      text = ''
+        background=0
+        remote=0
+        for argument in "$@"; do
+          case "$argument" in
+            --bg | --background) background=1 ;;
+            --remote-control | --remote-control=*) remote=1 ;;
+          esac
+        done
+        if [ "$background" = 1 ] && [ "$remote" = 0 ]; then
+          common=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)
+          case "$common" in
+            */.git) repo=$(basename "$(dirname "$common")") ;;
+            *) repo=$(basename "$PWD") ;;
+          esac
+          exec ${claude} --remote-control --remote-control-session-name-prefix "$repo" "$@"
+        fi
+        exec ${claude} "$@"
+      '';
+    }
+  );
+
   # A server lets the app start sessions in a repo; worktree gives each its own.
   remoteControl = repo: spawn: {
     Unit = {
@@ -89,6 +118,7 @@ in
   systemd.user.tmpfiles.rules = [ "d %h/claude-agent-home 0700 - - -" ];
 
   home.packages = [
+    claudeBg
     session-group
     session-end
     pkgs.pyright
@@ -207,6 +237,13 @@ in
     shows this session's group and the groups in use. When the work here has
     moved to another topic, run `session-group <name>`, reusing a name in use if
     one fits.
+
+    # Starting another session
+
+    To start a new session for the user, run `claude --bg -n <name> "<prompt>"`
+    from the repo it works in. On beast, `claude --bg` always turns on Remote
+    Control, so the session shows up in the Claude app and in the `beast`
+    picker like one started with `beast new`.
 
     # Reaching this session from a terminal
 
