@@ -142,6 +142,8 @@ class Phone:
         options: dict[str, Any] = dict(playwright.devices[device]) if device else {"viewport": viewport}
         self.touch = bool(options.get("has_touch"))
         self.context = self.browser.new_context(**options)
+        if engine == "webkit":
+            self.context.add_init_script("delete Navigator.prototype.mediaSession")
         self.context.route(
             HLS_URL,
             lambda route: route.fulfill(path=HLS_JS, content_type="text/javascript", headers={"access-control-allow-origin": "*"}),
@@ -424,6 +426,20 @@ def scrolls(phone, where):
 
 
 LOADED = 'document.readyState === "complete"'
+LOCK_SCREEN_SPY = """(() => {
+  window.mediaKeys = {};
+  window.sounds = [];
+  const setActionHandler = MediaSession.prototype.setActionHandler;
+  MediaSession.prototype.setActionHandler = function (action, handler) {
+    window.mediaKeys[action] = handler;
+    return setActionHandler.call(this, action, handler);
+  };
+  const play = HTMLMediaElement.prototype.play;
+  HTMLMediaElement.prototype.play = function () {
+    if (this instanceof HTMLAudioElement && !window.sounds.includes(this)) window.sounds.push(this);
+    return play.call(this);
+  };
+})();"""
 SHEET_STILL = '[...document.querySelectorAll("#sheet, .sheet-dim")].every((element) => element.getAnimations().length === 0)'
 
 
@@ -1226,6 +1242,37 @@ with sync_playwright() as playwright:
         phone.page.locator(".sheet-close").tap()
         phone.until('!document.documentElement.hasAttribute("data-sheet")', 3000)
         stop_everything(phone)
+
+    with scenario("a tap on the remote puts the TV on the lock screen, whose keys play, pause, seek and skip on the TV"):
+        locked = Phone(playwright)
+        locked.context.add_init_script(LOCK_SCREEN_SPY)
+        locked.goto("/")
+        at_home(locked)
+        switch_to(locked, "tv")
+        locked.api("POST", "/api/play", {"show": SHOW, "season": 1, "episode": 1})
+        tv_starts_at()
+        locked.until('document.querySelector(".bar-text span")?.textContent.includes("Anfang")', 30000)
+        assert locked.js("window.sounds.length === 0 && !navigator.mediaSession.metadata"), "nothing reaches the lock screen before a tap"
+        locked.page.locator(".bar-toggle").tap()
+        eventually("the tap pauses the TV", lambda: mpv("get_property", "pause") is True)
+        locked.until('navigator.mediaSession.metadata?.artist === "Testserie" && navigator.mediaSession.metadata.title.includes("Anfang")')
+        locked.until("window.sounds.length === 1 && window.sounds[0].paused")
+        locked.js('window.mediaKeys.play({ action: "play" })')
+        eventually("the lock screen's play resumes the TV", lambda: mpv("get_property", "pause") is False)
+        locked.until("!window.sounds[0].paused && window.sounds[0].loop")
+        locked.js('window.mediaKeys.seekto({ action: "seekto", seekTime: 60 })')
+        eventually("the lock screen seeks the TV", lambda: 58 < (tv_position() or 0) < 75)
+        locked.until('typeof window.mediaKeys.nexttrack === "function"')
+        locked.js('window.mediaKeys.nexttrack({ action: "nexttrack" })')
+        locked.until('navigator.mediaSession.metadata?.title.includes("Mitte")', 30000)
+        locked.until("!window.sounds[0].paused")
+        locked.js('window.mediaKeys.pause({ action: "pause" })')
+        eventually("the lock screen pauses the TV", lambda: mpv("get_property", "pause") is True)
+        locked.until("window.sounds[0].paused")
+        locked.api("POST", "/api/playback/stop", {})
+        tv_plays_nothing()
+        locked.until("navigator.mediaSession.metadata === null && window.mediaKeys.play === null", 40000)
+        locked.close()
 
     with scenario("the TV/phone switch moves at the tap and snaps back when the TV refuses"):
         phone.goto("/")

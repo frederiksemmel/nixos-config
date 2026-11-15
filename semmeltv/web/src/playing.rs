@@ -13,6 +13,7 @@ const SETTLE: Duration = Duration::from_secs(4);
 const FRESH: Duration = Duration::from_secs(10);
 const SCRUB: Asset = asset!("./scrub.js");
 const PLAYER: Asset = asset!("./player.js");
+const LOCK_SCREEN: Asset = asset!("./lockscreen.js");
 const DIRECTIONS: [&str; 2] = ["back", "forward"];
 const ALLOWED_CONTROLS: [&str; 4] = ["pause", "resume", "toggle", "stop"];
 const LONGEST_COMMAND: usize = 200;
@@ -154,6 +155,7 @@ struct Look {
     title: String,
     line: String,
     paused: bool,
+    loading: bool,
     speed: String,
     delay: String,
     subtitle: Option<i64>,
@@ -166,11 +168,16 @@ fn look(now: Option<&NowPlaying>) -> Option<Look> {
         title: now.title.clone(),
         line: line(now),
         paused: now.paused || now.loading,
+        loading: loading(now),
         speed: speed_value(now.speed),
         delay: delay_value(now.subtitle_delay),
         subtitle: now.subtitle,
         audio: now.audio,
     })
+}
+
+fn loading(now: &NowPlaying) -> bool {
+    now.loading && !now.paused
 }
 
 fn track_state(chosen: Option<i64>) -> String {
@@ -308,6 +315,7 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
             </div>
             <script type="module" src=(SCRUB)></script>
             <script type="module" src=(PLAYER)></script>
+            <script type="module" src=(LOCK_SCREEN)></script>
         </div>
     })
 }
@@ -611,7 +619,8 @@ async fn bar_info(cx: &Cx) -> Result<impl View> {
                         </span>
                         <i class=(now_class(&now)) data-key=(key(&now)) data-speed=(speed_value(now.speed))
                             data-subtitle=(track_state(now.subtitle)) data-audio=(track_state(now.audio))
-                            data-delay=(delay_value(now.subtitle_delay)) data-fetch=(fetch_body(&now)) hidden=(true)></i>
+                            data-delay=(delay_value(now.subtitle_delay)) data-fetch=(fetch_body(&now))
+                            data-loading=(if loading(&now) { "1" } else { "0" }) hidden=(true)></i>
                     }?
                 }
                 Tv::Unknown => emit! {

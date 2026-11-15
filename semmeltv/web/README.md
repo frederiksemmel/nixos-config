@@ -56,6 +56,14 @@ region changes every 5 s; `src/live.js` restarts the WebSocket when the pulse
 stops for 12 s or the page comes back from being away (a phone that slept), and
 marks the page `data-live="stale"` until the pulse is back, which dims the
 bar's and the remote's playing state and holds their controls.
+`src/lockscreen.js` puts what the TV plays on a phone's lock screen. A phone
+shows media keys there only for a page that plays sound, so after a tap on the
+remote or on a play button for the TV, the page plays a loop of silence while
+the TV plays and pauses it while the TV is paused. The Media Session carries
+the TV's title and poster, and its play, pause, seek and next-episode keys go to
+the TV's API. It lets go when the phone plays the video itself, after the TV
+has played nothing for 30 s, and when another app takes the phone's sound;
+the next tap engages it again.
 The microphone is plain JavaScript (`src/microphone.js`), because Topcoat's
 runtime cannot reach `getUserMedia` or audio worklets.
 
