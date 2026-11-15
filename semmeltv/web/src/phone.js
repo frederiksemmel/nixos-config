@@ -39,6 +39,17 @@ let screen = { kind: "tv", device: null, play: null, notice: null };
 let seenNotice = undefined;
 let socket = null;
 let pending = null;
+const PAGE = Math.random().toString(36).slice(2);
+
+// The player's history entry, made by this page load: one left by a load
+// before a reload or a back/forward restore is someone else's.
+function ownEntry() {
+  return history.state?.player === PAGE;
+}
+
+function pushEntry() {
+  history.pushState({ ...(history.state || {}), player: PAGE }, "");
+}
 let boot = null;
 let reloaded = takeResume();
 
@@ -375,8 +386,8 @@ class Player {
     document.body.append(this.root);
     this.root.focus({ preventScroll: true });
     this.mini = false;
-    history.pushState({ ...(history.state || {}), player: true }, "");
-    this.onPop = () => { if (!history.state?.player) this.minimize(); };
+    pushEntry();
+    this.onPop = () => { if (!ownEntry()) this.minimize(); };
     window.addEventListener("popstate", this.onPop);
     html.classList.add("pp-open");
     this.session = null;
@@ -710,7 +721,7 @@ class Player {
     if (this.closed || (this.mini && !dragged) || this.leaving) return;
     this.leaving = true;
     clearTimeout(this.settleTimer);
-    if (history.state?.player) history.back();
+    if (ownEntry()) history.back();
     this.closeSheet();
     if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
     if (!dragged) this.root.style.transform = "translateY(0px)";
@@ -739,7 +750,7 @@ class Player {
         void this.root.offsetWidth;
       }
     }
-    if (!history.state?.player) history.pushState({ ...(history.state || {}), player: true }, "");
+    if (!ownEntry()) pushEntry();
     this.root.style.transform = "";
     this.root.classList.remove("pp-mini-in");
     this.root.focus({ preventScroll: true });
@@ -1303,7 +1314,7 @@ class Player {
     document.removeEventListener("visibilitychange", this.onHide);
     window.removeEventListener("pagehide", this.onLeave);
     window.removeEventListener("popstate", this.onPop);
-    if (history.state?.player) history.back();
+    if (ownEntry()) history.back();
     document.removeEventListener("keydown", this.onKey, true);
     document.removeEventListener("keyup", this.onKeyUp, true);
     window.removeEventListener("pointermove", this.onDragMove);

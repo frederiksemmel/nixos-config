@@ -73,6 +73,7 @@ def settings_subpages(page, engine):
     page.locator('a[href="/settings"]').first.tap()
     until(page, engine, "Settings opens", 'location.pathname === "/settings" && document.querySelector("main .settings")')
     page.wait_for_timeout(500)
+    centred(page, engine, "Settings")
     for sub in ("/downloads", "/storage"):
         link = page.locator(f'main a[href="{sub}"]')
         link.scroll_into_view_if_needed()
@@ -94,6 +95,54 @@ def settings_subpages(page, engine):
     until(page, engine, "Back from Settings returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
     page.wait_for_timeout(500)
     scrolls(page, engine, "after Back from Settings")
+
+
+CENTRED = """() => {
+  const controls = [...document.querySelectorAll(".pill, .choice, .chip, .storage-button, .top-link, .back, .key")]
+    .filter((control) => control.getClientRects().length && getComputedStyle(control).visibility !== "hidden");
+  const off = [];
+  for (const control of controls) {
+    const box = control.getBoundingClientRect();
+    if (box.height < 20) continue;
+    const style = getComputedStyle(control);
+    const top = box.top + parseFloat(style.borderTopWidth) + parseFloat(style.paddingTop);
+    const bottom = box.bottom - parseFloat(style.borderBottomWidth) - parseFloat(style.paddingBottom);
+    let low = Infinity;
+    let high = -Infinity;
+    const take = (rect) => {
+      if (!rect.height) return;
+      low = Math.min(low, rect.top);
+      high = Math.max(high, rect.bottom);
+    };
+    const walker = document.createTreeWalker(control, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+    const texts = [];
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      if (node.nodeType === Node.TEXT_NODE) {
+        if (node.textContent.trim()) texts.push(node);
+      } else if (node.matches("svg, img") && getComputedStyle(node).display !== "none") {
+        take(node.getBoundingClientRect());
+      }
+    }
+    for (const text of texts) {
+      const wrap = document.createElement("span");
+      text.replaceWith(wrap);
+      wrap.append(text);
+      take(wrap.getBoundingClientRect());
+      wrap.replaceWith(text);
+    }
+    if (low === Infinity) continue;
+    const gap = (low + high) / 2 - (top + bottom) / 2;
+    if (Math.abs(gap) > 2) off.push(`${control.tagName.toLowerCase()}.${control.className} "${control.textContent.trim().slice(0, 24)}" ${gap.toFixed(1)} px (content ${top.toFixed(0)}-${bottom.toFixed(0)}, drawn ${low.toFixed(0)}-${high.toFixed(0)}, ${getComputedStyle(control).display}/${getComputedStyle(control).alignContent})`);
+  }
+  return off;
+}"""
+
+
+def centred(page, engine, where):
+    if engine == "webkit":
+        return
+    off = page.evaluate(CENTRED)
+    check(engine, f"{where}: every button's label sits in its middle", not off, "; ".join(off[:6]))
 
 
 def opens_title(page, engine, step):
@@ -500,6 +549,8 @@ def profiles(page, engine):
     check(engine, "the avatar in the top bar is Frederik's", page.evaluate('document.querySelector(".profile-link .avatar").textContent.trim() === "F"'))
     page.locator(".profile-link").tap()
     until(page, engine, "the avatar opens the picker with Frederik watching", 'location.pathname === "/profiles" && document.querySelector(".profile-choice.active .profile-name").textContent === "Frederik"')
+    page.wait_for_timeout(300)
+    centred(page, engine, "the signed-in picker")
     sign_in(page, engine, "Mami", "mami-pass", "switching to Mami")
     until(page, engine, "Mami lands on Home", 'location.pathname === "/" && document.querySelector(".profile-link .avatar").textContent.trim() === "M"', 8000)
     page.wait_for_timeout(800)
@@ -621,7 +672,10 @@ def run(p, engine, device):
     until(page, engine, "Home chip switches back", '[...document.querySelectorAll("main .chips .chip.on")].some((chip) => chip.textContent.trim() === "Home")', 3000)
     page.wait_for_selector(TILE)
     page.wait_for_timeout(1000)
+    centred(page, engine, "home")
     opens_title(page, engine, "cold load")
+    page.wait_for_timeout(500)
+    centred(page, engine, "a title page")
     finds_subtitles(page, engine)
     marks_watched(page, engine)
     answers(page, engine, "title page")
@@ -644,6 +698,7 @@ def run(p, engine, device):
     page.locator(".bar-open").tap()
     until(page, engine, "remote sheet opens", 'document.documentElement.hasAttribute("data-sheet")', 3000)
     page.wait_for_timeout(800)
+    centred(page, engine, "the remote")
     answers(page, engine, "sheet open")
     subtitle_timing(page, engine)
     check(engine, "no Sound choice while no headphones are paired", page.evaluate('!document.querySelector(".sound")'))
@@ -739,6 +794,51 @@ AWAY = """(away) => {
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => away ? "hidden" : "visible" });
   document.dispatchEvent(new Event("visibilitychange"));
 }"""
+
+
+def player_history(p):
+    engine = "history"
+    browser = p.chromium.launch()
+    page = browser.new_page(viewport={"width": 1280, "height": 800})
+    page.set_default_timeout(8000)
+    page.route("**/api/**", forward)
+    stub_hls(page)
+    fake("/fake/reset-screen")
+    tv_power(False)
+    page.goto(BASE + "/", wait_until="commit")
+    page.wait_for_timeout(1500)
+    if page.evaluate("location.pathname") == "/profiles":
+        sign_in(page, engine, "Frederik", "frederik-pass", "history")
+    until(page, engine, "home is there", '!!document.querySelector("main a[data-topcoat-link][href^=\'/movies/\']")', 8000)
+    tile = page.locator(TILE).first
+    href = tile.get_attribute("href")
+    tile.click()
+    until(page, engine, "a film opens from home", f'location.pathname === {href!r} && !!document.querySelector("main button.play[data-play-movie]")', 8000)
+    page.wait_for_timeout(800)
+    if page.evaluate('document.querySelector("#mode").dataset.mode') == "tv":
+        page.click("#mode")
+        until(page, engine, "the switch moves to the laptop", 'document.querySelector("#mode").dataset.mode === "phone"', 5000)
+    page.click("main button.play[data-play-movie]")
+    until(page, engine, "the film plays on the laptop", '!!document.querySelector(".pp")', 8000)
+    page.wait_for_timeout(1500)
+    page.reload(wait_until="commit")
+    until(page, engine, "after a reload the player is back", '!!document.querySelector(".pp")', 10000)
+    page.wait_for_timeout(1000)
+    page.go_back()
+    until(page, engine, "Back after the reload folds it into the bar", '!!document.querySelector(".pp.pp-mini")', 3000)
+    check(engine, "and stays on the film", page.evaluate("location.pathname") == href, page.evaluate("location.pathname"))
+    page.locator(".pp-mini-text").click()
+    until(page, engine, "the bar opens it again", '!!document.querySelector(".pp") && !document.querySelector(".pp-mini")', 3000)
+    page.wait_for_timeout(600)
+    page.keyboard.press("Escape")
+    until(page, engine, "Escape folds it into the bar", '!!document.querySelector(".pp.pp-mini")', 3000)
+    page.wait_for_timeout(600)
+    page.click(".pp-mini-stop")
+    until(page, engine, "and stop closes it", '!document.querySelector(".pp")', 3000)
+    page.wait_for_timeout(1500)
+    check(engine, "the page stays on the film, rather than going back past it", page.evaluate("location.pathname") == href,
+          page.evaluate("location.pathname"))
+    browser.close()
 
 
 def restart_fake(down, tv_plays):
@@ -966,6 +1066,7 @@ with sync_playwright() as p:
     stale_tv(p, "webkit", "iPhone 15")
     stale_tv(p, "chromium", "Pixel 7")
     restarts(p)
+    player_history(p)
     invite(p)
 
 print("PASS" if not failures else "FAIL: " + ", ".join(failures))
