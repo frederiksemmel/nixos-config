@@ -76,8 +76,34 @@ pub enum Request {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
+#[serde(try_from = "ScreenRequest")]
 pub enum ScreenCommand {
+    Flip {
+        to: ScreenKind,
+        device: screen::Device,
+        position: Option<f64>,
+    },
+    Play {
+        device: screen::Device,
+        pick: Pick,
+    },
+    Resume {
+        device: screen::Device,
+        pick: Pick,
+        position: f64,
+    },
+    Stop {
+        device: screen::Device,
+    },
+    Failed {
+        device: screen::Device,
+        reason: String,
+    },
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "action", rename_all = "lowercase", deny_unknown_fields)]
+enum ScreenRequest {
     Flip {
         to: ScreenKind,
         device: screen::Device,
@@ -105,6 +131,49 @@ pub enum ScreenCommand {
         device: screen::Device,
         reason: String,
     },
+}
+
+fn pick_of(movie: Option<String>, show: Option<String>, season: Option<u32>, episode: Option<u32>) -> Result<Pick, String> {
+    match (movie, show) {
+        (Some(key), None) if season.is_none() && episode.is_none() => Ok(Pick::Movie(key)),
+        (Some(_), None) => Err("a movie has no season or episode".to_string()),
+        (None, Some(key)) => Ok(Pick::Show { key, season, episode }),
+        _ => Err("give either movie or show".to_string()),
+    }
+}
+
+impl TryFrom<ScreenRequest> for ScreenCommand {
+    type Error = String;
+
+    fn try_from(request: ScreenRequest) -> Result<Self, String> {
+        Ok(match request {
+            ScreenRequest::Flip { to, device, position } => Self::Flip { to, device, position },
+            ScreenRequest::Play {
+                device,
+                movie,
+                show,
+                season,
+                episode,
+            } => Self::Play {
+                device,
+                pick: pick_of(movie, show, season, episode)?,
+            },
+            ScreenRequest::Resume {
+                device,
+                movie,
+                show,
+                season,
+                episode,
+                position,
+            } => Self::Resume {
+                device,
+                pick: pick_of(movie, show, season, episode)?,
+                position,
+            },
+            ScreenRequest::Stop { device } => Self::Stop { device },
+            ScreenRequest::Failed { device, reason } => Self::Failed { device, reason },
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -1677,6 +1746,29 @@ mod tests {
     use crate::progress::Position;
     use serde_json::{Value, json};
     use std::sync::mpsc;
+
+    #[test]
+    fn a_phone_asks_for_a_movie_or_a_show_and_never_both() {
+        let read = |body: Value| serde_json::from_value::<ScreenCommand>(body);
+        let device = json!({ "id": "p1", "name": "phone" });
+        let play = read(json!({ "action": "play", "device": device, "show": "dark", "season": 1, "episode": 2 }));
+        assert!(matches!(
+            play.unwrap(),
+            ScreenCommand::Play {
+                pick: Pick::Show { season: Some(1), episode: Some(2), .. },
+                ..
+            }
+        ));
+        let resume = read(json!({ "action": "resume", "device": device, "movie": "dune-2021", "position": 61.0 }));
+        assert!(matches!(
+            resume.unwrap(),
+            ScreenCommand::Resume { pick: Pick::Movie(_), position: 61.0, .. }
+        ));
+        assert!(read(json!({ "action": "play", "device": device, "movie": "dune-2021", "show": "dark" })).is_err());
+        assert!(read(json!({ "action": "play", "device": device })).is_err());
+        assert!(read(json!({ "action": "play", "device": device, "movie": "dune-2021", "season": 1 })).is_err());
+        assert!(read(json!({ "action": "stop", "device": device, "movie": "dune-2021" })).is_err());
+    }
 
     struct Server {
         base: String,

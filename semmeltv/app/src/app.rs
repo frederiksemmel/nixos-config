@@ -1309,14 +1309,8 @@ impl App {
                 });
                 done(format!("Watching on {name}"))
             }
-            api::ScreenCommand::Play {
-                device,
-                movie,
-                show,
-                season,
-                episode,
-            } => {
-                let place = match self.screen_place(movie, show, season, episode, None) {
+            api::ScreenCommand::Play { device, pick } => {
+                let place = match self.screen_place(&pick, None) {
                     Ok(place) => place,
                     Err(refusal) => return refusal,
                 };
@@ -1324,15 +1318,8 @@ impl App {
                 self.screen_step(screen::Event::Play { device, place });
                 done(message)
             }
-            api::ScreenCommand::Resume {
-                device,
-                movie,
-                show,
-                season,
-                episode,
-                position,
-            } => {
-                let place = match self.screen_place(movie, show, season, episode, Some(position)) {
+            api::ScreenCommand::Resume { device, pick, position } => {
+                let place = match self.screen_place(&pick, Some(position)) {
                     Ok(place) => place,
                     Err(refusal) => return refusal,
                 };
@@ -1363,21 +1350,9 @@ impl App {
         }
     }
 
-    fn screen_place(
-        &self,
-        movie: Option<String>,
-        show: Option<String>,
-        season: Option<u32>,
-        episode: Option<u32>,
-        position: Option<f64>,
-    ) -> Result<screen::Place, Outcome> {
+    fn screen_place(&self, pick: &intent::Pick, position: Option<f64>) -> Result<screen::Place, Outcome> {
         let refuse = |message: String| Outcome { message, ok: false };
-        let pick = match (movie, show) {
-            (Some(key), None) => intent::Pick::Movie(key),
-            (None, Some(key)) => intent::Pick::Show { key, season, episode },
-            _ => return Err(refuse("Give either movie or show".to_string())),
-        };
-        let path = match intent::choose(&pick, self.nav.library(), &self.progress) {
+        let path = match intent::choose(pick, self.nav.library(), &self.progress) {
             Action::Play(path) => path,
             other => return Err(refuse(self.describe(&other))),
         };
