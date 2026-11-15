@@ -18,7 +18,7 @@
   };
 
   services.semmeltv = {
-    offlineCacheGiB = 12;
+    offlineCacheGiB = null;
     headphones.enable = true;
     api.enable = true;
     web = {

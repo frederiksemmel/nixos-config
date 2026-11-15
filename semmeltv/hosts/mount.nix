@@ -21,6 +21,14 @@ let
       --config "$config" --non-interactive > /dev/null
   '';
 
+  offline = cfg.offlineCacheGiB != null;
+
+  cacheFlags =
+    if offline then
+      "--cache-dir ${cacheDir} --vfs-cache-mode full --vfs-cache-max-age 8760h --vfs-cache-min-free-space 5G --vfs-read-ahead 256M"
+    else
+      "--vfs-cache-mode off";
+
   mount = pkgs.writeShellApplication {
     name = "semmeltv-mount";
     runtimeInputs = [ pkgs.rclone ];
@@ -34,11 +42,7 @@ let
         --filter '+ /Series/**' \
         --filter '+ /Movies/**' \
         --filter '- **' \
-        --cache-dir ${cacheDir} \
-        --vfs-cache-mode full \
-        --vfs-cache-max-age 8760h \
-        --vfs-cache-min-free-space 5G \
-        --vfs-read-ahead 256M \
+        ${cacheFlags} \
         --dir-cache-time 1h \
         --rc \
         --rc-addr "unix://$RUNTIME_DIRECTORY/rc.sock" \
@@ -79,8 +83,8 @@ in
   imports = [ flake.inputs.agenix.nixosModules.default ];
 
   options.services.semmeltv.offlineCacheGiB = lib.mkOption {
-    type = lib.types.ints.positive;
-    description = "Disk space for downloaded titles, in GiB. Past it the app removes whole titles, least recently watched first, until they fit in 90% of it.";
+    type = lib.types.nullOr lib.types.ints.positive;
+    description = "Disk space for downloaded titles, in GiB. Past it the app removes whole titles, least recently watched first, until they fit in 90% of it. With null the TV only streams: rclone keeps nothing on disk, the app reads nothing ahead, and cards show no download state.";
   };
 
   config = {
@@ -91,10 +95,12 @@ in
 
     services.cage.environment = {
       SEMMELTV_META = meta;
+      SEMMELTV_REMOTE = "${remoteHost}:443";
+    }
+    // lib.optionalAttrs offline {
       SEMMELTV_VFS_CACHE = "${cacheDir}/vfs/pcloud/SemmelTV";
       SEMMELTV_VFS_CACHE_META = "${cacheDir}/vfsMeta/pcloud/SemmelTV";
       SEMMELTV_VFS_CACHE_BYTES = toString (cfg.offlineCacheGiB * 1024 * 1024 * 1024);
-      SEMMELTV_REMOTE = "${remoteHost}:443";
     };
 
     systemd.tmpfiles.settings.semmeltv = lib.genAttrs [ cacheDir meta ] (_: {

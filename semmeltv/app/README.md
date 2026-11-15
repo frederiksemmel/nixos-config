@@ -110,6 +110,9 @@ longer has, so every entry's artwork is on disk before the app sees the entry.
 A failed run leaves the previous copy as it was. Run it by hand with
 `systemctl start semmeltv-sync`. The cache size is
 `services.semmeltv.offlineCacheGiB` in `semmeltv/hosts/semmeltv5/default.nix`.
+semmeltv3 sets it to null and only streams: rclone runs with
+`--vfs-cache-mode off`, so nothing lands on the SD card and nothing is read
+ahead beyond rclone's in-memory buffer.
 
 rclone only keeps what was read, so when a title starts the app reads the rest of
 the file through the mount in the background, slowly, followed by the next
