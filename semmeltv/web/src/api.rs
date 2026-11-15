@@ -316,10 +316,8 @@ pub struct Show {
 pub struct NowPlaying {
     pub title: String,
     pub caption: String,
-    pub movie: Option<String>,
-    pub show: Option<String>,
-    pub season: Option<u32>,
-    pub episode: Option<u32>,
+    #[serde(flatten)]
+    pub playing: Playing,
     pub position: f64,
     pub duration: f64,
     pub paused: bool,
@@ -331,6 +329,21 @@ pub struct NowPlaying {
     pub jump: Option<i32>,
     #[serde(default)]
     pub subtitle_delay: f64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Playing {
+    Movie {
+        movie: String,
+    },
+    Episode {
+        show: String,
+        season: u32,
+        episode: u32,
+    },
+    #[default]
+    File,
 }
 
 fn normal_speed() -> f64 {
@@ -980,13 +993,19 @@ mod tests {
                 understood: true
             })
         );
-        let playing = r#"{"type":"playback","now_playing":{"title":"Dune","caption":"2021","movie":"dune-2021",
-            "show":null,"season":null,"episode":null,"position":12.5,"duration":9000.0,"paused":false,"muted":false,"loading":false}}"#;
+        let playing = r#"{"type":"playback","now_playing":{"title":"Dune","caption":"2021","kind":"movie","movie":"dune-2021",
+            "position":12.5,"duration":9000.0,"paused":false,"muted":false,"loading":false}}"#;
         let Event::Playback { now_playing: Some(now) } = serde_json::from_str(playing).unwrap() else {
             panic!("a playback event");
         };
         assert_eq!(now.title, "Dune");
         assert_eq!(now.position, 12.5);
+        assert_eq!(
+            now.playing,
+            Playing::Movie {
+                movie: "dune-2021".to_string()
+            }
+        );
     }
 
     #[test]

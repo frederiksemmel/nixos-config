@@ -37,10 +37,8 @@ pub enum Voice {
 pub struct NowPlaying {
     pub title: String,
     pub caption: String,
-    pub movie: Option<String>,
-    pub show: Option<String>,
-    pub season: Option<u32>,
-    pub episode: Option<u32>,
+    #[serde(flatten)]
+    pub playing: Playing,
     pub position: f64,
     pub duration: f64,
     pub paused: bool,
@@ -51,6 +49,21 @@ pub struct NowPlaying {
     pub audio: Option<i64>,
     pub loading: bool,
     pub jump: Option<i32>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum Playing {
+    Movie {
+        movie: String,
+    },
+    Episode {
+        show: String,
+        season: u32,
+        episode: u32,
+    },
+    #[default]
+    File,
 }
 
 impl NowPlaying {
@@ -189,5 +202,34 @@ mod tests {
             .collect();
         assert_eq!(positions, [Some(10.1), Some(11.2), None]);
         assert_eq!(bus.now_playing(), None);
+    }
+
+    #[test]
+    fn what_plays_is_a_movie_an_episode_or_a_file_and_never_a_mix() {
+        let json = |playing| {
+            let value = serde_json::to_value(NowPlaying {
+                playing,
+                ..NowPlaying::default()
+            })
+            .unwrap();
+            ["kind", "movie", "show", "season", "episode"].map(|key| value.get(key).cloned())
+        };
+        let movie = Playing::Movie {
+            movie: "dune-2021".to_string(),
+        };
+        assert_eq!(
+            json(movie),
+            [Some(json!("movie")), Some(json!("dune-2021")), None, None, None]
+        );
+        let episode = Playing::Episode {
+            show: "dark".to_string(),
+            season: 2,
+            episode: 3,
+        };
+        assert_eq!(
+            json(episode),
+            [Some(json!("episode")), None, Some(json!("dark")), Some(json!(2)), Some(json!(3))]
+        );
+        assert_eq!(json(Playing::File), [Some(json!("file")), None, None, None, None]);
     }
 }

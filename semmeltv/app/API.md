@@ -230,13 +230,14 @@ such image.
 | POST | `/api/playback/speed` | `{ "speed": 1.25 }`: 0.5 to 2, in steps of 0.05. Every video starts at 1 |
 
 `now_playing` is null or
-`{ title, caption, movie, show, season, episode, position, duration, paused, muted, speed, subtitle, subtitle_delay, audio, loading, jump }`.
+`{ title, caption, kind, …, position, duration, paused, muted, speed, subtitle, subtitle_delay, audio, loading, jump }`.
 `subtitle` is the id of the subtitle track that shows, or null when none does.
 `subtitle_delay` is the subtitle delay in seconds, positive to show them later. `audio` is the playing
 audio track's id. They follow what mpv reports, so a change made by the remote, by voice or from the web
 reaches every event listener.
-For a movie, `movie` is its key. For an episode, `show`, `season` and `episode`
-are set. `jump` is the last skip in seconds, negative going back, while a run of
+`kind` says what plays: `"movie"` with `movie`, its key; `"episode"` with
+`show`, `season` and `episode`; or `"file"`, a file outside the library, with
+none of them. `jump` is the last skip in seconds, negative going back, while a run of
 skips can still continue, and null otherwise.
 
 ## TV

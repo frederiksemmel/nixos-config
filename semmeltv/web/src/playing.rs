@@ -1,4 +1,4 @@
-use crate::api::{Api, Audio, Link, NowPlaying, Output, Pick, Screen, TvAbilities, Voice};
+use crate::api::{Api, Audio, Link, NowPlaying, Output, Pick, Playing, Screen, TvAbilities, Voice};
 use crate::live::{Live, Tv};
 use crate::public::Public;
 use std::time::Duration;
@@ -86,49 +86,46 @@ fn percent(now: &NowPlaying) -> f64 {
 }
 
 fn destination(now: &NowPlaying) -> String {
-    match (&now.movie, &now.show) {
-        (Some(movie), _) => format!("/movies/{movie}"),
-        (None, Some(show)) => format!("/shows/{show}"),
-        (None, None) => "/".to_string(),
+    match &now.playing {
+        Playing::Movie { movie } => format!("/movies/{movie}"),
+        Playing::Episode { show, .. } => format!("/shows/{show}"),
+        Playing::File => "/".to_string(),
     }
 }
 
 fn poster(now: &NowPlaying) -> Option<String> {
-    match (&now.movie, &now.show) {
-        (Some(movie), _) => Some(format!("/api/movies/{movie}/poster")),
-        (None, Some(show)) => Some(format!("/api/shows/{show}/poster")),
-        (None, None) => None,
+    match &now.playing {
+        Playing::Movie { movie } => Some(format!("/api/movies/{movie}/poster")),
+        Playing::Episode { show, .. } => Some(format!("/api/shows/{show}/poster")),
+        Playing::File => None,
     }
 }
 
 fn picture(now: &NowPlaying) -> Option<String> {
-    match (&now.movie, &now.show, now.season, now.episode) {
-        (Some(movie), _, _, _) => Some(format!("/api/movies/{movie}/backdrop")),
-        (None, Some(show), Some(season), Some(episode)) => {
+    match &now.playing {
+        Playing::Movie { movie } => Some(format!("/api/movies/{movie}/backdrop")),
+        Playing::Episode { show, season, episode } => {
             Some(format!("/api/shows/{show}/episodes/{season}/{episode}/still"))
         }
-        (None, Some(show), _, _) => Some(format!("/api/shows/{show}/backdrop")),
-        _ => None,
+        Playing::File => None,
     }
 }
 
 fn key(now: &NowPlaying) -> String {
-    format!(
-        "{}|{}|{}|{}",
-        now.movie.as_deref().unwrap_or_default(),
-        now.show.as_deref().unwrap_or_default(),
-        now.season.unwrap_or_default(),
-        now.episode.unwrap_or_default()
-    )
+    match &now.playing {
+        Playing::Movie { movie } => format!("{movie}||0|0"),
+        Playing::Episode { show, season, episode } => format!("|{show}|{season}|{episode}"),
+        Playing::File => "||0|0".to_string(),
+    }
 }
 
 pub fn fetch_body(now: &NowPlaying) -> String {
-    match (&now.movie, &now.show, now.season, now.episode) {
-        (Some(movie), _, _, _) => serde_json::json!({ "movie": movie }).to_string(),
-        (None, Some(show), Some(season), Some(episode)) => {
+    match &now.playing {
+        Playing::Movie { movie } => serde_json::json!({ "movie": movie }).to_string(),
+        Playing::Episode { show, season, episode } => {
             serde_json::json!({ "show": show, "season": season, "episode": episode }).to_string()
         }
-        _ => String::new(),
+        Playing::File => String::new(),
     }
 }
 
@@ -838,5 +835,30 @@ mod tests {
             ..NowPlaying::default()
         };
         assert_eq!(left(&now), "-1:17:26");
+    }
+
+    #[test]
+    fn the_tv_says_whether_a_movie_an_episode_or_a_file_plays_and_the_bar_follows() {
+        let read = |what: serde_json::Value| {
+            let mut now = serde_json::json!({
+                "title": "", "caption": "", "position": 0.0, "duration": 0.0, "paused": false,
+                "subtitle": null, "audio": null, "loading": false, "jump": null
+            });
+            now.as_object_mut().unwrap().extend(what.as_object().unwrap().clone());
+            serde_json::from_value::<NowPlaying>(now)
+        };
+        let episode = read(serde_json::json!({ "kind": "episode", "show": "dark", "season": 2, "episode": 3 })).unwrap();
+        assert_eq!(destination(&episode), "/shows/dark");
+        assert_eq!(picture(&episode).unwrap(), "/api/shows/dark/episodes/2/3/still");
+        assert_eq!(fetch_body(&episode), r#"{"episode":3,"season":2,"show":"dark"}"#);
+        assert_eq!(key(&episode), "|dark|2|3");
+        let movie = read(serde_json::json!({ "kind": "movie", "movie": "dune-2021" })).unwrap();
+        assert_eq!(fetch_body(&movie), r#"{"movie":"dune-2021"}"#);
+        assert_eq!(key(&movie), "dune-2021||0|0");
+        let file = read(serde_json::json!({ "kind": "file" })).unwrap();
+        assert_eq!(key(&file), "||0|0");
+        assert_eq!((destination(&file), poster(&file), fetch_body(&file)), ("/".to_string(), None, String::new()));
+        assert!(read(serde_json::json!({ "kind": "episode", "show": "dark" })).is_err());
+        assert!(read(serde_json::json!({ "movie": "dune-2021" })).is_err());
     }
 }

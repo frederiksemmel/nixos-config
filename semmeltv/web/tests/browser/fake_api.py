@@ -47,8 +47,7 @@ def now_playing():
     if not tv["on"]:
         return None
     return {
-        "title": "The Endless Summer", "caption": "1966", "movie": "the-endless-summer-1966",
-        "show": None, "season": None, "episode": None,
+        "title": "The Endless Summer", "caption": "1966", "kind": "movie", "movie": "the-endless-summer-1966",
         "position": playing["position"], "duration": 5498.56, "paused": playing["paused"],
         "muted": False, "speed": 1.0, "subtitle": playing["subtitle"], "audio": 1, "loading": False, "jump": None,
         "subtitle_delay": playing["delay"],

@@ -1,7 +1,7 @@
 use crate::api::{self, Outcome, Pending, Request, Seek, Shared};
 use crate::artwork;
 use crate::audio::{self, Audio};
-use crate::bus::{Bus, NowPlaying, Voice as VoiceEvent};
+use crate::bus::{Bus, NowPlaying, Playing, Voice as VoiceEvent};
 use crate::cache::Cache;
 use crate::card;
 use crate::cec;
@@ -1567,9 +1567,11 @@ impl App {
             return NowPlaying {
                 title: show.title.clone(),
                 caption: format!("{} · {}", episode.short_label(), episode.label()),
-                show: Some(show.key.clone()),
-                season: Some(episode.season),
-                episode: Some(episode.number),
+                playing: Playing::Episode {
+                    show: show.key.clone(),
+                    season: episode.season,
+                    episode: episode.number,
+                },
                 loading: true,
                 ..NowPlaying::default()
             };
@@ -1581,7 +1583,9 @@ impl App {
                 .and_then(|movie| movie.year)
                 .map(|year| year.to_string())
                 .unwrap_or_default(),
-            movie: movie.map(|movie| movie.key.clone()),
+            playing: movie.map_or(Playing::File, |movie| Playing::Movie {
+                movie: movie.key.clone(),
+            }),
             loading: true,
             ..NowPlaying::default()
         }
