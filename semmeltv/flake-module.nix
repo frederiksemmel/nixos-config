@@ -55,6 +55,11 @@ in
         semmeltv-web-browser = pkgs.callPackage ./web/browser-test.nix {
           inherit (self'.packages) semmeltv-web;
         };
+        semmeltv-vm = import ./tests/vm {
+          inherit pkgs;
+          inherit (self'.packages) semmeltv;
+          semmeltvModule = self.nixosModules.semmeltv;
+        };
       };
 
       packages = {
