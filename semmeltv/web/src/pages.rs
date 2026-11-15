@@ -1137,55 +1137,39 @@ mod tests {
     }
 
     #[test]
-    fn no_filter_keeps_the_library_order() {
-        assert_eq!(
-            keys(&arrange(&cards(), "", "")),
-            ["alien", "dune", "home", "cats", "lotus"]
-        );
-    }
-
-    #[test]
-    fn best_first_puts_unrated_titles_last() {
-        assert_eq!(
-            keys(&arrange(&cards(), "best", "")),
-            ["alien", "dune", "lotus", "cats", "home"]
-        );
-        assert_eq!(keys(&arrange(&cards(), "8", "")), ["alien", "dune"]);
-    }
-
-    #[test]
-    fn years_sort_or_narrow_to_a_decade() {
-        assert_eq!(
-            keys(&arrange(&cards(), "", "newest")),
-            ["dune", "lotus", "cats", "alien", "home"]
-        );
-        assert_eq!(
-            keys(&arrange(&cards(), "", "oldest")),
-            ["alien", "cats", "dune", "lotus", "home"]
-        );
-        assert_eq!(keys(&arrange(&cards(), "", "2020")), ["dune", "lotus"]);
-        assert_eq!(keys(&arrange(&cards(), "", "older")), ["alien"]);
-        assert_eq!(keys(&arrange(&cards(), "7", "2020")), ["dune", "lotus"]);
-    }
-
-    #[test]
-    fn titles_from_the_same_year_come_best_first() {
-        let mut cards = cards();
-        cards[4].ratings.imdb = Some(8.3);
-        assert_eq!(
-            keys(&arrange(&cards, "", "newest")),
-            ["dune", "lotus", "cats", "alien", "home"]
-        );
-        assert_eq!(
-            keys(&arrange(&cards, "best", "newest")),
-            ["lotus", "dune", "cats", "alien", "home"]
-        );
-        assert_eq!(keys(&arrange(&cards, "best", "2020")), ["lotus", "dune"]);
-    }
-
-    #[test]
-    fn a_year_filter_shows_when_a_series_ran() {
-        let arranged = arrange(&cards(), "", "2020");
-        assert_eq!(arranged[1].subtitle, "2021–");
+    fn arrange_filters_and_sorts_cards() {
+        let mut lotus_best = cards();
+        lotus_best[4].ratings.imdb = Some(8.3);
+        let rows = [
+            (cards(), "", "", vec!["alien", "dune", "home", "cats", "lotus"]),
+            (cards(), "best", "", vec!["alien", "dune", "lotus", "cats", "home"]),
+            (cards(), "8", "", vec!["alien", "dune"]),
+            (cards(), "", "newest", vec!["dune", "lotus", "cats", "alien", "home"]),
+            (cards(), "", "oldest", vec!["alien", "cats", "dune", "lotus", "home"]),
+            (cards(), "", "2020", vec!["dune", "lotus"]),
+            (cards(), "", "older", vec!["alien"]),
+            (cards(), "7", "2020", vec!["dune", "lotus"]),
+            (
+                lotus_best.clone(),
+                "",
+                "newest",
+                vec!["dune", "lotus", "cats", "alien", "home"],
+            ),
+            (
+                lotus_best.clone(),
+                "best",
+                "newest",
+                vec!["lotus", "dune", "cats", "alien", "home"],
+            ),
+            (lotus_best, "best", "2020", vec!["lotus", "dune"]),
+        ];
+        for (cards, rating, years, want) in rows {
+            let arranged = arrange(&cards, rating, years);
+            assert_eq!(keys(&arranged), want, "{rating:?} {years:?}");
+            if let Some(lotus) = arranged.iter().find(|card| card.key == "lotus") {
+                let subtitle = if years.is_empty() { "8 episodes" } else { "2021–" };
+                assert_eq!(lotus.subtitle, subtitle, "{rating:?} {years:?}");
+            }
+        }
     }
 }

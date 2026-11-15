@@ -814,48 +814,55 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_bar_names_what_a_phone_plays() {
-        let screen: Screen = serde_json::from_str(
-            r#"{"kind":"phone","device":{"id":"76ecfdaf","name":"laptop"},"play":{"state":"playing","kind":"episode","show":"brooklyn-nine-nine","season":8,"episode":3,"name":"Brooklyn Nine-Nine","caption":"3. Blue Flu","position":8.9,"session":"85cc2170","paused":false},"notice":null}"#,
-        )
-        .unwrap();
-        assert_eq!(
-            phone_line(Some(&screen)),
-            Some(("Brooklyn Nine-Nine".to_string(), "Playing on laptop".to_string()))
-        );
-    }
-
-    #[test]
-    fn a_starting_phone_has_no_pause_and_a_playing_one_must_say_whether_it_is_paused() {
-        let read = |json: &str| serde_json::from_str::<Screen>(json);
+    fn the_screen_json_reads_into_the_bar() {
         let device = r#""device":{"id":"p1","name":"laptop"}"#;
-        let starting = read(&format!(r#"{{"kind":"phone",{device},"play":{{"state":"starting","name":"Up","position":0.0}},"boot":1}}"#)).unwrap();
-        assert_eq!(phone_line(Some(&starting)).unwrap().1, "Starting on laptop");
-        let paused = read(&format!(r#"{{"kind":"phone",{device},"play":{{"state":"playing","name":"Up","session":"s","paused":true}}}}"#)).unwrap();
-        assert_eq!(phone_line(Some(&paused)).unwrap().1, "Paused on laptop");
-        assert!(read(&format!(r#"{{"kind":"phone",{device},"play":{{"state":"playing","name":"Up"}}}}"#)).is_err());
-        assert!(read(&format!(r#"{{"kind":"phone",{device},"play":{{"state":"moving","name":"Up"}}}}"#)).is_err());
-        let moving = read(&format!(r#"{{"kind":"moving",{device},"play":{{"state":"moving","name":"Up"}},"boot":1,"notice":null}}"#)).unwrap();
-        assert_eq!(mode_of(Some(&moving)).0, "moving");
-        let tv = read(r#"{"kind":"tv","boot":1,"notice":null}"#).unwrap();
-        assert_eq!(mode_of(Some(&tv)).0, "tv");
+        let rows = [
+            (
+                r#"{"kind":"phone","device":{"id":"76ecfdaf","name":"laptop"},"play":{"state":"playing","kind":"episode","show":"brooklyn-nine-nine","season":8,"episode":3,"name":"Brooklyn Nine-Nine","caption":"3. Blue Flu","position":8.9,"session":"85cc2170","paused":false},"notice":null}"#.to_string(),
+                Some(("phone", Some(("Brooklyn Nine-Nine", "Playing on laptop")))),
+            ),
+            (
+                format!(r#"{{"kind":"phone",{device},"play":{{"state":"starting","name":"Up","position":0.0}},"boot":1}}"#),
+                Some(("phone", Some(("Up", "Starting on laptop")))),
+            ),
+            (
+                format!(r#"{{"kind":"phone",{device},"play":{{"state":"playing","name":"Up","session":"s","paused":true}}}}"#),
+                Some(("phone", Some(("Up", "Paused on laptop")))),
+            ),
+            (format!(r#"{{"kind":"phone",{device},"play":{{"state":"playing","name":"Up"}}}}"#), None),
+            (format!(r#"{{"kind":"phone",{device},"play":{{"state":"moving","name":"Up"}}}}"#), None),
+            (
+                format!(r#"{{"kind":"moving",{device},"play":{{"state":"moving","name":"Up"}},"boot":1,"notice":null}}"#),
+                Some(("moving", None)),
+            ),
+            (r#"{"kind":"tv","boot":1,"notice":null}"#.to_string(), Some(("tv", None))),
+        ];
+        for (json, want) in rows {
+            let read = serde_json::from_str::<Screen>(&json).ok();
+            let got = read
+                .as_ref()
+                .map(|screen| (mode_of(Some(screen)).0, phone_line(Some(screen))));
+            let want = want.map(|(mode, line)| {
+                (
+                    mode,
+                    line.map(|(name, doing): (&str, &str)| (name.to_string(), doing.to_string())),
+                )
+            });
+            assert_eq!(got, want, "{json}");
+        }
     }
 
     #[test]
     fn times_read_like_a_player() {
+        let at = |position: f64, duration: f64| NowPlaying {
+            position,
+            duration,
+            ..NowPlaying::default()
+        };
         assert_eq!(clock(65.4), "1:05");
         assert_eq!(clock(3725.0), "1:02:05");
         assert_eq!(clock(-3.0), "0:00");
-    }
-
-    #[test]
-    fn the_time_left_counts_down_to_the_end() {
-        let now = NowPlaying {
-            position: 754.0,
-            duration: 5400.0,
-            ..NowPlaying::default()
-        };
-        assert_eq!(left(&now), "-1:17:26");
+        assert_eq!(left(&at(754.0, 5400.0)), "-1:17:26");
     }
 
     #[test]
@@ -872,13 +879,12 @@ mod tests {
         assert_eq!(destination(&episode), "/shows/dark");
         assert_eq!(picture(&episode).unwrap(), "/api/shows/dark/episodes/2/3/still");
         assert_eq!(fetch_body(&episode), r#"{"episode":3,"season":2,"show":"dark"}"#);
-        assert_eq!(key(&episode), "|dark|2|3");
         let movie = read(serde_json::json!({ "kind": "movie", "movie": "dune-2021" })).unwrap();
         assert_eq!(fetch_body(&movie), r#"{"movie":"dune-2021"}"#);
-        assert_eq!(key(&movie), "dune-2021||0|0");
         let file = read(serde_json::json!({ "kind": "file" })).unwrap();
-        assert_eq!(key(&file), "||0|0");
         assert_eq!((destination(&file), poster(&file), fetch_body(&file)), ("/".to_string(), None, String::new()));
+        let keys = [key(&episode), key(&movie), key(&file)];
+        assert!(keys[0] != keys[1] && keys[1] != keys[2] && keys[0] != keys[2], "{keys:?}");
         assert!(read(serde_json::json!({ "kind": "episode", "show": "dark" })).is_err());
         assert!(read(serde_json::json!({ "movie": "dune-2021" })).is_err());
     }

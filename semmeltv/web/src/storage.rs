@@ -297,28 +297,38 @@ mod tests {
     }
 
     #[test]
-    fn the_tv_report_reads_into_kinds_and_keeps_and_refuses_unknown_ones() {
+    fn storage_titles_are_the_json_the_tv_speaks() {
         let report = serde_json::json!({
             "kind": "series", "key": "dark", "name": "Dark", "bytes": 1, "complete": 1, "total": 2,
             "last_watched": null, "cached_at": 0, "keep": "up-next"
         });
-        let read: Download = serde_json::from_value(report.clone()).unwrap();
-        assert_eq!(read.title, Stored::Series("dark".to_string()));
-        assert_eq!(read.keep, Some(Keep::UpNext));
-        let mut odd = report.clone();
-        odd["keep"] = serde_json::json!("up_next");
-        assert!(serde_json::from_value::<Download>(odd).is_err());
-        let mut odd = report;
-        odd["kind"] = serde_json::json!("show");
-        assert!(serde_json::from_value::<Download>(odd).is_err());
-    }
-
-    #[test]
-    fn a_removal_names_the_title_as_the_tv_reads_it() {
-        assert_eq!(
-            serde_json::to_value(Stored::Movie("up".to_string())).unwrap(),
-            serde_json::json!({ "kind": "movie", "key": "up" })
-        );
+        let rows = [
+            (
+                "series",
+                "up-next",
+                Some((Stored::Series("dark".to_string()), Some(Keep::UpNext))),
+            ),
+            ("movie", "", Some((Stored::Movie("dark".to_string()), None))),
+            ("series", "up_next", None),
+            ("show", "up-next", None),
+        ];
+        for (kind, keep, want) in rows {
+            let mut sent = report.clone();
+            sent["kind"] = serde_json::json!(kind);
+            sent["keep"] = if keep.is_empty() {
+                serde_json::Value::Null
+            } else {
+                serde_json::json!(keep)
+            };
+            let read = serde_json::from_value::<Download>(sent)
+                .ok()
+                .map(|download| (download.title, download.keep));
+            assert_eq!(read, want, "{kind} {keep}");
+            if let Some((title, _)) = want {
+                let removal = serde_json::json!({ "kind": kind, "key": "dark" });
+                assert_eq!(serde_json::to_value(title).unwrap(), removal, "{kind} {keep}");
+            }
+        }
         assert_eq!(Stored::parse("show", "dark".to_string()), None);
     }
 }

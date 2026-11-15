@@ -376,26 +376,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn sign_in_pages_and_assets_are_open_and_everything_else_is_not() {
-        assert!(open("/profiles"));
-        assert!(open("/invite/abc"));
-        assert!(open("/_topcoat/assets/style.css"));
-        assert!(open("/manifest.webmanifest"));
-        assert!(!open("/"));
-        assert!(!open("/movies/dune"));
-        assert!(!open("/_topcoat/runtime/procedures/play"));
-        assert!(!open("/profilesx"));
-        assert!(!open("/account"));
-    }
-
-    #[test]
-    fn storage_downloads_and_people_are_for_admins() {
-        assert!(for_admins("/storage"));
-        assert!(for_admins("/downloads"));
-        assert!(for_admins("/people"));
-        assert!(for_admins("/feedback"));
-        assert!(!for_admins("/storagex"));
-        assert!(!for_admins("/settings"));
+    fn every_page_has_its_access() {
+        let rows = [
+            ("/profiles", "open"),
+            ("/invite/abc", "open"),
+            ("/_topcoat/assets/style.css", "open"),
+            ("/manifest.webmanifest", "open"),
+            ("/", "signed"),
+            ("/movies/dune", "signed"),
+            ("/_topcoat/runtime/procedures/play", "signed"),
+            ("/profilesx", "signed"),
+            ("/account", "signed"),
+            ("/settings", "signed"),
+            ("/storagex", "signed"),
+            ("/storage", "admin"),
+            ("/downloads", "admin"),
+            ("/people", "admin"),
+            ("/feedback", "admin"),
+        ];
+        for (path, want) in rows {
+            let got = match (open(path), for_admins(path)) {
+                (true, _) => "open",
+                (false, true) => "admin",
+                (false, false) => "signed",
+            };
+            assert_eq!(got, want, "{path}");
+        }
     }
 
     #[test]
