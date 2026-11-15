@@ -56,6 +56,7 @@ Argon2id.
 | GET | `/api/auth/choices` | | `{ profiles }`: each person with `password`, `passkey` (one for this address), `active` and `signed_in` (on this browser) |
 | GET | `/api/auth/me` | | `{ person, others, passkeys, password }` |
 | POST | `/api/auth/password` | `{ profile, password }` | `{ ok, person }` and the cookie |
+| POST | `/api/auth/guest` | `{ profile }` | `{ ok, person }` and the cookie, for the guest profile from home only |
 | POST | `/api/auth/passkey/start` | `{ profile }` | `{ ceremony, options }` for `navigator.credentials.get` |
 | POST | `/api/auth/passkey/finish` | `{ ceremony, credential }` | `{ ok, person }` and the cookie |
 | POST | `/api/auth/switch` | `{ profile }` | `{ ok, person }`, or 401 with `sign_in: true` |
@@ -72,7 +73,15 @@ Argon2id.
 | POST | `/api/auth/members/{id}/invite` | | admin: `{ ok, link, expires_in_days }` |
 | POST | `/api/auth/members/{id}/sign-out` | | admin: ends all of that person's sessions |
 
-A person is `{ id, name, role, color }`, `role` being `admin` or `viewer`.
+A person is `{ id, name, role, color }`, `role` being `admin`, `viewer` or
+`guest`. The guest profile has a viewer's rights and no passkey or password.
+It signs in without either, but only from home: a request with no
+`X-Real-IP` (the tailnet, through `tailscale serve`) or one whose `X-Real-IP`,
+which nginx sets, is a private, tailnet (100.64/10), link-local or
+unique-local address. A loopback address doesn't count, since a relay in
+front of nginx would make every visitor look like one. From elsewhere a guest
+needs an invite like anyone else. `choices` marks the guest `guest: true`, and
+`open: true` when this request may sign in as it.
 Passkeys use WebAuthn with user verification (Face ID, Touch ID, a screen
 lock); a passkey belongs to the address it was made on, so the tailnet and the
 home address each need their own. `credential` is the browser's

@@ -35,11 +35,12 @@ PROFILES = {
     1: {"id": 1, "name": "Frederik", "role": "admin", "color": "#E5484D", "password": "frederik-pass"},
     2: {"id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "password": "mami-pass"},
     3: {"id": 3, "name": "Ramu", "role": "viewer", "color": "#8E4EC6", "password": None},
+    4: {"id": 4, "name": "Guest", "role": "guest", "color": "#12A594", "password": None},
 }
 sessions = {}
 invites = {"good-invite": 2}
 used_invites = set()
-OPEN = ("/api/auth/choices", "/api/auth/password", "/api/auth/passkey/start", "/api/auth/invite/")
+OPEN = ("/api/auth/choices", "/api/auth/password", "/api/auth/passkey/start", "/api/auth/invite/", "/api/auth/guest")
 SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
 
 
@@ -103,7 +104,8 @@ async def auth_choices(request):
     active = sessions[found[0]] if found else None
     on_device = {sessions[token] for token in found}
     return web.json_response({"profiles": [
-        {**person(profile), "password": profile["password"] is not None, "passkey": False, "active": profile["id"] == active,
+        {**person(profile), "guest": profile["role"] == "guest", "open": profile["role"] == "guest",
+         "password": profile["password"] is not None, "passkey": False, "active": profile["id"] == active,
          "signed_in": profile["id"] in on_device}
         for profile in PROFILES.values()]})
 
@@ -121,6 +123,13 @@ async def auth_password(request):
         return web.json_response({"error": "There is no such profile", "ok": False}, status=404)
     if profile["password"] is None or body.get("password") != profile["password"]:
         return web.json_response({"error": "That password is wrong", "ok": False}, status=401)
+    return signed_in(request, profile)
+
+
+async def auth_guest(request):
+    profile = PROFILES[(await request.json())["profile"]]
+    if profile["role"] != "guest":
+        return web.json_response({"error": "That profile needs a passkey or a password", "ok": False}, status=422)
     return signed_in(request, profile)
 
 
@@ -524,6 +533,7 @@ app.router.add_get("/api/auth/choices", auth_choices)
 app.router.add_get("/api/auth/me", auth_me)
 app.router.add_post("/api/auth/password", auth_password)
 app.router.add_post("/api/auth/passkey/start", auth_passkey_start)
+app.router.add_post("/api/auth/guest", auth_guest)
 app.router.add_post("/api/auth/switch", auth_switch)
 app.router.add_post("/api/auth/sign-out", auth_sign_out)
 app.router.add_get("/api/auth/invite/{token}", auth_invite)

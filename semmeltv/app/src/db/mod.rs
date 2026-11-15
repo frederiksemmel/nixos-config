@@ -370,7 +370,7 @@ mod tests {
     }
 
     #[test]
-    fn a_new_database_has_the_four_profiles_and_no_passwords() {
+    fn a_new_database_has_the_five_profiles_and_no_passwords() {
         let profiles = db()
             .wait(|mut db| async move {
                 models::Profile::all()
@@ -390,6 +390,7 @@ mod tests {
                 (2, "Mami", models::Role::Viewer, true),
                 (3, "Miriam", models::Role::Viewer, true),
                 (4, "Ramu", models::Role::Viewer, true),
+                (5, "Guest", models::Role::Guest, true),
             ]
         );
     }

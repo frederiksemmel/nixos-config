@@ -399,7 +399,8 @@ it needs the app's models. Review the SQL it writes before committing it.
 ## Profiles
 
 Four people use the TV: Frederik, the admin, and Mami, Miriam and Ramu, who are
-viewers. Viewers browse, play, watch on their phone, use the remote, the
+viewers. A fifth profile, Guest, is for visitors: a viewer that needs no
+passkey or password at home, and an invite from anywhere else. Viewers browse, play, watch on their phone, use the remote, the
 microphone and the TV/phone switch, pair their own headphones and keep their
 own subtitle style. Only an admin downloads, removes titles from the TV's
 storage, pairs the TV for volume, and adds, invites, signs out or removes
@@ -423,7 +424,9 @@ Bluetooth bonds themselves. The rules:
 - The TV's own screen, remote and voice act as the TV profile: whoever last
   started something on the TV from the web app or a phone, moved a video to
   the TV, paired headphones or pressed Show mine in Settings. It survives a
-  restart, and its name shows at the top right of Home. Voice and the remote
+  restart, and its name shows at the top right of Home. Up from the top row of
+  Home opens the profiles there; Up and Down move, OK switches, and Left or
+  Back return to the rows. Voice and the remote
   work without signing in, because whoever holds the remote is in the room;
   a PIN on the TV would only slow them down.
 - When B plays something on the TV while A's video plays, A's video stops

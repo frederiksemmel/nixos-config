@@ -170,6 +170,17 @@ async function tryPasskey(choice) {
 async function choose(choice) {
   const profile = Number(choice.dataset.profile);
   if (choice.getAttribute("aria-current") === "true") return arrive();
+  if (choice.dataset.guest === "true") {
+    if (choice.dataset.open !== "true") {
+      return say("Guest works on the home Wi-Fi. From elsewhere, ask Frederik for an invite link.");
+    }
+    try {
+      await call("/api/auth/guest", { profile });
+      return arrive();
+    } catch (error) {
+      return say(error.message);
+    }
+  }
   if (choice.dataset.signedIn === "true" && choice.dataset.admin !== "true") {
     try {
       await call("/api/auth/switch", { profile });

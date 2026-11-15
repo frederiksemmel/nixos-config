@@ -5,6 +5,7 @@ use toasty::{Deferred, Json};
 pub enum Role {
     Admin,
     Viewer,
+    Guest,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]

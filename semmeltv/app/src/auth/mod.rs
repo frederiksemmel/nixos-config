@@ -86,6 +86,9 @@ pub enum Refusal {
     LastAdmin,
     Yourself,
     NotSignedIn,
+    GuestFromAfar,
+    NotAGuest,
+    GuestsHaveNoSignIn,
     Store(String),
 }
 
@@ -115,6 +118,9 @@ impl fmt::Display for Refusal {
             Refusal::LastAdmin => write!(f, "SemmelTV needs at least one admin"),
             Refusal::Yourself => write!(f, "You can't remove your own profile"),
             Refusal::NotSignedIn => write!(f, "Not signed in"),
+            Refusal::GuestFromAfar => write!(f, "Guest works on the home Wi-Fi. From elsewhere, ask Frederik for an invite"),
+            Refusal::NotAGuest => write!(f, "That profile needs a passkey or a password"),
+            Refusal::GuestsHaveNoSignIn => write!(f, "The guest profile has no passkey or password"),
             Refusal::Store(reason) => write!(f, "The TV couldn't save that: {reason}"),
         }
     }
@@ -225,6 +231,7 @@ pub struct Member {
 pub struct Choice {
     #[serde(flatten)]
     pub person: Person,
+    pub guest: bool,
     pub password: bool,
     pub passkey: bool,
 }
@@ -300,6 +307,7 @@ impl Auth {
                 None => false,
             };
             choices.push(Choice {
+                guest: profile.role == Role::Guest,
                 person: Person::from(&profile),
                 password: profile.password_hash.is_some(),
                 passkey,
@@ -401,9 +409,21 @@ impl Auth {
         self.open_session(profile, label)
     }
 
+    pub fn sign_in_as_guest(&self, profile: ProfileId, at_home: bool, label: &str) -> Outcome<String> {
+        if self.profile(profile)?.role != Role::Guest {
+            return Err(Refusal::NotAGuest);
+        }
+        if !at_home {
+            return Err(Refusal::GuestFromAfar);
+        }
+        self.open_session(profile, label)
+    }
+
     pub fn set_password(&self, profile: ProfileId, password: &str) -> Outcome<()> {
         Self::check_password_shape(password)?;
-        self.profile(profile)?;
+        if self.profile(profile)?.role == Role::Guest {
+            return Err(Refusal::GuestsHaveNoSignIn);
+        }
         let hashed = password::hash(password).map_err(Refusal::Store)?;
         self.store().set_password_hash(profile, Some(&hashed))?;
         Ok(())
@@ -459,6 +479,9 @@ impl Auth {
     pub fn start_registration(&self, origin: &str, profile: ProfileId) -> Outcome<(String, CreationChallengeResponse)> {
         let party = self.party(origin)?;
         let found = self.profile(profile)?;
+        if found.role == Role::Guest {
+            return Err(Refusal::GuestsHaveNoSignIn);
+        }
         let known = self.passkeys_here(profile, party)?;
         let exclude = known.iter().map(|(_, passkey)| passkey.cred_id().clone()).collect::<Vec<_>>();
         let (options, state) = party
@@ -728,6 +751,11 @@ mod tests {
                     role: Role::Viewer,
                     color: None,
                 },
+                NewProfile {
+                    name: "Guest".to_string(),
+                    role: Role::Guest,
+                    color: None,
+                },
             ]));
             let time = Arc::new(AtomicU64::new(1_000_000));
             let clock = time.clone();
@@ -888,7 +916,23 @@ mod tests {
         assert_eq!(rig.auth.create_profile("ramu", Role::Viewer), Err(Refusal::NameTaken));
         assert_eq!(rig.auth.create_profile("", Role::Viewer), Err(Refusal::BadName));
         rig.auth.delete_profile(FREDERIK, ramu.id).unwrap();
-        assert_eq!(rig.auth.people().unwrap().len(), 2);
+        assert_eq!(rig.auth.people().unwrap().len(), 3);
+    }
+
+    const GUEST: ProfileId = ProfileId(3);
+
+    #[test]
+    fn a_guest_signs_in_without_anything_but_only_at_home() {
+        let rig = Rig::new();
+        let session = rig.auth.sign_in_as_guest(GUEST, true, "iPad").unwrap();
+        assert_eq!(rig.auth.resolve(&[session]).unwrap().person().unwrap().role, Role::Guest);
+        assert_eq!(rig.auth.sign_in_as_guest(GUEST, false, "iPad"), Err(Refusal::GuestFromAfar));
+        assert_eq!(rig.auth.sign_in_as_guest(MAMI, true, "iPad"), Err(Refusal::NotAGuest));
+        assert_eq!(rig.auth.set_password(GUEST, "correct horse"), Err(Refusal::GuestsHaveNoSignIn));
+        assert_eq!(rig.auth.start_registration(ORIGIN, GUEST).unwrap_err(), Refusal::GuestsHaveNoSignIn);
+        let choices = rig.auth.choices(ORIGIN).unwrap();
+        assert!(choices.iter().any(|choice| choice.guest && choice.person.name == "Guest"));
+        assert!(!rig.auth.person(GUEST).unwrap().admin());
     }
 
     #[test]

@@ -50,6 +50,7 @@ pub fn access(method: &Method, path: &str) -> Access {
         | ["api", "auth", "password"]
         | ["api", "auth", "passkey", "start" | "finish"]
         | ["api", "auth", "invite", _]
+        | ["api", "auth", "guest"]
         | ["api", "log"] => Access::Open,
         ["api", "stream", id, ..] if *id != "open" => Access::Stream,
         ["api", "events"] if method == Method::GET => Access::Service,
@@ -58,6 +59,23 @@ pub fn access(method: &Method, path: &str) -> Access {
             Access::Admin
         }
         _ => Access::Signed,
+    }
+}
+
+pub fn at_home(headers: &HeaderMap) -> bool {
+    let Some(client) = headers.get("x-real-ip").and_then(|value| value.to_str().ok()) else {
+        return true;
+    };
+    match client.trim().parse::<std::net::IpAddr>() {
+        Ok(std::net::IpAddr::V4(address)) => {
+            let [a, b, ..] = address.octets();
+            address.is_private() || address.is_link_local() || (a == 100 && (64..128).contains(&b))
+        }
+        Ok(std::net::IpAddr::V6(address)) => {
+            let first = address.segments()[0];
+            first & 0xfe00 == 0xfc00 || first & 0xffc0 == 0xfe80
+        }
+        Err(_) => false,
     }
 }
 
@@ -225,6 +243,28 @@ mod tests {
         assert_eq!(access(&Method::GET, "/api/feedback"), Access::Admin);
         assert_eq!(access(&Method::GET, "/api/feedback/20261115-131211-ab12"), Access::Admin);
         assert_eq!(access(&Method::GET, "/api/feedback/files/20261115-131211-ab12-tv.jpg"), Access::Admin);
+    }
+
+    #[test]
+    fn home_is_the_home_network_the_tailnet_or_a_request_no_proxy_marked() {
+        let at = |address: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert("x-real-ip", HeaderValue::from_str(address).unwrap());
+            at_home(&headers)
+        };
+        assert!(at("192.168.1.42"));
+        assert!(at("10.0.0.3"));
+        assert!(at("100.101.102.103"));
+        assert!(at("fd7a:115c:a1e0::1"));
+        assert!(at("fe80::1"));
+        assert!(!at("85.195.12.34"));
+        assert!(!at("2a02:1210::1"));
+        assert!(!at("100.128.0.1"));
+        assert!(!at("not an address"));
+        assert!(!at("127.0.0.1"), "a relay in front of nginx hides the client, so it isn't home");
+        assert!(!at("::1"));
+        assert!(at_home(&HeaderMap::new()), "tailscale serve and local callers set no X-Real-IP");
+        assert_eq!(access(&Method::POST, "/api/auth/guest"), Access::Open);
     }
 
     #[test]
