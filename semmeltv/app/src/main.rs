@@ -15,6 +15,7 @@ mod display;
 mod downloads;
 mod fetch;
 mod heatmap;
+mod hold;
 mod imdb;
 mod import;
 mod intent;

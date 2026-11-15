@@ -13,6 +13,7 @@ use crate::downloads::remote::Downloads;
 use crate::downloads::{Outcome as Started, Proposal};
 use crate::fetch;
 use crate::heatmap;
+use crate::hold::{self, Hold};
 use crate::intent::{self, Action, Control};
 use crate::led::Led;
 use crate::library::{self, Item, Library};
@@ -154,6 +155,22 @@ struct OnTv {
     shown: NowPlaying,
     file: PathBuf,
     owner: ProfileId,
+    hold: Cell<Hold>,
+}
+
+impl OnTv {
+    fn act(&self, (hold, act): (Hold, hold::Act)) {
+        self.hold.set(hold);
+        match act {
+            hold::Act::Nothing => {}
+            hold::Act::Pause => self.player.set_paused(true),
+            hold::Act::Resume => self.player.set_paused(false),
+        }
+    }
+
+    fn playing(&self) -> bool {
+        !self.player.state().paused
+    }
 }
 
 struct App {
@@ -194,11 +211,8 @@ struct App {
     audio: Option<Audio>,
     offer: Option<Offer>,
     waking_tv: Arc<AtomicBool>,
-    paused_for_tv: Cell<bool>,
-    paused_for_handoff: bool,
     screen: screen::Screen,
     notice: Option<screen::Said>,
-    stopping_tv: bool,
 }
 
 pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
@@ -328,11 +342,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         audio: audio.clone(),
         offer: None,
         waking_tv: Arc::new(AtomicBool::new(false)),
-        paused_for_tv: Cell::new(false),
-        paused_for_handoff: false,
         screen: screen::Screen::Tv,
         notice: None,
-        stopping_tv: false,
     }));
     if let Some(audio) = &app.borrow().audio {
         let db = &app.borrow().db;
@@ -698,7 +709,6 @@ impl App {
     }
 
     fn play_from(&mut self, path: &Path, start: f64) {
-        self.stopping_tv = false;
         if self.screen != screen::Screen::Tv {
             self.screen_step(screen::Event::TvPlays);
         }
@@ -746,9 +756,9 @@ impl App {
                     shown: self.now_playing_for(path),
                     file: path.to_path_buf(),
                     owner: self.profile,
+                    hold: Cell::default(),
                 });
                 self.publish_playback();
-                self.paused_for_tv.set(false);
                 self.wake_tv();
                 self.record_start(path);
                 self.lead = Some(path.to_path_buf());
@@ -855,7 +865,6 @@ impl App {
     }
 
     fn finish_playback(&mut self, success: bool, ended: bool) {
-        self.stopping_tv = false;
         self.record_place();
         let ended_play = self.on_tv.take().map(|OnTv { file, owner, .. }| (file, owner));
         self.publish_playback();
@@ -1216,10 +1225,7 @@ impl App {
     }
 
     fn tv_place(&self) -> Option<screen::Place> {
-        if self.stopping_tv {
-            return None;
-        }
-        let tv = self.on_tv.as_ref()?;
+        let tv = self.on_tv.as_ref().filter(|tv| !tv.hold.get().stopping())?;
         self.place_of(&tv.file, tv.player.place().position)
     }
 
@@ -1241,16 +1247,23 @@ impl App {
         for effect in effects {
             match effect {
                 screen::Effect::PauseTv => {
-                    self.paused_for_handoff = self.player().is_some_and(|player| !player.state().paused);
-                    self.control(Control::Pause);
+                    if let Some(tv) = &self.on_tv {
+                        tv.act(tv.hold.get().hand_off(tv.playing()));
+                    }
                 }
                 screen::Effect::ResumeTv => {
-                    if std::mem::take(&mut self.paused_for_handoff) {
-                        self.control(Control::Resume);
+                    if let Some(tv) = &self.on_tv {
+                        let (hold, act) = tv.hold.get().hand_back();
+                        tv.hold.set(hold);
+                        if act == hold::Act::Resume {
+                            self.control(Control::Resume);
+                        }
                     }
                 }
                 screen::Effect::StopTv => {
-                    self.stopping_tv = self.on_tv.is_some();
+                    if let Some(tv) = &self.on_tv {
+                        tv.hold.set(Hold::Stopping);
+                    }
                     self.control(Control::Stop);
                 }
                 screen::Effect::PlayTv(place) => {
@@ -1635,6 +1648,9 @@ impl App {
     }
 
     fn control(&self, control: Control) {
+        if let (Control::Pause | Control::Resume, Some(tv)) = (control, &self.on_tv) {
+            tv.hold.set(tv.hold.get().viewer_chose());
+        }
         let player = self.player();
         match (control, player) {
             (Control::TvOn | Control::TvOff | Control::ShowSemmelTv, _) => {
@@ -1649,12 +1665,8 @@ impl App {
                 }
             }
             (_, None) => {}
-            (Control::Pause, Some(player)) => {
-                self.paused_for_tv.set(false);
-                player.set_paused(true);
-            }
+            (Control::Pause, Some(player)) => player.set_paused(true),
             (Control::Resume, Some(player)) => {
-                self.paused_for_tv.set(false);
                 self.wake_tv();
                 player.set_paused(false);
             }
@@ -1692,19 +1704,14 @@ impl App {
     }
 
     fn pause_for_tv(&self) {
-        if let Some(player) = self.player()
-            && !player.state().paused
-        {
-            player.set_paused(true);
-            self.paused_for_tv.set(true);
+        if let Some(tv) = &self.on_tv {
+            tv.act(tv.hold.get().tv_waking(tv.playing()));
         }
     }
 
     fn resume_after_tv(&self) {
-        if self.paused_for_tv.replace(false)
-            && let Some(player) = self.player()
-        {
-            player.set_paused(false);
+        if let Some(tv) = &self.on_tv {
+            tv.act(tv.hold.get().tv_showing());
         }
     }
 
