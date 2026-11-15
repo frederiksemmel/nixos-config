@@ -845,6 +845,8 @@ mod tests {
         let stored = rig.db.profile(MAMI).await.unwrap().unwrap().password_hash.unwrap();
         assert!(stored.starts_with("$argon2id$"));
         assert!(!stored.contains("correct horse"));
+        rig.db.set_password_hash(MAMI, Some("not a hash")).await.unwrap();
+        assert_eq!(rig.auth.sign_in_with_password(MAMI, "correct horse", "x").await, Err(Refusal::WrongPassword));
     }
 
     #[tokio::test]

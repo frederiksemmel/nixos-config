@@ -367,48 +367,4 @@ mod tests {
         assert!(people[1..].iter().all(|person| !person.admin()));
     }
 
-    #[tokio::test]
-    async fn invites_sessions_and_passwords_round_trip_through_the_database() {
-        let (auth, db) = auth().await;
-        let mami = ProfileId(2);
-        let invite = auth.invite(Some(ProfileId::FIRST), mami).await.unwrap();
-        let (profile, session) = auth.redeem(&invite, "iPhone · Safari").await.unwrap();
-        assert_eq!(profile, mami);
-        assert!(auth.redeem(&invite, "again").await.is_err());
-        assert_eq!(auth.resolve(std::slice::from_ref(&session)).await.unwrap().person().unwrap().name, "Mami");
-        assert_eq!(db.sessions(mami).await.unwrap()[0].label, "iPhone · Safari");
-
-        auth.set_password(mami, "correct horse").await.unwrap();
-        assert!(auth.sign_in_with_password(mami, "correct horse", "iPad").await.is_ok());
-        assert!(auth.sign_in_with_password(mami, "wrong horse", "iPad").await.is_err());
-        assert_eq!(db.sessions(mami).await.unwrap().len(), 2);
-
-        auth.sign_out_everywhere(mami).await.unwrap();
-        assert_eq!(auth.resolve(&[session]).await.unwrap().active, None);
-    }
-
-    #[tokio::test]
-    async fn passkeys_are_unique_and_removing_a_profile_takes_its_rows_along() {
-        let (auth, db) = auth().await;
-        let key = StoredPasskey {
-            profile: ProfileId(4),
-            credential_id: vec![1, 2, 3],
-            rp_id: "tv.example.org".to_string(),
-            name: "iPhone".to_string(),
-            passkey: "{}".to_string(),
-            created_at: 1,
-            last_used_at: None,
-        };
-        db.add_passkey(&key).await.unwrap();
-        assert_eq!(db.add_passkey(&StoredPasskey { profile: ProfileId(3), ..key.clone() }).await, Err(StoreError::Taken));
-        db.update_passkey(&[1, 2, 3], "{\"x\":1}", 5).await.unwrap();
-        assert_eq!(db.passkey(&[1, 2, 3]).await.unwrap().unwrap().last_used_at, Some(5));
-        auth.invite(Some(ProfileId::FIRST), ProfileId(4)).await.unwrap();
-        auth.delete_profile(ProfileId::FIRST, ProfileId(4)).await.unwrap();
-        assert_eq!(db.passkey(&[1, 2, 3]).await.unwrap(), None);
-        assert!(db.invites().await.unwrap().is_empty());
-        assert_eq!(auth.create_profile("mami", Role::Viewer).await.unwrap_err(), crate::auth::Refusal::NameTaken);
-        let new = auth.create_profile("Oma", Role::Viewer).await.unwrap();
-        assert_eq!(auth.person(new.id).await.unwrap().name, "Oma");
-    }
 }

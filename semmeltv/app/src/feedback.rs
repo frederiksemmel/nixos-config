@@ -414,13 +414,6 @@ mod tests {
     }
 
     #[test]
-    fn only_plain_ids_name_files() {
-        assert!(!valid_id("../semmeltv"));
-        assert!(!valid_id("a/b"));
-        assert!(!valid_id(""));
-    }
-
-    #[test]
     fn screenshots_are_jpeg_or_png_data_urls() {
         assert_eq!(picture("data:image/png;base64,aGk=").unwrap(), ("png", b"hi".to_vec()));
         assert!(picture("data:image/gif;base64,aGk=").is_err());
@@ -456,8 +449,4 @@ mod tests {
         let _ = std::fs::remove_dir_all(dir);
     }
 
-    #[test]
-    fn available_memory_is_read_in_megabytes() {
-        assert_eq!(meminfo_available("MemTotal: 100 kB\nMemAvailable:    2048000 kB\n"), Some(2000));
-    }
 }

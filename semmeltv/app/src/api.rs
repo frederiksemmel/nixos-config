@@ -1510,6 +1510,12 @@ mod tests {
             finished: true,
         };
         progress.shows.insert("outlander".to_string(), position);
+        let the_bear = Position {
+            season: 1,
+            episode: 1,
+            finished: true,
+        };
+        progress.shows.insert("the-bear".to_string(), the_bear);
         progress.watching.played(watching::Kind::Series, "outlander", 1);
         progress.watching.played(watching::Kind::Movie, "dune-2021", 2);
         let dune = library().movies[0].path.clone();
@@ -1615,7 +1621,7 @@ mod tests {
     }
 
     #[test]
-    fn the_library_lists_shows_and_movies_with_their_artwork() {
+    fn the_library_json_lists_cards_with_progress() {
         let server = serve(no_root(), None);
         let (status, body) = get(&server, "/api/library");
         assert_eq!(status, 200);
@@ -1651,82 +1657,20 @@ mod tests {
         assert_eq!(body["forgotten"][0]["key"], "up-2009");
         assert_eq!(body["forgotten"][0]["detail"], "1h 20m left");
         assert_eq!(body["forgotten"].as_array().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn dismissing_a_forgotten_title_asks_the_tv() {
-        let server = serve(no_root(), None);
-        let (status, body) = post(
-            &server,
-            "/api/forgotten/dismiss",
-            json!({ "kind": "show", "key": "the-bear" }),
-        );
-        assert_eq!(status, 200);
-        assert_eq!(body["ok"], true);
-        assert_eq!(server.asked.recv().unwrap(), r#"Dismiss(Series, "the-bear", ProfileId(1))"#);
-    }
-
-    #[test]
-    fn marking_a_title_asks_the_tv_and_answers_with_its_state() {
-        let server = serve(no_root(), None);
-        let (status, body) = post(
-            &server,
-            "/api/watched",
-            json!({ "kind": "show", "key": "outlander", "season": 1, "episode": 1, "watched": true }),
-        );
-        assert_eq!(status, 200);
-        assert_eq!((&body["ok"], &body["watched"]), (&json!(true), &json!(true)));
+        let finished: Vec<(&str, bool)> = ["shows", "movies"]
+            .iter()
+            .flat_map(|list| body[list].as_array().unwrap())
+            .map(|card| (card["key"].as_str().unwrap(), card["finished"].as_bool().unwrap()))
+            .collect();
         assert_eq!(
-            server.asked.recv().unwrap(),
-            r#"Mark(Series, "outlander", Some((1, 1)), Watched, ProfileId(1))"#
+            finished,
+            [
+                ("the-bear", true),
+                ("outlander", false),
+                ("dune-2021", false),
+                ("up-2009", false)
+            ]
         );
-        let (_, body) = post(
-            &server,
-            "/api/watched",
-            json!({ "kind": "movie", "key": "dune-2021", "watched": false }),
-        );
-        assert_eq!(body["watched"], false);
-        assert_eq!(
-            server.asked.recv().unwrap(),
-            r#"Mark(Movie, "dune-2021", None, Unwatched, ProfileId(1))"#
-        );
-        let (status, _) = post(
-            &server,
-            "/api/watched",
-            json!({ "kind": "movie", "key": "dune-2021", "season": 1, "episode": 1, "watched": true }),
-        );
-        assert_eq!(status, 400);
-        let (status, body) = post(
-            &server,
-            "/api/watched",
-            json!({ "kind": "movie", "key": "gone", "watched": true }),
-        );
-        assert_eq!((status, &body["ok"]), (422, &json!(false)));
-    }
-
-    #[test]
-    fn cards_say_whether_a_title_is_finished() {
-        let server = serve(no_root(), None);
-        let (_, body) = get(&server, "/api/library");
-        assert_eq!(body["movies"][0]["finished"], false);
-        assert_eq!(body["shows"][0]["finished"], false);
-    }
-
-    #[test]
-    fn search_finds_titles_while_they_are_typed() {
-        let server = serve(no_root(), None);
-        let titles = |query: &str| -> Vec<String> {
-            get(&server, &format!("/api/search?q={query}")).1["results"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|card| card["title"].as_str().unwrap().to_string())
-                .collect()
-        };
-        assert_eq!(titles("outl"), ["Outlander"]);
-        assert_eq!(titles("bear"), ["The Bear"]);
-        assert_eq!(titles("outlandr"), ["Outlander"]);
-        assert!(titles("zzz").is_empty());
     }
 
     #[test]
@@ -1777,50 +1721,6 @@ mod tests {
             json!([{ "name": "Timothée Chalamet", "character": "Paul Atreides", "photo": null,
                      "imdb": "https://www.imdb.com/find/?q=Timoth%C3%A9e+Chalamet&s=nm" }])
         );
-    }
-
-    #[test]
-    fn playing_goes_to_the_tv_and_reports_its_answer() {
-        let server = serve(no_root(), None);
-        let (status, body) = post(
-            &server,
-            "/api/play",
-            json!({ "show": "outlander", "season": 2, "episode": 1 }),
-        );
-        assert_eq!((status, body), (200, json!({ "message": "done", "ok": true })));
-        assert_eq!(
-            server.asked.recv().unwrap(),
-            format!(
-                "{:?}",
-                Request::Play(
-                    Pick::Show {
-                        key: "outlander".to_string(),
-                        season: Some(2),
-                        episode: Some(1)
-                    },
-                    ProfileId::FIRST
-                )
-            )
-        );
-        assert_eq!(post(&server, "/api/play", json!({ "movie": "jaws" })).0, 404);
-        assert_eq!(post(&server, "/api/play", json!({})).0, 400);
-        assert_eq!(post(&server, "/api/playback/pause", json!({})).0, 200);
-        assert_eq!(server.asked.recv().unwrap(), "Control(Pause)");
-        assert_eq!(post(&server, "/api/playback/seek", json!({ "by": -30.0 })).0, 200);
-        assert_eq!(server.asked.recv().unwrap(), "Seek(By(-30.0))");
-        assert_eq!(
-            post(&server, "/api/playback/skip", json!({ "direction": "back" })).0,
-            200
-        );
-        assert_eq!(server.asked.recv().unwrap(), "Seek(Step(Back))");
-        assert_eq!(post(&server, "/api/playback/skip", json!({ "direction": "up" })).0, 422);
-        assert_eq!(post(&server, "/api/playback/dance", json!({})).0, 404);
-        for (name, control) in [("on", "TvOn"), ("off", "TvOff"), ("semmeltv", "ShowSemmelTv")] {
-            assert_eq!(post(&server, &format!("/api/tv/{name}"), json!({})).0, 200, "{name}");
-            assert_eq!(server.asked.recv().unwrap(), format!("Control({control})"));
-        }
-        assert_eq!(post(&server, "/api/tv/dance", json!({})).0, 404);
-        assert_eq!(post(&server, "/api/command", json!({ "text": "play" })).0, 422);
     }
 
     #[test]
@@ -1884,11 +1784,155 @@ mod tests {
     }
 
     #[test]
-    fn a_tv_without_headphones_offers_no_audio_choice() {
+    fn api_routes_forward_to_the_core() {
         let server = serve(no_root(), None);
-        assert_eq!(get(&server, "/api/audio").0, 404);
-        assert_eq!(post(&server, "/api/audio", json!({ "output": "headphones" })).0, 404);
-        assert_eq!(post(&server, "/api/audio/pair", json!({})).0, 404);
+        let unsupported = "Volume control is not supported by this TV";
+        let rows: Vec<(&str, &str, Value, u16, Vec<(&str, Value)>, Option<&str>)> = vec![
+            (
+                "POST",
+                "/api/forgotten/dismiss",
+                json!({ "kind": "show", "key": "the-bear" }),
+                200,
+                vec![("/ok", json!(true))],
+                Some(r#"Dismiss(Series, "the-bear", ProfileId(1))"#),
+            ),
+            (
+                "POST",
+                "/api/watched",
+                json!({ "kind": "show", "key": "outlander", "season": 1, "episode": 1, "watched": true }),
+                200,
+                vec![("/ok", json!(true)), ("/watched", json!(true))],
+                Some(r#"Mark(Series, "outlander", Some((1, 1)), Watched, ProfileId(1))"#),
+            ),
+            (
+                "POST",
+                "/api/watched",
+                json!({ "kind": "movie", "key": "dune-2021", "watched": false }),
+                200,
+                vec![("/watched", json!(false))],
+                Some(r#"Mark(Movie, "dune-2021", None, Unwatched, ProfileId(1))"#),
+            ),
+            (
+                "POST",
+                "/api/watched",
+                json!({ "kind": "movie", "key": "dune-2021", "season": 1, "episode": 1, "watched": true }),
+                400,
+                vec![],
+                None,
+            ),
+            (
+                "POST",
+                "/api/watched",
+                json!({ "kind": "movie", "key": "gone", "watched": true }),
+                422,
+                vec![("/ok", json!(false))],
+                Some(r#"Mark(Movie, "gone", None, Watched, ProfileId(1))"#),
+            ),
+            (
+                "GET",
+                "/api/search?q=outl",
+                Value::Null,
+                200,
+                vec![("/results/0/title", json!("Outlander")), ("/results/1", Value::Null)],
+                None,
+            ),
+            (
+                "GET",
+                "/api/search?q=zzz",
+                Value::Null,
+                200,
+                vec![("/results", json!([]))],
+                None,
+            ),
+            (
+                "POST",
+                "/api/play",
+                json!({ "show": "outlander", "season": 2, "episode": 1 }),
+                200,
+                vec![("", json!({ "message": "done", "ok": true }))],
+                Some(r#"Play(Show { key: "outlander", season: Some(2), episode: Some(1) }, ProfileId(1))"#),
+            ),
+            ("POST", "/api/play", json!({ "movie": "jaws" }), 404, vec![], None),
+            ("POST", "/api/play", json!({}), 400, vec![], None),
+            (
+                "POST",
+                "/api/playback/pause",
+                json!({}),
+                200,
+                vec![],
+                Some("Control(Pause)"),
+            ),
+            (
+                "POST",
+                "/api/playback/seek",
+                json!({ "by": -30.0 }),
+                200,
+                vec![],
+                Some("Seek(By(-30.0))"),
+            ),
+            (
+                "POST",
+                "/api/playback/skip",
+                json!({ "direction": "back" }),
+                200,
+                vec![],
+                Some("Seek(Step(Back))"),
+            ),
+            (
+                "POST",
+                "/api/playback/skip",
+                json!({ "direction": "up" }),
+                422,
+                vec![],
+                None,
+            ),
+            ("POST", "/api/playback/dance", json!({}), 404, vec![], None),
+            ("POST", "/api/tv/on", json!({}), 200, vec![], Some("Control(TvOn)")),
+            ("POST", "/api/tv/off", json!({}), 200, vec![], Some("Control(TvOff)")),
+            (
+                "POST",
+                "/api/tv/semmeltv",
+                json!({}),
+                200,
+                vec![],
+                Some("Control(ShowSemmelTv)"),
+            ),
+            ("POST", "/api/tv/dance", json!({}), 404, vec![], None),
+            ("GET", "/api/audio", Value::Null, 404, vec![], None),
+            (
+                "POST",
+                "/api/audio",
+                json!({ "output": "headphones" }),
+                404,
+                vec![],
+                None,
+            ),
+            ("POST", "/api/audio/pair", json!({}), 404, vec![], None),
+            (
+                "POST",
+                "/api/volume/up",
+                json!({}),
+                422,
+                vec![("/message", json!(unsupported))],
+                None,
+            ),
+            ("POST", "/api/volume/sideways", json!({}), 404, vec![], None),
+            ("POST", "/api/command", json!({ "text": "play" }), 422, vec![], None),
+        ];
+        for (method, path, sent, status, answer, asked) in rows {
+            let row = format!("{method} {path} {sent}");
+            let (got, reply) = match method {
+                "GET" => get(&server, path),
+                _ => post(&server, path, sent),
+            };
+            assert_eq!(got, status, "{row}: {reply}");
+            for (pointer, want) in answer {
+                assert_eq!(reply.pointer(pointer).unwrap_or(&Value::Null), &want, "{row} {pointer}");
+            }
+            if let Some(asked) = asked {
+                assert_eq!(server.asked.recv().unwrap(), asked, "{row}");
+            }
+        }
     }
 
     #[test]
@@ -1899,14 +1943,5 @@ mod tests {
         assert_eq!(status, 200);
         assert_eq!(get(&server, "/api/audio/dialogue"), (200, json!({ "on": true })));
         assert_eq!(post(&server, "/api/audio/dialogue", json!({ "on": "yes" })).0, 422);
-    }
-
-    #[test]
-    fn volume_keys_without_headphones_go_to_the_tv() {
-        let server = serve(no_root(), None);
-        let (status, body) = post(&server, "/api/volume/up", json!({}));
-        assert_eq!(status, 422);
-        assert_eq!(body["message"], "Volume control is not supported by this TV");
-        assert_eq!(post(&server, "/api/volume/sideways", json!({})).0, 404);
     }
 }

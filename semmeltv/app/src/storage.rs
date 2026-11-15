@@ -516,67 +516,81 @@ mod tests {
     };
 
     #[test]
-    fn nothing_goes_below_the_high_water_mark_with_room_on_the_disk() {
-        assert_eq!(excess(80 * G, 30 * G, MARKS), 0);
-        let titles = [cached("up", 5 * G, Some(1), 1)];
-        assert!(plan(&titles, 80 * G, 30 * G, MARKS).is_empty());
-    }
-
-    #[test]
-    fn past_the_high_water_mark_it_frees_down_to_the_low_one() {
-        assert_eq!(excess(81 * G, 30 * G, MARKS), 9 * G);
-        let titles = [
-            cached("new", 6 * G, Some(300), 10),
-            cached("old", 4 * G, Some(100), 10),
-            cached("middle", 3 * G, Some(200), 10),
-            cached("newest", 5 * G, Some(400), 10),
-        ];
-        assert_eq!(
-            keys(&titles, &plan(&titles, 81 * G, 30 * G, MARKS)),
-            ["old", "middle", "new"]
-        );
-    }
-
-    #[test]
-    fn a_full_disk_frees_space_even_under_the_high_water_mark() {
-        assert_eq!(excess(50 * G, 9 * G, MARKS), 9 * G);
-        assert_eq!(excess(75 * G, 9 * G, MARKS), 9 * G);
-        let titles = [cached("old", 4 * G, Some(1), 1), cached("new", 6 * G, Some(2), 1)];
-        assert_eq!(keys(&titles, &plan(&titles, 50 * G, 9 * G, MARKS)), ["old", "new"]);
-    }
-
-    #[test]
-    fn titles_never_watched_count_from_when_they_were_cached() {
-        let titles = [
-            cached("watched-last-week", G, Some(700), 100),
-            cached("cached-long-ago", G, None, 50),
-            cached("cached-today", G, None, 900),
-        ];
-        assert_eq!(
-            keys(&titles, &order(&titles)),
-            ["cached-long-ago", "watched-last-week", "cached-today"]
-        );
-    }
-
-    #[test]
-    fn kept_titles_are_never_chosen_and_files_outside_the_library_go_first() {
-        let mut titles = vec![
-            cached("playing", 20 * G, Some(1), 1),
-            cached("watching", 20 * G, Some(2), 1),
-            cached("old", G, Some(3), 1),
-            cached("stray", G, None, 999),
-        ];
-        titles[0].keep = Some(Keep::Playing);
-        titles[1].keep = Some(Keep::Watching);
-        titles[3].title = Title::Other("Movies/Extras".to_string());
-        assert_eq!(keys(&titles, &plan(&titles, 100 * G, 30 * G, MARKS)), ["stray", "old"]);
-    }
-
-    #[test]
-    fn the_low_water_mark_is_a_tenth_under_the_high_one() {
+    fn eviction_plan_frees_the_oldest_unkept_titles() {
         let marks = Marks::new(80 * GIB);
-        assert_eq!(marks.low, 72 * GIB);
-        assert_eq!(marks.floor, 10 * GIB);
+        let mut kept = vec![
+            cached("playing", 20 * GIB, Some(1), 1),
+            cached("watching", 20 * GIB, Some(2), 1),
+            cached("old", GIB, Some(3), 1),
+            cached("stray", GIB, None, 999),
+        ];
+        kept[0].keep = Some(Keep::Playing);
+        kept[1].keep = Some(Keep::Watching);
+        kept[3].title = Title::Other("Movies/Extras".to_string());
+        let full = vec![cached("old", 4 * GIB, Some(1), 1), cached("new", 6 * GIB, Some(2), 1)];
+        let rows: Vec<(&str, u64, u64, Vec<Cached>, u64, Vec<&str>)> = vec![
+            (
+                "room on the disk",
+                80 * GIB,
+                30 * GIB,
+                vec![cached("up", 5 * GIB, Some(1), 1)],
+                0,
+                vec![],
+            ),
+            (
+                "past the high water mark",
+                81 * GIB,
+                30 * GIB,
+                vec![
+                    cached("new", 6 * GIB, Some(300), 10),
+                    cached("old", 4 * GIB, Some(100), 10),
+                    cached("middle", 3 * GIB, Some(200), 10),
+                    cached("newest", 5 * GIB, Some(400), 10),
+                ],
+                9 * GIB,
+                vec!["old", "middle", "new"],
+            ),
+            (
+                "a full disk",
+                50 * GIB,
+                9 * GIB,
+                full.clone(),
+                9 * GIB,
+                vec!["old", "new"],
+            ),
+            (
+                "a full disk near the mark",
+                75 * GIB,
+                9 * GIB,
+                full,
+                9 * GIB,
+                vec!["old", "new"],
+            ),
+            (
+                "never watched",
+                100 * GIB,
+                30 * GIB,
+                vec![
+                    cached("watched-last-week", GIB, Some(700), 100),
+                    cached("cached-long-ago", GIB, None, 50),
+                    cached("cached-today", GIB, None, 900),
+                ],
+                28 * GIB,
+                vec!["cached-long-ago", "watched-last-week", "cached-today"],
+            ),
+            (
+                "kept and stray",
+                100 * GIB,
+                30 * GIB,
+                kept,
+                28 * GIB,
+                vec!["stray", "old"],
+            ),
+        ];
+        for (name, used, free, titles, want_excess, removed) in rows {
+            assert_eq!(excess(used, free, marks), want_excess, "{name}");
+            assert_eq!(keys(&titles, &plan(&titles, used, free, marks)), removed, "{name}");
+        }
     }
 
     fn library() -> Library {
@@ -653,12 +667,11 @@ mod tests {
     }
 
     #[test]
-    fn playing_watching_up_next_and_started_titles_are_kept() {
+    fn titles_in_use_are_kept() {
         let library = library();
         let mut progress = Progress::default();
         let dark = PathBuf::from("/lib/Series/Dark/S01/E01.mkv");
         let up = PathBuf::from("/lib/Movies/Up (2009)/Up.mkv");
-        let heat = PathBuf::from("/lib/Movies/Heat.mkv");
         progress.record(
             &up,
             Place {
@@ -668,73 +681,80 @@ mod tests {
             },
         );
         progress.played(&up, 777);
-        progress.files.insert(
-            heat.clone(),
-            Watched {
-                last_played: Some(555),
-                ..Watched::default()
+        let heat = Watched {
+            last_played: Some(555),
+            ..Watched::default()
+        };
+        progress.files.insert(PathBuf::from("/lib/Movies/Heat.mkv"), heat);
+        let gone = Watched {
+            viewing: crate::progress::Viewing::InProgress {
+                at: 60.0,
+                tracks: crate::progress::Tracks::default(),
             },
-        );
-        let files = vec![
-            stored("/lib/Series/Dark/S01/E01.mkv", 10, 10, 1),
-            stored("/lib/Movies/Up (2009)/Up.mkv", 10, 10, 1),
-            stored("/lib/Movies/Heat.mkv", 10, 10, 1),
+            ..Watched::default()
+        };
+        progress.files.insert(PathBuf::from("/lib/Movies/Gone/Gone.mkv"), gone);
+        let files: Vec<Stored> = [
+            "/lib/Series/Dark/S01/E01.mkv",
+            "/lib/Movies/Up (2009)/Up.mkv",
+            "/lib/Movies/Heat.mkv",
+            "/lib/Movies/Playing/Playing.mkv",
+            "/lib/Movies/Queued/Queued.mkv",
+            "/lib/Movies/Gone/Gone.mkv",
+            "/lib/Movies/Stale/Stale.mkv",
+        ]
+        .into_iter()
+        .map(|path| stored(path, 10, 10, 1))
+        .collect();
+        let series = Title::Series("dark".to_string());
+        let movie = |key: &str| Title::Movie(key.to_string());
+        let other = |key: &str| Title::Other(format!("Movies/{key}"));
+        let unlisted = PathBuf::from("/lib/Movies/Playing/Playing.mkv");
+        let rows = [
+            (
+                None,
+                vec![dark.clone()],
+                vec![
+                    (series.clone(), Some(Keep::UpNext), None),
+                    (movie("up"), Some(Keep::Started), Some(777)),
+                    (movie("heat"), None, Some(555)),
+                ],
+                vec!["Playing", "Queued", "Stale", "heat"],
+            ),
+            (
+                Some(dark.as_path()),
+                vec![dark.clone()],
+                vec![(series, Some(Keep::Playing), None)],
+                vec!["Playing", "Queued", "Stale", "heat"],
+            ),
+            (
+                Some(unlisted.as_path()),
+                vec![PathBuf::from("/lib/Movies/Queued/Queued.mkv")],
+                vec![
+                    (other("Playing"), Some(Keep::Playing), None),
+                    (other("Queued"), Some(Keep::UpNext), None),
+                    (other("Gone"), Some(Keep::Started), None),
+                    (other("Stale"), None, None),
+                ],
+                vec!["Stale", "Dark", "heat"],
+            ),
         ];
-        let queued = [dark.clone()];
-        let activity = Activity {
-            playing: None,
-            queued: &queued,
-        };
-        let titles = titles(Path::new("/lib"), &library, &progress, files.clone(), &activity);
-        assert_eq!(find(&titles, &Title::Series("dark".into())).keep, Some(Keep::UpNext));
-        let up_title = find(&titles, &Title::Movie("up".into()));
-        assert_eq!((up_title.keep, up_title.last_watched), (Some(Keep::Started), Some(777)));
-        let heat_title = find(&titles, &Title::Movie("heat".into()));
-        assert_eq!((heat_title.keep, heat_title.last_watched), (None, Some(555)));
-
-        let playing = Activity {
-            playing: Some(&dark),
-            queued: &queued,
-        };
-        let titles = super::titles(Path::new("/lib"), &library, &progress, files, &playing);
-        assert_eq!(find(&titles, &Title::Series("dark".into())).keep, Some(Keep::Playing));
-    }
-
-    #[test]
-    fn files_in_use_are_kept_even_when_the_library_does_not_list_them() {
-        let progress = Progress {
-            files: [(
-                PathBuf::from("/lib/Movies/Gone/Gone.mkv"),
-                Watched {
-                    viewing: crate::progress::Viewing::InProgress {
-                        at: 60.0,
-                        tracks: crate::progress::Tracks::default(),
-                    },
-                    ..Watched::default()
-                },
-            )]
-            .into(),
-            ..Progress::default()
-        };
-        let files = vec![
-            stored("/lib/Movies/Playing/Playing.mkv", 10, 10, 1),
-            stored("/lib/Movies/Queued/Queued.mkv", 10, 10, 1),
-            stored("/lib/Movies/Gone/Gone.mkv", 10, 10, 1),
-            stored("/lib/Movies/Stale/Stale.mkv", 10, 10, 1),
-        ];
-        let playing = PathBuf::from("/lib/Movies/Playing/Playing.mkv");
-        let queued = [PathBuf::from("/lib/Movies/Queued/Queued.mkv")];
-        let activity = Activity {
-            playing: Some(&playing),
-            queued: &queued,
-        };
-        let titles = titles(Path::new("/lib"), &Library::default(), &progress, files, &activity);
-        let keep = |key: &str| find(&titles, &Title::Other(format!("Movies/{key}"))).keep;
-        assert_eq!(keep("Playing"), Some(Keep::Playing));
-        assert_eq!(keep("Queued"), Some(Keep::UpNext));
-        assert_eq!(keep("Gone"), Some(Keep::Started));
-        assert_eq!(keep("Stale"), None);
-        assert_eq!(keys(&titles, &order(&titles)), ["Stale"]);
+        for (playing, queued, wants, removable) in rows {
+            let activity = Activity {
+                playing,
+                queued: &queued,
+            };
+            let titles = titles(Path::new("/lib"), &library, &progress, files.clone(), &activity);
+            for (title, keep, last_watched) in wants {
+                let found = find(&titles, &title);
+                assert_eq!(
+                    (found.keep, found.last_watched),
+                    (keep, last_watched),
+                    "{title:?} with {playing:?} playing"
+                );
+            }
+            assert_eq!(keys(&titles, &order(&titles)), removable, "{playing:?} playing");
+        }
     }
 
     #[test]

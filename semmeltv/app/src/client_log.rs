@@ -100,18 +100,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_line_names_the_device_and_flattens_what_it_was_sent() {
-        let entry = Entry {
-            level: "error".to_string(),
-            message: "flip refused\nby the TV".to_string(),
-            detail: Some("422".to_string()),
-            page: Some("/shows/dark".to_string()),
-            at: Some(1500.0),
-        };
-        assert_eq!(
-            line("iPhone 1a2b", "Safari", &entry),
-            "client iPhone 1a2b: error flip refused by the TV | 422 | at /shows/dark | t=1.5s | Safari"
-        );
+    fn a_client_entry_is_one_short_journal_line() {
+        let long = "x".repeat(LONGEST_FIELD + 10);
+        let cut = format!("{}…", "x".repeat(LONGEST_FIELD));
+        let rows = [
+            (
+                Entry {
+                    level: "error".to_string(),
+                    message: "flip refused\nby the TV".to_string(),
+                    detail: Some("422".to_string()),
+                    page: Some("/shows/dark".to_string()),
+                    at: Some(1500.0),
+                },
+                vec![
+                    "error",
+                    "flip refused by the TV",
+                    "422",
+                    "/shows/dark",
+                    "t=1.5s",
+                    "Safari",
+                ],
+            ),
+            (
+                Entry {
+                    level: "warn".to_string(),
+                    message: long.clone(),
+                    detail: Some(long),
+                    page: None,
+                    at: None,
+                },
+                vec![cut.as_str()],
+            ),
+        ];
+        for (entry, parts) in rows {
+            let line = line("iPhone 1a2b", "Safari", &entry);
+            assert!(
+                line.starts_with("client iPhone 1a2b: ") && !line.contains('\n'),
+                "{line}"
+            );
+            for part in parts {
+                assert!(line.contains(part), "{part:?} in {line}");
+            }
+        }
     }
 
     #[test]
@@ -123,9 +153,4 @@ mod tests {
         assert!(budget.take(now + Duration::from_secs(61)));
     }
 
-    #[test]
-    fn long_fields_are_cut() {
-        let long = "x".repeat(LONGEST_FIELD + 10);
-        assert_eq!(clean(&long).chars().count(), LONGEST_FIELD + 1);
-    }
 }

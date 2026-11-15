@@ -146,12 +146,34 @@ mod tests {
     const FFMPEG_VTT: &str = "WEBVTT\n\n00:01.000 --> 00:03.000\nHello\n\n00:00:30.000 --> 00:00:33.500 align:start\n<i>World</i>\nagain\n\n";
 
     #[test]
-    fn cues_move_by_the_subtitle_delay_and_cues_before_the_start_go() {
-        let shifted = shift(FFMPEG_VTT, -2.0);
-        assert!(shifted.starts_with("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n"));
-        assert!(shifted.contains("00:00:00.000 --> 00:00:01.000\nHello\n"));
-        assert!(shifted.contains("00:00:28.000 --> 00:00:31.500 align:start\n<i>World</i>\nagain\n"));
-        assert!(!shift(FFMPEG_VTT, -3.5).contains("Hello"));
+    fn vtt_cues_shift_by_the_delay() {
+        let late = "WEBVTT\n\n01:02:05.250 --> 01:02:06.000\nLate\n\n";
+        let rows = [
+            (
+                FFMPEG_VTT,
+                -2.0,
+                vec![
+                    "00:00:00.000 --> 00:00:01.000\nHello\n",
+                    "00:00:28.000 --> 00:00:31.500 align:start\n<i>World</i>\nagain\n",
+                ],
+                vec![],
+            ),
+            (FFMPEG_VTT, -3.5, vec!["World"], vec!["Hello"]),
+            (late, -2.0, vec!["01:02:03.250 --> 01:02:04.000\nLate\n"], vec![]),
+        ];
+        for (vtt, delay, kept, gone) in rows {
+            let shifted = shift(vtt, delay);
+            assert!(
+                shifted.starts_with("WEBVTT\nX-TIMESTAMP-MAP=MPEGTS:0,LOCAL:00:00:00.000\n"),
+                "{delay}: {shifted}"
+            );
+            for cue in kept {
+                assert!(shifted.contains(cue), "{delay}: {cue:?} in {shifted}");
+            }
+            for cue in gone {
+                assert!(!shifted.contains(cue), "{delay}: {cue:?} in {shifted}");
+            }
+        }
     }
 
     #[test]
@@ -164,9 +186,4 @@ mod tests {
         assert_eq!(cues(FFMPEG_VTT).len(), 2);
     }
 
-    #[test]
-    fn hours_are_kept_past_the_first_hour() {
-        assert_eq!(format_time(3723.25), "01:02:03.250");
-        assert_eq!(parse_time("01:02:03.250"), Some(3723.25));
-    }
 }

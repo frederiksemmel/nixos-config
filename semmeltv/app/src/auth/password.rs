@@ -18,17 +18,3 @@ pub fn verify(password: &str, stored: &str) -> bool {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn a_hash_verifies_its_password_and_no_other() {
-        let stored = hash("correct horse").unwrap();
-        assert!(verify("correct horse", &stored));
-        assert!(!verify("correct horsf", &stored));
-        assert!(!verify("correct horse", "not a hash"));
-        assert_ne!(hash("correct horse").unwrap(), stored, "every hash has its own salt");
-    }
-}

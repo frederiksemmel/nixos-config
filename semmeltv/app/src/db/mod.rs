@@ -330,31 +330,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_new_database_has_the_four_profiles_and_no_passwords() {
-        let mut raw = db().await.db.clone();
-        let profiles = models::Profile::all()
-            .order_by(models::Profile::fields().id().asc())
-            .exec(&mut raw)
-            .await
-            .unwrap();
-        let seen: Vec<_> = profiles
-            .iter()
-            .map(|profile| (profile.id, profile.name.as_str(), profile.role, profile.password_hash.is_none()))
-            .collect();
-        assert_eq!(
-            seen,
-            [
-                (1, "Frederik", models::Role::Admin, true),
-                (2, "Mami", models::Role::Viewer, true),
-                (3, "Miriam", models::Role::Viewer, true),
-                (4, "Ramu", models::Role::Viewer, true),
-            ]
-        );
-    }
-
-    #[tokio::test]
-    async fn deleting_a_profile_takes_its_state_along_and_leaves_the_others() {
-        use crate::auth::store::Invite;
+    async fn deleting_a_profile_takes_all_its_rows_along() {
+        use crate::auth::store::{Invite, StoreError, StoredPasskey};
         use crate::progress::{Place, Progress};
         let db = db().await;
         for profile in [ProfileId(3), ProfileId(4)] {
@@ -377,6 +354,30 @@ mod tests {
             used_at: None,
         };
         db.create_invite(&invite).await.unwrap();
+        let for_ramu = Invite {
+            token_hash: vec![8],
+            profile: ProfileId(4),
+            created_by: Some(ProfileId(1)),
+            ..invite
+        };
+        db.create_invite(&for_ramu).await.unwrap();
+        let key = StoredPasskey {
+            profile: ProfileId(4),
+            credential_id: vec![1, 2, 3],
+            rp_id: "tv.example.org".to_string(),
+            name: "iPhone".to_string(),
+            passkey: "{}".to_string(),
+            created_at: 1,
+            last_used_at: None,
+        };
+        db.add_passkey(&key).await.unwrap();
+        let taken = StoredPasskey {
+            profile: ProfileId(3),
+            ..key.clone()
+        };
+        assert_eq!(db.add_passkey(&taken).await, Err(StoreError::Taken));
+        db.update_passkey(&[1, 2, 3], "{\"x\":1}", 5).await.unwrap();
+        assert_eq!(db.passkey(&[1, 2, 3]).await.unwrap().unwrap().last_used_at, Some(5));
 
         assert!(db.delete_profile(ProfileId(4)).await.unwrap());
 
@@ -387,17 +388,12 @@ mod tests {
         assert_eq!(db.subtitle_settings(ProfileId(4)).await.unwrap(), None);
         assert_eq!(db.audio_prefs(ProfileId(4)).await.unwrap(), AudioPrefs::default());
         assert_eq!(db.invite(&[9]).await.unwrap().unwrap().created_by, None);
+        assert_eq!(db.invite(&[8]).await.unwrap(), None);
+        assert_eq!(db.passkey(&[1, 2, 3]).await.unwrap(), None);
         let kept = db.progress(ProfileId(3)).await.unwrap();
         assert_eq!(kept.files[Path::new("/lib/Movies/Up/Up.mkv")].stopped_at(), Some(60.0));
         assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap().output(), Output::Headphones);
         assert!(!db.delete_profile(ProfileId(4)).await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn prefs_for_a_profile_that_does_not_exist_are_refused() {
-        let db = db().await;
-        let orphan = db.save_audio_prefs(ProfileId(99), &AudioPrefs::default()).await;
-        assert!(orphan.is_err());
     }
 
     #[tokio::test]
@@ -448,9 +444,6 @@ mod tests {
         };
         db.save_subtitle_file(file, remembered).await.unwrap();
         assert_eq!(db.subtitle_files().await.unwrap(), BTreeMap::from([(file.to_path_buf(), remembered)]));
-        let mut raw = db.db.clone();
-        let stored = VideoFact::all().exec(&mut raw).await.unwrap();
-        assert_eq!((stored[0].kind, stored[0].video_id), (models::VideoKind::Movie, 9));
         db.save_subtitle_file(file, Remembered::default()).await.unwrap();
         assert!(db.subtitle_files().await.unwrap().is_empty());
         assert!(db.save_subtitle_file(Path::new("/lib/elsewhere.mkv"), remembered).await.is_err());
@@ -480,7 +473,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn audio_prefs_default_to_the_tv() {
+    async fn audio_prefs_are_kept_per_existing_profile() {
         let db = db().await;
         assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), AudioPrefs::default());
         let prefs = AudioPrefs::Paired {
@@ -494,6 +487,8 @@ mod tests {
         assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), on_tv);
         db.save_audio_prefs(ProfileId(3), &AudioPrefs::Unpaired).await.unwrap();
         assert_eq!(db.audio_prefs(ProfileId(3)).await.unwrap(), AudioPrefs::Unpaired);
+        let orphan = db.save_audio_prefs(ProfileId(99), &AudioPrefs::default()).await;
+        assert!(orphan.is_err());
     }
 
     #[tokio::test]

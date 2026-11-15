@@ -185,41 +185,37 @@ mod tests {
     use super::*;
 
     #[test]
-    fn only_sign_in_and_the_stream_by_its_id_are_open() {
-        let get = Method::GET;
-        let post = Method::POST;
-        assert_eq!(access(&get, "/api/auth/choices"), Access::Open);
-        assert_eq!(access(&post, "/api/auth/password"), Access::Open);
-        assert_eq!(access(&post, "/api/auth/passkey/start"), Access::Open);
-        assert_eq!(access(&post, "/api/auth/invite/abc"), Access::Open);
-        assert_eq!(access(&get, "/api/auth/me"), Access::Signed);
-        assert_eq!(access(&post, "/api/auth/passkeys/start"), Access::Signed);
-        assert_eq!(access(&get, "/api/stream/abc/main.m3u8"), Access::Stream);
-        assert_eq!(access(&post, "/api/stream/open"), Access::Signed);
-        assert_eq!(access(&get, "/api/events"), Access::Service);
-        assert_eq!(access(&get, "/api/library"), Access::Signed);
-        assert_eq!(access(&get, "/api/movies/dune/poster"), Access::Signed);
-        assert_eq!(access(&post, "/api/play"), Access::Signed);
-        assert_eq!(access(&get, "//api/auth/choices/../../library"), Access::Signed);
-    }
-
-    #[test]
-    fn storage_tv_pairing_members_and_downloads_are_for_admins() {
-        assert_eq!(access(&Method::GET, "/api/storage"), Access::Admin);
-        assert_eq!(access(&Method::POST, "/api/storage/remove"), Access::Admin);
-        assert_eq!(access(&Method::POST, "/api/tv/pair"), Access::Admin);
-        assert_eq!(access(&Method::POST, "/api/tv/on"), Access::Signed);
-        assert_eq!(access(&Method::GET, "/api/auth/members"), Access::Admin);
-        assert_eq!(access(&Method::POST, "/api/auth/members/2/invite"), Access::Admin);
-        assert_eq!(access(&Method::POST, "/api/downloads/confirm"), Access::Admin);
-    }
-
-    #[test]
-    fn everyone_sends_feedback_and_admins_read_it() {
-        assert_eq!(access(&Method::POST, "/api/feedback"), Access::Signed);
-        assert_eq!(access(&Method::GET, "/api/feedback"), Access::Admin);
-        assert_eq!(access(&Method::GET, "/api/feedback/20261115-131211-ab12"), Access::Admin);
-        assert_eq!(access(&Method::GET, "/api/feedback/files/20261115-131211-ab12-tv.jpg"), Access::Admin);
+    fn every_route_has_its_access() {
+        let (get, post) = (Method::GET, Method::POST);
+        let rows = [
+            (&get, "/api/auth/choices", Access::Open),
+            (&post, "/api/auth/password", Access::Open),
+            (&post, "/api/auth/passkey/start", Access::Open),
+            (&post, "/api/auth/invite/abc", Access::Open),
+            (&get, "/api/auth/me", Access::Signed),
+            (&post, "/api/auth/passkeys/start", Access::Signed),
+            (&get, "/api/stream/abc/main.m3u8", Access::Stream),
+            (&post, "/api/stream/open", Access::Signed),
+            (&get, "/api/events", Access::Service),
+            (&get, "/api/library", Access::Signed),
+            (&get, "/api/movies/dune/poster", Access::Signed),
+            (&post, "/api/play", Access::Signed),
+            (&get, "//api/auth/choices/../../library", Access::Signed),
+            (&get, "/api/storage", Access::Admin),
+            (&post, "/api/storage/remove", Access::Admin),
+            (&post, "/api/tv/pair", Access::Admin),
+            (&post, "/api/tv/on", Access::Signed),
+            (&get, "/api/auth/members", Access::Admin),
+            (&post, "/api/auth/members/2/invite", Access::Admin),
+            (&post, "/api/downloads/confirm", Access::Admin),
+            (&post, "/api/feedback", Access::Signed),
+            (&get, "/api/feedback", Access::Admin),
+            (&get, "/api/feedback/20261115-131211-ab12", Access::Admin),
+            (&get, "/api/feedback/files/20261115-131211-ab12-tv.jpg", Access::Admin),
+        ];
+        for (method, path, want) in rows {
+            assert_eq!(access(method, path), want, "{method} {path}");
+        }
     }
 
     #[test]
