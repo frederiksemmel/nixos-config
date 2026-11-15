@@ -256,6 +256,57 @@ def app_restarted():
     tv.wait_for_text("Testfilm", timeout=120)
 
 
+def plays_the_next_episodes(phone, through_the_end=True):
+    opens = []
+    phone.page.on("request", lambda request: opens.append(request.post_data_json) if request.url.endswith("/api/stream/open") else None)
+    phone.goto(f"/shows/{SHOW}")
+    phone.until('document.querySelectorAll("main button.episode[data-play-show]").length === 3')
+    switch_to(phone, "phone")
+    episode = phone.page.locator('main button.episode[data-episode="1"]')
+    episode.scroll_into_view_if_needed()
+    episode.tap()
+    phone.until('document.querySelector(".pp-title")?.textContent.includes("Anfang")')
+    phone.until(PLAYS, 30000)
+    controls(phone)
+    phone.page.locator('.pp-pill[aria-label="Next episode"]').tap()
+    phone.until('document.querySelector(".pp-title")?.textContent.includes("Mitte")')
+    phone.until(PLAYS, 30000)
+    assert opens[-1]["episode"] == 2 and opens[-1].get("replaces"), f"Next opens episode 2 in place of 1: {opens[-1]}"
+    phone.page.wait_for_timeout(8000)
+    assert phone.js(PLAYS), "the next episode plays on: the closed stream of the one before doesn't fail it"
+    if not through_the_end:
+        return
+    end = f"{VIDEO}.seekable.end({VIDEO}.seekable.length - 1)"
+    phone.until(f"{VIDEO}.seekable.length > 0 && {end} > 178", 90000)
+    phone.js(f"{VIDEO}.currentTime = {end} - 1.5")
+    phone.until('document.querySelector(".pp-title")?.textContent.includes("Ende")', 30000)
+    phone.until(PLAYS, 30000)
+    assert opens[-1]["episode"] == 3 and opens[-1].get("replaces"), f"an episode that ends plays the next: {opens[-1]}"
+    assert (screen(phone)["play"] or {}).get("episode") == 3
+    phone.page.go_back()
+    phone.until(f'!!document.querySelector(".pp.pp-mini") && location.pathname === "/shows/{SHOW}" && !document.documentElement.classList.contains("pp-open")', 3000)
+    assert "Ende" in phone.js('document.querySelector(".pp-mini-text").textContent')
+    streams = len(opens)
+    phone.page.locator(".pp-mini-text").tap()
+    phone.until('!document.querySelector(".pp-mini") && document.documentElement.classList.contains("pp-open") && !!history.state?.player', 3000)
+    phone.page.wait_for_timeout(500)
+    phone.js('document.querySelector(".pp-close").click()')
+    phone.until('!!document.querySelector(".pp.pp-mini")', 3000)
+    phone.page.wait_for_timeout(500)
+    playing = phone.page.locator('main button.episode[data-episode="3"]')
+    playing.scroll_into_view_if_needed()
+    playing.tap()
+    phone.until('!document.querySelector(".pp-mini") && document.querySelector(".pp-title").textContent.includes("Ende")', 3000)
+    phone.page.wait_for_timeout(800)
+    assert len(opens) == streams, "tapping the episode that plays opens its player without streaming it again"
+    close_player(phone)
+    eventually("the TV hears that the phone stopped", lambda: screen(phone)["play"] is None)
+    phone.page.wait_for_timeout(800)
+    assert phone.js('!document.querySelector(".pp")')
+    assert phone.js('getComputedStyle(document.querySelector(".bar")).visibility !== "hidden" && !document.elementFromPoint(innerWidth / 2, innerHeight - 30).closest(".pp")')
+    switch_to(phone, "tv")
+
+
 TILE = 'main a[data-topcoat-link][href^="/movies/"]'
 
 CENTRED = """() => {
@@ -852,51 +903,40 @@ with sync_playwright() as playwright:
         phone.page.unroute("**/api/screen")
 
     with scenario("a phone plays the next episode in place of the one that ends"):
-        opens = []
-        phone.page.on("request", lambda request: opens.append(request.post_data_json) if request.url.endswith("/api/stream/open") else None)
-        phone.goto(f"/shows/{SHOW}")
-        phone.until('document.querySelectorAll("main button.episode[data-play-show]").length === 3')
-        switch_to(phone, "phone")
-        episode = phone.page.locator('main button.episode[data-episode="1"]')
-        episode.scroll_into_view_if_needed()
-        episode.tap()
-        phone.until('document.querySelector(".pp-title")?.textContent.includes("Anfang")')
-        phone.until(PLAYS, 30000)
-        phone.until(f"{VIDEO}.buffered.length > 0 && {VIDEO}.buffered.end({VIDEO}.buffered.length - 1) >= Math.min({VIDEO}.currentTime + 25, {VIDEO}.duration - 1)", 30000)
-        phone.page.wait_for_timeout(1000)
-        controls(phone)
-        phone.page.locator('.pp-pill[aria-label="Next episode"]').tap()
-        phone.until('document.querySelector(".pp-title")?.textContent.includes("Mitte")')
-        phone.until(PLAYS, 30000)
-        assert opens[-1]["episode"] == 2 and opens[-1].get("replaces"), f"Next opens episode 2 in place of 1: {opens[-1]}"
-        phone.until(f"Math.abs({VIDEO}.duration - 180) < 2", 60000)
-        phone.js(f"{VIDEO}.currentTime = {VIDEO}.duration - 1.5")
-        phone.until('document.querySelector(".pp-title")?.textContent.includes("Ende")', 30000)
-        phone.until(PLAYS, 30000)
-        assert opens[-1]["episode"] == 3 and opens[-1].get("replaces"), f"an episode that ends plays the next: {opens[-1]}"
-        assert (screen(phone)["play"] or {}).get("episode") == 3
-        phone.page.go_back()
-        phone.until(f'!!document.querySelector(".pp.pp-mini") && location.pathname === "/shows/{SHOW}" && !document.documentElement.classList.contains("pp-open")', 3000)
-        assert "Ende" in phone.js('document.querySelector(".pp-mini-text").textContent')
-        streams = len(opens)
-        phone.page.locator(".pp-mini-text").tap()
-        phone.until('!document.querySelector(".pp-mini") && document.documentElement.classList.contains("pp-open") && !!history.state?.player', 3000)
-        phone.page.wait_for_timeout(500)
-        phone.js('document.querySelector(".pp-close").click()')
-        phone.until('!!document.querySelector(".pp.pp-mini")', 3000)
-        phone.page.wait_for_timeout(500)
-        playing = phone.page.locator('main button.episode[data-episode="3"]')
-        playing.scroll_into_view_if_needed()
-        playing.tap()
-        phone.until('!document.querySelector(".pp-mini") && document.querySelector(".pp-title").textContent.includes("Ende")', 3000)
-        phone.page.wait_for_timeout(800)
-        assert len(opens) == streams, "tapping the episode that plays opens its player without streaming it again"
-        close_player(phone)
-        eventually("the TV hears that the phone stopped", lambda: screen(phone)["play"] is None)
-        phone.page.wait_for_timeout(800)
-        assert phone.js('!document.querySelector(".pp")')
-        assert phone.js('getComputedStyle(document.querySelector(".bar")).visibility !== "hidden" && !document.elementFromPoint(innerWidth / 2, innerHeight - 30).closest(".pp")')
-        switch_to(phone, "tv")
+        plays_the_next_episodes(phone)
+
+    with scenario("Apple's native HLS path plays an episode, the next one and its subtitles"):
+        apple = Phone(playwright)
+        apple.context.add_init_script("Object.defineProperty(Navigator.prototype, 'vendor', { get: () => 'Apple Computer, Inc.' })")
+        assert apple.js('document.createElement("video").canPlayType("application/vnd.apple.mpegurl")'), "this Chromium plays HLS itself"
+        plays_the_next_episodes(apple, through_the_end=False)
+        assert apple.js(f'{VIDEO}.src.endsWith("/main.m3u8") && !window.Hls'), "the video plays the playlist itself, without hls.js"
+        ranges = apple.js(f"Array.from({{ length: {VIDEO}.seekable.length }}, (_, i) => [{VIDEO}.seekable.start(i), {VIDEO}.seekable.end(i)])")
+        print(f"the native player can seek in {ranges} at {apple.js(VIDEO + '.currentTime')} s, the player at {phone_time(apple)} s")
+        controls(apple)
+        apple.page.locator(".pp-pill", has_text="Audio").tap()
+        apple.until('!document.querySelector(".pp-sheet").hidden')
+        apple.page.locator(".pp-sheet section").nth(1).locator(".pp-choice", has_text="English").tap()
+        apple.until(f"({ACTIVE_CUES})().length > 0", 15000)
+        checked = 0
+        for _ in range(12):
+            at = phone_time(apple)
+            cues = apple.js(ACTIVE_CUES)
+            if 0.3 < at % 5 < 3.7:
+                assert cues == [f"Episode 2 line {int(at // 5) + 1}"], f"at {at:.2f} s the subtitles show {cues}"
+                checked += 1
+            time.sleep(0.4)
+        assert checked >= 5, f"{checked} subtitle checks"
+        reopened = []
+        apple.page.on("request", lambda request: reopened.append(request.url) if request.url.endswith("/api/stream/open") else None)
+        jumped_from = float(phone_time(apple))
+        apple.page.keyboard.press("ArrowLeft")
+        eventually("a jump back plays from 10 s earlier", lambda: apple.js(PLAYS) and jumped_from - 13 < phone_time(apple) < jumped_from - 5, timeout=20)
+        print(f"jumped back from {jumped_from:.1f} s to {phone_time(apple):.1f} s, {'by opening the stream again' if reopened else 'in the stream'}")
+        close_player(apple)
+        eventually("the TV hears that the Apple phone stopped", lambda: screen(apple)["play"] is None)
+        switch_to(apple, "tv")
+        apple.close()
 
     with scenario("Settings opens Feedback and comes Back, and keeps scrolling"):
         phone.goto("/")

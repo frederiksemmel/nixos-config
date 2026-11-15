@@ -559,7 +559,7 @@ class Player {
       this.mediaState("paused");
     });
     video.addEventListener("ended", () => this.ended());
-    video.addEventListener("error", () => this.trouble(video.error && video.error.message));
+    video.addEventListener("error", () => { if (video.getAttribute("src")) this.trouble(video.error && video.error.message); });
 
     this.reportTimer = setInterval(() => {
       if (this.started && !this.idling) this.report(video.paused ? "paused" : "playing");
@@ -954,7 +954,7 @@ class Player {
       else this.applyDefaultSubtitles(session);
       video.play().catch(() => this.blocked(session));
     };
-    if (this.hls) { this.hls.destroy(); this.hls = null; }
+    this.detach();
     if (this.capabilities.native) {
       video.src = source;
       video.addEventListener("loadedmetadata", begin, { once: true });
@@ -965,11 +965,18 @@ class Player {
       if (this.closed || this.session !== session) return;
       const hls = new Hls({ startPosition: Math.max(0, session.start - session.offset), maxBufferLength: 30, backBufferLength: 30 });
       this.hls = hls;
-      hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal) this.trouble(data.details); });
+      hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal && this.hls === hls) this.trouble(data.details); });
       video.addEventListener("loadedmetadata", begin, { once: true });
       hls.loadSource(source);
       hls.attachMedia(video);
     }).catch(() => this.failed("The player library didn't load"));
+  }
+
+  // Stops loading the stream the video plays.
+  detach() {
+    if (this.hls) { this.hls.destroy(); this.hls = null; }
+    this.video.removeAttribute("src");
+    this.video.load();
   }
 
   clearSubtitles() {
@@ -1150,6 +1157,7 @@ class Player {
     const next = { show: session.key, season: session.next.season, episode: session.next.episode };
     this.started = false;
     this.pause();
+    this.detach();
     this.session = null;
     this.replacing = session.id;
     this.skip.hidden = true;
@@ -1214,7 +1222,7 @@ class Player {
   }
 
   trouble(detail) {
-    if (this.resuming || this.awaiting || this.closed) return;
+    if (this.resuming || this.awaiting || this.closed || this.waiting) return;
     if (!this.session) {
       this.failed(detail);
       return;
