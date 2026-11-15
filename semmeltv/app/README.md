@@ -118,10 +118,12 @@ in `S2 E3`. Anything unknown is left out. No video file is read for any of this.
 
 ## Refreshing
 
-The app checks `library.db` every 30 seconds and reloads it when it changed.
-Focus stays on the same title and an open show stays open. During playback the
-reload waits until the video ends. Art for cards that had none is looked for
-again on every reload.
+The app checks `library.db` every 30 seconds and reloads it when it changed,
+also during playback, so a new title shows on the TV and in the web app at
+once. A title whose file is not on the mount yet is left out until the file
+arrives: each check looks again for the files the last reload missed. Focus
+stays on the same title and an open show stays open. Art for cards that had none
+is looked for again on every reload.
 
 ## Streaming and offline
 

@@ -117,7 +117,6 @@ pub struct Actor {
     downloading: Option<PathBuf>,
     online: bool,
     problem: Option<String>,
-    deferred: Option<Result<Library, String>>,
     voice: Option<Voice>,
     ear: voice::Ear,
     queued: Option<PathBuf>,
@@ -197,7 +196,6 @@ impl Actor {
             downloading: None,
             online: true,
             problem: None,
-            deferred: None,
             voice,
             ear: voice::Ear::Idle,
             queued: None,
@@ -268,7 +266,6 @@ impl Actor {
                 self.publish_home();
                 self.tend();
             }
-            Signal::Library(result) if self.on_tv.is_some() => self.deferred = Some(result),
             Signal::Library(result) => self.reload(result).await,
             Signal::Download(found) => self.download_found(found),
             Signal::TvWaking => self.pause_for_tv(),
@@ -612,9 +609,6 @@ impl Actor {
         self.subtitles.set_owner(self.profile);
         if !success {
             self.show_message("This video could not be played".to_string());
-        }
-        if let Some(result) = self.deferred.take() {
-            self.reload(result).await;
         }
         self.publish_home();
         self.queue_downloads(false);
@@ -1612,6 +1606,32 @@ mod tests {
             &library.movies[0]
         ));
         assert!(!core.ask(mark("jaws")).await.unwrap().ok);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_new_library_reaches_both_frontends_at_once() {
+        let core = core().await;
+        let mut events = core.subscribe();
+        let mut library = (*core.library()).clone();
+        let mut diaries = library.movies[0].clone();
+        diaries.id = 87;
+        diaries.key = crate::library::movie_key("The Princess Diaries", Some(2001));
+        diaries.title = "The Princess Diaries".to_string();
+        diaries.path = PathBuf::from("/lib/Movies/The Princess Diaries (2001)/Diaries.mkv");
+        library.movies.push(diaries);
+        core.signal(Signal::Library(Ok(library)));
+        let home = loop {
+            if let Event::Home(home) = events.recv().await.unwrap() {
+                break home;
+            }
+        };
+        assert!(
+            home.library
+                .movies
+                .iter()
+                .any(|movie| movie.title == "The Princess Diaries")
+        );
+        assert!(core.library().movies.iter().any(|movie| movie.id == 87));
     }
 
     #[tokio::test(flavor = "multi_thread")]

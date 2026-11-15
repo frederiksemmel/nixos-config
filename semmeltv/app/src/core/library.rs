@@ -68,10 +68,30 @@ pub async fn read(root: &Path, meta: &Path, saved: &Path) -> Result<Library, Str
     }
 }
 
+async fn absent(root: &Path, meta: &Path) -> Vec<PathBuf> {
+    let Ok(listed) = everything(root, meta).await else {
+        return Vec::new();
+    };
+    spawn_blocking(move || listed.paths().filter(|path| !path.is_file()).cloned().collect())
+        .await
+        .unwrap_or_default()
+}
+
+async fn appeared(absent: &[PathBuf]) -> bool {
+    if absent.is_empty() {
+        return false;
+    }
+    let absent = absent.to_vec();
+    spawn_blocking(move || absent.iter().any(|path| path.is_file()))
+        .await
+        .unwrap_or(false)
+}
+
 pub fn watch(paths: Paths, core: Core) {
     tokio::spawn(async move {
         let manifest_file = paths.meta.join(manifest::FILE_NAME);
         let mut manifest_seen = None;
+        let mut missing = Vec::new();
         let mut every = tokio::time::interval(POLL);
         every.set_missed_tick_behavior(MissedTickBehavior::Delay);
         loop {
@@ -83,9 +103,11 @@ pub fn watch(paths: Paths, core: Core) {
             core.signal(Signal::Poll { online });
             if online {
                 let current = stamp(&manifest_file).await;
-                if manifest_seen != Some(current) {
+                if manifest_seen != Some(current) || appeared(&missing).await {
                     manifest_seen = Some(current);
-                    core.signal(Signal::Library(read(&paths.root, &paths.meta, &paths.saved).await));
+                    let library = read(&paths.root, &paths.meta, &paths.saved).await;
+                    missing = absent(&paths.root, &paths.meta).await;
+                    core.signal(Signal::Library(library));
                 }
             } else {
                 manifest_seen = None;
@@ -123,6 +145,31 @@ mod tests {
 
         fs::remove_file(&saved).unwrap();
         assert!(read(&root, &root, &saved).await.unwrap_err().contains("library.db"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_title_whose_file_arrives_after_its_entry_shows_up_once_the_file_is_there() {
+        let root = std::env::temp_dir().join(format!("semmeltv-arrives-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(root.join("Movies")).unwrap();
+        fs::write(root.join("Movies/Up.mkv"), b"x").unwrap();
+        let saved = root.join("saved.db");
+        let both = "[[movie]]\ntitle = \"Up\"\npath = \"Movies/Up.mkv\"\nadded = 2024-01-01\n\n\
+                    [[movie]]\ntitle = \"The Princess Diaries\"\nyear = 2001\npath = \"Movies/Diaries.mkv\"\nadded = 2026-11-15\n";
+        library_db::write(&root.join(manifest::FILE_NAME), &Manifest::parse(both).unwrap())
+            .await
+            .unwrap();
+
+        assert_eq!(read(&root, &root, &saved).await.unwrap().movies.len(), 1);
+        let missing = absent(&root, &root).await;
+        assert_eq!(missing, [root.join("Movies/Diaries.mkv")]);
+        assert!(!appeared(&missing).await);
+
+        fs::write(root.join("Movies/Diaries.mkv"), b"x").unwrap();
+        assert!(appeared(&missing).await);
+        assert_eq!(read(&root, &root, &saved).await.unwrap().movies.len(), 2);
+        assert!(absent(&root, &root).await.is_empty());
         fs::remove_dir_all(root).unwrap();
     }
 }
