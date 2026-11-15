@@ -5,10 +5,10 @@ mod probe;
 mod session;
 mod vtt;
 
-use crate::auth::gate::Who;
-use crate::profile::ProfileId;
 use crate::api::{self, problem};
+use crate::auth::gate::Who;
 use crate::core::{Core, Request};
+use crate::profile::ProfileId;
 use crate::progress::Watched;
 use crate::segments::{self, Kind as SegmentKind, Title};
 use crate::sidecar;
@@ -210,7 +210,10 @@ fn device_name(device: Option<&crate::screen::Device>) -> &str {
 }
 
 fn file_name(file: &std::path::Path) -> String {
-    file.file_name().map_or_else(|| file.display().to_string(), |name| name.to_string_lossy().into_owned())
+    file.file_name().map_or_else(
+        || file.display().to_string(),
+        |name| name.to_string_lossy().into_owned(),
+    )
 }
 
 fn new_id() -> String {
@@ -450,7 +453,10 @@ fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profi
 }
 
 fn resume_at(progress: &crate::progress::Progress, file: &PathBuf, duration: f64) -> f64 {
-    let at = progress.files.get(file).map_or(0.0, crate::progress::Watched::resume_at);
+    let at = progress
+        .files
+        .get(file)
+        .map_or(0.0, crate::progress::Watched::resume_at);
     if at < duration - 10.0 { at } else { 0.0 }
 }
 
@@ -494,8 +500,14 @@ mod picked_tests {
         let movie = Picked::Movie {
             key: "dune-2021".to_string(),
         };
-        assert_eq!(serde_json::to_value(&movie).unwrap(), json!({ "kind": "movie", "key": "dune-2021" }));
-        assert_eq!((movie.art(), movie.episode()), ("/api/movies/dune-2021".to_string(), None));
+        assert_eq!(
+            serde_json::to_value(&movie).unwrap(),
+            json!({ "kind": "movie", "key": "dune-2021" })
+        );
+        assert_eq!(
+            (movie.art(), movie.episode()),
+            ("/api/movies/dune-2021".to_string(), None)
+        );
         let episode = Picked::Show {
             key: "dark".to_string(),
             season: 1,
@@ -509,9 +521,15 @@ mod picked_tests {
             }),
         };
         let json = serde_json::to_value(&episode).unwrap();
-        assert_eq!((&json["kind"], &json["season"], &json["episode"]), (&json!("show"), &json!(1), &json!(10)));
+        assert_eq!(
+            (&json["kind"], &json["season"], &json["episode"]),
+            (&json!("show"), &json!(1), &json!(10))
+        );
         assert_eq!(json["next"]["season"], 2);
-        assert_eq!((episode.art(), episode.episode()), ("/api/shows/dark".to_string(), Some((1, 10))));
+        assert_eq!(
+            (episode.art(), episode.episode()),
+            ("/api/shows/dark".to_string(), Some((1, 10)))
+        );
     }
 }
 
@@ -524,7 +542,11 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     let (media, index) = match examine(&streams, &chosen.file).await {
         Ok(found) => found,
         Err(error) => {
-            eprintln!("stream: {} can't open {}: {error}", device_name(body.device.as_ref()), file_name(&chosen.file));
+            eprintln!(
+                "stream: {} can't open {}: {error}",
+                device_name(body.device.as_ref()),
+                file_name(&chosen.file)
+            );
             return problem(StatusCode::UNPROCESSABLE_ENTITY, error);
         }
     };
@@ -538,7 +560,11 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     let (hevc, copy_audio) = match probe::verdict(&media, audio, body.client) {
         Verdict::Plays { hevc, copy_audio } => (hevc, copy_audio && !dialogue.load(Ordering::SeqCst)),
         Verdict::Refused(reason) => {
-            eprintln!("stream: {} can't open {}: {reason}", device_name(body.device.as_ref()), file_name(&chosen.file));
+            eprintln!(
+                "stream: {} can't open {}: {reason}",
+                device_name(body.device.as_ref()),
+                file_name(&chosen.file)
+            );
             return problem(StatusCode::UNPROCESSABLE_ENTITY, reason);
         }
     };
@@ -571,7 +597,11 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
             } else {
                 "Three phones are already watching"
             };
-            eprintln!("stream: {} can't open {}: {reason}", device_name(body.device.as_ref()), file_name(&chosen.file));
+            eprintln!(
+                "stream: {} can't open {}: {reason}",
+                device_name(body.device.as_ref()),
+                file_name(&chosen.file)
+            );
             return problem(StatusCode::TOO_MANY_REQUESTS, reason.to_string());
         }
     }
@@ -813,7 +843,11 @@ async fn subtitles(State(streams): State<Streams>, Path((id, name)): Path<(Strin
     };
     if let Some(track) = subtitle.embedded() {
         if playlist {
-            return body(PLAYLIST, "no-store", plan::subtitle_pieces(live.duration, number, SUBTITLE_PIECE));
+            return body(
+                PLAYLIST,
+                "no-store",
+                plan::subtitle_pieces(live.duration, number, SUBTITLE_PIECE),
+            );
         }
         let Some(piece) = piece else {
             return problem(StatusCode::NOT_FOUND, format!("no subtitles {name}"));
@@ -821,7 +855,11 @@ async fn subtitles(State(streams): State<Streams>, Path((id, name)): Path<(Strin
         let from = piece as f64 * SUBTITLE_PIECE;
         let to = (from + SUBTITLE_PIECE).min(live.duration);
         let cues = live.session.subtitles(track, from, to).await;
-        return body("text/vtt; charset=utf-8", "private, max-age=3600", vtt::render(&cues, live.delay));
+        return body(
+            "text/vtt; charset=utf-8",
+            "private, max-age=3600",
+            vtt::render(&cues, live.delay),
+        );
     }
     if playlist {
         return body(
@@ -953,7 +991,13 @@ async fn progress(
     });
     let answer = api::ask(&streams.core, request).await;
     if ends && let Some(live) = streams.live.lock().unwrap().remove(&id) {
-        eprintln!("stream {}: ended, {} reported {:?} at {:.0} s", short(&id), device_name(live.device.as_ref()), report.state, report.position);
+        eprintln!(
+            "stream {}: ended, {} reported {:?} at {:.0} s",
+            short(&id),
+            device_name(live.device.as_ref()),
+            report.state,
+            report.position
+        );
         live.session.close();
     }
     answer

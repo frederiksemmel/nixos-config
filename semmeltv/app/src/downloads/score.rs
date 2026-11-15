@@ -125,9 +125,7 @@ fn unit(release: &Release, target: &Target) -> Result<Unit, String> {
             Err(format!("season {season}"))
         }
         (Kind::Tv, Some(_), None, Coverage::Season(_)) => Ok(Unit::Whole),
-        (Kind::Tv, Some(_), None, Coverage::Episodes { first, last, .. }) if first == last => {
-            Ok(Unit::Episode(first))
-        }
+        (Kind::Tv, Some(_), None, Coverage::Episodes { first, last, .. }) if first == last => Ok(Unit::Episode(first)),
         (Kind::Tv, Some(_), None, Coverage::Episodes { first, last, .. }) => {
             let count = target.episodes.len() as u32;
             if first == 1 && last >= count {
@@ -218,7 +216,11 @@ fn rate(offer: &Offer, target: &Target, room: u64) -> Result<Rated, String> {
         return Err(format!("{} seeders", offer.seeders));
     }
     if offer.size > room {
-        return Err(format!("{} is more than the {} free for downloads", gb(offer.size), gb(room)));
+        return Err(format!(
+            "{} is more than the {} free for downloads",
+            gb(offer.size),
+            gb(room)
+        ));
     }
     let resolution = release.tags.resolution.as_deref();
     let band = band(resolution);
@@ -248,7 +250,11 @@ fn rate(offer: &Offer, target: &Target, room: u64) -> Result<Rated, String> {
         why.push(format!("{video}, decoded in software"));
         0.3
     } else {
-        why.push(if video.is_empty() { "codec unknown".to_string() } else { video.to_string() });
+        why.push(if video.is_empty() {
+            "codec unknown".to_string()
+        } else {
+            video.to_string()
+        });
         0.0
     };
     let seeders_value = ((1.0 + f64::from(offer.seeders)).log10() / 2.0).min(1.0);
@@ -359,16 +365,15 @@ fn episode_set(episodes: &BTreeMap<u32, Vec<Rated>>, target: &Target, room: u64)
     why.extend(first.why.iter().cloned());
     Some(Choice {
         label: format!("Episodes {} as separate torrents", numbers.join(", ")),
-        facts: format!(
-            "{} episodes · {}",
-            picked.len(),
-            facts(&first.release, size, seeders)
-        ),
+        facts: format!("{} episodes · {}", picked.len(), facts(&first.release, size, seeders)),
         why,
         score: picked.iter().map(|(_, rated)| rated.score).sum::<f64>() / picked.len() as f64,
         size,
         seeders,
-        parts: picked.iter().map(|(number, rated)| part(rated, vec![*number])).collect(),
+        parts: picked
+            .iter()
+            .map(|(number, rated)| part(rated, vec![*number]))
+            .collect(),
     })
 }
 
@@ -415,17 +420,47 @@ mod tests {
 
     fn real_offers() -> Vec<Offer> {
         vec![
-            offer("Outlander Blood of My Blood S02E08 1080p WEB h264 ETHEL", 3409, 555, "a1"),
-            offer("Outlander Blood of My Blood S02E08 1080p HEVC x265 MeGusta", 556, 383, "a2"),
-            offer("Outlander (2014) S08 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence)", 19896, 253, "a3"),
-            offer("Outlander (2014) S08 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence)", 19896, 229, "A3"),
+            offer(
+                "Outlander Blood of My Blood S02E08 1080p WEB h264 ETHEL",
+                3409,
+                555,
+                "a1",
+            ),
+            offer(
+                "Outlander Blood of My Blood S02E08 1080p HEVC x265 MeGusta",
+                556,
+                383,
+                "a2",
+            ),
+            offer(
+                "Outlander (2014) S08 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence)",
+                19896,
+                253,
+                "a3",
+            ),
+            offer(
+                "Outlander (2014) S08 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence)",
+                19896,
+                229,
+                "A3",
+            ),
             offer("Outlander.S08E10.1080p.WEB.h264-GRACE", 4812, 142, "a4"),
             offer("Outlander S08E09 1080p WEB h264-GRACE", 3287, 132, "a5"),
             offer("Outlander S08E03 720p 10bit WEBRip 2CH x265 HEVC-PSA", 327, 68, "a6"),
             offer("Outlander.S08E09.1080p.x265-ELiTE", 777, 53, "a7"),
             offer("Outlander S05 1080p BluRay AV1 PTNX", 8366, 19, "a8"),
-            offer("Outlander S08e01-10 [1080p Ita Eng Spa h265 10bit SubS] byMe7alh [MIRCrew]", 9054, 17, "a9"),
-            offer("Outlander.S08E08.REPACK.MULTi.2160p.SDR.NF.WEB.DDP5.1.H265-SiC", 5242, 18, "a10"),
+            offer(
+                "Outlander S08e01-10 [1080p Ita Eng Spa h265 10bit SubS] byMe7alh [MIRCrew]",
+                9054,
+                17,
+                "a9",
+            ),
+            offer(
+                "Outlander.S08E08.REPACK.MULTi.2160p.SDR.NF.WEB.DDP5.1.H265-SiC",
+                5242,
+                18,
+                "a10",
+            ),
             offer("Outlander S08 720p HEVC x265-MeGusta", 4300, 2, "a11"),
         ]
     }
@@ -510,7 +545,12 @@ mod tests {
             folder: None,
         };
         let offers = [
-            offer("Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.Atmos.H.265-FLUX", 6200, 412, "b1"),
+            offer(
+                "Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.Atmos.H.265-FLUX",
+                6200,
+                412,
+                "b1",
+            ),
             offer("Dune.Part.Two.2024.1080p.WEBRip.x264.AAC5.1-YTS", 2800, 900, "b2"),
             offer("Dune Part Two 2024 HDCAM x264", 1500, 5000, "b3"),
             offer("Dune.Part.Two.1999.1080p.x265", 3000, 50, "b4"),

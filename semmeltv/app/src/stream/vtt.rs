@@ -185,5 +185,4 @@ mod tests {
         assert_eq!(found[0].text, vec!["Hello".to_string()]);
         assert_eq!(cues(FFMPEG_VTT).len(), 2);
     }
-
 }

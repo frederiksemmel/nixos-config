@@ -35,11 +35,21 @@ struct Budget {
 
 impl Budget {
     fn take(&mut self, now: Instant) -> bool {
-        if self.since.is_none_or(|since| now.duration_since(since) >= Duration::from_secs(60)) {
+        if self
+            .since
+            .is_none_or(|since| now.duration_since(since) >= Duration::from_secs(60))
+        {
             if self.dropped > 0 {
-                eprintln!("client: dropped {} lines over the limit of {LINES_PER_MINUTE} a minute", self.dropped);
+                eprintln!(
+                    "client: dropped {} lines over the limit of {LINES_PER_MINUTE} a minute",
+                    self.dropped
+                );
             }
-            *self = Budget { since: Some(now), lines: 0, dropped: 0 };
+            *self = Budget {
+                since: Some(now),
+                lines: 0,
+                dropped: 0,
+            };
         }
         if self.lines >= LINES_PER_MINUTE {
             self.dropped += 1;
@@ -77,7 +87,11 @@ fn line(device: &str, agent: &str, entry: &Entry) -> String {
 }
 
 async fn log(State(budget): State<Arc<Mutex<Budget>>>, Json(batch): Json<Batch>) -> StatusCode {
-    let device = batch.device.as_deref().map(clean).unwrap_or_else(|| "unknown".to_string());
+    let device = batch
+        .device
+        .as_deref()
+        .map(clean)
+        .unwrap_or_else(|| "unknown".to_string());
     let agent = batch.agent.as_deref().map(clean).unwrap_or_default();
     let now = Instant::now();
     for entry in batch.entries.iter().take(MOST_ENTRIES) {
@@ -152,5 +166,4 @@ mod tests {
         assert!(!budget.take(now));
         assert!(budget.take(now + Duration::from_secs(61)));
     }
-
 }

@@ -147,7 +147,10 @@ fn info(name: &str) -> Option<String> {
     let spaced = if rest.contains(' ') {
         rest.to_string()
     } else {
-        DECIMAL_DOT.replace_all(rest, "$1\u{0}$2").replace('.', " ").replace('\0', ".")
+        DECIMAL_DOT
+            .replace_all(rest, "$1\u{0}$2")
+            .replace('.', " ")
+            .replace('\0', ".")
     };
     let cleaned: String = spaced
         .chars()

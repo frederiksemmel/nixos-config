@@ -856,5 +856,4 @@ episodes = [
         assert_eq!(nav.apply(Up), Effect::None);
         assert_eq!(nav.profile_focus(), None);
     }
-
 }

@@ -16,7 +16,13 @@ const PLAYER: Asset = asset!("./player.js");
 const DIRECTIONS: [&str; 2] = ["back", "forward"];
 const ALLOWED_CONTROLS: [&str; 4] = ["pause", "resume", "toggle", "stop"];
 const LONGEST_COMMAND: usize = 200;
-const SPEEDS: [(f64, &str); 5] = [(0.75, "0.75×"), (1.0, "1×"), (1.25, "1.25×"), (1.5, "1.5×"), (2.0, "2×")];
+const SPEEDS: [(f64, &str); 5] = [
+    (0.75, "0.75×"),
+    (1.0, "1×"),
+    (1.25, "1.25×"),
+    (1.5, "1.5×"),
+    (2.0, "2×"),
+];
 
 #[procedure]
 pub async fn play_movie(cx: &Cx, key: String) -> Result<String> {
@@ -176,7 +182,11 @@ fn speed_value(speed: f64) -> String {
 }
 
 fn now_class(now: &NowPlaying) -> &'static str {
-    if now.paused || now.loading { "now-state paused" } else { "now-state" }
+    if now.paused || now.loading {
+        "now-state paused"
+    } else {
+        "now-state"
+    }
 }
 
 #[component]
@@ -330,7 +340,11 @@ fn sound_of(audio: &Audio) -> Option<Sound> {
     let headphones = audio.headphones.as_ref()?;
     let connecting = headphones.state == Link::Connecting;
     let name = headphones.name.clone();
-    let note = if connecting { format!("Connecting to {name}…") } else { String::new() };
+    let note = if connecting {
+        format!("Connecting to {name}…")
+    } else {
+        String::new()
+    };
     Some(Sound {
         on_headphones: audio.output == Output::Headphones,
         connecting,
@@ -557,7 +571,11 @@ pub async fn mode_switch(cx: &Cx) -> Result<impl View> {
 }
 
 fn phone_line(screen: Option<&Screen>) -> Option<(String, String)> {
-    let Some(Screen::Phone { device, play: Some(play) }) = screen else {
+    let Some(Screen::Phone {
+        device,
+        play: Some(play),
+    }) = screen
+    else {
         return None;
     };
     let (name, doing) = match play {
@@ -875,16 +893,23 @@ mod tests {
             now.as_object_mut().unwrap().extend(what.as_object().unwrap().clone());
             serde_json::from_value::<NowPlaying>(now)
         };
-        let episode = read(serde_json::json!({ "kind": "episode", "show": "dark", "season": 2, "episode": 3 })).unwrap();
+        let episode =
+            read(serde_json::json!({ "kind": "episode", "show": "dark", "season": 2, "episode": 3 })).unwrap();
         assert_eq!(destination(&episode), "/shows/dark");
         assert_eq!(picture(&episode).unwrap(), "/api/shows/dark/episodes/2/3/still");
         assert_eq!(fetch_body(&episode), r#"{"episode":3,"season":2,"show":"dark"}"#);
         let movie = read(serde_json::json!({ "kind": "movie", "movie": "dune-2021" })).unwrap();
         assert_eq!(fetch_body(&movie), r#"{"movie":"dune-2021"}"#);
         let file = read(serde_json::json!({ "kind": "file" })).unwrap();
-        assert_eq!((destination(&file), poster(&file), fetch_body(&file)), ("/".to_string(), None, String::new()));
+        assert_eq!(
+            (destination(&file), poster(&file), fetch_body(&file)),
+            ("/".to_string(), None, String::new())
+        );
         let keys = [key(&episode), key(&movie), key(&file)];
-        assert!(keys[0] != keys[1] && keys[1] != keys[2] && keys[0] != keys[2], "{keys:?}");
+        assert!(
+            keys[0] != keys[1] && keys[1] != keys[2] && keys[0] != keys[2],
+            "{keys:?}"
+        );
         assert!(read(serde_json::json!({ "kind": "episode", "show": "dark" })).is_err());
         assert!(read(serde_json::json!({ "movie": "dune-2021" })).is_err());
     }

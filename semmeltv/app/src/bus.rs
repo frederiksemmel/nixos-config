@@ -17,9 +17,13 @@ const BACKLOG: usize = 64;
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
     Voice(Voice),
-    Playback { now_playing: Option<NowPlaying> },
+    Playback {
+        now_playing: Option<NowPlaying>,
+    },
     Audio(audio::View),
-    Screen { screen: screen::View },
+    Screen {
+        screen: screen::View,
+    },
     #[serde(skip)]
     Home(Arc<Home>),
     #[serde(skip)]
@@ -298,7 +302,13 @@ mod tests {
         };
         assert_eq!(
             json(episode),
-            [Some(json!("episode")), None, Some(json!("dark")), Some(json!(2)), Some(json!(3))]
+            [
+                Some(json!("episode")),
+                None,
+                Some(json!("dark")),
+                Some(json!(2)),
+                Some(json!(3))
+            ]
         );
         assert_eq!(json(Playing::File), [Some(json!("file")), None, None, None, None]);
     }

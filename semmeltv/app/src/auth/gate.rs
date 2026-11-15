@@ -3,12 +3,12 @@ use crate::profile::ProfileId;
 use axum::Json;
 use axum::extract::{FromRequestParts, Request, State};
 use axum::http::request::Parts;
-use std::convert::Infallible;
 use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
 use sha2::{Digest, Sha256};
+use std::convert::Infallible;
 
 pub const COOKIE: &str = "semmeltv_session";
 
@@ -30,7 +30,10 @@ impl<S: Send + Sync> FromRequestParts<S> for Who {
     type Rejection = Infallible;
 
     async fn from_request_parts(parts: &mut Parts, _: &S) -> Result<Self, Self::Rejection> {
-        Ok(Who(parts.extensions.get::<Person>().map_or(ProfileId::FIRST, |person| person.id)))
+        Ok(Who(parts
+            .extensions
+            .get::<Person>()
+            .map_or(ProfileId::FIRST, |person| person.id)))
     }
 }
 
@@ -158,7 +161,9 @@ pub async fn guard(State(gate): State<Gate>, mut request: Request, next: Next) -
         (_, None) => {
             let mut response = refuse(StatusCode::UNAUTHORIZED, "Not signed in");
             if resolved.rewrite {
-                response.headers_mut().append(header::SET_COOKIE, cookie(&resolved.tokens()));
+                response
+                    .headers_mut()
+                    .append(header::SET_COOKIE, cookie(&resolved.tokens()));
             }
             return response;
         }
@@ -175,7 +180,9 @@ pub async fn guard(State(gate): State<Gate>, mut request: Request, next: Next) -
     request.extensions_mut().insert(resolved.clone());
     let mut response = next.run(request).await;
     if resolved.rewrite && !response.headers().contains_key(header::SET_COOKIE) {
-        response.headers_mut().append(header::SET_COOKIE, cookie(&resolved.tokens()));
+        response
+            .headers_mut()
+            .append(header::SET_COOKIE, cookie(&resolved.tokens()));
     }
     response
 }
@@ -221,7 +228,10 @@ mod tests {
     #[test]
     fn the_cookie_holds_the_device_sessions_in_order() {
         let mut headers = HeaderMap::new();
-        headers.insert(header::COOKIE, HeaderValue::from_static("other=1; semmeltv_session=aaa.bbb; x=y"));
+        headers.insert(
+            header::COOKIE,
+            HeaderValue::from_static("other=1; semmeltv_session=aaa.bbb; x=y"),
+        );
         assert_eq!(tokens(&headers), vec!["aaa".to_string(), "bbb".to_string()]);
         let set = cookie(&["aaa".to_string(), "bbb".to_string()]);
         let set = set.to_str().unwrap();

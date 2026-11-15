@@ -20,9 +20,7 @@ pub struct Manifest;
 impl IntoResponse for Manifest {
     fn into_response(self, cx: &Cx) -> Result<Response> {
         let assets = asset_config(cx);
-        let icon = |asset: Asset, sizes: &str, kind: &str, purpose: &str| {
-            json!({ "src": assets.resolve(asset), "sizes": sizes, "type": kind, "purpose": purpose })
-        };
+        let icon = |asset: Asset, sizes: &str, kind: &str, purpose: &str| json!({ "src": assets.resolve(asset), "sizes": sizes, "type": kind, "purpose": purpose });
         let body = json!({
             "id": "/",
             "name": "SemmelTV",

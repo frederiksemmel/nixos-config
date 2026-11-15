@@ -70,7 +70,11 @@ impl Token {
     }
 
     pub fn get(&self) -> Option<String> {
-        self.value.lock().unwrap().clone().filter(|value| !value.trim().is_empty())
+        self.value
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|value| !value.trim().is_empty())
     }
 
     pub fn set(&self, value: &str) -> Result<(), String> {
@@ -155,8 +159,9 @@ fn backends(kind: Kind, renderer: Option<&upnp::Renderer>, token: &Token) -> Bac
     let volume = renderer.map(|renderer| Box::new(renderer.clone()) as Box<dyn Volume>);
     let pairing = match kind {
         Kind::Generic => None,
-        Kind::Samsung => renderer
-            .map(|renderer| Box::new(samsung::Remote::new(renderer.host(), token.clone())) as Box<dyn Pairing>),
+        Kind::Samsung => {
+            renderer.map(|renderer| Box::new(samsung::Remote::new(renderer.host(), token.clone())) as Box<dyn Pairing>)
+        }
     };
     Backends { kind, volume, pairing }
 }

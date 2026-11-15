@@ -26,11 +26,19 @@ pub fn admin(cx: &Cx) -> Result<()> {
 
 fn open(path: &str) -> bool {
     path == "/manifest.webmanifest"
-        || OPEN.iter().any(|open| if open.ends_with('/') { path.starts_with(open) } else { path == *open })
+        || OPEN.iter().any(|open| {
+            if open.ends_with('/') {
+                path.starts_with(open)
+            } else {
+                path == *open
+            }
+        })
 }
 
 fn for_admins(path: &str) -> bool {
-    FOR_ADMINS.iter().any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
+    FOR_ADMINS
+        .iter()
+        .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
 }
 
 fn sign_in_link(path_and_query: &str) -> String {
@@ -61,7 +69,9 @@ impl Layer for SignedIn {
         Box::pin(async move {
             let target = uri(cx);
             let path = target.path().to_string();
-            let wanted = target.path_and_query().map_or(path.clone(), |found| found.as_str().to_string());
+            let wanted = target
+                .path_and_query()
+                .map_or(path.clone(), |found| found.as_str().to_string());
             let found = Api::of(cx).me().await;
             match found {
                 Ok(Some(me)) => {
@@ -210,7 +220,9 @@ async fn invite_page(cx: &Cx) -> Result<impl View> {
 fn day(seconds: u64) -> String {
     let days = seconds / 86_400;
     let (year, month, day) = civil(days as i64);
-    const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
     format!("{day} {} {year}", MONTHS[(month - 1) as usize])
 }
 
@@ -295,19 +307,29 @@ async fn account_page(cx: &Cx) -> Result<impl View> {
 async fn member_row(member: &Member, own: bool) -> Result<impl View> {
     let person = &member.person;
     let mut facts = Vec::new();
-    facts.push(if person.admin() { "Admin".to_string() } else { "Viewer".to_string() });
+    facts.push(if person.admin() {
+        "Admin".to_string()
+    } else {
+        "Viewer".to_string()
+    });
     facts.push(match member.passkeys {
         0 => "no passkey".to_string(),
         1 => "1 passkey".to_string(),
         count => format!("{count} passkeys"),
     });
-    facts.push(if member.password { "password".to_string() } else { "no password".to_string() });
+    facts.push(if member.password {
+        "password".to_string()
+    } else {
+        "no password".to_string()
+    });
     match member.sessions {
         0 => facts.push("signed in nowhere".to_string()),
         1 => facts.push("signed in on 1 device".to_string()),
         count => facts.push(format!("signed in on {count} devices")),
     }
-    let invite = member.invite_expires_at.map(|until| format!("Invite link open until {}", day(until)));
+    let invite = member
+        .invite_expires_at
+        .map(|until| format!("Invite link open until {}", day(until)));
     Ok(view! {
         <div class="member" data-member=(person.id.to_string())>
             avatar(person: person, size: "small")
@@ -408,7 +430,10 @@ mod tests {
     fn signing_in_returns_to_where_it_was_asked_for() {
         assert_eq!(sign_in_link("/"), "/profiles");
         assert_eq!(sign_in_link("/_topcoat/runtime/shards/cc7d"), "/profiles");
-        assert_eq!(sign_in_link("/movies/dune?x=1&y=2"), "/profiles?next=/movies/dune%3Fx%3D1%26y%3D2");
+        assert_eq!(
+            sign_in_link("/movies/dune?x=1&y=2"),
+            "/profiles?next=/movies/dune%3Fx%3D1%26y%3D2"
+        );
     }
 
     #[test]

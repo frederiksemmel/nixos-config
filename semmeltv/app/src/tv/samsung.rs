@@ -1,10 +1,10 @@
+use super::Token;
 use super::{Failure, Pairing};
 use base64::Engine;
 use rustls::client::danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier};
 use rustls::crypto::{self, CryptoProvider};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use rustls::{ClientConfig, ClientConnection, DigitallySignedStruct, SignatureScheme, StreamOwned};
-use super::Token;
 use serde_json::Value;
 use std::io;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -91,9 +91,7 @@ impl Pairing for Remote {
     fn pair(&self) -> Result<(), Failure> {
         let saved = self.token.get();
         match self.connect(saved.as_deref())? {
-            Some(token) if saved.as_ref() != Some(&token) => {
-                self.token.set(&token).map_err(Failure::Unsaved)
-            }
+            Some(token) if saved.as_ref() != Some(&token) => self.token.set(&token).map_err(Failure::Unsaved),
             _ => Ok(()),
         }
     }

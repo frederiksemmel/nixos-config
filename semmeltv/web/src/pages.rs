@@ -1,4 +1,6 @@
-use crate::api::{About, Api, Card, CastMember, Episode, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard};
+use crate::api::{
+    About, Api, Card, CastMember, Episode, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard,
+};
 use crate::layout::back;
 use crate::playing::{play_episode, play_movie, play_show, tell, tv_icon};
 use crate::public::Public;
@@ -120,7 +122,14 @@ async fn forget(cx: &Cx, kind: String, key: String) -> Result<(bool, String)> {
 }
 
 #[procedure]
-async fn mark(cx: &Cx, kind: String, key: String, watched: bool, season: Option<u32>, episode: Option<u32>) -> Result<(bool, String)> {
+async fn mark(
+    cx: &Cx,
+    kind: String,
+    key: String,
+    watched: bool,
+    season: Option<u32>,
+    episode: Option<u32>,
+) -> Result<(bool, String)> {
     let mut body = serde_json::json!({ "kind": kind, "key": key, "watched": watched });
     if let (Some(season), Some(episode)) = (season, episode) {
         body["season"] = season.into();
@@ -704,7 +713,13 @@ async fn movie_mark(cx: &Cx, key: &str, finished: bool, said: Signal<String>) ->
 }
 
 #[component]
-async fn episode_row(cx: &Cx, public: &Public, series: &str, episode: &Episode, said: Signal<String>) -> Result<impl View> {
+async fn episode_row(
+    cx: &Cx,
+    public: &Public,
+    series: &str,
+    episode: &Episode,
+    said: Signal<String>,
+) -> Result<impl View> {
     let show_key = series.to_string();
     let (season_number, episode_number) = (episode.season, episode.episode);
     let still = episode.still.as_deref().map(|path| public.url(path));

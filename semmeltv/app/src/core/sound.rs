@@ -78,10 +78,15 @@ impl Core {
         let audio = self.headphones()?;
         let view = blocking(move || audio.choose(output)).await?;
         let profile = self.tv_profile();
-        let prefs = self.db().audio_prefs(profile).await.unwrap_or_default().choosing(match output {
-            audio::Output::Tv => db::Output::Tv,
-            audio::Output::Headphones => db::Output::Headphones,
-        });
+        let prefs = self
+            .db()
+            .audio_prefs(profile)
+            .await
+            .unwrap_or_default()
+            .choosing(match output {
+                audio::Output::Tv => db::Output::Tv,
+                audio::Output::Headphones => db::Output::Headphones,
+            });
         if let Err(error) = self.db().save_audio_prefs(profile, &prefs).await {
             eprintln!("headphones: {error}");
         }

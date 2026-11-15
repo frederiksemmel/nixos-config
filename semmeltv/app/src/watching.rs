@@ -253,7 +253,10 @@ pub fn mark(
 }
 
 pub fn movie_finished(progress: &Progress, movie: &Movie) -> bool {
-    progress.files.get(&movie.path).is_some_and(crate::progress::Watched::finished)
+    progress
+        .files
+        .get(&movie.path)
+        .is_some_and(crate::progress::Watched::finished)
 }
 
 pub fn show_finished(progress: &Progress, show: &Show) -> bool {

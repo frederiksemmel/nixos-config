@@ -1,7 +1,7 @@
 use crate::audio;
+use crate::card::{self, Billing};
 use crate::command::Command;
 use crate::display::{self, Video};
-use crate::card::{self, Billing};
 use crate::overlay::{self, View};
 use crate::progress::{Place, Tracks};
 use crate::seek::{self, Direction, Order, Scrub};
@@ -1101,9 +1101,21 @@ mod tests {
         assert_eq!(playback.card, Card::Shown { opened: now });
         let closed = now + Duration::from_secs(5);
         playback.close_card(closed);
-        assert_eq!(playback.card, Card::Fading { opened: now, since: closed });
+        assert_eq!(
+            playback.card,
+            Card::Fading {
+                opened: now,
+                since: closed
+            }
+        );
         playback.close_card(closed + Duration::from_secs(1));
-        assert_eq!(playback.card, Card::Fading { opened: now, since: closed });
+        assert_eq!(
+            playback.card,
+            Card::Fading {
+                opened: now,
+                since: closed
+            }
+        );
         playback.show_card(closed + CARD_FADE);
         assert_eq!(playback.card, Card::Gone);
     }
@@ -1339,10 +1351,7 @@ mod tests {
         subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
         subtitles.observe(Observed::Audio(Some(2)));
         subtitles.observe(Observed::Audio(None));
-        let playback = Playback {
-            subtitles,
-            ..playing()
-        };
+        let playback = Playback { subtitles, ..playing() };
         let sent = sent_by(|playback| playback.set_audio_device("auto"), playback);
         assert_eq!(
             sent,

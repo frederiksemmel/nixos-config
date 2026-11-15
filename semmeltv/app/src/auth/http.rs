@@ -52,7 +52,10 @@ fn refused(refusal: Refusal) -> Response {
 }
 
 pub fn label(headers: &HeaderMap) -> String {
-    let agent = headers.get(header::USER_AGENT).and_then(|value| value.to_str().ok()).unwrap_or("");
+    let agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
     let device = [
         ("iPad", "iPad"),
         ("iPhone", "iPhone"),
@@ -65,10 +68,15 @@ pub fn label(headers: &HeaderMap) -> String {
     .iter()
     .find(|(needle, _)| agent.contains(needle))
     .map_or("Browser", |(_, name)| name);
-    let browser = [("Firefox/", "Firefox"), ("Edg/", "Edge"), ("Chrome/", "Chrome"), ("Safari/", "Safari")]
-        .iter()
-        .find(|(needle, _)| agent.contains(needle))
-        .map(|(_, name)| *name);
+    let browser = [
+        ("Firefox/", "Firefox"),
+        ("Edg/", "Edge"),
+        ("Chrome/", "Chrome"),
+        ("Safari/", "Safari"),
+    ]
+    .iter()
+    .find(|(needle, _)| agent.contains(needle))
+    .map(|(_, name)| *name);
     match browser {
         Some(browser) => format!("{device} · {browser}"),
         None => device.to_string(),
@@ -169,7 +177,10 @@ async fn password_sign_in(
 ) -> Response {
     let label = label(&headers);
     let signed = async {
-        let token = gate.auth.sign_in_with_password(body.profile, &body.password, &label).await?;
+        let token = gate
+            .auth
+            .sign_in_with_password(body.profile, &body.password, &label)
+            .await?;
         Ok::<_, Refusal>((gate.auth.person(body.profile).await?, token))
     };
     match signed.await {
@@ -214,7 +225,10 @@ async fn finish_sign_in(
     };
     let label = label(&headers);
     let signed = async {
-        let (profile, token) = gate.auth.finish_sign_in(&origin, &body.ceremony, &body.credential, &label).await?;
+        let (profile, token) = gate
+            .auth
+            .finish_sign_in(&origin, &body.ceremony, &body.credential, &label)
+            .await?;
         Ok::<_, Refusal>((gate.auth.person(profile).await?, token))
     };
     match signed.await {
@@ -229,14 +243,22 @@ struct Switch {
     profile: ProfileId,
 }
 
-async fn switch(State(gate): State<Gate>, Extension(resolved): Extension<Resolved>, Json(body): Json<Switch>) -> Response {
+async fn switch(
+    State(gate): State<Gate>,
+    Extension(resolved): Extension<Resolved>,
+    Json(body): Json<Switch>,
+) -> Response {
     let Some((active, active_token)) = resolved.active.clone() else {
         return refused(Refusal::NotSignedIn);
     };
     if active.id == body.profile {
         return Json(json!({ "ok": true, "person": active })).into_response();
     }
-    let target = resolved.others.iter().find(|(person, _)| person.id == body.profile).cloned();
+    let target = resolved
+        .others
+        .iter()
+        .find(|(person, _)| person.id == body.profile)
+        .cloned();
     let Some((person, token)) = target.filter(|(person, _)| !person.admin()) else {
         let name = gate.auth.person(body.profile).await.map(|person| person.name);
         return match name {
@@ -274,7 +296,11 @@ async fn sign_out(State(gate): State<Gate>, Extension(resolved): Extension<Resol
             return refused(refusal);
         }
     }
-    let rest = resolved.others.iter().map(|(_, token)| token.clone()).collect::<Vec<_>>();
+    let rest = resolved
+        .others
+        .iter()
+        .map(|(_, token)| token.clone())
+        .collect::<Vec<_>>();
     let next = resolved.others.first().map(|(person, _)| person.clone());
     let mut response = Json(json!({ "ok": true, "person": next })).into_response();
     response.headers_mut().append(header::SET_COOKIE, gate::cookie(&rest));
@@ -355,7 +381,11 @@ async fn finish_registration(
         Err(response) => return response,
     };
     let name = label(&headers);
-    match gate.auth.finish_registration(&origin, person.id, &body.ceremony, &body.credential, &name).await {
+    match gate
+        .auth
+        .finish_registration(&origin, person.id, &body.ceremony, &body.credential, &name)
+        .await
+    {
         Ok(passkey) => Json(json!({ "ok": true, "message": "Passkey saved", "passkey": passkey })).into_response(),
         Err(refusal) => refused(refusal),
     }
@@ -368,7 +398,11 @@ async fn remove_passkey(
 ) -> Response {
     match gate.auth.remove_passkey(person.id, &id).await {
         Ok(true) => Json(json!({ "ok": true, "message": "Passkey removed" })).into_response(),
-        Ok(false) => (StatusCode::NOT_FOUND, Json(json!({ "error": "No such passkey", "ok": false }))).into_response(),
+        Ok(false) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "No such passkey", "ok": false })),
+        )
+            .into_response(),
         Err(refusal) => refused(refusal),
     }
 }
@@ -389,8 +423,9 @@ struct NewMember {
 
 async fn create_member(State(gate): State<Gate>, Json(body): Json<NewMember>) -> Response {
     match gate.auth.create_profile(&body.name, body.role).await {
-        Ok(person) => Json(json!({ "ok": true, "message": format!("{} added", person.name), "person": person }))
-            .into_response(),
+        Ok(person) => {
+            Json(json!({ "ok": true, "message": format!("{} added", person.name), "person": person })).into_response()
+        }
         Err(refusal) => refused(refusal),
     }
 }
@@ -466,7 +501,9 @@ mod tests {
         assert_eq!(label(&headers), "iPhone · Safari");
         headers.insert(
             header::USER_AGENT,
-            HeaderValue::from_static("Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36"),
+            HeaderValue::from_static(
+                "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/130.0 Mobile Safari/537.36",
+            ),
         );
         assert_eq!(label(&headers), "Android · Chrome");
         assert_eq!(label(&HeaderMap::new()), "Browser");

@@ -110,7 +110,12 @@ impl Db {
     }
 
     pub async fn create_profile(&self, new: NewProfile, at: u64) -> Stored<Profile> {
-        if self.profiles().await?.iter().any(|known| known.name.to_lowercase() == new.name.to_lowercase()) {
+        if self
+            .profiles()
+            .await?
+            .iter()
+            .any(|known| known.name.to_lowercase() == new.name.to_lowercase())
+        {
             return Err(StoreError::Taken);
         }
         let mut db = self.db.clone();
@@ -149,7 +154,9 @@ impl Db {
             let Some(mut found) = StoredProfile::filter_by_id(id.0).first().exec(&mut transaction).await? else {
                 return Ok(false);
             };
-            toasty::update!(found { password_hash: hash }).exec(&mut transaction).await?;
+            toasty::update!(found { password_hash: hash })
+                .exec(&mut transaction)
+                .await?;
             transaction.commit().await?;
             Ok::<_, toasty::Error>(true)
         };
@@ -172,7 +179,12 @@ impl Db {
 
     pub async fn passkey(&self, credential_id: &[u8]) -> Stored<Option<StoredPasskey>> {
         let mut db = self.db.clone();
-        let row = stored(Passkey::filter_by_credential_id(credential_id.to_vec()).first().exec(&mut db).await)?;
+        let row = stored(
+            Passkey::filter_by_credential_id(credential_id.to_vec())
+                .first()
+                .exec(&mut db)
+                .await,
+        )?;
         Ok(row.map(passkey))
     }
 
@@ -214,7 +226,10 @@ impl Db {
         let mut db = self.db.clone();
         let removed = async {
             let fields = Passkey::fields();
-            let mine = fields.profile_id().eq(profile.0).and(fields.credential_id().eq(credential_id));
+            let mine = fields
+                .profile_id()
+                .eq(profile.0)
+                .and(fields.credential_id().eq(credential_id));
             let mut transaction = db.transaction().await?;
             let found = Passkey::filter(mine.clone()).first().exec(&mut transaction).await?;
             if found.is_some() {
@@ -246,7 +261,12 @@ impl Db {
 
     pub async fn session(&self, token_hash: &[u8]) -> Stored<Option<Session>> {
         let mut db = self.db.clone();
-        let row = stored(StoredSession::filter_by_token_hash(token_hash.to_vec()).first().exec(&mut db).await)?;
+        let row = stored(
+            StoredSession::filter_by_token_hash(token_hash.to_vec())
+                .first()
+                .exec(&mut db)
+                .await,
+        )?;
         Ok(row.map(session))
     }
 
@@ -272,12 +292,22 @@ impl Db {
 
     pub async fn delete_session(&self, token_hash: &[u8]) -> Stored<()> {
         let mut db = self.db.clone();
-        stored(StoredSession::filter_by_token_hash(token_hash.to_vec()).delete().exec(&mut db).await)
+        stored(
+            StoredSession::filter_by_token_hash(token_hash.to_vec())
+                .delete()
+                .exec(&mut db)
+                .await,
+        )
     }
 
     pub async fn delete_sessions(&self, profile: ProfileId) -> Stored<()> {
         let mut db = self.db.clone();
-        stored(StoredSession::filter_by_profile_id(profile.0).delete().exec(&mut db).await)
+        stored(
+            StoredSession::filter_by_profile_id(profile.0)
+                .delete()
+                .exec(&mut db)
+                .await,
+        )
     }
 
     pub async fn delete_expired_sessions(&self, now: u64) -> Stored<()> {
@@ -310,7 +340,12 @@ impl Db {
 
     pub async fn invite(&self, token_hash: &[u8]) -> Stored<Option<Invite>> {
         let mut db = self.db.clone();
-        let row = stored(StoredInvite::filter_by_token_hash(token_hash.to_vec()).first().exec(&mut db).await)?;
+        let row = stored(
+            StoredInvite::filter_by_token_hash(token_hash.to_vec())
+                .first()
+                .exec(&mut db)
+                .await,
+        )?;
         Ok(row.map(invite))
     }
 
@@ -324,7 +359,11 @@ impl Db {
         let token_hash = token_hash.to_vec();
         let mut db = self.db.clone();
         let used = async {
-            let mut transaction = db.transaction_builder().mode(TransactionMode::Immediate).begin().await?;
+            let mut transaction = db
+                .transaction_builder()
+                .mode(TransactionMode::Immediate)
+                .begin()
+                .await?;
             let fields = StoredInvite::fields();
             let unused = StoredInvite::filter(fields.token_hash().eq(token_hash).and(fields.used_at().is_none()))
                 .first()
@@ -333,7 +372,11 @@ impl Db {
             let Some(mut unused) = unused else {
                 return Ok(false);
             };
-            toasty::update!(unused { used_at: Some(seconds(at)) }).exec(&mut transaction).await?;
+            toasty::update!(unused {
+                used_at: Some(seconds(at))
+            })
+            .exec(&mut transaction)
+            .await?;
             transaction.commit().await?;
             Ok::<_, toasty::Error>(true)
         };
@@ -342,7 +385,12 @@ impl Db {
 
     pub async fn delete_invites(&self, profile: ProfileId) -> Stored<()> {
         let mut db = self.db.clone();
-        stored(StoredInvite::filter_by_profile_id(profile.0).delete().exec(&mut db).await)
+        stored(
+            StoredInvite::filter_by_profile_id(profile.0)
+                .delete()
+                .exec(&mut db)
+                .await,
+        )
     }
 }
 
@@ -366,5 +414,4 @@ mod tests {
         assert!(people[0].admin());
         assert!(people[1..].iter().all(|person| !person.admin()));
     }
-
 }

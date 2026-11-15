@@ -187,7 +187,15 @@
               projectRootFile = "flake.nix"; # optional, default is "treefmt.toml"
               programs = {
                 nixfmt.enable = true;
+                rustfmt = {
+                  enable = true;
+                  edition = "2024";
+                };
               };
+              settings.formatter.rustfmt.options = [
+                "--config-path"
+                "semmeltv/rustfmt.toml"
+              ];
             };
           };
       }

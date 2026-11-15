@@ -51,19 +51,25 @@ impl Index {
             self.shows.insert(show.key.clone(), show.id);
             self.show_keys.insert(show.id, show.key.clone());
             for episode in show.episodes().filter(|episode| episode.id != 0) {
-                self.link(&episode.path, Video {
-                    kind: VideoKind::Episode,
-                    id: episode.id,
-                });
+                self.link(
+                    &episode.path,
+                    Video {
+                        kind: VideoKind::Episode,
+                        id: episode.id,
+                    },
+                );
             }
         }
         for movie in library.movies.iter().filter(|movie| movie.id != 0) {
             self.movies.insert(movie.key.clone(), movie.id);
             self.movie_keys.insert(movie.id, movie.key.clone());
-            self.link(&movie.path, Video {
-                kind: VideoKind::Movie,
-                id: movie.id,
-            });
+            self.link(
+                &movie.path,
+                Video {
+                    kind: VideoKind::Movie,
+                    id: movie.id,
+                },
+            );
         }
     }
 

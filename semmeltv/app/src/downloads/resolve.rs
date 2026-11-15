@@ -218,7 +218,9 @@ pub fn resolve(client: &Client, wish: &Wish, manifest: &Manifest, today: Date) -
             .iter()
             .filter(|(_, found)| {
                 without_article(&found.name) == wanted
-                    && wish.year.is_none_or(|year| year_of(found).is_some_and(|found| found.abs_diff(year) <= 1))
+                    && wish
+                        .year
+                        .is_none_or(|year| year_of(found).is_some_and(|found| found.abs_diff(year) <= 1))
             })
             .cloned()
             .collect();
@@ -315,10 +317,15 @@ fn target(
     };
     match kind {
         Kind::Movie => {
-            let details = client.details(Kind::Movie, found.id).map_err(|error| format!("TMDB: {error}"))?;
+            let details = client
+                .details(Kind::Movie, found.id)
+                .map_err(|error| format!("TMDB: {error}"))?;
             target.runtime = details.runtime;
             if in_library(manifest, Kind::Movie, found.id) {
-                return Ok(Resolved::Refused(format!("{} is already in the library", target.label())));
+                return Ok(Resolved::Refused(format!(
+                    "{} is already in the library",
+                    target.label()
+                )));
             }
         }
         Kind::Tv => {
@@ -348,13 +355,19 @@ fn target(
             if let Some(wanted) = episode
                 && !target.episodes.iter().any(|episode| episode.number == wanted)
             {
-                return Ok(Resolved::Refused(format!("{} has not aired or does not exist", target.label())));
+                return Ok(Resolved::Refused(format!(
+                    "{} has not aired or does not exist",
+                    target.label()
+                )));
             }
             target.folder = show_folder(manifest, found.id);
             if let Some(missing) = missing(manifest, &target)
                 && missing.is_empty()
             {
-                return Ok(Resolved::Refused(format!("{} is already in the library", target.label())));
+                return Ok(Resolved::Refused(format!(
+                    "{} is already in the library",
+                    target.label()
+                )));
             }
         }
     }

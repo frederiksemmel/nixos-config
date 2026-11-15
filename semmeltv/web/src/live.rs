@@ -84,7 +84,11 @@ pub fn audio_notices(before: Option<&Audio>, after: &Audio) -> Vec<(String, Stri
         return Vec::new();
     };
     let mut found = Vec::new();
-    if let Some(error) = after.error.as_ref().filter(|error| before.error.as_ref() != Some(*error)) {
+    if let Some(error) = after
+        .error
+        .as_ref()
+        .filter(|error| before.error.as_ref() != Some(*error))
+    {
         found.push((error.clone(), String::new(), Tone::Error));
     }
     let state = |audio: &Audio| audio.pairing.as_ref().map(|pairing| pairing.state);
@@ -103,9 +107,11 @@ pub fn audio_notices(before: Option<&Audio>, after: &Audio) -> Vec<(String, Stri
         .or(before.headphones.as_ref())
         .map_or("the headphones", |headphones| headphones.name.as_str());
     match (before.output, after.output) {
-        (Output::Headphones, Output::Tv) => {
-            found.push(("Sound is back on the TV".to_string(), format!("{name} stopped playing"), Tone::Info))
-        }
+        (Output::Headphones, Output::Tv) => found.push((
+            "Sound is back on the TV".to_string(),
+            format!("{name} stopped playing"),
+            Tone::Info,
+        )),
         (Output::Tv, Output::Headphones) => found.push((format!("Sound is on {name}"), String::new(), Tone::Ok)),
         _ => {}
     }
@@ -156,7 +162,9 @@ pub fn follow(url: String, service: Option<String>) -> Live {
     let (audio, audio_seen) = watch::channel(None);
     let (notices, notices_seen) = watch::channel(Notices::default());
     let (screen, screen_seen) = watch::channel(None);
-    let boot = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis());
+    let boot = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_millis());
     let mut raise = Raise { boot, count: 0 };
     tokio::spawn(async move {
         loop {
@@ -184,7 +192,9 @@ pub fn follow(url: String, service: Option<String>) -> Live {
                             Ok(Event::Audio(state)) => {
                                 let found = audio_notices(audio.borrow().as_ref(), &state);
                                 if !found.is_empty() {
-                                    notices.send_modify(|list| found.into_iter().for_each(|notice| raise.push(list, notice)));
+                                    notices.send_modify(|list| {
+                                        found.into_iter().for_each(|notice| raise.push(list, notice))
+                                    });
                                 }
                                 audio.send_if_modified(|current| replace(current, Some(state)));
                             }

@@ -207,9 +207,7 @@ pub async fn find(cx: &Cx, text: String) -> Result<String> {
     if text.is_empty() {
         return Ok(String::new());
     }
-    let found = downloads(cx)?
-        .search(json!({ "text": text, "from": "web" }))
-        .await;
+    let found = downloads(cx)?.search(json!({ "text": text, "from": "web" })).await;
     Ok(found.map_or_else(|error| format!("!{error}"), |proposal| proposal.id))
 }
 
@@ -228,7 +226,10 @@ pub async fn pick(cx: &Cx, kind: String, tmdb: u64, season: i64, episode: i64, a
 #[procedure]
 pub async fn confirm(cx: &Cx, proposal: String, choice: u32) -> Result<String> {
     Ok(downloads(cx)?
-        .outcome("/api/downloads/confirm", json!({ "proposal": proposal, "choice": choice }))
+        .outcome(
+            "/api/downloads/confirm",
+            json!({ "proposal": proposal, "choice": choice }),
+        )
         .await)
 }
 
@@ -347,7 +348,11 @@ async fn choice_card(cx: &Cx, id: &str, index: usize, choice: &Choice) -> Result
     let said = signal(cx, String::new);
     let id = id.to_string();
     let number = index as u32;
-    let class = if index == 0 { "download-choice best" } else { "download-choice" };
+    let class = if index == 0 {
+        "download-choice best"
+    } else {
+        "download-choice"
+    };
     Ok(view! {
         <li class=(class)>
             <b>(choice.facts.as_str())</b>
@@ -543,17 +548,31 @@ mod tests {
     fn a_proposal_reads_as_refused_a_question_with_its_season_or_a_search() {
         let read = |answer: Value| {
             let mut proposal = json!({ "id": "p", "asked": "dark season 2", "from": "voice", "created": 1 });
-            proposal.as_object_mut().unwrap().extend(answer.as_object().unwrap().clone());
+            proposal
+                .as_object_mut()
+                .unwrap()
+                .extend(answer.as_object().unwrap().clone());
             serde_json::from_value::<Proposal>(proposal)
         };
-        let question = read(json!({ "outcome": "question", "text": "Which one?", "options": [], "season": 2, "episode": null })).unwrap();
-        assert!(matches!(&question.answer, Answer::Question(Question { season: Some(2), .. })));
+        let question =
+            read(json!({ "outcome": "question", "text": "Which one?", "options": [], "season": 2, "episode": null }))
+                .unwrap();
+        assert!(matches!(
+            &question.answer,
+            Answer::Question(Question { season: Some(2), .. })
+        ));
         assert!(!question.found());
-        let empty = read(json!({ "outcome": "searched", "label": "Dark S2", "message": "No releases of Dark S2 found",
-            "target": {}, "choices": [], "dropped": 0, "problems": [] })).unwrap();
+        let empty = read(
+            json!({ "outcome": "searched", "label": "Dark S2", "message": "No releases of Dark S2 found",
+            "target": {}, "choices": [], "dropped": 0, "problems": [] }),
+        )
+        .unwrap();
         assert_eq!((empty.heading(), empty.found()), ("Dark S2", false));
         let refused = read(json!({ "outcome": "refused", "message": "Nothing called \"x\" on TMDB" })).unwrap();
-        assert_eq!((refused.heading(), refused.message()), ("dark season 2", "Nothing called \"x\" on TMDB"));
+        assert_eq!(
+            (refused.heading(), refused.message()),
+            ("dark season 2", "Nothing called \"x\" on TMDB")
+        );
         assert!(read(json!({ "outcome": "searched", "message": "x" })).is_err());
         assert!(read(json!({ "ok": true, "message": "x" })).is_err());
     }

@@ -77,10 +77,7 @@ pub async fn set_flag(cx: &Cx, name: String, on: bool) -> Result<String> {
         return Ok(format!("No such setting: {name}"));
     }
     let applies = if name == "shown" { " for the next video" } else { "" };
-    Ok(saved(
-        Api::of(cx).change_subtitles(json!({ name: on })).await,
-        applies,
-    ))
+    Ok(saved(Api::of(cx).change_subtitles(json!({ name: on })).await, applies))
 }
 
 #[procedure]
@@ -88,10 +85,7 @@ pub async fn set_color(cx: &Cx, name: String, value: String) -> Result<String> {
     if !matches!(name.as_str(), "color" | "outline_color") {
         return Ok(format!("No such setting: {name}"));
     }
-    Ok(saved(
-        Api::of(cx).change_subtitles(json!({ name: value })).await,
-        "",
-    ))
+    Ok(saved(Api::of(cx).change_subtitles(json!({ name: value })).await, ""))
 }
 
 fn reorder(current: &[String], slot: usize, code: &str) -> Vec<String> {
@@ -169,7 +163,13 @@ async fn colour(cx: &Cx, name: &'static str, label: &'static str, value: &str) -
 }
 
 #[component]
-pub async fn switch(cx: &Cx, name: &'static str, label: &'static str, detail: &'static str, on: bool) -> Result<impl View> {
+pub async fn switch(
+    cx: &Cx,
+    name: &'static str,
+    label: &'static str,
+    detail: &'static str,
+    on: bool,
+) -> Result<impl View> {
     let said = signal(cx, String::new);
     Ok(view! {
         <label class="setting setting-row">

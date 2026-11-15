@@ -632,11 +632,7 @@ impl Api {
     }
 
     async fn post(&self, path: &str, body: Value) -> String {
-        let sent = self
-            .request(reqwest::Method::POST, path)
-            .json(&body)
-            .send()
-            .await;
+        let sent = self.request(reqwest::Method::POST, path).json(&body).send().await;
         let response = match sent {
             Ok(response) => response,
             Err(error) => return format!("The TV is not answering: {error}"),
@@ -681,9 +677,13 @@ impl Api {
             struct Invitee {
                 person: Person,
             }
-            serde_json::from_str::<Invitee>(&text).map(|found| Ok(found.person)).map_err(|error| error.to_string())
+            serde_json::from_str::<Invitee>(&text)
+                .map(|found| Ok(found.person))
+                .map_err(|error| error.to_string())
         } else {
-            Ok(Err(serde_json::from_str::<Problem>(&text).map_or(text, |problem| problem.error)))
+            Ok(Err(
+                serde_json::from_str::<Problem>(&text).map_or(text, |problem| problem.error)
+            ))
         }
     }
 
@@ -818,7 +818,11 @@ impl Api {
     }
 
     pub async fn mark_watched(&self, body: Value) -> Result<bool, String> {
-        let sent = self.request(reqwest::Method::POST, "/api/watched").json(&body).send().await;
+        let sent = self
+            .request(reqwest::Method::POST, "/api/watched")
+            .json(&body)
+            .send()
+            .await;
         let response = sent.map_err(|error| format!("The TV is not answering: {error}"))?;
         let text = response.text().await.unwrap_or_default();
         match serde_json::from_str::<Marked>(&text) {
@@ -829,11 +833,7 @@ impl Api {
     }
 
     async fn answer(&self, path: &str, body: Value) -> (bool, String) {
-        let sent = self
-            .request(reqwest::Method::POST, path)
-            .json(&body)
-            .send()
-            .await;
+        let sent = self.request(reqwest::Method::POST, path).json(&body).send().await;
         let response = match sent {
             Ok(response) => response,
             Err(error) => return (false, format!("The TV is not answering: {error}")),
@@ -870,7 +870,11 @@ impl Person {
     }
 
     pub fn initial(&self) -> String {
-        self.name.chars().next().map(|first| first.to_uppercase().collect()).unwrap_or_default()
+        self.name
+            .chars()
+            .next()
+            .map(|first| first.to_uppercase().collect())
+            .unwrap_or_default()
     }
 }
 

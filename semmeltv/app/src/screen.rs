@@ -157,19 +157,39 @@ fn short(session: &str) -> &str {
 impl Event {
     pub fn describe(&self) -> String {
         match self {
-            Self::Flip { to: Target::Tv, position } => match position {
+            Self::Flip {
+                to: Target::Tv,
+                position,
+            } => match position {
                 Some(position) => format!("flip to the TV at {position:.0} s"),
                 None => "flip to the TV".to_string(),
             },
-            Self::Flip { to: Target::Phone(device), .. } => format!("flip to {}", device.name),
-            Self::Play { device, place } => format!("{} plays {} from {:.0} s", device.name, place.name, place.position),
-            Self::Resume { device, place } => {
-                format!("{} resumes {} at {:.0} s after the app restarted", device.name, place.name, place.position)
+            Self::Flip {
+                to: Target::Phone(device),
+                ..
+            } => format!("flip to {}", device.name),
+            Self::Play { device, place } => {
+                format!("{} plays {} from {:.0} s", device.name, place.name, place.position)
             }
-            Self::Started { device, session, position } => {
+            Self::Resume { device, place } => {
+                format!(
+                    "{} resumes {} at {:.0} s after the app restarted",
+                    device.name, place.name, place.position
+                )
+            }
+            Self::Started {
+                device,
+                session,
+                position,
+            } => {
                 format!("{} started stream {} at {position:.0} s", device.name, short(session))
             }
-            Self::Report { device, session, place, paused } => format!(
+            Self::Report {
+                device,
+                session,
+                place,
+                paused,
+            } => format!(
                 "{} reported stream {} {} at {:.0} s",
                 device.name,
                 short(session),
@@ -195,12 +215,17 @@ impl Screen {
             Self::Tv => "tv".to_string(),
             Self::Moving { to, place, .. } => format!("moving {} to {}", place.name, to.name),
             Self::Phone { device, play: None } => format!("{}, nothing playing", device.name),
-            Self::Phone { device, play: Some(PhonePlay::Starting { place, .. }) } => {
+            Self::Phone {
+                device,
+                play: Some(PhonePlay::Starting { place, .. }),
+            } => {
                 format!("{}, starting {}", device.name, place.name)
             }
             Self::Phone {
                 device,
-                play: Some(PhonePlay::Playing { session, place, paused, .. }),
+                play: Some(PhonePlay::Playing {
+                    session, place, paused, ..
+                }),
             } => format!(
                 "{}, {} {} on stream {}",
                 device.name,
@@ -449,7 +474,11 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
             vec![
                 Effect::ResumeTv,
                 notice(
-                    format!("It didn't start on {}: {}. Still on the TV", device.name, reason.trim_end_matches('.')),
+                    format!(
+                        "It didn't start on {}: {}. Still on the TV",
+                        device.name,
+                        reason.trim_end_matches('.')
+                    ),
                     Tone::Error,
                 ),
             ],

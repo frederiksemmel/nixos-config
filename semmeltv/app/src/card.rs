@@ -70,14 +70,23 @@ struct Semmel {
 static SEMMEL: LazyLock<Semmel> = LazyLock::new(|| semmel(LOGO).expect("the favicon has the Semmel's six layers"));
 
 fn semmel(svg: &str) -> Option<Semmel> {
-    let mut groups = svg.split("<g ").skip(1).map(group).collect::<Option<Vec<_>>>()?.into_iter();
+    let mut groups = svg
+        .split("<g ")
+        .skip(1)
+        .map(group)
+        .collect::<Option<Vec<_>>>()?
+        .into_iter();
     let _silhouette = groups.next()?;
     let cheeks = groups.next()?;
     let mouth = groups.next()?;
     let lines = groups.next()?;
     let mut eyes = groups.next()?;
     let highlights = groups.next()?;
-    if [&cheeks, &mouth, &lines, &eyes].iter().any(|group| group.fill.is_empty()) || eyes.paths.len() < 3 {
+    if [&cheeks, &mouth, &lines, &eyes]
+        .iter()
+        .any(|group| group.fill.is_empty())
+        || eyes.paths.len() < 3
+    {
         return None;
     }
     let body = vec![lines.paths.first()?.first()?.clone()];
@@ -124,7 +133,10 @@ fn group(part: &str) -> Option<Group> {
         .collect::<Option<Vec<_>>>()?;
     Some(Group {
         fill: attribute(attributes, "fill")?.to_string(),
-        stroke: attribute(attributes, "stroke-width").and_then(|width| width.parse::<f64>().ok()).unwrap_or(0.0) / 10.0,
+        stroke: attribute(attributes, "stroke-width")
+            .and_then(|width| width.parse::<f64>().ok())
+            .unwrap_or(0.0)
+            / 10.0,
         paths,
     })
 }
@@ -284,7 +296,10 @@ fn lid(eye: &Path) -> Path {
 
 fn text(x: f64, y: f64, size: f64, bold: bool, color: &str, alpha: &str, content: &str) -> String {
     let weight = if bold { 700 } else { 400 };
-    format!(r"{{\an1\pos({x:.0},{y:.0})\bord0\shad0\b{weight}\fs{size:.0}\fsp-0.5\1c{color}\alpha{alpha}}}{}", escape(content))
+    format!(
+        r"{{\an1\pos({x:.0},{y:.0})\bord0\shad0\b{weight}\fs{size:.0}\fsp-0.5\1c{color}\alpha{alpha}}}{}",
+        escape(content)
+    )
 }
 
 /// The card `since` the film began opening, at `opacity` (1 while it opens,
@@ -299,12 +314,15 @@ pub fn frame(billing: &Billing, since: Duration, opacity: f64) -> String {
     let gap = width * GAP;
 
     let room = f64::from(overlay::WIDTH) - 2.0 * MARGIN - width - gap;
-    let longest_line = billing.lines.iter().map(|line| line.chars().count()).max().unwrap_or(0) as f64 * LINE_SIZE * LINE_EM;
+    let longest_line =
+        billing.lines.iter().map(|line| line.chars().count()).max().unwrap_or(0) as f64 * LINE_SIZE * LINE_EM;
     let title_chars = billing.title.chars().count().max(1) as f64;
     let title_size = (room / (title_chars * TITLE_EM)).clamp(SMALLEST_TITLE, TITLE_SIZE);
     let fits = (room / (title_size * TITLE_EM)).floor().max(8.0) as usize;
     let title = shorten_to(&billing.title, fits);
-    let text_width = (title.chars().count() as f64 * title_size * TITLE_EM).max(longest_line).min(room);
+    let text_width = (title.chars().count() as f64 * title_size * TITLE_EM)
+        .max(longest_line)
+        .min(room);
     let left = ((f64::from(overlay::WIDTH) - width - gap - text_width) / 2.0).max(MARGIN);
 
     let middle = f64::from(overlay::HEIGHT) / 2.0;
@@ -370,14 +388,27 @@ mod tests {
         assert!(card.contains("Star Wars: Maul"));
         assert!(card.contains('…'));
         assert!(card.contains("4. The Hunt Begins") && card.contains("Picks up at 3:12"));
-        let positions = card.split(r"\pos(").skip(1).filter_map(|rest| rest.split(',').next()?.parse::<f64>().ok());
+        let positions = card
+            .split(r"\pos(")
+            .skip(1)
+            .filter_map(|rest| rest.split(',').next()?.parse::<f64>().ok());
         assert!(positions.clone().all(|x| (0.0..1920.0).contains(&x)));
         let drawn_x = card
             .split(r"\p4}")
             .skip(1)
-            .flat_map(|drawing| drawing.split("{\\p0}").next().unwrap_or("").split(' ').collect::<Vec<_>>())
+            .flat_map(|drawing| {
+                drawing
+                    .split("{\\p0}")
+                    .next()
+                    .unwrap_or("")
+                    .split(' ')
+                    .collect::<Vec<_>>()
+            })
             .collect::<Vec<_>>();
-        let coordinates = drawn_x.iter().filter_map(|value| value.parse::<i64>().ok()).collect::<Vec<_>>();
+        let coordinates = drawn_x
+            .iter()
+            .filter_map(|value| value.parse::<i64>().ok())
+            .collect::<Vec<_>>();
         assert!(coordinates.iter().step_by(2).all(|x| (0..1920 * 8).contains(x)));
     }
 

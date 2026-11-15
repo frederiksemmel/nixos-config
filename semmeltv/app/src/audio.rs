@@ -22,8 +22,7 @@ const COMMAND_TIMEOUT_SECONDS: &str = "20";
 const HEADPHONE_ICONS: [&str; 2] = ["audio-headphones", "audio-headset"];
 const MONITOR_RESTART: Duration = Duration::from_secs(2);
 const SCANNING: &str = "Open the case near the TV and hold the button on its back until the light flashes white.";
-const NOTHING_FOUND: &str =
-    "No headphones showed up. Open the case near the TV, hold the button on its back until the light flashes white, and try again.";
+const NOTHING_FOUND: &str = "No headphones showed up. Open the case near the TV, hold the button on its back until the light flashes white, and try again.";
 const NONE_PAIRED: &str = "No headphones are paired. Pair them in Settings.";
 const MAX_VOLUME: u8 = 127;
 const VOLUME_STEP: u8 = 8;
@@ -432,7 +431,11 @@ impl Audio {
 
     pub fn cancel_pairing(&self) -> View {
         let mut state = self.inner.state.lock().unwrap();
-        if state.pairing.as_ref().is_some_and(|pairing| pairing.state == Stage::Scanning) {
+        if state
+            .pairing
+            .as_ref()
+            .is_some_and(|pairing| pairing.state == Stage::Scanning)
+        {
             state.pair_attempt += 1;
             state.pairing = None;
             self.publish(&state);
@@ -510,7 +513,9 @@ impl Audio {
         state.set_wire(Wire::Connected(next));
         let headphones = state.device().cloned();
         if next == Sound::Tv {
-            let name = headphones.as_ref().map_or("The headphones", |headphones| &headphones.name);
+            let name = headphones
+                .as_ref()
+                .map_or("The headphones", |headphones| &headphones.name);
             state.error = Some(format!("{name} didn't play. The sound is back on the TV."));
         }
         self.publish(&state);
@@ -660,7 +665,11 @@ impl Audio {
     }
 
     fn sink(&self, address: &str, present: bool) {
-        let level = if present { self.inner.radio.volume(address) } else { None };
+        let level = if present {
+            self.inner.radio.volume(address)
+        } else {
+            None
+        };
         let adjustment = if present {
             self.inner.radio.delay_adjustment(address)
         } else {
@@ -668,7 +677,11 @@ impl Audio {
         };
         let mut state = self.inner.state.lock().unwrap();
         let had_sound = state.output() == Output::Headphones;
-        let Some(known) = state.headphones.as_mut().filter(|known| known.device.address == address) else {
+        let Some(known) = state
+            .headphones
+            .as_mut()
+            .filter(|known| known.device.address == address)
+        else {
             return;
         };
         let headphones = known.device.clone();
@@ -755,10 +768,13 @@ impl Audio {
             }
         };
         let delay = (delay + by).clamp(-MAX_AUDIO_DELAY, MAX_AUDIO_DELAY);
-        self.inner.radio.set_delay_adjustment(&headphones.address, -delay).map_err(|error| {
-            eprintln!("headphones: {error}");
-            format!("{} didn't take the timing change", headphones.name)
-        })?;
+        self.inner
+            .radio
+            .set_delay_adjustment(&headphones.address, -delay)
+            .map_err(|error| {
+                eprintln!("headphones: {error}");
+                format!("{} didn't take the timing change", headphones.name)
+            })?;
         let mut state = self.inner.state.lock().unwrap();
         if let Some(known) = state
             .headphones
@@ -773,7 +789,11 @@ impl Audio {
 
     fn volume_changed(&self, address: &str, level: Level) {
         let mut state = self.inner.state.lock().unwrap();
-        if let Some(known) = state.headphones.as_mut().filter(|known| known.device.address == address) {
+        if let Some(known) = state
+            .headphones
+            .as_mut()
+            .filter(|known| known.device.address == address)
+        {
             known.volume = Some(level);
             self.publish(&state);
         }
@@ -850,10 +870,13 @@ fn view_of(state: &State) -> View {
             name: known.device.name.clone(),
             address: known.device.address.clone(),
             state: link,
-            volume: known.volume.filter(|_| link == Link::Connected).map(|level| VolumeView {
-                level: level.percent(),
-                muted: level.muted,
-            }),
+            volume: known
+                .volume
+                .filter(|_| link == Link::Connected)
+                .map(|level| VolumeView {
+                    level: level.percent(),
+                    muted: level.muted,
+                }),
             audio_delay: known.audio_delay.filter(|_| link == Link::Connected),
         }),
         pairing: state.pairing.clone(),
@@ -1098,7 +1121,10 @@ impl Radio for Bluetoothctl {
         let path = sink_path(address).ok_or_else(|| format!("no BlueALSA sink for {address}"))?;
         let value = level.value.to_string();
         let muted = if level.muted { "on" } else { "off" };
-        for args in [["volume", path.as_str(), value.as_str()], ["mute", path.as_str(), muted]] {
+        for args in [
+            ["volume", path.as_str(), value.as_str()],
+            ["mute", path.as_str(), muted],
+        ] {
             let status = Command::new("bluealsa-cli")
                 .args(args)
                 .stdin(Stdio::null())
@@ -1178,7 +1204,12 @@ mod tests {
 
         fn bonded(&self, address: &str) -> Option<Device> {
             let world = self.world.lock().unwrap();
-            world.paired.iter().chain(&world.bonded).find(|device| device.address == address).cloned()
+            world
+                .paired
+                .iter()
+                .chain(&world.bonded)
+                .find(|device| device.address == address)
+                .cloned()
         }
 
         fn connect(&self, address: &str) -> Result<(), String> {
@@ -1383,7 +1414,10 @@ mod tests {
         assert_eq!(view.headphones.unwrap().name, "WH-1000XM5");
         assert!(calls_until(&rig, &format!("disconnect {AIRPODS}")).contains(&format!("disconnect {AIRPODS}")));
         rig.audio.select(Some(sony()));
-        assert!(rig.routes.recv_timeout(Duration::from_millis(100)).is_err(), "the same headphones change nothing");
+        assert!(
+            rig.routes.recv_timeout(Duration::from_millis(100)).is_err(),
+            "the same headphones change nothing"
+        );
     }
 
     fn tick(pace: &mut Pace, start: Instant, millis: u64, position: f64) -> Flow {
@@ -1403,7 +1437,11 @@ mod tests {
         assert_eq!(pace.observe(start + Duration::from_millis(3500), None), Flow::Idle);
         let mut seeking = Pace::default();
         tick(&mut seeking, start, 0, 100.0);
-        assert_eq!(tick(&mut seeking, start, 500, 700.0), Flow::Silent, "a seek forward is no verdict");
+        assert_eq!(
+            tick(&mut seeking, start, 500, 700.0),
+            Flow::Silent,
+            "a seek forward is no verdict"
+        );
         assert_eq!(tick(&mut seeking, start, 1000, 50.0), Flow::Silent, "nor is one back");
     }
 
@@ -1420,7 +1458,11 @@ mod tests {
         rig.audio.choose(Output::Headphones);
         assert_eq!(route(&rig).said, "Sound on AirPods");
         let view = rig.audio.view();
-        assert_eq!((view.output, link(&view)), (Output::Tv, Some(Link::Connecting)), "no success while untested");
+        assert_eq!(
+            (view.output, link(&view)),
+            (Output::Tv, Some(Link::Connecting)),
+            "no success while untested"
+        );
         let start = Instant::now();
         rig.audio.heard(Flow::Flowing, start);
         assert_eq!(rig.audio.view().output, Output::Tv);
@@ -1428,7 +1470,11 @@ mod tests {
         let view = rig.audio.view();
         assert_eq!((view.output, link(&view)), (Output::Headphones, Some(Link::Connected)));
         rig.audio.heard(Flow::Stalled, start + TRIAL * 2);
-        assert_eq!(rig.audio.view().output, Output::Headphones, "proven headphones aren't second-guessed");
+        assert_eq!(
+            rig.audio.view().output,
+            Output::Headphones,
+            "proven headphones aren't second-guessed"
+        );
     }
 
     #[test]
@@ -1441,7 +1487,10 @@ mod tests {
         assert_eq!(rig.audio.device(), TV_DEVICE);
         let view = rig.audio.view();
         assert_eq!(view.output, Output::Tv);
-        assert_eq!(view.error.as_deref(), Some("AirPods didn't play. The sound is back on the TV."));
+        assert_eq!(
+            view.error.as_deref(),
+            Some("AirPods didn't play. The sound is back on the TV.")
+        );
     }
 
     #[test]
@@ -1452,7 +1501,11 @@ mod tests {
         route(&rig);
         assert_eq!(rig.audio.view().output, Output::Headphones);
         rig.audio.heard(Flow::Silent, Instant::now());
-        assert_eq!(rig.audio.view().output, Output::Tv, "a video starting puts them on trial");
+        assert_eq!(
+            rig.audio.view().output,
+            Output::Tv,
+            "a video starting puts them on trial"
+        );
         rig.audio.heard(Flow::Stalled, Instant::now());
         assert_eq!(route(&rig).device, TV_DEVICE);
     }
@@ -1769,7 +1822,10 @@ mod tests {
         let view = rig.audio.delay_sound(50).unwrap();
         assert_eq!(view.headphones.unwrap().audio_delay, Some(30));
         assert_eq!(call(&rig), format!("delay {AIRPODS} -30"));
-        assert_eq!(rig.audio.delay_sound(900).unwrap().headphones.unwrap().audio_delay, Some(500));
+        assert_eq!(
+            rig.audio.delay_sound(900).unwrap().headphones.unwrap().audio_delay,
+            Some(500)
+        );
         assert_eq!(rig.bus.audio_state(), Some(rig.audio.view()));
     }
 
@@ -1779,7 +1835,8 @@ mod tests {
             "\tName: airpodsfs - Find My\n\tAlias: airpodsfs - Find My\n\tIcon: audio-headphones\n\tModalias: bluetooth:v004Cp2027d242F\n",
         );
         assert_eq!(shown_name(&airpods), "AirPods");
-        let other = parse_info("\tAlias: Sony WH - Find My\n\tIcon: audio-headphones\n\tModalias: bluetooth:v0039p4EF0d0001\n");
+        let other =
+            parse_info("\tAlias: Sony WH - Find My\n\tIcon: audio-headphones\n\tModalias: bluetooth:v0039p4EF0d0001\n");
         assert_eq!(shown_name(&other), "Sony WH");
         assert_eq!(shown_name(&Info::default()), "Headphones");
     }
@@ -1817,16 +1874,28 @@ mod tests {
     #[test]
     fn bluealsa_cli_volume_and_mute_are_read_from_the_left_channel() {
         assert_eq!(pcm_value("Volume: L: 102 R: 100\n", "Volume:"), Some("102".to_string()));
-        assert_eq!(pcm_value("Muted: L: true R: true\n", "Muted:"), Some("true".to_string()));
+        assert_eq!(
+            pcm_value("Muted: L: true R: true\n", "Muted:"),
+            Some("true".to_string())
+        );
         assert_eq!(pcm_value("Volume: 90\n", "Volume:"), Some("90".to_string()));
     }
 
     #[test]
     fn the_monitor_reports_headphone_sinks_by_address() {
-        assert_eq!(sink_change(&format!("PCMAdded {SINK}")), Some(Change::Added(AIRPODS.to_string())));
-        assert_eq!(sink_change(&format!("PCMRemoved {SINK}")), Some(Change::Removed(AIRPODS.to_string())));
+        assert_eq!(
+            sink_change(&format!("PCMAdded {SINK}")),
+            Some(Change::Added(AIRPODS.to_string()))
+        );
+        assert_eq!(
+            sink_change(&format!("PCMRemoved {SINK}")),
+            Some(Change::Removed(AIRPODS.to_string()))
+        );
         assert_eq!(sink_change("ServiceStopped org.bluealsa"), Some(Change::Stopped));
-        assert_eq!(sink_change("PCMAdded /org/bluealsa/hci0/dev_34_0E_22_67_03_38/a2dpsnk/source"), None);
+        assert_eq!(
+            sink_change("PCMAdded /org/bluealsa/hci0/dev_34_0E_22_67_03_38/a2dpsnk/source"),
+            None
+        );
         assert_eq!(sink_change(&format!("PropertyChanged {SINK} Running true")), None);
     }
 
@@ -1845,7 +1914,8 @@ mod tests {
                 apple: false,
             }
         );
-        let tv = parse_info("Device D0:C2:4E:8A:F1:37 (public)\n\tName: [TV] Samsung\n\tIcon: video-display\n\tRSSI: -70\n");
+        let tv =
+            parse_info("Device D0:C2:4E:8A:F1:37 (public)\n\tName: [TV] Samsung\n\tIcon: video-display\n\tRSSI: -70\n");
         assert!(!tv.headphones);
         assert_eq!(
             parse_devices("Device 34:0E:22:67:03:38 AirPods\nDevice D0:C2:4E:8A:F1:37 [TV] Samsung\n"),

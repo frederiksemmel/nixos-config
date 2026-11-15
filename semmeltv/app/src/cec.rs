@@ -1,6 +1,6 @@
+use crate::command::Command;
 use crate::core::{Core, Request};
 use crate::intent::Control;
-use crate::command::Command;
 use cec_linux::{
     CecDevice, CecEvent, CecLogAddrType, CecLogAddrs, CecLogicalAddress, CecModeFollower, CecModeInitiator, CecOpcode,
     CecPhysicalAddress, CecPrimDevType, CecUserControlCode, PollFlags, PollTimeout, VendorID, Version,

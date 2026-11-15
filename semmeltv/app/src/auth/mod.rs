@@ -13,8 +13,8 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use store::{Invite, NewProfile, Profile, Session, StoreError, StoredPasskey};
 pub use store::Role;
+use store::{Invite, NewProfile, Profile, Session, StoreError, StoredPasskey};
 use webauthn_rs::prelude::{
     CreationChallengeResponse, Passkey, PasskeyAuthentication, PasskeyRegistration, PublicKeyCredential,
     RegisterPublicKeyCredential, RequestChallengeResponse, Url, Uuid, Webauthn, WebauthnBuilder,
@@ -138,7 +138,9 @@ pub fn hash(token: &str) -> Vec<u8> {
 }
 
 pub fn now() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs())
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 fn user_handle(profile: ProfileId) -> Uuid {
@@ -192,7 +194,11 @@ pub struct Resolved {
 
 impl Resolved {
     pub fn tokens(&self) -> Vec<String> {
-        self.active.iter().chain(&self.others).map(|(_, token)| token.clone()).collect()
+        self.active
+            .iter()
+            .chain(&self.others)
+            .map(|(_, token)| token.clone())
+            .collect()
     }
 
     pub fn person(&self) -> Option<&Person> {
@@ -237,7 +243,10 @@ impl Auth {
         let mut parties = Vec::new();
         for origin in origins {
             let url = Url::parse(origin).map_err(|error| format!("origin {origin}: {error}"))?;
-            let host = url.host_str().ok_or_else(|| format!("origin {origin} has no host"))?.to_string();
+            let host = url
+                .host_str()
+                .ok_or_else(|| format!("origin {origin} has no host"))?
+                .to_string();
             let webauthn = WebauthnBuilder::new(&host, &url)
                 .and_then(|builder| builder.rp_name("SemmelTV").build())
                 .map_err(|error| format!("origin {origin}: {error}"))?;
@@ -295,7 +304,12 @@ impl Auth {
         let mut choices = Vec::new();
         for profile in self.db().profiles().await? {
             let passkey = match &rp_id {
-                Some(rp_id) => self.db().passkeys(profile.id).await?.iter().any(|passkey| &passkey.rp_id == rp_id),
+                Some(rp_id) => self
+                    .db()
+                    .passkeys(profile.id)
+                    .await?
+                    .iter()
+                    .any(|passkey| &passkey.rp_id == rp_id),
                 None => false,
             };
             choices.push(Choice {
@@ -344,7 +358,9 @@ impl Auth {
                 continue;
             }
             if found.is_empty() && now.saturating_sub(session.last_seen_at) >= RENEW_AFTER {
-                self.db().touch_session(&session.token_hash, now, now + SESSION_LIFETIME).await?;
+                self.db()
+                    .touch_session(&session.token_hash, now, now + SESSION_LIFETIME)
+                    .await?;
                 renewed = true;
             }
             found.push((Person::from(&profile), token.clone()));
@@ -418,7 +434,10 @@ impl Auth {
         let mut ceremonies = self.inner.ceremonies.lock().unwrap();
         ceremonies.retain(|_, ceremony| ceremony.started.elapsed() < CEREMONY_TIME);
         if ceremonies.len() >= MOST_CEREMONIES
-            && let Some(oldest) = ceremonies.iter().min_by_key(|(_, ceremony)| ceremony.started).map(|(id, _)| id.clone())
+            && let Some(oldest) = ceremonies
+                .iter()
+                .min_by_key(|(_, ceremony)| ceremony.started)
+                .map(|(id, _)| id.clone())
         {
             ceremonies.remove(&oldest);
         }
@@ -435,7 +454,13 @@ impl Auth {
     }
 
     fn take(&self, id: &str, origin: &str) -> Outcome<Ceremony> {
-        let ceremony = self.inner.ceremonies.lock().unwrap().remove(id).ok_or(Refusal::CeremonyGone)?;
+        let ceremony = self
+            .inner
+            .ceremonies
+            .lock()
+            .unwrap()
+            .remove(id)
+            .ok_or(Refusal::CeremonyGone)?;
         if ceremony.started.elapsed() >= CEREMONY_TIME {
             return Err(Refusal::CeremonyGone);
         }
@@ -460,11 +485,18 @@ impl Auth {
         Ok(found)
     }
 
-    pub async fn start_registration(&self, origin: &str, profile: ProfileId) -> Outcome<(String, CreationChallengeResponse)> {
+    pub async fn start_registration(
+        &self,
+        origin: &str,
+        profile: ProfileId,
+    ) -> Outcome<(String, CreationChallengeResponse)> {
         let party = self.party(origin)?;
         let found = self.profile(profile).await?;
         let known = self.passkeys_here(profile, party).await?;
-        let exclude = known.iter().map(|(_, passkey)| passkey.cred_id().clone()).collect::<Vec<_>>();
+        let exclude = known
+            .iter()
+            .map(|(_, passkey)| passkey.cred_id().clone())
+            .collect::<Vec<_>>();
         let (options, state) = party
             .webauthn
             .start_passkey_registration(user_handle(profile), &found.name, &found.name, Some(exclude))
@@ -492,10 +524,13 @@ impl Auth {
         if begun.profile != profile {
             return Err(Refusal::CeremonyGone);
         }
-        let passkey = party.webauthn.finish_passkey_registration(credential, &state).map_err(|error| {
-            eprintln!("auth: finishing a passkey registration: {error}");
-            Refusal::PasskeyFailed
-        })?;
+        let passkey = party
+            .webauthn
+            .finish_passkey_registration(credential, &state)
+            .map_err(|error| {
+                eprintln!("auth: finishing a passkey registration: {error}");
+                Refusal::PasskeyFailed
+            })?;
         let json = serde_json::to_string(&passkey).map_err(|error| Refusal::Store(error.to_string()))?;
         let name = name.trim().chars().take(LONGEST_NAME).collect::<String>();
         let stored = StoredPasskey {
@@ -522,10 +557,13 @@ impl Auth {
             return Err(Refusal::NoPasskey(found.name));
         }
         let passkeys = known.into_iter().map(|(_, passkey)| passkey).collect::<Vec<_>>();
-        let (options, state) = party.webauthn.start_passkey_authentication(&passkeys).map_err(|error| {
-            eprintln!("auth: starting a passkey sign-in: {error}");
-            Refusal::PasskeyFailed
-        })?;
+        let (options, state) = party
+            .webauthn
+            .start_passkey_authentication(&passkeys)
+            .map_err(|error| {
+                eprintln!("auth: starting a passkey sign-in: {error}");
+                Refusal::PasskeyFailed
+            })?;
         let id = self.begin(origin, profile, Step::SignIn(state));
         Ok((id, options))
     }
@@ -542,10 +580,13 @@ impl Auth {
         let Step::SignIn(state) = begun.step else {
             return Err(Refusal::CeremonyGone);
         };
-        let result = party.webauthn.finish_passkey_authentication(credential, &state).map_err(|error| {
-            eprintln!("auth: finishing a passkey sign-in: {error}");
-            Refusal::PasskeyFailed
-        })?;
+        let result = party
+            .webauthn
+            .finish_passkey_authentication(credential, &state)
+            .map_err(|error| {
+                eprintln!("auth: finishing a passkey sign-in: {error}");
+                Refusal::PasskeyFailed
+            })?;
         let stored = self
             .db()
             .passkey(result.cred_id())
@@ -556,7 +597,9 @@ impl Auth {
             serde_json::from_str(&stored.passkey).map_err(|error| Refusal::Store(error.to_string()))?;
         passkey.update_credential(&result);
         let json = serde_json::to_string(&passkey).map_err(|error| Refusal::Store(error.to_string()))?;
-        self.db().update_passkey(&stored.credential_id, &json, self.now()).await?;
+        self.db()
+            .update_passkey(&stored.credential_id, &json, self.now())
+            .await?;
         let token = self.open_session(begun.profile, label).await?;
         Ok((begun.profile, token))
     }
@@ -567,7 +610,13 @@ impl Auth {
 
     pub async fn passkeys(&self, profile: ProfileId, origin: &str) -> Outcome<Vec<PasskeyView>> {
         let origin = origin.trim_end_matches('/');
-        Ok(self.db().passkeys(profile).await?.iter().map(|stored| view(stored, origin)).collect())
+        Ok(self
+            .db()
+            .passkeys(profile)
+            .await?
+            .iter()
+            .map(|stored| view(stored, origin))
+            .collect())
     }
 
     pub async fn remove_passkey(&self, profile: ProfileId, id: &str) -> Outcome<bool> {
@@ -632,7 +681,10 @@ impl Auth {
         let mut members = Vec::new();
         for profile in self.db().profiles().await? {
             let sessions = self.db().sessions(profile.id).await?;
-            let live = sessions.iter().filter(|session| session.expires_at > now).collect::<Vec<_>>();
+            let live = sessions
+                .iter()
+                .filter(|session| session.expires_at > now)
+                .collect::<Vec<_>>();
             members.push(Member {
                 person: Person::from(&profile),
                 password: profile.password_hash.is_some(),
@@ -641,7 +693,9 @@ impl Auth {
                 last_seen_at: live.iter().map(|session| session.last_seen_at).max(),
                 invite_expires_at: invites
                     .iter()
-                    .filter(|invite| invite.profile == profile.id && invite.used_at.is_none() && invite.expires_at > now)
+                    .filter(|invite| {
+                        invite.profile == profile.id && invite.used_at.is_none() && invite.expires_at > now
+                    })
                     .map(|invite| invite.expires_at)
                     .max(),
             });
@@ -729,8 +783,12 @@ mod tests {
             let db = Db::memory().await;
             let time = Arc::new(AtomicU64::new(1_000_000));
             let clock = time.clone();
-            let auth = Auth::with_clock(db.clone(), &[ORIGIN.to_string()], Arc::new(move || clock.load(Ordering::SeqCst)))
-                .unwrap();
+            let auth = Auth::with_clock(
+                db.clone(),
+                &[ORIGIN.to_string()],
+                Arc::new(move || clock.load(Ordering::SeqCst)),
+            )
+            .unwrap();
             Rig { auth, db, time }
         }
 
@@ -749,7 +807,10 @@ mod tests {
         assert_eq!(rig.auth.peek_invite(&invite).await.unwrap().name, "Mami");
         let (profile, session) = rig.auth.redeem(&invite, "iPhone").await.unwrap();
         assert_eq!(profile, MAMI);
-        assert_eq!(rig.auth.resolve(&[session]).await.unwrap().person().unwrap().name, "Mami");
+        assert_eq!(
+            rig.auth.resolve(&[session]).await.unwrap().person().unwrap().name,
+            "Mami"
+        );
         assert_eq!(rig.auth.redeem(&invite, "iPhone").await, Err(Refusal::InviteUsed));
 
         let late = rig.auth.invite(Some(FREDERIK), MAMI).await.unwrap();
@@ -782,7 +843,11 @@ mod tests {
     async fn a_session_lasts_a_week_after_it_was_last_used() {
         let rig = Rig::new().await;
         rig.auth.set_password(MAMI, "correct horse").await.unwrap();
-        let session = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPhone").await.unwrap();
+        let session = rig
+            .auth
+            .sign_in_with_password(MAMI, "correct horse", "iPhone")
+            .await
+            .unwrap();
 
         rig.pass(6 * 24 * 60 * 60);
         let resolved = rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap();
@@ -790,7 +855,14 @@ mod tests {
         assert!(resolved.rewrite, "a renewed session sends its cookie again");
 
         rig.pass(6 * 24 * 60 * 60);
-        assert!(rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap().active.is_some());
+        assert!(
+            rig.auth
+                .resolve(std::slice::from_ref(&session))
+                .await
+                .unwrap()
+                .active
+                .is_some()
+        );
 
         rig.pass(10 * 60);
         let again = rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap();
@@ -809,9 +881,21 @@ mod tests {
         let rig = Rig::new().await;
         rig.auth.set_password(MAMI, "correct horse").await.unwrap();
         rig.auth.set_password(FREDERIK, "battery staple").await.unwrap();
-        let mami = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPad").await.unwrap();
-        let frederik = rig.auth.sign_in_with_password(FREDERIK, "battery staple", "iPad").await.unwrap();
-        let resolved = rig.auth.resolve(&[mami.clone(), "stale".to_string(), frederik.clone()]).await.unwrap();
+        let mami = rig
+            .auth
+            .sign_in_with_password(MAMI, "correct horse", "iPad")
+            .await
+            .unwrap();
+        let frederik = rig
+            .auth
+            .sign_in_with_password(FREDERIK, "battery staple", "iPad")
+            .await
+            .unwrap();
+        let resolved = rig
+            .auth
+            .resolve(&[mami.clone(), "stale".to_string(), frederik.clone()])
+            .await
+            .unwrap();
         assert_eq!(resolved.person().unwrap().id, MAMI);
         assert_eq!(resolved.others.len(), 1);
         assert_eq!(resolved.tokens(), vec![mami, frederik]);
@@ -823,20 +907,32 @@ mod tests {
         let rig = Rig::new().await;
         rig.auth.set_password(MAMI, "correct horse").await.unwrap();
         for _ in 0..FREE_FAILURES {
-            assert_eq!(rig.auth.sign_in_with_password(MAMI, "wrong one", "x").await, Err(Refusal::WrongPassword));
+            assert_eq!(
+                rig.auth.sign_in_with_password(MAMI, "wrong one", "x").await,
+                Err(Refusal::WrongPassword)
+            );
         }
-        assert_eq!(rig.auth.sign_in_with_password(MAMI, "correct horse", "x").await, Err(Refusal::Throttled(60)));
+        assert_eq!(
+            rig.auth.sign_in_with_password(MAMI, "correct horse", "x").await,
+            Err(Refusal::Throttled(60))
+        );
         assert!(rig.auth.sign_in_with_password(FREDERIK, "anything", "x").await != Err(Refusal::Throttled(60)));
         rig.pass(60);
         assert!(rig.auth.sign_in_with_password(MAMI, "correct horse", "x").await.is_ok());
-        assert_eq!(rig.auth.sign_in_with_password(MAMI, "wrong one", "x").await, Err(Refusal::WrongPassword));
+        assert_eq!(
+            rig.auth.sign_in_with_password(MAMI, "wrong one", "x").await,
+            Err(Refusal::WrongPassword)
+        );
     }
 
     #[tokio::test]
     async fn passwords_need_a_sensible_length_and_are_hashed() {
         let rig = Rig::new().await;
         assert_eq!(rig.auth.set_password(MAMI, "short").await, Err(Refusal::ShortPassword));
-        assert_eq!(rig.auth.set_password(MAMI, &"x".repeat(201)).await, Err(Refusal::LongPassword));
+        assert_eq!(
+            rig.auth.set_password(MAMI, &"x".repeat(201)).await,
+            Err(Refusal::LongPassword)
+        );
         assert_eq!(
             rig.auth.sign_in_with_password(MAMI, "anything", "x").await,
             Err(Refusal::NoPassword("Mami".to_string()))
@@ -846,18 +942,36 @@ mod tests {
         assert!(stored.starts_with("$argon2id$"));
         assert!(!stored.contains("correct horse"));
         rig.db.set_password_hash(MAMI, Some("not a hash")).await.unwrap();
-        assert_eq!(rig.auth.sign_in_with_password(MAMI, "correct horse", "x").await, Err(Refusal::WrongPassword));
+        assert_eq!(
+            rig.auth.sign_in_with_password(MAMI, "correct horse", "x").await,
+            Err(Refusal::WrongPassword)
+        );
     }
 
     #[tokio::test]
     async fn signing_out_ends_only_that_session() {
         let rig = Rig::new().await;
         rig.auth.set_password(MAMI, "correct horse").await.unwrap();
-        let phone = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPhone").await.unwrap();
-        let ipad = rig.auth.sign_in_with_password(MAMI, "correct horse", "iPad").await.unwrap();
+        let phone = rig
+            .auth
+            .sign_in_with_password(MAMI, "correct horse", "iPhone")
+            .await
+            .unwrap();
+        let ipad = rig
+            .auth
+            .sign_in_with_password(MAMI, "correct horse", "iPad")
+            .await
+            .unwrap();
         rig.auth.sign_out(&phone).await.unwrap();
         assert_eq!(rig.auth.resolve(&[phone]).await.unwrap().active, None);
-        assert!(rig.auth.resolve(std::slice::from_ref(&ipad)).await.unwrap().active.is_some());
+        assert!(
+            rig.auth
+                .resolve(std::slice::from_ref(&ipad))
+                .await
+                .unwrap()
+                .active
+                .is_some()
+        );
         rig.auth.sign_out_everywhere(MAMI).await.unwrap();
         assert_eq!(rig.auth.resolve(&[ipad]).await.unwrap().active, None);
     }
@@ -866,27 +980,42 @@ mod tests {
     async fn passkeys_only_start_on_a_known_address_for_someone_who_has_one() {
         let rig = Rig::new().await;
         assert_eq!(
-            rig.auth.start_sign_in("https://elsewhere.example.org", MAMI).await.unwrap_err(),
+            rig.auth
+                .start_sign_in("https://elsewhere.example.org", MAMI)
+                .await
+                .unwrap_err(),
             Refusal::UnknownOrigin
         );
-        assert_eq!(rig.auth.start_sign_in(ORIGIN, MAMI).await.unwrap_err(), Refusal::NoPasskey("Mami".to_string()));
+        assert_eq!(
+            rig.auth.start_sign_in(ORIGIN, MAMI).await.unwrap_err(),
+            Refusal::NoPasskey("Mami".to_string())
+        );
         let (ceremony, options) = rig.auth.start_registration(ORIGIN, MAMI).await.unwrap();
         let options = serde_json::to_value(&options).unwrap();
         assert_eq!(options["publicKey"]["rp"]["id"], "tv.example.org");
         assert_eq!(options["publicKey"]["user"]["name"], "Mami");
         assert!(rig.auth.take(&ceremony, "https://elsewhere.example.org").is_err());
-        assert!(rig.auth.take(&ceremony, ORIGIN).is_err(), "a ceremony is used up by any attempt");
+        assert!(
+            rig.auth.take(&ceremony, ORIGIN).is_err(),
+            "a ceremony is used up by any attempt"
+        );
     }
 
     #[tokio::test]
     async fn the_last_admin_and_oneself_stay() {
         let rig = Rig::new().await;
         let before = rig.auth.people().await.unwrap().len();
-        assert_eq!(rig.auth.delete_profile(FREDERIK, FREDERIK).await, Err(Refusal::Yourself));
+        assert_eq!(
+            rig.auth.delete_profile(FREDERIK, FREDERIK).await,
+            Err(Refusal::Yourself)
+        );
         assert_eq!(rig.auth.delete_profile(MAMI, FREDERIK).await, Err(Refusal::LastAdmin));
         let oma = rig.auth.create_profile(" Oma ", Role::Viewer).await.unwrap();
         assert_eq!(oma.name, "Oma");
-        assert_eq!(rig.auth.create_profile("oma", Role::Viewer).await, Err(Refusal::NameTaken));
+        assert_eq!(
+            rig.auth.create_profile("oma", Role::Viewer).await,
+            Err(Refusal::NameTaken)
+        );
         assert_eq!(rig.auth.create_profile("", Role::Viewer).await, Err(Refusal::BadName));
         assert_eq!(rig.auth.people().await.unwrap().len(), before + 1);
         rig.auth.delete_profile(FREDERIK, oma.id).await.unwrap();

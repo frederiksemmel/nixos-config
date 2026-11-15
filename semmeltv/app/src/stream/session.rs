@@ -212,13 +212,19 @@ impl Session {
             .arg(self.playlist(number));
         for track in &self.spec.subtitles {
             command
-                .args(["-map", &format!("0:s:{track}"), "-c:s", "webvtt", "-flush_packets", "1", "-f", "webvtt"])
+                .args([
+                    "-map",
+                    &format!("0:s:{track}"),
+                    "-c:s",
+                    "webvtt",
+                    "-flush_packets",
+                    "1",
+                    "-f",
+                    "webvtt",
+                ])
                 .arg(self.subtitle_file(number, *track));
         }
-        command
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .kill_on_drop(true);
+        command.stdin(Stdio::null()).stdout(Stdio::null()).kill_on_drop(true);
         if let Ok(log) = std::fs::File::create(self.log(number)) {
             command.stderr(log);
         }
@@ -538,7 +544,10 @@ impl Session {
                 continue;
             };
             for cue in vtt::cues(&text) {
-                if cue.start >= from && cue.start < to && seen.insert(((cue.start * 1000.0).round() as i64, cue.text.join("\n"))) {
+                if cue.start >= from
+                    && cue.start < to
+                    && seen.insert(((cue.start * 1000.0).round() as i64, cue.text.join("\n")))
+                {
                     found.push(cue);
                 }
             }
@@ -752,8 +761,14 @@ mod tests {
             run: Some(run_through(2905.0)),
             ..State::default()
         };
-        assert!(!session.should_restart(&state, 291), "the run is still making segment 291");
-        assert!(!session.should_restart(&state, 293), "the run is close enough to reach segment 293");
+        assert!(
+            !session.should_restart(&state, 291),
+            "the run is still making segment 291"
+        );
+        assert!(
+            !session.should_restart(&state, 293),
+            "the run is close enough to reach segment 293"
+        );
     }
 
     #[test]

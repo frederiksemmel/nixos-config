@@ -16,8 +16,16 @@ pub struct Offer {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Search {
-    Movie { title: String, year: Option<u16>, imdb: Option<String> },
-    Tv { title: String, season: u32, episode: Option<u32> },
+    Movie {
+        title: String,
+        year: Option<u16>,
+        imdb: Option<String>,
+    },
+    Tv {
+        title: String,
+        season: u32,
+        episode: Option<u32>,
+    },
 }
 
 pub struct Torznab {
@@ -129,7 +137,10 @@ fn child<'a>(item: roxmltree::Node<'a, 'a>, name: &str) -> Option<&'a str> {
 
 fn infohash_from_magnet(magnet: &str) -> Option<String> {
     let start = magnet.find("urn:btih:")? + "urn:btih:".len();
-    let hash: String = magnet[start..].chars().take_while(char::is_ascii_alphanumeric).collect();
+    let hash: String = magnet[start..]
+        .chars()
+        .take_while(char::is_ascii_alphanumeric)
+        .collect();
     (hash.len() == 40).then(|| hash.to_lowercase())
 }
 
@@ -153,8 +164,12 @@ pub fn parse(xml: &str) -> Result<Vec<Offer>, String> {
             let size = attribute(item, "size")
                 .or_else(|| child(item, "size"))
                 .and_then(|size| size.parse().ok())?;
-            let seeders = attribute(item, "seeders").and_then(|seeders| seeders.parse().ok()).unwrap_or(0);
-            let peers = attribute(item, "peers").and_then(|peers| peers.parse().ok()).unwrap_or(seeders);
+            let seeders = attribute(item, "seeders")
+                .and_then(|seeders| seeders.parse().ok())
+                .unwrap_or(0);
+            let peers = attribute(item, "peers")
+                .and_then(|peers| peers.parse().ok())
+                .unwrap_or(seeders);
             let indexer = child(item, "jackettindexer").unwrap_or("").to_string();
             Some(Offer {
                 name,

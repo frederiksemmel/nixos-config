@@ -1,6 +1,6 @@
 use crate::api;
-use crate::core::{Core, Request};
 use crate::auth::gate::Who;
+use crate::core::{Core, Request};
 use crate::db::{self, Db};
 use crate::profile::ProfileId;
 use crate::progress::Tracks;
@@ -563,7 +563,12 @@ impl Subtitles {
     }
 
     pub fn file_delay(&self, file: &Path) -> f64 {
-        self.state.lock().unwrap().files.get(file).map_or(0.0, |remembered| remembered.delay)
+        self.state
+            .lock()
+            .unwrap()
+            .files
+            .get(file)
+            .map_or(0.0, |remembered| remembered.delay)
     }
 
     pub fn plays(&self, file: &Path) -> bool {
@@ -886,7 +891,11 @@ mod tests {
         assert_eq!(playing.tracks[2].title.as_deref(), Some("French SRT"));
         let unnamed = Track::parse(&json!({ "id": 4, "type": "sub" }), "sub").unwrap();
         assert_eq!(unnamed.label, "Track 4");
-        let titled = Track::parse(&json!({ "id": 5, "type": "sub", "lang": "xx", "title": "Commentary" }), "sub").unwrap();
+        let titled = Track::parse(
+            &json!({ "id": 5, "type": "sub", "lang": "xx", "title": "Commentary" }),
+            "sub",
+        )
+        .unwrap();
         assert_eq!(titled.label, "Commentary");
         assert_eq!(
             Track::parse(&json!({ "id": 6, "type": "sub", "lang": "ger" }), "sub")
@@ -1066,7 +1075,11 @@ mod tests {
             ..Settings::default()
         };
         subtitles.save(ProfileId(2), big.clone()).await.unwrap();
-        assert_eq!(subtitles.settings(), Settings::default(), "Mami's change leaves the playing style alone");
+        assert_eq!(
+            subtitles.settings(),
+            Settings::default(),
+            "Mami's change leaves the playing style alone"
+        );
         assert_eq!(subtitles.settings_of(ProfileId(2)), big);
         subtitles.set_owner(ProfileId(2));
         assert_eq!(subtitles.settings(), big);
@@ -1228,10 +1241,13 @@ mod tests {
     async fn library_subtitles_are_added_once_the_file_loads_and_shown_when_wanted() {
         let subtitles = Subtitles::default();
         subtitles
-            .save(ProfileId::FIRST, Settings {
-                shown: true,
-                ..Settings::default()
-            })
+            .save(
+                ProfileId::FIRST,
+                Settings {
+                    shown: true,
+                    ..Settings::default()
+                },
+            )
             .await
             .unwrap();
         let film = Path::new("/lib/Movies/Airplane 1980/Airplane.mp4");

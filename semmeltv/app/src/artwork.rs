@@ -250,7 +250,9 @@ impl<S: Source> Run<'_, S> {
                 None => match self.source.person_imdb(person) {
                     Ok(imdb) => imdb,
                     Err(error) => {
-                        self.summary.problems.push(format!("{label}: IMDb id of {} failed: {error}", member.name));
+                        self.summary
+                            .problems
+                            .push(format!("{label}: IMDb id of {} failed: {error}", member.name));
                         None
                     }
                 },

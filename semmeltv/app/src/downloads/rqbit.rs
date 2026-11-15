@@ -87,7 +87,10 @@ impl Rqbit {
         if status.is_success() {
             Ok(body)
         } else {
-            Err(format!("rqbit {what}: HTTP {status}: {}", body.chars().take(300).collect::<String>()))
+            Err(format!(
+                "rqbit {what}: HTTP {status}: {}",
+                body.chars().take(300).collect::<String>()
+            ))
         }
     }
 
@@ -101,9 +104,7 @@ impl Rqbit {
         for (name, value) in query {
             request = request.query(*name, value);
         }
-        let response = request
-            .send(body)
-            .map_err(|error| format!("rqbit {path}: {error}"))?;
+        let response = request.send(body).map_err(|error| format!("rqbit {path}: {error}"))?;
         self.answer(response, path)
     }
 

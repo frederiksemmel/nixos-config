@@ -205,7 +205,10 @@ impl Core {
             headphones,
         } = setup;
         let saved = cache.saved_manifest();
-        let library = match library::listed(&root, &saved).await.filter(|library| !library.is_empty()) {
+        let library = match library::listed(&root, &saved)
+            .await
+            .filter(|library| !library.is_empty())
+        {
             Some(library) => library,
             None => library::listed(&root, &meta.join(crate::manifest::FILE_NAME))
                 .await
@@ -389,7 +392,13 @@ impl Core {
     }
 
     pub async fn profile_name(&self, profile: ProfileId) -> Option<String> {
-        self.parts.db.profile(profile).await.ok().flatten().map(|found| found.name)
+        self.parts
+            .db
+            .profile(profile)
+            .await
+            .ok()
+            .flatten()
+            .map(|found| found.name)
     }
 
     pub fn storage(&self) -> Option<storage::Report> {
@@ -415,7 +424,11 @@ impl Core {
 
     pub fn recount(&self, video: &Path) {
         let count = sidecar::find(video).len();
-        self.published.sidecars.write().unwrap().insert(video.to_path_buf(), count);
+        self.published
+            .sidecars
+            .write()
+            .unwrap()
+            .insert(video.to_path_buf(), count);
     }
 
     pub(crate) fn db(&self) -> &Db {

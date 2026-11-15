@@ -785,7 +785,12 @@ fn download(request: &Request, found: &Found) -> Action {
         SeasonChoice::Number(number) => Some(number),
         SeasonChoice::Next => match show {
             Some(show) => Some(show.last_season() + 1),
-            None => return Action::Refuse(format!("\"{}\" is not in the library, so say which season", request.title)),
+            None => {
+                return Action::Refuse(format!(
+                    "\"{}\" is not in the library, so say which season",
+                    request.title
+                ));
+            }
         },
         SeasonChoice::Unspecified => None,
     };

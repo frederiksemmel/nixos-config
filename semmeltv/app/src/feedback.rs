@@ -111,8 +111,18 @@ fn civil(seconds: u64) -> (String, String) {
     let date = Date::from_unix(seconds);
     let of_day = seconds % 86_400;
     let (hour, minute, second) = (of_day / 3600, of_day / 60 % 60, of_day % 60);
-    let compact = format!("{:04}{:02}{:02}-{hour:02}{minute:02}{second:02}", date.year(), date.month(), date.day());
-    let spoken = format!("{:04}-{:02}-{:02} {hour:02}:{minute:02}:{second:02} UTC", date.year(), date.month(), date.day());
+    let compact = format!(
+        "{:04}{:02}{:02}-{hour:02}{minute:02}{second:02}",
+        date.year(),
+        date.month(),
+        date.day()
+    );
+    let spoken = format!(
+        "{:04}-{:02}-{:02} {hour:02}:{minute:02}:{second:02} UTC",
+        date.year(),
+        date.month(),
+        date.day()
+    );
     (compact, spoken)
 }
 
@@ -185,7 +195,10 @@ async fn journal(args: &[&str], problems: &mut Vec<String>) -> Vec<String> {
     let mut all = vec!["--no-pager", "-o", "short-iso", "--since", "-20min"];
     all.extend_from_slice(args);
     match run("journalctl", &all).await {
-        Ok(out) => String::from_utf8_lossy(&out).lines().map(|line| cut(line, 1000)).collect(),
+        Ok(out) => String::from_utf8_lossy(&out)
+            .lines()
+            .map(|line| cut(line, 1000))
+            .collect(),
         Err(problem) => {
             problems.push(problem);
             Vec::new()
@@ -194,7 +207,10 @@ async fn journal(args: &[&str], problems: &mut Vec<String>) -> Vec<String> {
 }
 
 async fn read(path: &str) -> Option<String> {
-    tokio::fs::read_to_string(path).await.ok().map(|text| text.trim().to_string())
+    tokio::fs::read_to_string(path)
+        .await
+        .ok()
+        .map(|text| text.trim().to_string())
 }
 
 fn meminfo_available(meminfo: &str) -> Option<u64> {
@@ -207,7 +223,11 @@ impl Feedback {
     async fn snapshot(&self, id: &str) -> Snapshot {
         let mut problems = Vec::new();
         let app_journal = journal(&["-t", "cage", "-n", "250"], &mut problems).await;
-        let services_journal = journal(&["-u", "semmeltv-web", "-u", "semmeltv-mount", "-u", "nginx", "-n", "80"], &mut problems).await;
+        let services_journal = journal(
+            &["-u", "semmeltv-web", "-u", "semmeltv-mount", "-u", "nginx", "-n", "80"],
+            &mut problems,
+        )
+        .await;
         let kernel_journal = journal(&["-k", "-p", "warning", "-n", "30"], &mut problems).await;
         let screenshot = match &self.grim {
             Some(grim) => {
@@ -261,7 +281,9 @@ impl Feedback {
         tokio::fs::create_dir_all(&self.dir)
             .await
             .map_err(|error| format!("{}: {error}", self.dir.display()))?;
-        let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs());
+        let at = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |since| since.as_secs());
         let id = new_id(at);
         let mut problems = Vec::new();
         let screenshot = match sent.screenshot.as_deref().map(picture) {
@@ -293,7 +315,10 @@ impl Feedback {
                 id: person.id.0,
                 name: person.name,
             }),
-            device: client.get("device").and_then(Value::as_str).map(|device| cut(device, 80)),
+            device: client
+                .get("device")
+                .and_then(Value::as_str)
+                .map(|device| cut(device, 80)),
             page: sent.page.map(|page| cut(&page, 300)),
             message,
             screenshot,
@@ -316,8 +341,12 @@ impl Feedback {
     }
 
     async fn summaries(&self) -> Vec<Summary> {
-        let text = tokio::fs::read_to_string(self.dir.join(INDEX)).await.unwrap_or_default();
-        text.lines().filter_map(|line| serde_json::from_str(line).ok()).collect()
+        let text = tokio::fs::read_to_string(self.dir.join(INDEX))
+            .await
+            .unwrap_or_default();
+        text.lines()
+            .filter_map(|line| serde_json::from_str(line).ok())
+            .collect()
     }
 
     async fn prune(&self, mut index: Vec<Summary>) {
@@ -341,16 +370,18 @@ impl Feedback {
     }
 }
 
-async fn send(
-    State(feedback): State<Feedback>,
-    person: Option<Extension<Person>>,
-    Json(sent): Json<Sent>,
-) -> Response {
+async fn send(State(feedback): State<Feedback>, person: Option<Extension<Person>>, Json(sent): Json<Sent>) -> Response {
     let person = person.map(|Extension(person)| person);
-    let who = person.as_ref().map_or("someone".to_string(), |person| person.name.clone());
+    let who = person
+        .as_ref()
+        .map_or("someone".to_string(), |person| person.name.clone());
     match feedback.store(person, sent).await {
         Ok(summary) => {
-            eprintln!("feedback: {} from {who}: {}", summary.id, cut(&summary.message, 200).replace('\n', " "));
+            eprintln!(
+                "feedback: {} from {who}: {}",
+                summary.id,
+                cut(&summary.message, 200).replace('\n', " ")
+            );
             (StatusCode::CREATED, Json(json!({ "id": summary.id }))).into_response()
         }
         Err(problem) => {
@@ -388,7 +419,14 @@ async fn file(State(feedback): State<Feedback>, Path(name): Path<String>) -> Res
         return StatusCode::NOT_FOUND.into_response();
     }
     match tokio::fs::read(feedback.dir.join(&name)).await {
-        Ok(body) => ([(header::CONTENT_TYPE, kind), (header::CACHE_CONTROL, "private, max-age=86400")], body).into_response(),
+        Ok(body) => (
+            [
+                (header::CONTENT_TYPE, kind),
+                (header::CACHE_CONTROL, "private, max-age=86400"),
+            ],
+            body,
+        )
+            .into_response(),
         Err(_) => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -408,7 +446,10 @@ mod tests {
 
     #[test]
     fn ids_sort_by_time_and_say_it() {
-        assert_eq!(civil(1_794_748_331), ("20261115-131211".to_string(), "2026-11-15 13:12:11 UTC".to_string()));
+        assert_eq!(
+            civil(1_794_748_331),
+            ("20261115-131211".to_string(), "2026-11-15 13:12:11 UTC".to_string())
+        );
         let id = new_id(1_794_748_331);
         assert!(id.starts_with("20261115-131211-") && valid_id(&id));
     }
@@ -445,8 +486,10 @@ mod tests {
         let summary = runtime.block_on(feedback.store(None, sent)).unwrap();
         let name = summary.screenshot.unwrap();
         assert_eq!(name, format!("{}-phone.jpg", summary.id));
-        assert_eq!(std::fs::read(dir.join(&name)).unwrap(), [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]);
+        assert_eq!(
+            std::fs::read(dir.join(&name)).unwrap(),
+            [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]
+        );
         let _ = std::fs::remove_dir_all(dir);
     }
-
 }

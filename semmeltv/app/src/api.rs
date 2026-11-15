@@ -1,5 +1,7 @@
 use crate::artwork;
 use crate::audio;
+use crate::auth::gate::Who;
+use crate::auth::{self, gate::Gate};
 use crate::bus::{Bus, Event};
 use crate::core::sound::Refusal;
 use crate::core::{Core, Outcome, Request, ScreenCommand, ScreenKind, Seek};
@@ -8,11 +10,10 @@ use crate::heatmap;
 use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::manifest::{About, Date};
-use crate::auth::gate::Who;
 use crate::progress::Progress;
+use crate::screen;
 use crate::seek::Direction;
 use crate::sidecar::{self, Sidecar};
-use crate::screen;
 use crate::storage;
 use crate::stream;
 use crate::subfetch::{self, Match, Wanted};
@@ -27,7 +28,6 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
 use axum::{Json, Router, middleware};
-use crate::auth::{self, gate::Gate};
 use serde::{Deserialize, Serialize};
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
@@ -84,7 +84,12 @@ enum ScreenRequest {
     },
 }
 
-fn pick_of(movie: Option<String>, show: Option<String>, season: Option<u32>, episode: Option<u32>) -> Result<Pick, String> {
+fn pick_of(
+    movie: Option<String>,
+    show: Option<String>,
+    season: Option<u32>,
+    episode: Option<u32>,
+) -> Result<Pick, String> {
     match (movie, show) {
         (Some(key), None) if season.is_none() && episode.is_none() => Ok(Pick::Movie(key)),
         (Some(_), None) => Err("a movie has no season or episode".to_string()),
@@ -1199,7 +1204,11 @@ async fn fetch_subtitles(State(api): State<Api>, Who(profile): Who, Json(body): 
             video: chosen.video.clone(),
             sidecar,
         };
-        shown = api.core.ask(Request::Subtitles(add)).await.is_some_and(|outcome| outcome.ok);
+        shown = api
+            .core
+            .ask(Request::Subtitles(add))
+            .await
+            .is_some_and(|outcome| outcome.ok);
     }
     let message = if shown {
         format!("{label} subtitles added")
@@ -1432,8 +1441,8 @@ mod tests {
     use super::*;
     use crate::bus::{NowPlaying, Voice};
     use crate::import::library_from_paths;
-    use crate::progress::Position;
     use crate::profile::ProfileId;
+    use crate::progress::Position;
     use serde_json::{Value, json};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
@@ -1449,14 +1458,22 @@ mod tests {
         assert!(matches!(
             play.unwrap(),
             ScreenCommand::Play {
-                pick: Pick::Show { season: Some(1), episode: Some(2), .. },
+                pick: Pick::Show {
+                    season: Some(1),
+                    episode: Some(2),
+                    ..
+                },
                 ..
             }
         ));
         let resume = read(json!({ "action": "resume", "device": device, "movie": "dune-2021", "position": 61.0 }));
         assert!(matches!(
             resume.unwrap(),
-            ScreenCommand::Resume { pick: Pick::Movie(_), position: 61.0, .. }
+            ScreenCommand::Resume {
+                pick: Pick::Movie(_),
+                position: 61.0,
+                ..
+            }
         ));
         assert!(read(json!({ "action": "play", "device": device, "movie": "dune-2021", "show": "dark" })).is_err());
         assert!(read(json!({ "action": "play", "device": device })).is_err());

@@ -88,9 +88,8 @@ async fn serve() -> Result<(), String> {
     let public = public::Public {
         api: env::var("SEMMELTV_API_PUBLIC_URL").unwrap_or_default(),
     };
-    let downloads = downloads::Downloads::new(
-        env::var("SEMMELTV_DOWNLOADS_URL").unwrap_or_else(|_| DEFAULT_DOWNLOADS.to_string()),
-    );
+    let downloads =
+        downloads::Downloads::new(env::var("SEMMELTV_DOWNLOADS_URL").unwrap_or_else(|_| DEFAULT_DOWNLOADS.to_string()));
     topcoat::start(router(api, downloads, live, public, assets))
         .await
         .map_err(|error| error.to_string())

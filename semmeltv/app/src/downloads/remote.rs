@@ -36,7 +36,13 @@ impl Downloads {
             .map_err(|error| format!("downloads: {error}"))
     }
 
-    pub fn search(&self, title: String, season: Option<u32>, episode: Option<u32>, said: String) -> Result<Proposal, String> {
+    pub fn search(
+        &self,
+        title: String,
+        season: Option<u32>,
+        episode: Option<u32>,
+        said: String,
+    ) -> Result<Proposal, String> {
         let body = SearchBody {
             text: Some(said),
             wish: Some(Wish {

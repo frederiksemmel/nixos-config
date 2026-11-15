@@ -255,12 +255,7 @@ fn clock() -> String {
     let seconds = now();
     let date = Date::from_unix(seconds);
     let day = seconds % 86_400;
-    format!(
-        "{date} {:02}:{:02}:{:02}",
-        day / 3600,
-        day % 3600 / 60,
-        day % 60
-    )
+    format!("{date} {:02}:{:02}:{:02}", day / 3600, day % 3600 / 60, day % 60)
 }
 
 fn new_id() -> String {
@@ -387,7 +382,11 @@ impl Service {
             .ok()
             .and_then(|bytes| serde_json::from_slice(&bytes).ok())
             .unwrap_or_default();
-        self.book.lock().unwrap().jobs = saved.jobs.into_iter().filter(|job| job.stage != Stage::Stopped).collect();
+        self.book.lock().unwrap().jobs = saved
+            .jobs
+            .into_iter()
+            .filter(|job| job.stage != Stage::Stopped)
+            .collect();
     }
 
     fn update(&self, id: &str, change: impl FnOnce(&mut Job)) {
@@ -658,7 +657,9 @@ impl Service {
             part.total = part.files.iter().map(|file| file.size).sum();
             let files: Vec<String> = part.files.iter().map(|file| file.path.clone()).collect();
             let name = part.part.name.clone();
-            self.update(&job.id, |job| job.note(format!("{name}: {} files: {}", files.len(), files.join(", "))));
+            self.update(&job.id, |job| {
+                job.note(format!("{name}: {} files: {}", files.len(), files.join(", ")))
+            });
         }
         self.update(&job.id, |job| {
             job.parts = parts;
@@ -701,7 +702,11 @@ impl Service {
             }
             if part.phase == PartPhase::Complete {
                 let paused = self.rqbit.pause(&hash);
-                let after = self.rqbit.stats(&hash).map(|stats| stats.uploaded_bytes).unwrap_or(part.uploaded);
+                let after = self
+                    .rqbit
+                    .stats(&hash)
+                    .map(|stats| stats.uploaded_bytes)
+                    .unwrap_or(part.uploaded);
                 part.uploaded = after;
                 if paused.is_ok() {
                     part.phase = PartPhase::Done;
@@ -765,7 +770,8 @@ impl Service {
         for part in &job.parts {
             for file in &part.files {
                 let local = Path::new(&part.folder).join(&file.path);
-                let Some(destination) = deliver::destination(&job.target, Path::new(&file.path), part.part.info.as_deref())
+                let Some(destination) =
+                    deliver::destination(&job.target, Path::new(&file.path), part.part.info.as_deref())
                 else {
                     return self.fail(id, format!("No place in the library for {}", file.path));
                 };
@@ -1068,7 +1074,10 @@ mod tests {
         assert_eq!(PartPhase::from_stats(false, true), PartPhase::Checking);
         assert_eq!(PartPhase::from_stats(false, false), PartPhase::Downloading);
         assert_eq!(PartPhase::from_stats(true, true), PartPhase::Complete);
-        assert_eq!(serde_json::to_value(PartPhase::Done).unwrap(), serde_json::json!("done"));
+        assert_eq!(
+            serde_json::to_value(PartPhase::Done).unwrap(),
+            serde_json::json!("done")
+        );
     }
 
     fn proposal(answer: Answer) -> serde_json::Value {
@@ -1095,7 +1104,10 @@ mod tests {
             season: Some(2),
             episode: None,
         }));
-        assert_eq!((&question["outcome"], &question["season"]), (&serde_json::json!("question"), &serde_json::json!(2)));
+        assert_eq!(
+            (&question["outcome"], &question["season"]),
+            (&serde_json::json!("question"), &serde_json::json!(2))
+        );
         assert!(question.get("choices").is_none());
         let read: Proposal = serde_json::from_value(question).unwrap();
         assert!(read.best().is_none());

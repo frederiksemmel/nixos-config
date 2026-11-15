@@ -286,7 +286,11 @@ impl About {
                     .imdb
                     .as_ref()
                     .map_or(String::new(), |imdb| format!(", imdb = {}", quoted(imdb)));
-                let _ = writeln!(text, "  {{ name = {}{character}{person}{imdb} }},", quoted(&member.name));
+                let _ = writeln!(
+                    text,
+                    "  {{ name = {}{character}{person}{imdb} }},",
+                    quoted(&member.name)
+                );
             }
             let _ = writeln!(text, "]");
         }
@@ -489,7 +493,10 @@ pub enum ReadError {
 }
 
 pub fn temporary(path: &Path) -> std::path::PathBuf {
-    let name = path.file_name().map(|name| name.to_string_lossy().into_owned()).unwrap_or_default();
+    let name = path
+        .file_name()
+        .map(|name| name.to_string_lossy().into_owned())
+        .unwrap_or_default();
     path.with_file_name(format!(".{name}.tmp"))
 }
 

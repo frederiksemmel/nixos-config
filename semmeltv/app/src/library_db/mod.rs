@@ -21,7 +21,9 @@ pub async fn read(path: &Path) -> Result<Manifest, ReadError> {
     if !path.exists() {
         return Err(ReadError::Unreadable(io::Error::from(io::ErrorKind::NotFound)));
     }
-    read_stored(path).await.map_err(|error| ReadError::Invalid(error.to_string()))
+    read_stored(path)
+        .await
+        .map_err(|error| ReadError::Invalid(error.to_string()))
 }
 
 async fn read_stored(path: &Path) -> toasty::Result<Manifest> {
@@ -70,15 +72,18 @@ async fn unknown_migrations(db: &mut toasty::Db) -> toasty::Result<Option<String
         .column_types([Type::I64])
         .exec(db)
         .await?;
-    let known: HashSet<i64> = MIGRATIONS.migrations().iter().map(|migration| migration.id() as i64).collect();
+    let known: HashSet<i64> = MIGRATIONS
+        .migrations()
+        .iter()
+        .map(|migration| migration.id() as i64)
+        .collect();
     let unknown = applied
         .iter()
         .filter_map(number)
         .filter(|id| !known.contains(id))
         .count();
-    Ok((unknown > 0).then(|| {
-        format!("the library was written by a newer SemmelTV ({unknown} migrations this one does not know)")
-    }))
+    Ok((unknown > 0)
+        .then(|| format!("the library was written by a newer SemmelTV ({unknown} migrations this one does not know)")))
 }
 
 fn number(row: &Value) -> Option<i64> {
@@ -202,23 +207,42 @@ fn same_show(stored: &ShowEntry, wanted: &ShowEntry) -> bool {
 
 async fn store(executor: &mut dyn toasty::Executor, wanted: Manifest) -> toasty::Result<()> {
     let stored = load(executor).await?;
-    let mut shows: BTreeMap<i64, ShowEntry> = stored.show.iter().cloned().map(|show| (show.id.unwrap_or_default(), show)).collect();
+    let mut shows: BTreeMap<i64, ShowEntry> = stored
+        .show
+        .iter()
+        .cloned()
+        .map(|show| (show.id.unwrap_or_default(), show))
+        .collect();
     let mut episodes: BTreeMap<i64, (i64, EpisodeEntry)> = stored
         .show
         .iter()
-        .flat_map(|show| show.episodes.iter().map(move |episode| (show.id.unwrap_or_default(), episode.clone())))
+        .flat_map(|show| {
+            show.episodes
+                .iter()
+                .map(move |episode| (show.id.unwrap_or_default(), episode.clone()))
+        })
         .map(|(show, episode)| (episode.id.unwrap_or_default(), (show, episode)))
         .collect();
-    let mut movies: BTreeMap<i64, MovieEntry> = stored.movie.iter().cloned().map(|movie| (movie.id.unwrap_or_default(), movie)).collect();
+    let mut movies: BTreeMap<i64, MovieEntry> = stored
+        .movie
+        .iter()
+        .cloned()
+        .map(|movie| (movie.id.unwrap_or_default(), movie))
+        .collect();
     let show_by_title: HashMap<String, i64> = shows.iter().map(|(id, show)| (show.title.clone(), *id)).collect();
-    let episode_by_path: HashMap<String, i64> = episodes.iter().map(|(id, (_, episode))| (episode.path.clone(), *id)).collect();
+    let episode_by_path: HashMap<String, i64> = episodes
+        .iter()
+        .map(|(id, (_, episode))| (episode.path.clone(), *id))
+        .collect();
     let movie_by_path: HashMap<String, i64> = movies.iter().map(|(id, movie)| (movie.path.clone(), *id)).collect();
 
     for show in &wanted.show {
-        let known = show
-            .id
-            .filter(|id| shows.contains_key(id))
-            .or_else(|| show_by_title.get(&show.title).copied().filter(|id| shows.contains_key(id)));
+        let known = show.id.filter(|id| shows.contains_key(id)).or_else(|| {
+            show_by_title
+                .get(&show.title)
+                .copied()
+                .filter(|id| shows.contains_key(id))
+        });
         let show_id = match known {
             Some(id) => {
                 let before = shows.remove(&id).expect("known show");
@@ -260,10 +284,12 @@ async fn store(executor: &mut dyn toasty::Executor, wanted: Manifest) -> toasty:
             }
         };
         for episode in &show.episodes {
-            let known = episode
-                .id
-                .filter(|id| episodes.contains_key(id))
-                .or_else(|| episode_by_path.get(&episode.path).copied().filter(|id| episodes.contains_key(id)));
+            let known = episode.id.filter(|id| episodes.contains_key(id)).or_else(|| {
+                episode_by_path
+                    .get(&episode.path)
+                    .copied()
+                    .filter(|id| episodes.contains_key(id))
+            });
             match known {
                 Some(id) => {
                     let (before_show, before) = episodes.remove(&id).expect("known episode");
@@ -313,10 +339,12 @@ async fn store(executor: &mut dyn toasty::Executor, wanted: Manifest) -> toasty:
         }
     }
     for movie in &wanted.movie {
-        let known = movie
-            .id
-            .filter(|id| movies.contains_key(id))
-            .or_else(|| movie_by_path.get(&movie.path).copied().filter(|id| movies.contains_key(id)));
+        let known = movie.id.filter(|id| movies.contains_key(id)).or_else(|| {
+            movie_by_path
+                .get(&movie.path)
+                .copied()
+                .filter(|id| movies.contains_key(id))
+        });
         match known {
             Some(id) => {
                 let before = movies.remove(&id).expect("known movie");
@@ -418,7 +446,9 @@ pub async fn toasty_cli(file: &Path, arguments: Vec<String>) -> db::Result<()> {
 pub fn from_toml(toml: &Path, file: &Path) -> Result<Manifest, String> {
     let text = fs::read_to_string(toml).map_err(|error| format!("{}: {error}", toml.display()))?;
     let manifest = Manifest::parse(&text).map_err(|error| format!("{}: {error}", toml.display()))?;
-    manifest.write(file).map_err(|error| format!("{}: {error}", file.display()))?;
+    manifest
+        .write(file)
+        .map_err(|error| format!("{}: {error}", file.display()))?;
     Manifest::read(file).map_err(|_| format!("{} could not be read back", file.display()))
 }
 
@@ -515,7 +545,12 @@ review = true
         assert_eq!(second.show[0].episodes[0].path, "Series/Dark/Season 1/S01E01.mkv");
         let up_again = second.movie.iter().find(|movie| movie.title == "Up").unwrap();
         assert_eq!((up_again.id, up_again.ratings.rt), (up, Some(98)));
-        assert!(second.movie.iter().any(|movie| movie.title == "Heat" && movie.id.is_some() && movie.id != up));
+        assert!(
+            second
+                .movie
+                .iter()
+                .any(|movie| movie.title == "Heat" && movie.id.is_some() && movie.id != up)
+        );
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

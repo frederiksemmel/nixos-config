@@ -35,7 +35,10 @@ fn for_claude(report: &FeedbackSummary, dir: &str) -> String {
 
 #[component]
 async fn report_row(report: &FeedbackSummary, dir: &str, api: &str, now: u64) -> Result<impl View> {
-    let who = report.person.as_ref().map_or("Someone".to_string(), |person| person.name.clone());
+    let who = report
+        .person
+        .as_ref()
+        .map_or("Someone".to_string(), |person| person.name.clone());
     let copy = format!("copy-{}", report.id);
     let pictures: Vec<(String, &'static str)> = [
         report.screenshot.as_ref().map(|name| (name, "Their screenshot")),
@@ -75,7 +78,9 @@ async fn feedback_page(cx: &Cx) -> Result<impl View> {
     let list = Api::of(cx).feedback().await;
     let empty = list.as_ref().is_ok_and(|list| list.reports.is_empty());
     let api = app_context::<Public>(cx).api.clone();
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs());
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
     Ok(view! {
         <article class="page feedback-page">
             back(href: "/settings")
@@ -119,7 +124,9 @@ mod tests {
             at: 0,
             when: "2026-11-15 13:12:11 UTC".to_string(),
             host: "semmeltv5".to_string(),
-            person: Some(Reporter { name: "Frederik".to_string() }),
+            person: Some(Reporter {
+                name: "Frederik".to_string(),
+            }),
             device: Some("iPhone 1a2b".to_string()),
             page: Some("/shows/dark".to_string()),
             message: "The episode list jumped".to_string(),

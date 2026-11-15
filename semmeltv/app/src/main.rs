@@ -3,8 +3,8 @@ mod artwork;
 mod audio;
 mod auth;
 mod bus;
-mod card;
 mod cache;
+mod card;
 mod cec;
 mod client_log;
 mod command;
@@ -33,8 +33,8 @@ mod parse;
 mod player;
 mod profile;
 mod progress;
-mod seek;
 mod screen;
+mod seek;
 mod segments;
 mod sidecar;
 mod storage;
@@ -211,7 +211,9 @@ fn wake_word(args: &Args) -> Option<voice::WakeWord> {
 }
 
 async fn open_db(args: &Args) -> Result<Db, String> {
-    Db::open(&args.db).await.map_err(|error| format!("{}: {error}", args.db.display()))
+    Db::open(&args.db)
+        .await
+        .map_err(|error| format!("{}: {error}", args.db.display()))
 }
 
 fn waiting<T>(work: impl Future<Output = T>) -> Result<T, String> {
@@ -266,9 +268,13 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
     let wake_word = wake_word(&args);
     let meta = args.meta().to_path_buf();
     let kind = env::var("SEMMELTV_TV_KIND").ok().filter(|kind| !kind.is_empty());
-    let feedback = env_path("SEMMELTV_FEEDBACK")
-        .unwrap_or_else(|| args.db.parent().unwrap_or(Path::new(".")).join("feedback"));
-    let gate = if args.api.is_some() { sign_in_gate(&db).await? } else { None };
+    let feedback =
+        env_path("SEMMELTV_FEEDBACK").unwrap_or_else(|| args.db.parent().unwrap_or(Path::new(".")).join("feedback"));
+    let gate = if args.api.is_some() {
+        sign_in_gate(&db).await?
+    } else {
+        None
+    };
     let api = args.api.map(|address| api::Config {
         address,
         library: args.library.clone(),
@@ -306,12 +312,18 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
 }
 
 fn run_toasty(args: &Args) -> Result<(), String> {
-    let (which, rest) = args.toasty.split_first().ok_or("toasty needs tv or library, then a migration command")?;
+    let (which, rest) = args
+        .toasty
+        .split_first()
+        .ok_or("toasty needs tv or library, then a migration command")?;
     let rest = rest.to_vec();
     match which.as_str() {
         "tv" => waiting(db::toasty_cli(&args.db, rest))?,
         "library" => {
-            let file = args.manifest.clone().unwrap_or_else(|| env::temp_dir().join("semmeltv-library-scratch.db"));
+            let file = args
+                .manifest
+                .clone()
+                .unwrap_or_else(|| env::temp_dir().join("semmeltv-library-scratch.db"));
             waiting(library_db::toasty_cli(&file, rest))?
         }
         other => return Err(format!("toasty {other}: say tv or library")),
@@ -320,10 +332,14 @@ fn run_toasty(args: &Args) -> Result<(), String> {
 }
 
 fn run_library(args: &Args) -> Result<(), String> {
-    let manifest = args.manifest.as_ref().ok_or("library needs --manifest FILE, the library.db")?;
+    let manifest = args
+        .manifest
+        .as_ref()
+        .ok_or("library needs --manifest FILE, the library.db")?;
     match args.toasty.iter().map(String::as_str).collect::<Vec<_>>().as_slice() {
         ["show"] => {
-            let library = manifest::Manifest::read(manifest).map_err(|error| format!("{}: {error:?}", manifest.display()))?;
+            let library =
+                manifest::Manifest::read(manifest).map_err(|error| format!("{}: {error:?}", manifest.display()))?;
             println!("{}", library.render());
             Ok(())
         }
@@ -412,18 +428,24 @@ fn print_card(words: &[String]) -> Result<(), String> {
     let [seconds, title, lines @ ..] = words else {
         return Err("card needs SECONDS and a TITLE, then any lines under it".to_string());
     };
-    let seconds = seconds.parse::<f64>().map_err(|_| format!("{seconds} is not a number of seconds"))?;
+    let seconds = seconds
+        .parse::<f64>()
+        .map_err(|_| format!("{seconds} is not a number of seconds"))?;
     let billing = card::Billing {
         title: title.clone(),
         lines: lines.to_vec(),
     };
-    println!("{}", card::frame(&billing, Duration::from_secs_f64(seconds.max(0.0)), 1.0));
+    println!(
+        "{}",
+        card::frame(&billing, Duration::from_secs_f64(seconds.max(0.0)), 1.0)
+    );
     Ok(())
 }
 
 async fn invite(args: &Args) -> Result<(), String> {
     let db = open_db(args).await?;
-    let origins = env_text("SEMMELTV_ORIGINS").ok_or("invite needs SEMMELTV_ORIGINS, the addresses people sign in on")?;
+    let origins =
+        env_text("SEMMELTV_ORIGINS").ok_or("invite needs SEMMELTV_ORIGINS, the addresses people sign in on")?;
     let auth = auth::Auth::new(db, &[])?;
     let wanted = args.transcript.trim();
     let person = auth
@@ -433,8 +455,16 @@ async fn invite(args: &Args) -> Result<(), String> {
         .into_iter()
         .find(|person| person.name.eq_ignore_ascii_case(wanted))
         .ok_or_else(|| format!("There is no profile called {wanted}"))?;
-    let token = auth.invite(None, person.id).await.map_err(|refusal| refusal.to_string())?;
-    println!("Invite for {} ({}), open once within {} days:", person.name, person.role.name(), auth::INVITE_LIFETIME / 86400);
+    let token = auth
+        .invite(None, person.id)
+        .await
+        .map_err(|refusal| refusal.to_string())?;
+    println!(
+        "Invite for {} ({}), open once within {} days:",
+        person.name,
+        person.role.name(),
+        auth::INVITE_LIFETIME / 86400
+    );
     for origin in origins.split(',').map(str::trim).filter(|origin| !origin.is_empty()) {
         println!("  {}/invite/{token}", origin.trim_end_matches('/'));
     }
@@ -446,7 +476,10 @@ async fn sign_in_gate(db: &Db) -> Result<Option<auth::gate::Gate>, String> {
         eprintln!("api: SEMMELTV_ORIGINS is unset, so nobody signs in and anyone who reaches the API may use it");
         return Ok(None);
     };
-    let origins = origins.split(',').map(|origin| origin.trim().to_string()).filter(|origin| !origin.is_empty());
+    let origins = origins
+        .split(',')
+        .map(|origin| origin.trim().to_string())
+        .filter(|origin| !origin.is_empty());
     let origins = origins.collect::<Vec<_>>();
     let service = match env_path("SEMMELTV_SERVICE_TOKEN_FILE") {
         Some(file) => Some(
@@ -482,7 +515,10 @@ fn run_downloads(args: &Args) -> Result<(), String> {
         listen: env_text("SEMMELTV_DOWNLOADS_LISTEN").unwrap_or_else(|| "127.0.0.1:8092".to_string()),
         state: needed("SEMMELTV_DOWNLOADS_STATE")?.into(),
         downloads: needed("SEMMELTV_DOWNLOADS_DIR")?.into(),
-        torznab: needed("SEMMELTV_TORZNAB")?.split_whitespace().map(str::to_string).collect(),
+        torznab: needed("SEMMELTV_TORZNAB")?
+            .split_whitespace()
+            .map(str::to_string)
+            .collect(),
         torznab_key_file: env_path("SEMMELTV_TORZNAB_KEY_FILE"),
         rqbit: needed("SEMMELTV_RQBIT")?,
         quota: env_number("SEMMELTV_DOWNLOADS_QUOTA_GIB", 30)? * GIB,
@@ -559,7 +595,10 @@ fn run() -> Result<(), String> {
         "progress" => {
             let mut files: Vec<_> = stored_progress(&args).files.into_iter().collect();
             files.sort_by(|a, b| a.0.cmp(&b.0));
-            for (file, watched) in files.iter().filter(|(_, watched)| watched.stopped_at().is_some() || watched.finished()) {
+            for (file, watched) in files
+                .iter()
+                .filter(|(_, watched)| watched.stopped_at().is_some() || watched.finished())
+            {
                 println!(
                     "{:>8.1} {:>8} {:>8.1}  {}",
                     watched.stopped_at().unwrap_or(0.0),

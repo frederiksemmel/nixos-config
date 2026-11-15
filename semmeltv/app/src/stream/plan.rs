@@ -123,7 +123,9 @@ mod tests {
     fn subtitle_pieces_cover_the_video_to_its_end() {
         let playlist = subtitle_pieces(75.5, "3", 30.0);
         assert!(playlist.contains("#EXT-X-TARGETDURATION:30\n"));
-        assert!(playlist.contains("#EXTINF:30.000000,\n3-0.vtt\n#EXTINF:30.000000,\n3-1.vtt\n#EXTINF:15.500000,\n3-2.vtt\n#EXT-X-ENDLIST"));
+        assert!(playlist.contains(
+            "#EXTINF:30.000000,\n3-0.vtt\n#EXTINF:30.000000,\n3-1.vtt\n#EXTINF:15.500000,\n3-2.vtt\n#EXT-X-ENDLIST"
+        ));
     }
 
     #[test]

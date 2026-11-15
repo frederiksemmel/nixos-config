@@ -77,7 +77,11 @@ fn set_aside_unknown(file: &Path) -> Result<()> {
     if !file.exists() || fs::metadata(file)?.len() == 0 {
         return Ok(());
     }
-    let known: HashSet<i64> = MIGRATIONS.migrations().iter().map(|migration| migration.id() as i64).collect();
+    let known: HashSet<i64> = MIGRATIONS
+        .migrations()
+        .iter()
+        .map(|migration| migration.id() as i64)
+        .collect();
     let applied: Vec<i64> = {
         let connection = rusqlite::Connection::open(file)?;
         let tracked: bool = connection.query_row(
@@ -89,7 +93,9 @@ fn set_aside_unknown(file: &Path) -> Result<()> {
             return Ok(());
         }
         let mut statement = connection.prepare("SELECT id FROM __toasty_migrations")?;
-        statement.query_map([], |row| row.get(0))?.collect::<rusqlite::Result<_>>()?
+        statement
+            .query_map([], |row| row.get(0))?
+            .collect::<rusqlite::Result<_>>()?
     };
     if applied.iter().all(|id| known.contains(id)) {
         return Ok(());
@@ -130,7 +136,11 @@ impl Db {
             fs::create_dir_all(dir)?;
         }
         set_aside_unknown(file)?;
-        fs::OpenOptions::new().create(true).append(true).mode(0o600).open(file)?;
+        fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .mode(0o600)
+            .open(file)?;
         let driver = Sqlite::open(file)
             .journal_mode(JournalMode::Wal)
             .synchronous(Synchronous::Normal)
@@ -171,7 +181,10 @@ impl Db {
 
     pub async fn setting(&self, name: &str) -> Result<Option<String>> {
         let mut db = self.db.clone();
-        let found = StoredSetting::filter_by_name(name.to_string()).first().exec(&mut db).await?;
+        let found = StoredSetting::filter_by_name(name.to_string())
+            .first()
+            .exec(&mut db)
+            .await?;
         Ok(found.map(|setting| setting.value))
     }
 
@@ -184,7 +197,12 @@ impl Db {
                     .exec(&mut db)
                     .await?;
             }
-            None => StoredSetting::filter_by_name(name.to_string()).delete().exec(&mut db).await?,
+            None => {
+                StoredSetting::filter_by_name(name.to_string())
+                    .delete()
+                    .exec(&mut db)
+                    .await?
+            }
         }
         Ok(())
     }
@@ -210,9 +228,14 @@ impl Db {
     pub async fn subtitle_files(&self) -> Result<BTreeMap<PathBuf, Remembered>> {
         let mut db = self.db.clone();
         let fields = VideoFact::fields();
-        let rows = VideoFact::filter(fields.subtitle_delay().ne(0.0).or(fields.embedded_subtitles().is_some()))
-            .exec(&mut db)
-            .await?;
+        let rows = VideoFact::filter(
+            fields
+                .subtitle_delay()
+                .ne(0.0)
+                .or(fields.embedded_subtitles().is_some()),
+        )
+        .exec(&mut db)
+        .await?;
         let index = self.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
         Ok(rows
             .into_iter()
@@ -246,14 +269,19 @@ impl Db {
 
     pub async fn audio_prefs(&self, profile: ProfileId) -> Result<AudioPrefs> {
         let mut db = self.db.clone();
-        let stored = StoredAudioPrefs::filter_by_profile_id(profile.0).first().exec(&mut db).await?;
-        Ok(stored.map_or_else(AudioPrefs::default, |stored| match stored.headphones {
-            models::Headphones::Unpaired => AudioPrefs::Unpaired,
-            models::Headphones::Paired { address, listening } => AudioPrefs::Paired {
-                address,
-                output: if listening { Output::Headphones } else { Output::Tv },
-            },
-        }))
+        let stored = StoredAudioPrefs::filter_by_profile_id(profile.0)
+            .first()
+            .exec(&mut db)
+            .await?;
+        Ok(
+            stored.map_or_else(AudioPrefs::default, |stored| match stored.headphones {
+                models::Headphones::Unpaired => AudioPrefs::Unpaired,
+                models::Headphones::Paired { address, listening } => AudioPrefs::Paired {
+                    address,
+                    output: if listening { Output::Headphones } else { Output::Tv },
+                },
+            }),
+        )
     }
 
     pub async fn save_audio_prefs(&self, profile: ProfileId, prefs: &AudioPrefs) -> Result<()> {
@@ -270,20 +298,36 @@ impl Db {
 
     pub async fn dialogue(&self, profile: ProfileId) -> Result<bool> {
         let mut db = self.db.clone();
-        let stored = StoredAudioPrefs::filter_by_profile_id(profile.0).first().exec(&mut db).await?;
+        let stored = StoredAudioPrefs::filter_by_profile_id(profile.0)
+            .first()
+            .exec(&mut db)
+            .await?;
         Ok(stored.is_some_and(|stored| stored.dialogue))
     }
 
     pub async fn save_dialogue(&self, profile: ProfileId, on: bool) -> Result<()> {
         let mut db = self.db.clone();
-        let stored = StoredAudioPrefs::filter_by_profile_id(profile.0).first().exec(&mut db).await?;
+        let stored = StoredAudioPrefs::filter_by_profile_id(profile.0)
+            .first()
+            .exec(&mut db)
+            .await?;
         let headphones = stored.map_or(models::Headphones::Unpaired, |stored| stored.headphones);
         self.store_audio_prefs(profile, headphones, on).await
     }
 
-    async fn store_audio_prefs(&self, profile: ProfileId, headphones: models::Headphones, dialogue: bool) -> Result<()> {
+    async fn store_audio_prefs(
+        &self,
+        profile: ProfileId,
+        headphones: models::Headphones,
+        dialogue: bool,
+    ) -> Result<()> {
         let mut db = self.db.clone();
-        if models::Profile::filter_by_id(profile.0).first().exec(&mut db).await?.is_none() {
+        if models::Profile::filter_by_id(profile.0)
+            .first()
+            .exec(&mut db)
+            .await?
+            .is_none()
+        {
             return Err(toasty::Error::record_not_found(format!("profile {}", profile.0)).into());
         }
         StoredAudioPrefs::upsert_by_profile_id(profile.0)
@@ -337,12 +381,31 @@ mod tests {
         for profile in [ProfileId(3), ProfileId(4)] {
             let mut progress = Progress::default();
             let file = Path::new("/lib/Movies/Up/Up.mkv");
-            progress.record(file, Place { position: 60.0, duration: 5760.0, credits: None });
+            progress.record(
+                file,
+                Place {
+                    position: 60.0,
+                    duration: 5760.0,
+                    credits: None,
+                },
+            );
             progress.watching.played(crate::watching::Kind::Movie, "up", 1);
-            progress.shows.insert("dark".to_string(), crate::progress::Position { season: 1, episode: 1, finished: false });
+            progress.shows.insert(
+                "dark".to_string(),
+                crate::progress::Position {
+                    season: 1,
+                    episode: 1,
+                    finished: false,
+                },
+            );
             db.save_progress(profile, &progress).await.unwrap();
-            db.save_subtitle_settings(profile, &subtitles::Settings::default()).await.unwrap();
-            let prefs = AudioPrefs::Paired { address: format!("AA:{}", profile.0), output: Output::Headphones };
+            db.save_subtitle_settings(profile, &subtitles::Settings::default())
+                .await
+                .unwrap();
+            let prefs = AudioPrefs::Paired {
+                address: format!("AA:{}", profile.0),
+                output: Output::Headphones,
+            };
             db.save_audio_prefs(profile, &prefs).await.unwrap();
         }
         let invite = Invite {
@@ -443,10 +506,17 @@ mod tests {
             embedded: Some(2),
         };
         db.save_subtitle_file(file, remembered).await.unwrap();
-        assert_eq!(db.subtitle_files().await.unwrap(), BTreeMap::from([(file.to_path_buf(), remembered)]));
+        assert_eq!(
+            db.subtitle_files().await.unwrap(),
+            BTreeMap::from([(file.to_path_buf(), remembered)])
+        );
         db.save_subtitle_file(file, Remembered::default()).await.unwrap();
         assert!(db.subtitle_files().await.unwrap().is_empty());
-        assert!(db.save_subtitle_file(Path::new("/lib/elsewhere.mkv"), remembered).await.is_err());
+        assert!(
+            db.save_subtitle_file(Path::new("/lib/elsewhere.mkv"), remembered)
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
@@ -513,9 +583,15 @@ mod tests {
         let unpaired = AudioPrefs::Unpaired.choosing(Output::Headphones);
         assert_eq!((unpaired.headphones(), unpaired.output()), (None, Output::Tv));
         let listening = unpaired.pairing("AA".to_string()).choosing(Output::Headphones);
-        assert_eq!((listening.headphones(), listening.output()), (Some("AA"), Output::Headphones));
+        assert_eq!(
+            (listening.headphones(), listening.output()),
+            (Some("AA"), Output::Headphones)
+        );
         let replaced = listening.pairing("BB".to_string());
-        assert_eq!((replaced.headphones(), replaced.output()), (Some("BB"), Output::Headphones));
+        assert_eq!(
+            (replaced.headphones(), replaced.output()),
+            (Some("BB"), Output::Headphones)
+        );
     }
 
     #[tokio::test]

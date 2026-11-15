@@ -42,7 +42,12 @@ fn safe(text: &str) -> String {
             c => Some(c),
         })
         .collect();
-    replaced.split_whitespace().collect::<Vec<_>>().join(" ").trim_end_matches('.').to_string()
+    replaced
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_end_matches('.')
+        .to_string()
 }
 
 fn named(title: &str, year: Option<u16>) -> String {
@@ -138,7 +143,10 @@ fn remote_size(remote: &str, path: &str) -> Result<Option<u64>, String> {
 
 pub fn upload_to(remote: &str, placed: &Placed) -> Result<(), String> {
     let local = placed.local.to_string_lossy();
-    run("rclone", &["copyto", &local, &format!("{remote}/{}", placed.destination)])?;
+    run(
+        "rclone",
+        &["copyto", &local, &format!("{remote}/{}", placed.destination)],
+    )?;
     match remote_size(remote, &placed.destination)? {
         Some(size) if size == placed.size => Ok(()),
         Some(size) => Err(format!(
@@ -182,7 +190,13 @@ impl Shelf {
     fn manifest_hash(&self) -> Result<String, String> {
         let listing = run(
             "rclone",
-            &["hashsum", "sha1", &self.remote, "--include", &format!("/{}", manifest::FILE_NAME)],
+            &[
+                "hashsum",
+                "sha1",
+                &self.remote,
+                "--include",
+                &format!("/{}", manifest::FILE_NAME),
+            ],
         )?;
         listing
             .split_whitespace()
@@ -208,13 +222,22 @@ impl Shelf {
             }
             run(
                 "rclone",
-                &["copy", &self.work.join(artwork::DIR).to_string_lossy(), &self.remote(artwork::DIR)],
+                &[
+                    "copy",
+                    &self.work.join(artwork::DIR).to_string_lossy(),
+                    &self.remote(artwork::DIR),
+                ],
             )?;
             if self.manifest_hash()? != before {
-                log(format!("library.db changed on pCloud before the upload (attempt {attempt}), starting over"));
+                log(format!(
+                    "library.db changed on pCloud before the upload (attempt {attempt}), starting over"
+                ));
                 continue;
             }
-            run("rclone", &["copyto", &manifest.to_string_lossy(), &self.remote(manifest::FILE_NAME)])?;
+            run(
+                "rclone",
+                &["copyto", &manifest.to_string_lossy(), &self.remote(manifest::FILE_NAME)],
+            )?;
             log("library.db uploaded".to_string());
             return Ok(());
         }
@@ -227,7 +250,11 @@ impl Shelf {
         let manifest_path = self.work.join(manifest::FILE_NAME);
         run(
             "rclone",
-            &["copyto", &self.remote(manifest::FILE_NAME), &manifest_path.to_string_lossy()],
+            &[
+                "copyto",
+                &self.remote(manifest::FILE_NAME),
+                &manifest_path.to_string_lossy(),
+            ],
         )?;
         let art = self.meta.join(artwork::DIR);
         if art.is_dir() {

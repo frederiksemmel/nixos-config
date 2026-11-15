@@ -104,7 +104,10 @@ async fn load(executor: &mut dyn Executor, profile: i64) -> toasty::Result<Rows>
         .exec(executor)
         .await?;
     let dismissed = StoredDismissal::filter(StoredDismissal::fields().profile_id().eq(profile))
-        .order_by((StoredDismissal::fields().at().asc(), StoredDismissal::fields().video_id().asc()))
+        .order_by((
+            StoredDismissal::fields().at().asc(),
+            StoredDismissal::fields().video_id().asc(),
+        ))
         .exec(executor)
         .await?;
     Ok(Rows {
@@ -280,7 +283,11 @@ impl Db {
         let (wanted, known) = {
             let index = self.index.read().unwrap_or_else(|poisoned| poisoned.into_inner());
             let blind = self.blind.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let known = if blind.contains(&profile) { Known::default() } else { index.known() };
+            let known = if blind.contains(&profile) {
+                Known::default()
+            } else {
+                index.known()
+            };
             (rows(&index, progress), known)
         };
         let mut db = self.db.clone();
@@ -346,7 +353,10 @@ fn rows(index: &Index, progress: &Progress) -> Rows {
             dismissed.insert(video, dismissal.at as i64);
         }
     }
-    rows.dismissed = dismissed.into_iter().map(|(video, at)| Dismissed { video, at }).collect();
+    rows.dismissed = dismissed
+        .into_iter()
+        .map(|(video, at)| Dismissed { video, at })
+        .collect();
     rows
 }
 
@@ -549,7 +559,10 @@ pub mod tests {
         let progress = db.progress(ProfileId::FIRST).await.unwrap();
         assert_eq!(progress.files[&moved].stopped_at(), Some(600.0));
         assert_eq!(progress.shows["dark-2017"].episode, 2);
-        assert_eq!(progress.watching.last_played(Kind::Series, "dark-2017"), Some(1_800_000_100));
+        assert_eq!(
+            progress.watching.last_played(Kind::Series, "dark-2017"),
+            Some(1_800_000_100)
+        );
         assert!(!progress.files.contains_key(Path::new(DARK)));
     }
 
