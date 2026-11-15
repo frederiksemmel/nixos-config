@@ -1,4 +1,5 @@
 {
+  config,
   flake,
   nixos-raspberrypi,
   pkgs,
@@ -25,6 +26,16 @@ in
     type = "path";
     path = pkgs.path;
   };
+
+  boot.loader.raspberry-pi.configurationLimit = 5;
+  boot.loader.generic-extlinux-compatible.configurationLimit = 5;
+
+  nix.gc = {
+    automatic = true;
+    dates = "04:30";
+    persistent = true;
+  };
+  systemd.services.nix-gc.preStart = "${config.nix.package}/bin/nix-env --profile /nix/var/nix/profiles/system --delete-generations +5";
 
   environment.systemPackages = with pkgs; [
     bottom
