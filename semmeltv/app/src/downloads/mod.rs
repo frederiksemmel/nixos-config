@@ -59,6 +59,26 @@ pub struct Config {
 pub struct Question {
     pub text: String,
     pub options: Vec<Candidate>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Searched {
+    pub label: String,
+    pub target: Target,
+    pub message: String,
+    pub choices: Vec<Choice>,
+    pub dropped: usize,
+    pub problems: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum Answer {
+    Refused { message: String },
+    Question(Question),
+    Searched(Searched),
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -67,14 +87,31 @@ pub struct Proposal {
     pub asked: String,
     pub from: String,
     pub created: u64,
-    pub ok: bool,
-    pub message: String,
-    pub label: Option<String>,
-    pub target: Option<Target>,
-    pub question: Option<Question>,
-    pub choices: Vec<Choice>,
-    pub dropped: usize,
-    pub problems: Vec<String>,
+    #[serde(flatten)]
+    pub answer: Answer,
+}
+
+impl Proposal {
+    pub fn heading(&self) -> &str {
+        match &self.answer {
+            Answer::Searched(searched) => &searched.label,
+            Answer::Refused { .. } | Answer::Question(_) => &self.asked,
+        }
+    }
+
+    pub fn message(&self) -> &str {
+        match &self.answer {
+            Answer::Refused { message } | Answer::Searched(Searched { message, .. }) => message,
+            Answer::Question(question) => &question.text,
+        }
+    }
+
+    pub fn best(&self) -> Option<&Choice> {
+        match &self.answer {
+            Answer::Searched(searched) => searched.choices.first(),
+            Answer::Refused { .. } | Answer::Question(_) => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,22 +138,38 @@ pub struct FileState {
     pub size: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PartPhase {
+    New,
+    Checking,
+    Downloading,
+    Complete,
+    Done,
+}
+
+impl PartPhase {
+    fn from_stats(finished: bool, initializing: bool) -> Self {
+        match (finished, initializing) {
+            (true, _) => Self::Complete,
+            (false, true) => Self::Checking,
+            (false, false) => Self::Downloading,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PartState {
     pub part: Part,
     pub folder: String,
     pub files: Vec<FileState>,
-    pub added: bool,
+    pub phase: PartPhase,
     pub progress: u64,
     pub total: u64,
     pub uploaded: u64,
-    pub finished: bool,
-    pub paused: bool,
     pub speed: f64,
     pub peers: Option<u64>,
     pub seen: Option<u64>,
-    #[serde(default)]
-    pub checking: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -378,27 +431,19 @@ impl Service {
     }
 
     fn propose(&self, asked: String, from: String, resolved: Result<Resolved, String>) -> Proposal {
-        let mut proposal = Proposal {
-            id: new_id(),
-            asked,
-            from,
-            created: now(),
-            ok: false,
-            message: String::new(),
-            label: None,
-            target: None,
-            question: None,
-            choices: Vec::new(),
-            dropped: 0,
-            problems: Vec::new(),
-        };
-        match resolved {
-            Err(error) => proposal.message = error,
-            Ok(Resolved::Refused(reason)) => proposal.message = reason,
-            Ok(Resolved::Question(text, options)) => {
-                proposal.message = text.clone();
-                proposal.question = Some(Question { text, options });
-            }
+        let answer = match resolved {
+            Err(message) | Ok(Resolved::Refused(message)) => Answer::Refused { message },
+            Ok(Resolved::Question {
+                text,
+                options,
+                season,
+                episode,
+            }) => Answer::Question(Question {
+                text,
+                options,
+                season,
+                episode,
+            }),
             Ok(Resolved::Target(target)) => {
                 let search = match (target.kind, target.season) {
                     (Kind::Movie, _) | (Kind::Tv, None) => torznab::Search::Movie {
@@ -415,18 +460,11 @@ impl Service {
                 let (offers, problems) = self.torznab.search(&search);
                 let room = self.room();
                 let ranking = score::rank(&offers, &target, room);
-                proposal.label = Some(target.label());
-                proposal.problems = problems;
-                proposal.dropped = ranking.dropped.len();
                 for dropped in &ranking.dropped {
                     eprintln!("dropped: {} ({})", dropped.name, dropped.reason);
                 }
-                proposal.choices = ranking.choices;
-                proposal.message = match proposal.choices.first() {
-                    Some(best) => {
-                        proposal.ok = true;
-                        format!("{}: {}", target.label(), best.facts)
-                    }
+                let message = match ranking.choices.first() {
+                    Some(best) => format!("{}: {}", target.label(), best.facts),
                     None if offers.is_empty() => format!("No releases of {} found", target.label()),
                     None => format!(
                         "None of the {} releases of {} passed the checks ({} free for downloads)",
@@ -435,9 +473,23 @@ impl Service {
                         score::gb(room)
                     ),
                 };
-                proposal.target = Some(target);
+                Answer::Searched(Searched {
+                    label: target.label(),
+                    target,
+                    message,
+                    choices: ranking.choices,
+                    dropped: ranking.dropped.len(),
+                    problems,
+                })
             }
-        }
+        };
+        let proposal = Proposal {
+            id: new_id(),
+            asked,
+            from,
+            created: now(),
+            answer,
+        };
         let mut book = self.book.lock().unwrap();
         let cutoff = now().saturating_sub(PROPOSAL_LIFE);
         book.proposals.retain(|known| known.created >= cutoff);
@@ -479,8 +531,10 @@ impl Service {
         let Some(index) = book.proposals.iter().position(|known| known.id == proposal) else {
             return Outcome::no("That search has expired; search again");
         };
-        let found = book.proposals[index].clone();
-        let (Some(target), Some(picked)) = (found.target.clone(), found.choices.get(choice).cloned()) else {
+        let Answer::Searched(Searched { target, choices, .. }) = book.proposals[index].answer.clone() else {
+            return Outcome::no("Nothing to download in that search");
+        };
+        let Some(picked) = choices.get(choice).cloned() else {
             return Outcome::no("Nothing to download in that search");
         };
         let duplicate = book.jobs.iter().any(|job| {
@@ -520,16 +574,13 @@ impl Service {
                     part: part.clone(),
                     folder: folder.join(number.to_string()).to_string_lossy().into_owned(),
                     files: Vec::new(),
-                    added: false,
+                    phase: PartPhase::New,
                     progress: 0,
                     total: 0,
                     uploaded: 0,
-                    finished: false,
-                    paused: false,
                     speed: 0.0,
                     peers: None,
                     seen: None,
-                    checking: false,
                 })
                 .collect(),
             placed: Vec::new(),
@@ -586,7 +637,7 @@ impl Service {
 
     fn check(&self, job: &Job) {
         let mut parts = job.parts.clone();
-        for part in parts.iter_mut().filter(|part| !part.added) {
+        for part in parts.iter_mut().filter(|part| part.phase == PartPhase::New) {
             if part.files.is_empty() {
                 let details = match self.rqbit.files(&part.part.magnet) {
                     Ok(details) => details,
@@ -603,7 +654,7 @@ impl Service {
             if let Err(error) = self.rqbit.add(&part.part.magnet, &part.folder, &only) {
                 return self.fail(&job.id, format!("rqbit did not take the torrent: {error}"));
             }
-            part.added = true;
+            part.phase = PartPhase::Downloading;
             part.total = part.files.iter().map(|file| file.size).sum();
             let files: Vec<String> = part.files.iter().map(|file| file.path.clone()).collect();
             let name = part.part.name.clone();
@@ -627,7 +678,7 @@ impl Service {
     fn poll(&self, job: &Job) {
         let mut parts = job.parts.clone();
         let mut notes = Vec::new();
-        for part in parts.iter_mut().filter(|part| !part.paused) {
+        for part in parts.iter_mut().filter(|part| part.phase != PartPhase::Done) {
             let hash = part.part.infohash.clone();
             let stats = match self.rqbit.stats(&hash) {
                 Ok(stats) => stats,
@@ -636,8 +687,8 @@ impl Service {
                     continue;
                 }
             };
-            part.checking = stats.state == "initializing";
-            if !part.checking {
+            part.phase = PartPhase::from_stats(stats.finished, stats.state == "initializing");
+            if part.phase != PartPhase::Checking {
                 part.progress = stats.progress_bytes;
             }
             part.total = stats.total_bytes;
@@ -648,12 +699,13 @@ impl Service {
             if let Some(error) = &stats.error {
                 notes.push(format!("{}: rqbit: {error}", part.part.name));
             }
-            if stats.finished {
+            if part.phase == PartPhase::Complete {
                 let paused = self.rqbit.pause(&hash);
                 let after = self.rqbit.stats(&hash).map(|stats| stats.uploaded_bytes).unwrap_or(part.uploaded);
                 part.uploaded = after;
-                part.finished = true;
-                part.paused = paused.is_ok();
+                if paused.is_ok() {
+                    part.phase = PartPhase::Done;
+                }
                 notes.push(match paused {
                     Ok(()) => format!(
                         "{}: complete, paused at once; {} bytes uploaded in all",
@@ -663,8 +715,8 @@ impl Service {
                 });
             }
         }
-        let done = parts.iter().all(|part| part.finished && part.paused);
-        let checking = parts.iter().any(|part| part.checking);
+        let done = parts.iter().all(|part| part.phase == PartPhase::Done);
+        let checking = parts.iter().any(|part| part.phase == PartPhase::Checking);
         let progress: u64 = parts.iter().map(|part| part.progress).sum();
         let total: u64 = parts.iter().map(|part| part.total).sum();
         let speed: f64 = parts.iter().map(|part| part.speed).sum();
@@ -1009,5 +1061,47 @@ mod tests {
             "Downloading, 0%, about 1h 26m left"
         );
         assert_eq!(downloading(5, 10, 0.0), "Downloading, 50%");
+    }
+
+    #[test]
+    fn a_part_is_checking_downloading_or_complete_and_finished_wins_over_checking() {
+        assert_eq!(PartPhase::from_stats(false, true), PartPhase::Checking);
+        assert_eq!(PartPhase::from_stats(false, false), PartPhase::Downloading);
+        assert_eq!(PartPhase::from_stats(true, true), PartPhase::Complete);
+        assert_eq!(serde_json::to_value(PartPhase::Done).unwrap(), serde_json::json!("done"));
+    }
+
+    fn proposal(answer: Answer) -> serde_json::Value {
+        serde_json::to_value(Proposal {
+            id: "p".to_string(),
+            asked: "dark season 2".to_string(),
+            from: "voice".to_string(),
+            created: 1,
+            answer,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn a_proposal_is_refused_a_question_or_a_search_and_only_a_search_has_choices() {
+        let refused = proposal(Answer::Refused {
+            message: "Nothing called \"x\" on TMDB".to_string(),
+        });
+        assert_eq!(refused["outcome"], "refused");
+        assert!(refused.get("choices").is_none() && refused.get("target").is_none());
+        let question = proposal(Answer::Question(Question {
+            text: "Which one: Dark (2017) or Dark (2005)?".to_string(),
+            options: Vec::new(),
+            season: Some(2),
+            episode: None,
+        }));
+        assert_eq!((&question["outcome"], &question["season"]), (&serde_json::json!("question"), &serde_json::json!(2)));
+        assert!(question.get("choices").is_none());
+        let read: Proposal = serde_json::from_value(question).unwrap();
+        assert!(read.best().is_none());
+        assert_eq!(read.heading(), "dark season 2");
+        let mut missing = refused;
+        missing["outcome"] = serde_json::json!("searched");
+        assert!(serde_json::from_value::<Proposal>(missing).is_err());
     }
 }

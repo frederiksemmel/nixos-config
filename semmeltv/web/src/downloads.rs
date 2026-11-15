@@ -31,7 +31,10 @@ pub struct Candidate {
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct Question {
+    pub text: String,
     pub options: Vec<Candidate>,
+    pub season: Option<u32>,
+    pub episode: Option<u32>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -42,9 +45,20 @@ pub struct Choice {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-pub struct Target {
-    pub season: Option<u32>,
-    pub episode: Option<u32>,
+pub struct Searched {
+    pub label: String,
+    pub message: String,
+    pub choices: Vec<Choice>,
+    pub dropped: usize,
+    pub problems: Vec<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "outcome", rename_all = "kebab-case")]
+pub enum Answer {
+    Refused { message: String },
+    Question(Question),
+    Searched(Searched),
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -52,25 +66,48 @@ pub struct Proposal {
     pub id: String,
     pub asked: String,
     pub from: String,
-    pub ok: bool,
-    pub message: String,
-    pub label: Option<String>,
-    pub target: Option<Target>,
-    pub question: Option<Question>,
-    pub choices: Vec<Choice>,
-    pub dropped: usize,
-    pub problems: Vec<String>,
+    #[serde(flatten)]
+    pub answer: Answer,
+}
+
+impl Proposal {
+    fn heading(&self) -> &str {
+        match &self.answer {
+            Answer::Searched(searched) => &searched.label,
+            Answer::Refused { .. } | Answer::Question(_) => &self.asked,
+        }
+    }
+
+    fn message(&self) -> &str {
+        match &self.answer {
+            Answer::Refused { message } | Answer::Searched(Searched { message, .. }) => message,
+            Answer::Question(question) => &question.text,
+        }
+    }
+
+    fn found(&self) -> bool {
+        matches!(&self.answer, Answer::Searched(searched) if !searched.choices.is_empty())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum PartPhase {
+    New,
+    Checking,
+    Downloading,
+    Complete,
+    Done,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct PartState {
+    pub phase: PartPhase,
     pub progress: u64,
     pub total: u64,
     pub uploaded: u64,
     pub speed: f64,
     pub peers: Option<u64>,
-    #[serde(default)]
-    pub checking: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
@@ -220,7 +257,7 @@ fn progress_line(job: &Job) -> String {
     let speed: f64 = job.parts.iter().map(|part| part.speed).sum();
     let peers: u64 = job.parts.iter().filter_map(|part| part.peers).sum();
     match job.stage {
-        Stage::Downloading if job.parts.iter().any(|part| part.checking) => {
+        Stage::Downloading if job.parts.iter().any(|part| part.phase == PartPhase::Checking) => {
             format!("{} downloaded before the restart · {uploaded} bytes uploaded", gb(done))
         }
         Stage::Downloading if total > 0 => format!(
@@ -306,9 +343,9 @@ async fn job_list(cx: &Cx) -> Result<impl View> {
 }
 
 #[component]
-async fn choice_card(cx: &Cx, proposal: &Proposal, index: usize, choice: &Choice) -> Result<impl View> {
+async fn choice_card(cx: &Cx, id: &str, index: usize, choice: &Choice) -> Result<impl View> {
     let said = signal(cx, String::new);
-    let id = proposal.id.clone();
+    let id = id.to_string();
     let number = index as u32;
     let class = if index == 0 { "download-choice best" } else { "download-choice" };
     Ok(view! {
@@ -330,15 +367,15 @@ async fn choice_card(cx: &Cx, proposal: &Proposal, index: usize, choice: &Choice
 }
 
 #[component]
-async fn question_buttons(proposal: &Proposal, shown: Signal<String>) -> Result<impl View> {
-    let options = proposal.question.as_ref().map(|question| question.options.clone()).unwrap_or_default();
-    let season = proposal.target.as_ref().and_then(|target| target.season).map_or(0, i64::from);
-    let episode = proposal.target.as_ref().and_then(|target| target.episode).map_or(0, i64::from);
-    let asked = proposal.asked.clone();
+async fn question_buttons(asked: &str, question: &Question, shown: Signal<String>) -> Result<impl View> {
+    let season = question.season.map_or(0, i64::from);
+    let episode = question.episode.map_or(0, i64::from);
+    let asked = asked.to_string();
     Ok(view! {
+        <p class="setting-note">(question.text.as_str())</p>
         <div class="tracks">
             #[key(option.tmdb)]
-            for option in &options {
+            for option in &question.options {
                 let kind = option.kind.clone();
                 let tmdb = option.tmdb;
                 let asked = asked.clone();
@@ -350,6 +387,30 @@ async fn question_buttons(proposal: &Proposal, shown: Signal<String>) -> Result<
                 </button>
             }
         </div>
+    })
+}
+
+#[component]
+async fn searched_view(id: &str, searched: &Searched) -> Result<impl View> {
+    Ok(view! {
+        if searched.choices.is_empty() {
+            <p class="setting-note">(searched.message.as_str())</p>
+        } else {
+            <p class="setting-note">(format!(
+                "{} releases checked, {} dropped by the checks.",
+                searched.dropped + searched.choices.len(),
+                searched.dropped
+            ))</p>
+            <ul class="download-choices">
+                #[key(index)]
+                for (index, choice) in searched.choices.iter().enumerate() {
+                    choice_card(id: id, index: index, choice: choice)
+                }
+            </ul>
+        }
+        for problem in &searched.problems {
+            <p class="setting-note">(problem.as_str())</p>
+        }
     })
 }
 
@@ -372,27 +433,11 @@ async fn proposal_view(cx: &Cx, id: String, shown: Signal<String>) -> Result<imp
             Ok(None) => <span></span>,
             Ok(Some(found)) => {
                 <section class="settings">
-                    <h2>(found.label.clone().unwrap_or_else(|| found.asked.clone()))</h2>
-                    if found.ok {
-                        <p class="setting-note">(format!(
-                            "{} releases checked, {} dropped by the checks.",
-                            found.dropped + found.choices.len(),
-                            found.dropped
-                        ))</p>
-                        <ul class="download-choices">
-                            #[key(index)]
-                            for (index, choice) in found.choices.iter().enumerate() {
-                                choice_card(proposal: &found, index: index, choice: choice)
-                            }
-                        </ul>
-                    } else {
-                        <p class="setting-note">(found.message.as_str())</p>
-                        if found.question.is_some() {
-                            question_buttons(proposal: &found, shown: shown)
-                        }
-                    }
-                    for problem in &found.problems {
-                        <p class="setting-note">(problem.as_str())</p>
+                    <h2>(found.heading().to_string())</h2>
+                    match &found.answer {
+                        Answer::Refused { message } => <p class="setting-note">(message.as_str())</p>,
+                        Answer::Question(question) => question_buttons(asked: found.asked.as_str(), question: question, shown: shown),
+                        Answer::Searched(searched) => searched_view(id: found.id.as_str(), searched: searched),
                     }
                 </section>
             },
@@ -406,7 +451,7 @@ async fn waiting(cx: &Cx, shown: Signal<String>) -> Result<impl View> {
     let voice: Vec<Proposal> = overview
         .proposals
         .into_iter()
-        .filter(|proposal| proposal.from == "voice" && proposal.ok)
+        .filter(|proposal| proposal.from == "voice" && proposal.found())
         .collect();
     Ok(view! {
         if !voice.is_empty() {
@@ -417,8 +462,8 @@ async fn waiting(cx: &Cx, shown: Signal<String>) -> Result<impl View> {
                     for found in &voice {
                         let id = found.id.clone();
                         <button type="button" class="track" @click=$(|_e| shown.set(id.to_owned()))>
-                            <b>(found.label.clone().unwrap_or_else(|| found.asked.clone()))</b>
-                            <span>(found.message.as_str())</span>
+                            <b>(found.heading().to_string())</b>
+                            <span>(found.message().to_string())</span>
                         </button>
                     }
                 </div>
@@ -472,7 +517,7 @@ mod tests {
     fn job(stage: &str) -> serde_json::Result<Job> {
         serde_json::from_value(json!({
             "id": "1", "label": "Up", "stage": stage, "message": "", "log": [],
-            "parts": [{ "progress": 50, "total": 100, "uploaded": 0, "speed": 0.0, "peers": null }]
+            "parts": [{ "phase": "downloading", "progress": 50, "total": 100, "uploaded": 0, "speed": 0.0, "peers": null }]
         }))
     }
 
@@ -492,5 +537,24 @@ mod tests {
         let uploading = job("uploading").unwrap();
         assert!(!uploading.stage.stoppable());
         assert_eq!(percent(&uploading), 100.0);
+    }
+
+    #[test]
+    fn a_proposal_reads_as_refused_a_question_with_its_season_or_a_search() {
+        let read = |answer: Value| {
+            let mut proposal = json!({ "id": "p", "asked": "dark season 2", "from": "voice", "created": 1 });
+            proposal.as_object_mut().unwrap().extend(answer.as_object().unwrap().clone());
+            serde_json::from_value::<Proposal>(proposal)
+        };
+        let question = read(json!({ "outcome": "question", "text": "Which one?", "options": [], "season": 2, "episode": null })).unwrap();
+        assert!(matches!(&question.answer, Answer::Question(Question { season: Some(2), .. })));
+        assert!(!question.found());
+        let empty = read(json!({ "outcome": "searched", "label": "Dark S2", "message": "No releases of Dark S2 found",
+            "target": {}, "choices": [], "dropped": 0, "problems": [] })).unwrap();
+        assert_eq!((empty.heading(), empty.found()), ("Dark S2", false));
+        let refused = read(json!({ "outcome": "refused", "message": "Nothing called \"x\" on TMDB" })).unwrap();
+        assert_eq!((refused.heading(), refused.message()), ("dark season 2", "Nothing called \"x\" on TMDB"));
+        assert!(read(json!({ "outcome": "searched", "message": "x" })).is_err());
+        assert!(read(json!({ "ok": true, "message": "x" })).is_err());
     }
 }

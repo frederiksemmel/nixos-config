@@ -733,18 +733,24 @@ paths start with `/api/downloads` too.
 | POST | `/api/downloads/jobs/{id}/stop` | | `{ message, ok, job }` |
 | POST | `/api/downloads/subtitles` | `{ video, imdb, season, episode, language, hash, size }` | `{ file, language, release, matched }` |
 
-`text` is what was said or typed, such as "outlander season 8". It resolves to
-one TMDB title, or to a `question` with up to four `options`
-(`{ kind, tmdb, label }`), one of which is sent back as `pick`. A proposal holds
-the `target` (TMDB and IMDb ids, season, aired episodes), up to three `choices`
-ranked by the scorer, each with `facts`, `why` and its torrents in `parts`, and
-`dropped`, the number of releases the checks removed. Nothing downloads until a
-choice is confirmed. Proposals expire after 30 minutes.
+`text` is what was said or typed, such as "outlander season 8". A proposal is
+`{ id, asked, from, created, outcome, … }`, and `outcome` says what the rest is:
+`refused` with a `message`; `question` with its `text`, up to four `options`
+(`{ kind, tmdb, label }`) and the `season` and `episode` that were asked for,
+all of which are sent back as `pick`; or `searched` with the `label`, the
+`target` (TMDB and IMDb ids, season, aired episodes), a `message`, up to three
+`choices` ranked by the scorer, each with `facts`, `why` and its torrents in
+`parts`, `dropped`, the number of releases the checks removed, and `problems`
+from the indexers. A search with no `choices` found nothing that passed. Nothing
+downloads until a choice is confirmed. Proposals expire after 30 minutes.
 
 A job moves through `checking` (reading the torrent's files), `downloading`,
 `uploading` (to pCloud, then the import), and ends `done`, `failed` or
-`stopped`. Each part reports `progress`, `total`, `speed`, `peers` and
-`uploaded`, the bytes sent to peers. `room` is the space left for a new
+`stopped`. Each part reports its `phase`, `new` (not yet given to rqbit),
+`checking` (rqbit verifies pieces it already has), `downloading`, `complete`
+(finished, pausing it failed and is tried again) or `done` (finished and
+paused), and `progress`, `total`, `speed`, `peers` and `uploaded`, the bytes
+sent to peers. `room` is the space left for a new
 download: the quota minus running downloads, and the free disk minus what they
 still need and a reserve.
 

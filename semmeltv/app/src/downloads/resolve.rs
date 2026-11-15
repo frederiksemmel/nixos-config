@@ -48,7 +48,12 @@ pub struct Candidate {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Resolved {
     Target(Target),
-    Question(String, Vec<Candidate>),
+    Question {
+        text: String,
+        options: Vec<Candidate>,
+        season: Option<u32>,
+        episode: Option<u32>,
+    },
     Refused(String),
 }
 
@@ -244,7 +249,12 @@ pub fn resolve(client: &Client, wish: &Wish, manifest: &Manifest, today: Date) -
                 .map(|(kind, found)| candidate(*kind, found))
                 .collect();
             let labels: Vec<&str> = options.iter().map(|option| option.label.as_str()).collect();
-            return Ok(Resolved::Question(format!("Which one: {}?", labels.join(" or ")), options));
+            return Ok(Resolved::Question {
+                text: format!("Which one: {}?", labels.join(" or ")),
+                options,
+                season: wish.season,
+                episode: wish.episode,
+            });
         }
     };
     target(client, kind, &found, wish.season, wish.episode, manifest, today)

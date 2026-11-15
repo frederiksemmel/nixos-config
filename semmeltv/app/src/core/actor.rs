@@ -6,7 +6,7 @@ use crate::card;
 use crate::command::Command;
 use crate::db::{self, Db};
 use crate::downloads::remote::Downloads;
-use crate::downloads::{Outcome as Started, Proposal};
+use crate::downloads::{Answer, Outcome as Started, Proposal};
 use crate::fetch;
 use crate::hold::{self, Hold};
 use crate::intent::{self, Action, Control};
@@ -1327,8 +1327,8 @@ impl Actor {
     fn download_found(&mut self, found: Found) {
         match found {
             Found::Proposal(proposal) => {
-                let heading = proposal.label.clone().unwrap_or_else(|| proposal.asked.clone());
-                match proposal.choices.first().filter(|_| proposal.ok) {
+                let heading = proposal.heading().to_string();
+                match proposal.best() {
                     Some(best) => {
                         self.tell_download(
                             &heading,
@@ -1343,9 +1343,11 @@ impl Actor {
                         });
                     }
                     None => {
-                        let status = match proposal.question {
-                            Some(_) => format!("{} Choose on the phone's Downloads page.", proposal.message),
-                            None => proposal.message,
+                        let status = match &proposal.answer {
+                            Answer::Question(question) => {
+                                format!("{} Choose on the phone's Downloads page.", question.text)
+                            }
+                            _ => proposal.message().to_string(),
                         };
                         self.tell_download(&heading, &status, VOICE_RESULT_TIME, false);
                     }
