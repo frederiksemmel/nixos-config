@@ -30,6 +30,53 @@ pub enum Heard {
     Failed(String),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Ear {
+    #[default]
+    Idle,
+    Listening {
+        unmute: bool,
+    },
+    Transcribing {
+        unmute: bool,
+    },
+    Cancelled,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pass {
+    On,
+    Drop,
+}
+
+impl Ear {
+    pub fn hear(self, heard: &Heard, muting: bool) -> (Self, Pass) {
+        match (self, heard) {
+            (_, Heard::Listening) => (
+                Self::Listening {
+                    unmute: self.unmute() || muting,
+                },
+                Pass::On,
+            ),
+            (Self::Cancelled, Heard::Transcribing) => (Self::Cancelled, Pass::Drop),
+            (Self::Cancelled, _) => (Self::Idle, Pass::Drop),
+            (_, Heard::Transcribing) => (Self::Transcribing { unmute: self.unmute() }, Pass::On),
+            _ => (Self::Idle, Pass::On),
+        }
+    }
+
+    pub fn active(self) -> bool {
+        matches!(self, Self::Listening { .. } | Self::Transcribing { .. })
+    }
+
+    pub fn unmute(self) -> bool {
+        matches!(
+            self,
+            Self::Listening { unmute: true } | Self::Transcribing { unmute: true }
+        )
+    }
+}
+
 enum Input {
     Listen,
     Cancel,
@@ -427,6 +474,37 @@ pub fn read_wav(bytes: &[u8]) -> Result<Vec<i16>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_request_listens_then_transcribes_then_ends_and_owes_the_unmute_until_it_ends() {
+        let (ear, pass) = Ear::Idle.hear(&Heard::Listening, true);
+        assert_eq!((ear, pass), (Ear::Listening { unmute: true }, Pass::On));
+        let (ear, _) = ear.hear(&Heard::Transcribing, false);
+        assert_eq!(ear, Ear::Transcribing { unmute: true });
+        assert!(ear.active() && ear.unmute());
+        let (ear, pass) = ear.hear(&Heard::Transcript("pause".to_string()), false);
+        assert_eq!((ear, pass), (Ear::Idle, Pass::On));
+        assert!(!ear.active() && !ear.unmute());
+    }
+
+    #[test]
+    fn listening_again_keeps_an_unmute_already_owed() {
+        let (ear, _) = Ear::Idle.hear(&Heard::Listening, true);
+        let (ear, _) = ear.hear(&Heard::Listening, false);
+        assert_eq!(ear, Ear::Listening { unmute: true });
+    }
+
+    #[test]
+    fn a_cancelled_request_drops_its_transcription_and_its_result_then_listens_again() {
+        let ear = Ear::Cancelled;
+        assert!(!ear.active() && !ear.unmute());
+        let (ear, pass) = ear.hear(&Heard::Transcribing, false);
+        assert_eq!((ear, pass), (Ear::Cancelled, Pass::Drop));
+        let (ear, pass) = ear.hear(&Heard::Transcript("play dune".to_string()), false);
+        assert_eq!((ear, pass), (Ear::Idle, Pass::Drop));
+        let (ear, pass) = Ear::Cancelled.hear(&Heard::Listening, false);
+        assert_eq!((ear, pass), (Ear::Listening { unmute: false }, Pass::On));
+    }
 
     fn tone(amplitude: f32) -> Vec<i16> {
         (0..FRAME)

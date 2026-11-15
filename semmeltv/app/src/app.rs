@@ -197,9 +197,7 @@ struct App {
     problem: Option<String>,
     deferred: Option<Result<Library, String>>,
     voice: Option<Voice>,
-    voice_active: bool,
-    voice_cancelled: bool,
-    unmute_after_listening: bool,
+    ear: voice::Ear,
     keys: Remote,
     queued: Option<PathBuf>,
     led: Option<Led>,
@@ -328,9 +326,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         problem: None,
         deferred: None,
         voice,
-        voice_active: false,
-        voice_cancelled: false,
-        unmute_after_listening: false,
+        ear: voice::Ear::Idle,
         keys: keys.clone(),
         queued: None,
         led,
@@ -574,7 +570,7 @@ impl App {
             app.borrow().listen();
             return;
         }
-        if command == Command::Back && app.borrow().voice_active {
+        if command == Command::Back && app.borrow().ear.active() {
             app.borrow_mut().cancel_voice();
             return;
         }
@@ -901,17 +897,15 @@ impl App {
     }
 
     fn hear(&mut self, heard: Heard) {
-        if heard == Heard::Listening {
-            self.voice_cancelled = false;
-        } else if self.voice_cancelled {
-            if heard != Heard::Transcribing {
-                self.voice_cancelled = false;
-            }
+        let muting = heard == Heard::Listening && self.player().is_some_and(|player| !player.muted());
+        let before = self.ear;
+        let (ear, pass) = before.hear(&heard, muting);
+        self.ear = ear;
+        if pass == voice::Pass::Drop {
             return;
         }
-        self.voice_active = matches!(heard, Heard::Listening | Heard::Transcribing);
         if let Some(led) = &self.led {
-            led.set(self.voice_active);
+            led.set(ear.active());
         }
         if heard == Heard::Transcribing {
             self.bus.voice(VoiceEvent::Transcribing);
@@ -920,15 +914,15 @@ impl App {
         }
         if heard == Heard::Listening {
             self.bus.voice(VoiceEvent::Listening);
-            if let Some(OnTv { player, .. }) = self.on_tv.as_ref().filter(|tv| !tv.player.muted()) {
+            if let Some(player) = self.player().filter(|_| muting) {
                 player.set_muted(true);
-                self.unmute_after_listening = true;
             }
             self.show_voice("", "Listening…", None);
             return;
         }
+        let unmute = before.unmute();
         if let Heard::Transcript(text) = &heard
-            && self.answer_offer(text)
+            && self.answer_offer(text, unmute)
         {
             return;
         }
@@ -939,7 +933,7 @@ impl App {
             }
             _ => None,
         };
-        if std::mem::take(&mut self.unmute_after_listening)
+        if unmute
             && action != Some(Action::Control(Control::Mute))
             && let Some(player) = self.player()
         {
@@ -981,13 +975,11 @@ impl App {
         if let Some(voice) = &self.voice {
             voice.cancel();
         }
-        self.voice_active = false;
-        self.voice_cancelled = true;
+        let unmute = std::mem::replace(&mut self.ear, voice::Ear::Cancelled).unmute();
         if let Some(led) = &self.led {
             led.set(false);
         }
-        if std::mem::take(&mut self.unmute_after_listening)
-            && let Some(player) = self.player()
+        if unmute && let Some(player) = self.player()
         {
             player.set_muted(false);
         }
@@ -1778,7 +1770,7 @@ impl App {
         self.show_voice(heading, status, Some(hold));
     }
 
-    fn answer_offer(&mut self, text: &str) -> bool {
+    fn answer_offer(&mut self, text: &str, unmute: bool) -> bool {
         let Some(offer) = self.offer.take().filter(|offer| offer.until > Instant::now()) else {
             return false;
         };
@@ -1789,9 +1781,7 @@ impl App {
         let Some(downloads) = self.downloads.clone() else {
             return false;
         };
-        if std::mem::take(&mut self.unmute_after_listening)
-            && let Some(player) = self.player()
-        {
+        if unmute && let Some(player) = self.player() {
             player.set_muted(false);
         }
         eprintln!("heard: {text}");
