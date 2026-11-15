@@ -149,6 +149,47 @@ fn key_command(message: &str) -> Option<Command> {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Phase {
+    #[default]
+    Opening,
+    Playing {
+        paused: bool,
+    },
+    Ended,
+}
+
+impl Phase {
+    fn started(self) -> bool {
+        self != Self::Opening
+    }
+
+    fn playing(self) -> bool {
+        matches!(self, Self::Playing { .. })
+    }
+
+    fn paused(self) -> bool {
+        match self {
+            Self::Opening => true,
+            Self::Playing { paused } => paused,
+            Self::Ended => false,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Card {
+    #[default]
+    Gone,
+    Shown {
+        opened: Instant,
+    },
+    Fading {
+        opened: Instant,
+        since: Instant,
+    },
+}
+
 #[derive(Default)]
 struct Playback {
     stream: Option<UnixStream>,
@@ -157,11 +198,9 @@ struct Playback {
     duration: f64,
     played: f64,
     saved: f64,
-    started: bool,
-    paused: bool,
+    phase: Phase,
     muted: bool,
     speed: f64,
-    ended: bool,
     closed: bool,
     segments: Vec<Segment>,
     credits: Option<f64>,
@@ -175,8 +214,7 @@ struct Playback {
     subtitles: Subtitles,
     tracks: Tracks,
     billing: Billing,
-    opening: Option<Instant>,
-    fading: Option<Instant>,
+    card: Card,
     on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
 }
@@ -219,14 +257,14 @@ impl Playback {
     }
 
     fn step(&mut self, direction: Direction, now: Instant) {
-        if self.started {
+        if self.phase.playing() {
             let order = self.scrub.step(direction, self.position, self.duration, now);
             self.seek(order);
         }
     }
 
     fn jump(&mut self, seconds: i32, now: Instant) {
-        if self.started {
+        if self.phase.playing() {
             let order = self.scrub.jump(seconds, self.position, self.duration, now);
             self.seek(order);
         }
@@ -258,17 +296,22 @@ impl Playback {
 
     fn advance(&mut self, position: f64) {
         let step = position - self.position;
-        if self.started && !self.paused && step > 0.0 && step <= PLAY_STEP {
+        if self.phase == (Phase::Playing { paused: false }) && step > 0.0 && step <= PLAY_STEP {
             self.played += step;
         }
         self.position = position;
     }
 
     fn begin(&mut self, now: Instant) {
-        if !self.started {
-            self.started = true;
-            self.paused = false;
+        if self.phase == Phase::Opening {
+            self.phase = Phase::Playing { paused: false };
             self.wake(now);
+        }
+    }
+
+    fn pause_changed(&mut self, paused: bool) {
+        if let Phase::Playing { .. } = self.phase {
+            self.phase = Phase::Playing { paused };
         }
     }
 
@@ -311,7 +354,7 @@ impl Playback {
         if self.toast_until.is_some_and(|until| now >= until) {
             self.hide_toast();
         }
-        if !self.ended {
+        if self.phase != Phase::Ended {
             let order = self.scrub.poll(now);
             self.seek(order);
             self.present(now);
@@ -319,21 +362,21 @@ impl Playback {
     }
 
     fn open_card(&mut self, now: Instant) {
-        self.opening = Some(now);
+        self.card = Card::Shown { opened: now };
         self.show_card(now);
     }
 
     fn show_card(&mut self, now: Instant) {
-        let Some(opened) = self.opening else {
-            return;
-        };
-        let opacity = match self.fading {
-            Some(fading) => 1.0 - now.duration_since(fading).as_secs_f64() / CARD_FADE.as_secs_f64(),
-            None => 1.0,
+        let (opened, opacity) = match self.card {
+            Card::Gone => return,
+            Card::Shown { opened } => (opened, 1.0),
+            Card::Fading { opened, since } => (
+                opened,
+                1.0 - now.duration_since(since).as_secs_f64() / CARD_FADE.as_secs_f64(),
+            ),
         };
         if opacity <= 0.0 {
-            self.opening = None;
-            self.fading = None;
+            self.card = Card::Gone;
             self.send(card_command(None));
             return;
         }
@@ -342,14 +385,18 @@ impl Playback {
     }
 
     fn close_card(&mut self, now: Instant) {
-        if self.opening.is_some() && self.fading.is_none() {
-            self.fading = Some(now);
+        if let Card::Shown { opened } = self.card {
+            self.card = Card::Fading { opened, since: now };
             self.send(json!(["set_property", "background-color", "#000000"]));
         }
     }
 
     fn shown(&self, now: Instant) -> bool {
-        self.started && (self.paused || self.shown_until.is_some_and(|until| now < until))
+        match self.phase {
+            Phase::Playing { paused: true } => true,
+            Phase::Playing { paused: false } => self.shown_until.is_some_and(|until| now < until),
+            Phase::Opening | Phase::Ended => false,
+        }
     }
 
     fn view(&self, now: Instant) -> View<'_> {
@@ -357,7 +404,7 @@ impl Playback {
             title: &self.name,
             position: self.scrub.target().unwrap_or(self.position),
             duration: self.duration,
-            paused: self.paused,
+            paused: self.phase.paused(),
             jump: self.scrub.jump_shown(now),
         }
     }
@@ -375,7 +422,7 @@ impl Playback {
     }
 
     fn save_position(&mut self) {
-        if !self.ended && save_due(self.saved, self.position) {
+        if self.phase != Phase::Ended && save_due(self.saved, self.position) {
             self.saved = self.position;
             if let Some(on_save) = &self.on_save {
                 on_save();
@@ -384,7 +431,7 @@ impl Playback {
     }
 
     fn end(&mut self) {
-        self.ended = true;
+        self.phase = Phase::Ended;
         self.send(json!(["quit", ENDED_EXIT_CODE]));
     }
 }
@@ -603,13 +650,13 @@ impl Player {
         State {
             position: playback.scrub.target().unwrap_or(playback.position),
             duration: playback.duration,
-            paused: playback.paused,
+            paused: playback.phase.paused(),
             muted: playback.muted,
             speed: playback.speed,
             subtitle,
             subtitle_delay: playback.subtitles.delay(),
             audio,
-            started: playback.started,
+            started: playback.phase.started(),
             jump: playback.scrub.jump_shown(Instant::now()),
         }
     }
@@ -621,7 +668,7 @@ impl Player {
     pub fn seek_to(&self, seconds: f64) {
         let now = Instant::now();
         let mut playback = self.playback.lock().unwrap();
-        if playback.started {
+        if playback.phase.playing() {
             let to = seek::within(seconds, playback.duration);
             playback.scrub.cancel();
             playback.seek(Some(Order { to, exact: true }));
@@ -758,14 +805,14 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
             Some(Event::Paused(paused)) => {
                 let now = Instant::now();
                 let mut playback = shared.lock().unwrap();
-                playback.paused = paused;
+                playback.pause_changed(paused);
                 playback.wake(now);
                 playback.present(now);
             }
             Some(Event::Video(video)) => {
                 let settled = {
                     let playback = shared.lock().unwrap();
-                    playback.started || playback.matched
+                    playback.phase.started() || playback.matched
                 };
                 if !settled {
                     let matched = display::match_video(video);
@@ -775,7 +822,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
             Some(Event::Started) => {
                 let mut playback = shared.lock().unwrap();
                 playback.close_card(Instant::now());
-                if !playback.started {
+                if playback.phase == Phase::Opening {
                     playback.send(json!(["set_property", "pause", false]));
                     playback.begin(Instant::now());
                 }
@@ -853,13 +900,13 @@ mod tests {
     #[test]
     fn only_steady_unpaused_playback_counts_as_watched() {
         let mut playback = Playback {
-            started: true,
+            phase: Phase::Playing { paused: false },
             ..Playback::default()
         };
         for position in [0.5, 1.0, 1.5, 300.0, 300.5, 120.0, 120.4] {
             playback.advance(position);
         }
-        playback.paused = true;
+        playback.pause_changed(true);
         playback.advance(121.0);
         assert!((playback.played - 2.4).abs() < 1e-9);
     }
@@ -998,14 +1045,50 @@ mod tests {
     fn nothing_is_saved_after_the_end() {
         let mut playback = Playback {
             position: 100.0,
-            ended: true,
+            phase: Phase::Playing { paused: false },
             ..Playback::default()
         };
         playback.save_position();
-        assert_eq!(playback.saved, 0.0);
-        playback.ended = false;
+        assert_eq!(playback.saved, 100.0);
+        playback.end();
+        playback.position = 200.0;
         playback.save_position();
         assert_eq!(playback.saved, 100.0);
+    }
+
+    #[test]
+    fn a_pause_before_the_start_is_mpvs_own_and_the_start_always_plays() {
+        let mut playback = Playback::default();
+        playback.pause_changed(true);
+        assert_eq!(playback.phase, Phase::Opening);
+        assert!(playback.phase.paused() && !playback.phase.started());
+        playback.begin(Instant::now());
+        assert_eq!(playback.phase, Phase::Playing { paused: false });
+        playback.pause_changed(true);
+        assert_eq!(playback.phase, Phase::Playing { paused: true });
+        playback.begin(Instant::now());
+        assert_eq!(playback.phase, Phase::Playing { paused: true });
+        playback.end();
+        playback.pause_changed(false);
+        assert_eq!(playback.phase, Phase::Ended);
+        assert!(playback.phase.started() && !playback.phase.playing());
+    }
+
+    #[test]
+    fn the_card_fades_only_once_it_was_shown_and_is_gone_after_the_fade() {
+        let now = Instant::now();
+        let mut playback = Playback::default();
+        playback.close_card(now);
+        assert_eq!(playback.card, Card::Gone);
+        playback.open_card(now);
+        assert_eq!(playback.card, Card::Shown { opened: now });
+        let closed = now + Duration::from_secs(5);
+        playback.close_card(closed);
+        assert_eq!(playback.card, Card::Fading { opened: now, since: closed });
+        playback.close_card(closed + Duration::from_secs(1));
+        assert_eq!(playback.card, Card::Fading { opened: now, since: closed });
+        playback.show_card(closed + CARD_FADE);
+        assert_eq!(playback.card, Card::Gone);
     }
 
     #[test]
@@ -1075,7 +1158,7 @@ mod tests {
             name: "Sintel".to_string(),
             position: 100.0,
             duration: 5400.0,
-            started: true,
+            phase: Phase::Playing { paused: false },
             ..Playback::default()
         }
     }
@@ -1130,10 +1213,10 @@ mod tests {
     fn the_overlay_stays_while_paused() {
         let now = Instant::now();
         let mut playback = playing();
-        playback.paused = true;
+        playback.pause_changed(true);
         playback.wake(now);
         assert!(playback.shown(now + Duration::from_secs(600)));
-        playback.paused = false;
+        playback.pause_changed(false);
         assert!(!playback.shown(now + Duration::from_secs(600)));
     }
 
@@ -1175,7 +1258,7 @@ mod tests {
     fn the_tick_sends_nothing_after_the_end() {
         let now = Instant::now();
         let mut ended = playing();
-        ended.ended = true;
+        ended.phase = Phase::Ended;
         ended.wake(now);
         assert!(sent_by(|playback| playback.tick(now), ended).is_empty());
     }
@@ -1184,7 +1267,7 @@ mod tests {
     fn ok_skips_a_section_even_right_after_an_arrow() {
         let now = Instant::now();
         let during = Playback {
-            started: true,
+            phase: Phase::Playing { paused: false },
             duration: 2700.0,
             ..during_the_intro()
         };
