@@ -1802,11 +1802,11 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .sections .chips { gap: 6px; margin-bottom: 4px; }
 .sections .chip { padding: 7px 12px; font-size: 14px; }
 .chip-gap { flex: none; width: 1px; margin: 6px 1px; background: var(--line); }
-.chip.pick { gap: 3px; padding: 7px 6px 7px 10px; }
-.chip.pick svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
-.chip.pick .glyph { width: 17px; height: 17px; stroke-width: 1.9; }
-.chip.pick[aria-expanded="true"] svg:last-child { transform: rotate(180deg); }
-.chip.pick.on { background: var(--accent); border-color: var(--accent); color: #111; }
+.chip.filter { gap: 3px; padding: 7px 6px 7px 10px; }
+.chip.filter svg { flex: none; width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.chip.filter .glyph { width: 17px; height: 17px; stroke-width: 1.9; }
+.chip.filter[aria-expanded="true"] svg:last-child { transform: rotate(180deg); }
+.chip.filter.on { background: var(--accent); border-color: var(--accent); color: #111; }
 
 .filter-options {
   display: flex;

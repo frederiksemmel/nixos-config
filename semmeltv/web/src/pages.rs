@@ -274,7 +274,7 @@ async fn sections(cx: &Cx, section: Signal<String>, rating: Signal<String>, year
             @click=$(|_e| section.set("movies".to_owned()))>"Movies"</button>
         <span class="chip-gap" :hidden=$(section.get() == "home")></span>
         <button type="button" aria-label="Rating" :hidden=$(section.get() == "home")
-            :class=$(if rating.get().is_empty() { "chip pick" } else { "chip pick on" })
+            :class=$(if rating.get().is_empty() { "chip filter" } else { "chip filter on" })
             :aria-expanded=$(if open.get() == "rating" { "true" } else { "false" })
             @click=$(|_e| if open.get() == "rating" { open.set("".to_owned()) } else { open.set("rating".to_owned()) })>
             <svg class="glyph" viewBox="0 0 24 24"><path d="m12 3.5 2.6 5.4 5.9.8-4.3 4.1 1 5.9-5.2-2.8-5.2 2.8 1-5.9-4.3-4.1 5.9-.8z"></path></svg>
@@ -282,7 +282,7 @@ async fn sections(cx: &Cx, section: Signal<String>, rating: Signal<String>, year
             <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 10 5 5 5-5"></path></svg>
         </button>
         <button type="button" aria-label="Year" :hidden=$(section.get() == "home")
-            :class=$(if year.get().is_empty() { "chip pick" } else { "chip pick on" })
+            :class=$(if year.get().is_empty() { "chip filter" } else { "chip filter on" })
             :aria-expanded=$(if open.get() == "year" { "true" } else { "false" })
             @click=$(|_e| if open.get() == "year" { open.set("".to_owned()) } else { open.set("year".to_owned()) })>
             <svg class="glyph" viewBox="0 0 24 24"><rect x="4" y="5.5" width="16" height="14.5" rx="2.5"></rect><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"></path></svg>

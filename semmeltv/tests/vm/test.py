@@ -358,6 +358,14 @@ TOP_BAR = """() => {
            brand: brand.top + brand.height / 2 - (talk.top + talk.height / 2) };
 }"""
 
+FILTER_ROW = """() => {
+  const chips = [...document.querySelectorAll("main .chips .chip")].filter((chip) => chip.getClientRects().length);
+  const heights = chips.map((chip) => chip.getBoundingClientRect().height);
+  const middles = (chip) => [...chip.querySelectorAll("svg")].map((svg) => { const box = svg.getBoundingClientRect(); return box.top + box.height / 2; });
+  const stacked = chips.filter((chip) => chip.querySelector("svg")).map((chip) => { const m = middles(chip); return Math.max(...m) - Math.min(...m); });
+  return { heights: Math.max(...heights) - Math.min(...heights), stacked: Math.max(0, ...stacked), chips: chips.length };
+}"""
+
 AWAY = """(away) => {
   Object.defineProperty(document, "visibilityState", { configurable: true, get: () => away ? "hidden" : "visible" });
   document.dispatchEvent(new Event("visibilitychange"));
@@ -909,6 +917,8 @@ with sync_playwright() as playwright:
             assert browse.js('getComputedStyle(document.body).userSelect === "none" || getComputedStyle(document.body).webkitUserSelect === "none"')
             browse.page.locator("main .chips .chip", has_text="Movies").tap()
             browse.until('[...document.querySelectorAll("main .chips .chip.on")].some((chip) => chip.textContent.trim() === "Movies")', 3000)
+            filters = browse.js(FILTER_ROW)
+            assert filters["heights"] <= 1 and filters["stacked"] <= 1, f"the filter chips are one slim row, icons beside each other: {filters}"
             browse.page.locator("main .chips .chip", has_text="Home").tap()
             browse.until('[...document.querySelectorAll("main .chips .chip.on")].some((chip) => chip.textContent.trim() === "Home")', 3000)
             browse.page.wait_for_selector(TILE)
