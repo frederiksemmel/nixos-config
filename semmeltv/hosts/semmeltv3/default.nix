@@ -12,6 +12,13 @@
 
   networking.hostName = "semmeltv3";
 
+  networking.wireless = {
+    enable = true;
+    secretsFile = config.age.secrets.wifi_joincena.path;
+    networks.joincena.pskRaw = "ext:psk_joincena";
+  };
+  age.secrets.wifi_joincena.file = ../../../secrets/wifi_joincena.age;
+
   zramSwap = {
     enable = true;
     memoryPercent = 100;
