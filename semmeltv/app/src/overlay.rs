@@ -131,7 +131,7 @@ pub fn toast(heading: &str, message: &str) -> String {
     events.join("\n")
 }
 
-fn clock(seconds: f64) -> String {
+pub fn clock(seconds: f64) -> String {
     let total = seconds.max(0.0) as u64;
     let (hours, minutes, seconds) = (total / 3600, total / 60 % 60, total % 60);
     if hours > 0 {
@@ -176,7 +176,7 @@ fn shorten(title: &str) -> String {
     shorten_to(title, TITLE_LENGTH)
 }
 
-fn shorten_to(title: &str, length: usize) -> String {
+pub fn shorten_to(title: &str, length: usize) -> String {
     let title = title.replace(['\n', '\r'], " ");
     if title.chars().count() <= length {
         return title;
@@ -185,7 +185,7 @@ fn shorten_to(title: &str, length: usize) -> String {
     format!("{}…", cut.trim_end())
 }
 
-fn escape(content: &str) -> String {
+pub fn escape(content: &str) -> String {
     let mut escaped = String::new();
     let mut after_backslash = false;
     for character in content.chars() {

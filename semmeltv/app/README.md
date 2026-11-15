@@ -240,6 +240,14 @@ seconds a press. Changing direction or leaving them alone for 1.2 seconds starts
 over. Up and Down skip a minute. Seeks stop at the start and 5 seconds before the
 end, so a long fast-forward does not end the episode.
 
+While a video opens, the TV shows the Semmel from the logo beside the title and,
+for an episode, its number and name, and where it picks up when it resumes. The
+Semmel breathes like rising dough and blinks now and then; it is drawn from
+`assets/logo/favicon.svg` in mpv's `osd-overlay`, redrawn every 100 ms over the
+logo's dark brown, which mpv paints as its background until the video starts and
+the card fades out. `semmeltv card SECONDS TITLE LINE…` prints that moment of the
+card as ASS events, to render with libass.
+
 Starting, seeking, pausing and resuming show the title, a progress bar, and the
 elapsed and remaining time at the bottom of the screen, for 4 seconds or for as
 long as the video is paused. A seek also shows where it lands and the size of the

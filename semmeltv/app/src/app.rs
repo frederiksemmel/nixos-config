@@ -3,6 +3,7 @@ use crate::artwork;
 use crate::audio::{self, Audio};
 use crate::bus::{Bus, NowPlaying, Voice as VoiceEvent};
 use crate::cache::Cache;
+use crate::card;
 use crate::cec;
 use crate::command::Command;
 use crate::db::Db;
@@ -18,6 +19,7 @@ use crate::library::{self, Item, Library};
 use crate::loader::{self, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence, Source, Store};
+use crate::overlay;
 use crate::player::{self, Finish, Player};
 use crate::auth::store::AuthStore;
 use crate::profile::ProfileId;
@@ -730,6 +732,7 @@ impl App {
             start,
             tracks,
             self.caption(path),
+            self.billing(path, start),
             self.title(path),
             self.subtitles.clone(),
             &self.audio_device(),
@@ -785,6 +788,18 @@ impl App {
         }
         let movie = self.nav.library().movies.iter().find(|movie| movie.path == path);
         movie.map_or_else(|| path.display().to_string(), |movie| movie.title.clone())
+    }
+
+    fn billing(&self, path: &Path, start: f64) -> card::Billing {
+        let library = self.nav.library();
+        let (title, mut lines) = match library.find_episode(path) {
+            Some((show, episode)) => (show.title.clone(), vec![episode.label()]),
+            None => (self.caption(path), Vec::new()),
+        };
+        if start > 1.0 {
+            lines.push(format!("Picks up at {}", overlay::clock(start)));
+        }
+        card::Billing { title, lines }
     }
 
     fn title(&self, path: &Path) -> Option<Title> {

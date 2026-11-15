@@ -1,5 +1,6 @@
 use crate::command::Command;
 use crate::display::{self, Video};
+use crate::card::{self, Billing};
 use crate::overlay::{self, View};
 use crate::progress::{Place, Tracks};
 use crate::seek::{self, Direction, Order, Scrub};
@@ -39,7 +40,7 @@ const PROMPT_ID: u64 = 1;
 const LOADING_ID: u64 = 2;
 const OVERLAY_ID: u64 = 3;
 const TOAST_ID: u64 = 4;
-const LOADING_TEXT: &str = r"{\an5\pos(960,540)\bord0\shad0\b1\fs64\1c&HFFFFFF&}Loading…";
+const CARD_FADE: Duration = Duration::from_millis(300);
 const KEYBINDS: [(&str, &str); 11] = [
     ("ESC", "script-message semmeltv-back"),
     ("BS", "script-message semmeltv-back"),
@@ -172,6 +173,9 @@ struct Playback {
     toast_until: Option<Instant>,
     subtitles: Subtitles,
     tracks: Tracks,
+    billing: Billing,
+    opening: Option<Instant>,
+    fading: Option<Instant>,
     on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
 }
@@ -302,6 +306,7 @@ impl Playback {
     }
 
     fn tick(&mut self, now: Instant) {
+        self.show_card(now);
         if self.toast_until.is_some_and(|until| now >= until) {
             self.hide_toast();
         }
@@ -309,6 +314,36 @@ impl Playback {
             let order = self.scrub.poll(now);
             self.seek(order);
             self.present(now);
+        }
+    }
+
+    fn open_card(&mut self, now: Instant) {
+        self.opening = Some(now);
+        self.show_card(now);
+    }
+
+    fn show_card(&mut self, now: Instant) {
+        let Some(opened) = self.opening else {
+            return;
+        };
+        let opacity = match self.fading {
+            Some(fading) => 1.0 - now.duration_since(fading).as_secs_f64() / CARD_FADE.as_secs_f64(),
+            None => 1.0,
+        };
+        if opacity <= 0.0 {
+            self.opening = None;
+            self.fading = None;
+            self.send(card_command(None));
+            return;
+        }
+        let frame = card::frame(&self.billing, now.duration_since(opened), opacity);
+        self.send(card_command(Some(&frame)));
+    }
+
+    fn close_card(&mut self, now: Instant) {
+        if self.opening.is_some() && self.fading.is_none() {
+            self.fading = Some(now);
+            self.send(json!(["set_property", "background-color", "#000000"]));
         }
     }
 
@@ -448,11 +483,10 @@ fn prompt_command(prompt: Option<Kind>) -> Value {
     }
 }
 
-fn loading_command(shown: bool) -> Value {
-    let (format, data) = if shown {
-        ("ass-events", LOADING_TEXT)
-    } else {
-        ("none", "")
+fn card_command(frame: Option<&str>) -> Value {
+    let (format, data) = match frame {
+        Some(frame) => ("ass-events", frame),
+        None => ("none", ""),
     };
     json!({
         "name": "osd-overlay",
@@ -488,6 +522,7 @@ impl Player {
         start: f64,
         tracks: Tracks,
         name: String,
+        billing: Billing,
         title: Option<Title>,
         subtitles: Subtitles,
         audio_device: &str,
@@ -511,6 +546,7 @@ impl Player {
             .arg("--profile=fast")
             .arg("--video-sync=display-resample")
             .arg("--no-osc")
+            .arg(format!("--background-color={}", card::BACKGROUND))
             .arg(format!("--osd-font={OSD_FONT}"))
             .arg(format!("--osd-fonts-dir={OSD_FONTS}"))
             .arg(format!("--input-ipc-server={}", socket_path.display()))
@@ -525,6 +561,7 @@ impl Player {
             name,
             subtitles,
             tracks,
+            billing,
             speed: 1.0,
             on_save: Some(Box::new(on_save)),
             on_key: Some(Box::new(on_key)),
@@ -662,7 +699,6 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             }
             let _ = send(&mut stream, json!(["observe_property", POSITION_ID, "time-pos"]));
             let _ = send(&mut stream, json!(["observe_property", ENDED_ID, "eof-reached"]));
-            let _ = send(&mut stream, loading_command(true));
             let _ = send(
                 &mut stream,
                 json!(["observe_property", VIDEO_ID, "current-tracks/video"]),
@@ -674,7 +710,11 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
                 let _ = send(&mut stream, json!(["observe_property", SUBTITLES_ID, name]));
             }
             let events = stream.try_clone();
-            shared.lock().unwrap().stream = Some(stream);
+            {
+                let mut playback = shared.lock().unwrap();
+                playback.stream = Some(stream);
+                playback.open_card(Instant::now());
+            }
             if let Ok(events) = events {
                 let ticking = shared.clone();
                 thread::spawn(move || tick(&ticking));
@@ -723,7 +763,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
             }
             Some(Event::Started) => {
                 let mut playback = shared.lock().unwrap();
-                playback.send(loading_command(false));
+                playback.close_card(Instant::now());
                 if !playback.started {
                     playback.send(json!(["set_property", "pause", false]));
                     playback.begin(Instant::now());
