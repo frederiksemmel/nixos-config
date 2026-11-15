@@ -345,7 +345,7 @@ impl Session {
             .values()
             .filter(|fragment| {
                 let end = fragment.start + (fragment.dts_end - fragment.dts) as f64 / scale;
-                end < wanted - BEHIND || fragment.start > wanted + AHEAD + REACH
+                end < wanted - BEHIND
             })
             .map(|fragment| fragment.dts)
             .collect();
@@ -413,11 +413,19 @@ impl Session {
         Some(bytes)
     }
 
+    /// Whether a segment that could not be assembled needs a new run. A run
+    /// that has already passed the segment's end left a hole there, so
+    /// waiting for it would never help.
     fn should_restart(&self, state: &State, segment: usize) -> bool {
         let start = self.plan.start(segment);
         match &state.run {
             None => true,
-            Some(run) => run.from > segment || run.exited || run.produced < start - REACH,
+            Some(run) => {
+                run.from > segment
+                    || run.exited
+                    || run.produced < start - REACH
+                    || run.produced > self.plan.end(segment) + MATCH
+            }
         }
     }
 
@@ -566,6 +574,85 @@ pub fn clear(root: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rounders() -> Arc<Session> {
+        let keyframes: Vec<f64> = (0..400).map(|n| f64::from(n) * 10.0).collect();
+        let plan = Plan::new(&index::Index {
+            duration: 4000.0,
+            keyframes,
+        });
+        let spec = Spec {
+            source: PathBuf::from("/nonexistent.mp4"),
+            audio: Some(0),
+            hevc: true,
+            copy_audio: true,
+            subtitles: Vec::new(),
+        };
+        Session::new(plan, PathBuf::from("/nonexistent"), spec)
+    }
+
+    fn run_through(produced: f64) -> Run {
+        Run {
+            number: 1,
+            from: 281,
+            starts: 2810.0,
+            pid: None,
+            produced,
+            paused: true,
+            exited: false,
+        }
+    }
+
+    #[test]
+    fn a_remux_that_runs_far_ahead_keeps_every_fragment_until_playback_has_passed_it() {
+        let session = rounders();
+        let timing = Init {
+            video: 1,
+            timescale: 1000,
+            shift: 0,
+        };
+        let mut state = State {
+            wanted: 2820.0,
+            ..State::default()
+        };
+        for n in 281..303 {
+            let start = f64::from(n) * 10.0;
+            let dts = (start * 1000.0) as i64;
+            state.fragments.insert(
+                dts,
+                Fragment {
+                    start,
+                    dts,
+                    dts_end: dts + 10_000,
+                    offset: 0,
+                    path: PathBuf::from(format!("/nonexistent/run1-{n}.m4s")),
+                    last: false,
+                    opening: false,
+                },
+            );
+        }
+        session.tidy(&mut state, timing);
+        assert_eq!(state.fragments.len(), 22, "a fragment ahead of playback was dropped");
+        state.wanted = 2900.0;
+        session.tidy(&mut state, timing);
+        assert_eq!(state.fragments.values().next().unwrap().start, 2850.0);
+    }
+
+    #[test]
+    fn a_segment_the_run_has_already_passed_restarts_the_remux_instead_of_waiting() {
+        let session = rounders();
+        let state = State {
+            run: Some(run_through(3022.0)),
+            ..State::default()
+        };
+        assert!(session.should_restart(&state, 291));
+        let state = State {
+            run: Some(run_through(2905.0)),
+            ..State::default()
+        };
+        assert!(!session.should_restart(&state, 291), "the run is still making segment 291");
+        assert!(!session.should_restart(&state, 293), "the run is close enough to reach segment 293");
+    }
 
     #[test]
     fn subtitles_wait_until_the_remux_has_passed_their_piece() {
