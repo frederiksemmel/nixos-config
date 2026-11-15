@@ -142,38 +142,6 @@ mod tests {
     }
 
     #[test]
-    fn a_film_shows_everything_it_knows_in_a_fixed_order() {
-        let tags = tags();
-        let details = Details {
-            tags: Some(&tags),
-            duration: Some(7860.0),
-            stopped_at: Some(3840.0),
-            download: "Downloaded",
-            ..Details::default()
-        };
-        assert_eq!(
-            details.line(),
-            "HEVC 10-bit · 1080p · 5.1 · 2h 11m · Stopped at 1h 04m · Downloaded"
-        );
-    }
-
-    #[test]
-    fn a_show_names_the_episode_the_values_belong_to() {
-        let tags = tags();
-        let details = Details {
-            episode: Some("S2 E3".to_string()),
-            tags: Some(&tags),
-            duration: Some(2730.0),
-            download: "3 of 10 downloaded",
-            ..Details::default()
-        };
-        assert_eq!(
-            details.line(),
-            "S2 E3 · HEVC 10-bit · 1080p · 5.1 · 46m · 3 of 10 downloaded"
-        );
-    }
-
-    #[test]
     fn a_play_reads_as_a_day_and_a_time_close_by_and_a_date_further_back() {
         let now = 1_794_255_000;
         let at = |days: i64, hour: i64, minute: i64| (now / 86_400 - days) * 86_400 + hour * 3600 + minute * 60;
@@ -192,95 +160,158 @@ mod tests {
     }
 
     #[test]
-    fn missing_values_are_left_out() {
-        assert_eq!(Details::default().line(), "");
-        let tags = Tags {
+    fn the_details_line_shows_what_is_known_in_order() {
+        let tags = tags();
+        let partial = Tags {
             resolution: Some("720p".to_string()),
             video: Some(String::new()),
             ..Tags::default()
         };
-        let details = Details {
-            tags: Some(&tags),
-            stopped_at: Some(90.0),
-            ..Details::default()
-        };
-        assert_eq!(details.line(), "720p · Stopped at 1m");
+        let rows = [
+            (
+                Details {
+                    tags: Some(&tags),
+                    duration: Some(7860.0),
+                    stopped_at: Some(3840.0),
+                    download: "Downloaded",
+                    ..Details::default()
+                },
+                "HEVC 10-bit · 1080p · 5.1 · 2h 11m · Stopped at 1h 04m · Downloaded",
+            ),
+            (
+                Details {
+                    episode: Some("S2 E3".to_string()),
+                    tags: Some(&tags),
+                    duration: Some(2730.0),
+                    download: "3 of 10 downloaded",
+                    ..Details::default()
+                },
+                "S2 E3 · HEVC 10-bit · 1080p · 5.1 · 46m · 3 of 10 downloaded",
+            ),
+            (Details::default(), ""),
+            (
+                Details {
+                    tags: Some(&partial),
+                    stopped_at: Some(90.0),
+                    ..Details::default()
+                },
+                "720p · Stopped at 1m",
+            ),
+            (
+                Details {
+                    duration: Some(3600.0),
+                    stopped_at: Some(59.0),
+                    ..Details::default()
+                },
+                "1h 00m",
+            ),
+            (
+                Details {
+                    duration: Some(2729.0),
+                    stopped_at: Some(3599.0),
+                    ..Details::default()
+                },
+                "45m · Stopped at 59m",
+            ),
+            (
+                Details {
+                    duration: Some(36000.0),
+                    ..Details::default()
+                },
+                "10h 00m",
+            ),
+        ];
+        for (details, line) in rows {
+            assert_eq!(details.line(), line, "{details:?}");
+        }
     }
 
     #[test]
-    fn a_few_seconds_in_is_not_a_stopping_point() {
-        let details = Details {
-            duration: Some(3600.0),
-            stopped_at: Some(59.0),
-            ..Details::default()
-        };
-        assert_eq!(details.line(), "1h 00m");
-    }
-
-    #[test]
-    fn ratings_read_as_imdb_tenths_and_rotten_tomatoes_percents() {
-        let scores = Scores {
-            imdb: Some(Tenths(80)),
-            rt: Some(87),
-            popcorn: Some(91),
-            metacritic: Some(74),
-            ..Scores::default()
-        };
-        let ratings = Ratings::from(&scores);
-        assert_eq!(ratings.imdb, "8.0");
-        assert_eq!(ratings.rt, "87%");
-        assert!(ratings.fresh);
-        assert_eq!(ratings.popcorn, "91%");
-        assert!(ratings.full);
-    }
-
-    #[test]
-    fn the_popcorn_bucket_tips_over_below_sixty_percent() {
-        let full = |popcorn| {
-            Ratings::from(&Scores {
-                popcorn: Some(popcorn),
-                ..Scores::default()
-            })
-            .full
-        };
-        assert!(full(60));
-        assert!(!full(59));
-    }
-
-    #[test]
-    fn rotten_tomatoes_turns_rotten_below_sixty_percent() {
-        let fresh = |rt| {
-            Ratings::from(&Scores {
-                rt: Some(rt),
-                ..Scores::default()
-            })
-            .fresh
-        };
-        assert!(fresh(60));
-        assert!(!fresh(59));
-        assert!(!fresh(0));
-    }
-
-    #[test]
-    fn missing_ratings_stay_empty() {
-        assert_eq!(Ratings::from(&Scores::default()), Ratings::default());
-        let only_imdb = Ratings::from(&Scores {
-            imdb: Some(Tenths(73)),
-            metacritic: Some(60),
-            ..Scores::default()
-        });
-        assert_eq!(only_imdb.imdb, "7.3");
-        assert_eq!(only_imdb.rt, "");
-        assert!(!only_imdb.fresh);
-        assert_eq!(only_imdb.popcorn, "");
-        assert!(!only_imdb.full);
-    }
-
-    #[test]
-    fn durations_round_and_stopping_points_round_down() {
-        assert_eq!(clock(minutes(2729.0 + 30.0)), "45m");
-        assert_eq!(clock(minutes(2730.0 + 30.0)), "46m");
-        assert_eq!(clock(minutes(3599.0)), "59m");
-        assert_eq!(clock(minutes(36000.0)), "10h 00m");
+    fn ratings_read_as_imdb_tenths_and_rt_percents() {
+        let rows = [
+            (
+                Scores {
+                    imdb: Some(Tenths(80)),
+                    rt: Some(87),
+                    popcorn: Some(91),
+                    metacritic: Some(74),
+                    ..Scores::default()
+                },
+                Ratings {
+                    imdb: "8.0".to_string(),
+                    rt: "87%".to_string(),
+                    fresh: true,
+                    popcorn: "91%".to_string(),
+                    full: true,
+                },
+            ),
+            (
+                Scores {
+                    popcorn: Some(60),
+                    ..Scores::default()
+                },
+                Ratings {
+                    popcorn: "60%".to_string(),
+                    full: true,
+                    ..Ratings::default()
+                },
+            ),
+            (
+                Scores {
+                    popcorn: Some(59),
+                    ..Scores::default()
+                },
+                Ratings {
+                    popcorn: "59%".to_string(),
+                    ..Ratings::default()
+                },
+            ),
+            (
+                Scores {
+                    rt: Some(60),
+                    ..Scores::default()
+                },
+                Ratings {
+                    rt: "60%".to_string(),
+                    fresh: true,
+                    ..Ratings::default()
+                },
+            ),
+            (
+                Scores {
+                    rt: Some(59),
+                    ..Scores::default()
+                },
+                Ratings {
+                    rt: "59%".to_string(),
+                    ..Ratings::default()
+                },
+            ),
+            (
+                Scores {
+                    rt: Some(0),
+                    ..Scores::default()
+                },
+                Ratings {
+                    rt: "0%".to_string(),
+                    ..Ratings::default()
+                },
+            ),
+            (Scores::default(), Ratings::default()),
+            (
+                Scores {
+                    imdb: Some(Tenths(73)),
+                    metacritic: Some(60),
+                    ..Scores::default()
+                },
+                Ratings {
+                    imdb: "7.3".to_string(),
+                    ..Ratings::default()
+                },
+            ),
+        ];
+        for (scores, ratings) in rows {
+            assert_eq!(Ratings::from(&scores), ratings, "{scores:?}");
+        }
     }
 }

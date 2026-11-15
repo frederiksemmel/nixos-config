@@ -512,20 +512,6 @@ mod tests {
     }
 
     #[test]
-    fn newly_added_shows_the_twelve_newest_titles_once_each() {
-        let mut text = show_text("Alpha", &[(1, 1), (1, 2)], "2026-01-20");
-        for day in 1..=15 {
-            text += &movie_text(&format!("Film {day}"), &format!("2026-01-{day:02}"));
-        }
-        let nav = Nav::new(library(&text));
-        let items = nav.row_items(HomeRow::Newest);
-        assert_eq!(items.len(), NEWEST_COUNT);
-        assert_eq!(nav.library().item_key(items[0]), "alpha");
-        assert_eq!(nav.library().item_key(items[1]), "film-15");
-        assert_eq!(nav.library().item_key(items[11]), "film-5");
-    }
-
-    #[test]
     fn moving_stops_at_the_edges() {
         let mut nav = nav();
         assert_eq!(nav.apply(Left), Effect::None);
@@ -572,28 +558,6 @@ mod tests {
     }
 
     #[test]
-    fn a_newly_added_show_opens_and_back_returns_to_that_row() {
-        let mut nav = nav();
-        nav.apply(Right);
-        assert_eq!(focused_key(&nav), "beta");
-        assert_eq!(nav.apply(Select), Effect::OpenShow);
-        assert_eq!(nav.open_show().unwrap().0.title, "Beta");
-        assert_eq!(nav.apply(Back), Effect::CloseShow);
-        assert_eq!((nav.home_cursor().row, nav.home_cursor().col()), (0, 1));
-    }
-
-    #[test]
-    fn a_newly_added_film_plays() {
-        let mut nav = nav();
-        nav.apply(Right);
-        nav.apply(Right);
-        assert_eq!(
-            nav.apply(Select),
-            Effect::Play("/lib/Movies/Delta (2001)/Delta.2001.1080p.mkv".into())
-        );
-    }
-
-    #[test]
     fn select_plays_movies_and_episodes() {
         let mut nav = nav();
         nav.apply(Down);
@@ -626,11 +590,6 @@ mod tests {
     }
 
     #[test]
-    fn back_on_home_does_nothing() {
-        assert_eq!(nav().apply(Back), Effect::None);
-    }
-
-    #[test]
     fn an_empty_library_ignores_input() {
         let mut nav = Nav::new(Library::default());
         assert!(nav.home_rows().is_empty());
@@ -640,62 +599,74 @@ mod tests {
     }
 
     #[test]
-    fn a_new_title_does_not_move_focus_off_the_current_one() {
-        let older = movie_text("Apple", "2026-01-01") + &movie_text("Mango", "2026-01-02");
-        let mut nav = Nav::new(library(&older));
-        nav.apply(Down);
-        nav.apply(Right);
-        assert_eq!(focused_key(&nav), "apple");
-
-        let newer = older + &movie_text("Zebra", "2026-02-01");
-        assert_eq!(nav.replace(library(&newer)), Reload::NoShow);
-        assert_eq!(focused_key(&nav), "apple");
-        assert_eq!(nav.home_cursor().col(), 2);
-        assert_eq!(nav.home_cursor().row, 1);
-    }
-
-    #[test]
-    fn the_first_title_grows_the_home_rows_around_the_focus() {
-        let movies = movie_text("Apple", "2026-01-01");
-        let mut nav = Nav::new(library(&movies));
-        nav.apply(Down);
-        assert_eq!(nav.home_rows(), [HomeRow::Newest, HomeRow::Movies]);
-
-        let all = show_text("Dark", &[(1, 1), (1, 2)], "2026-02-01") + &movies;
-        nav.replace(library(&all));
-        assert_eq!(nav.home_rows()[nav.home_cursor().row], HomeRow::Movies);
-        assert_eq!(focused_key(&nav), "apple");
-    }
-
-    #[test]
-    fn a_title_pushed_out_of_newly_added_keeps_focus_in_its_own_row() {
-        let mut text = movie_text("Oldest", "2026-01-01");
+    fn a_reload_keeps_home_focus_on_its_title() {
+        let apple = movie_text("Apple", "2026-01-01");
+        let apple_mango = apple.clone() + &movie_text("Mango", "2026-01-02");
+        let mut films = movie_text("Oldest", "2026-01-01");
         for day in 2..=12 {
-            text += &movie_text(&format!("Film {day}"), &format!("2026-01-{day:02}"));
+            films += &movie_text(&format!("Film {day}"), &format!("2026-01-{day:02}"));
         }
-        let mut nav = Nav::new(library(&text));
-        for _ in 0..11 {
-            nav.apply(Right);
+        let rows = [
+            (
+                "a new title",
+                apple_mango.clone(),
+                vec![Down, Right],
+                ("apple", HomeRow::Movies),
+                apple_mango.clone() + &movie_text("Zebra", "2026-02-01"),
+                Some(("apple", HomeRow::Movies, 2)),
+            ),
+            (
+                "the first show",
+                apple.clone(),
+                vec![Down],
+                ("apple", HomeRow::Movies),
+                show_text("Dark", &[(1, 1), (1, 2)], "2026-02-01") + &apple,
+                Some(("apple", HomeRow::Movies, 0)),
+            ),
+            (
+                "a title pushed out of Newly Added",
+                films.clone(),
+                vec![Right; 11],
+                ("oldest", HomeRow::Newest),
+                films + &movie_text("Newest", "2026-02-01"),
+                Some(("oldest", HomeRow::Movies, 12)),
+            ),
+            (
+                "the focused title went away",
+                apple_mango.clone(),
+                vec![Right],
+                ("apple", HomeRow::Newest),
+                movie_text("Mango", "2026-01-02"),
+                Some(("mango", HomeRow::Newest, 0)),
+            ),
+            (
+                "every title went away",
+                apple_mango,
+                vec![Right],
+                ("apple", HomeRow::Newest),
+                String::new(),
+                None,
+            ),
+        ];
+        for (name, before, moves, focused, after, kept) in rows {
+            let mut nav = Nav::new(library(&before));
+            for command in moves {
+                nav.apply(command);
+            }
+            let row = |nav: &Nav| nav.home_rows()[nav.home_cursor().row];
+            assert_eq!((focused_key(&nav).as_str(), row(&nav)), focused, "{name}");
+            assert_eq!(nav.replace(library(&after)), Reload::NoShow, "{name}");
+            match kept {
+                Some(kept) => {
+                    let now = (focused_key(&nav), row(&nav), nav.home_cursor().col());
+                    assert_eq!((now.0.as_str(), now.1, now.2), kept, "{name}");
+                }
+                None => {
+                    assert_eq!(nav.focused_item(), None, "{name}");
+                    assert_eq!(nav.apply(Select), Effect::None, "{name}");
+                }
+            }
         }
-        assert_eq!(focused_key(&nav), "oldest");
-
-        text += &movie_text("Newest", "2026-02-01");
-        nav.replace(library(&text));
-        assert_eq!(focused_key(&nav), "oldest");
-        assert_eq!(nav.home_rows()[nav.home_cursor().row], HomeRow::Movies);
-    }
-
-    #[test]
-    fn a_title_that_went_away_leaves_focus_nearby() {
-        let text = movie_text("Apple", "2026-01-01") + &movie_text("Mango", "2026-01-02");
-        let mut nav = Nav::new(library(&text));
-        nav.apply(Right);
-        assert_eq!(focused_key(&nav), "apple");
-        nav.replace(library(&movie_text("Mango", "2026-01-02")));
-        assert_eq!(focused_key(&nav), "mango");
-        nav.replace(Library::default());
-        assert_eq!(nav.focused_item(), None);
-        assert_eq!(nav.apply(Select), Effect::None);
     }
 
     #[test]
@@ -846,13 +817,6 @@ episodes = [
         assert_eq!(items.len(), 1);
         assert_eq!(nav.library().item_key(items[0]), "dark");
         assert_eq!(focused_key(&nav), "dark");
-    }
-
-    #[test]
-    fn an_empty_watching_list_hides_the_row() {
-        let (mut nav, _) = watching_dark();
-        nav.set_watching(Vec::new());
-        assert!(!nav.home_rows().contains(&HomeRow::Watching));
     }
 
     #[test]

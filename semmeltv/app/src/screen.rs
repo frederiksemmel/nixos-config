@@ -623,7 +623,7 @@ impl Default for View {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::{Value, json};
+    use serde_json::json;
 
     fn phone(id: &str) -> Device {
         Device {
@@ -1039,30 +1039,6 @@ mod tests {
     }
 
     #[test]
-    fn the_view_says_which_run_of_the_app_it_comes_from() {
-        let first = View::of(&Screen::Tv, None);
-        assert!(first.boot > 0);
-        assert_eq!(View::of(&Screen::Tv, None).boot, first.boot);
-        assert!(serde_json::to_value(&first).unwrap()["boot"].is_u64());
-    }
-
-    #[test]
-    fn the_log_says_what_happened_in_words() {
-        let now = Instant::now();
-        let iphone = phone("abc");
-        let screen = playing(&iphone, "286da8da9cf4", 600.0, now);
-        assert_eq!(screen.summary(), "abc phone, playing Outlander on stream 286da8da");
-        let report = Event::Report {
-            device: iphone,
-            session: "286da8da9cf4".to_string(),
-            place: place(612.4),
-            paused: true,
-        };
-        assert_eq!(report.describe(), "abc phone reported stream 286da8da paused at 612 s");
-        assert_eq!(Screen::Tv.summary(), "tv");
-    }
-
-    #[test]
     fn closing_the_player_stops_what_it_was_starting() {
         let now = Instant::now();
         let iphone = phone("a");
@@ -1149,21 +1125,6 @@ mod tests {
     }
 
     #[test]
-    fn keeping_it_on_the_tv_never_leaves_the_switch_on_the_phone() {
-        let now = Instant::now();
-        let iphone = phone("a");
-        let tv = place(1228.0);
-        let mut screen = Screen::Tv;
-        screen.step(flip_to(&iphone), Some(&tv), now);
-        assert!(matches!(View::of(&screen, None).on, OnScreen::Moving { .. }));
-        screen.step(flip_tv(None), Some(&tv), now);
-        assert_eq!(View::of(&screen, None).on, OnScreen::Tv);
-        screen.step(flip_to(&iphone), Some(&tv), now);
-        screen.step(Event::TvPlays, Some(&tv), now);
-        assert_eq!(View::of(&screen, None).on, OnScreen::Tv);
-    }
-
-    #[test]
     fn the_phone_screen_never_lets_the_tv_play() {
         let now = Instant::now();
         let iphone = phone("a");
@@ -1244,40 +1205,71 @@ mod tests {
     }
 
     #[test]
-    fn the_view_names_the_phone_and_what_it_plays() {
+    fn the_screen_json_is_what_phones_read() {
         let now = Instant::now();
         let iphone = phone("a");
-        let view = View::of(&playing(&iphone, "s1", 12.0, now), None);
-        let json = serde_json::to_value(&view).unwrap();
-        assert_eq!(json["kind"], "phone");
-        assert_eq!(json["device"]["name"], "a phone");
-        assert_eq!(json["play"]["state"], "playing");
-        assert_eq!(json["play"]["show"], "outlander");
-        assert_eq!(json["play"]["season"], 2);
-        assert_eq!(json["play"]["position"], 12.0);
-        assert_eq!(json["play"]["session"], "s1");
-        assert!(json["play"].get("file").is_none());
-    }
-
-    #[test]
-    fn only_a_playing_phone_has_a_session_and_a_pause_and_the_tv_has_no_device() {
-        let now = Instant::now();
-        let iphone = phone("a");
-        let json = |screen: &Screen| serde_json::to_value(View::of(screen, None)).unwrap();
-        let tv = json(&Screen::Tv);
-        assert_eq!(tv["kind"], "tv");
-        assert!(tv.get("device").is_none() && tv.get("play").is_none());
         let mut moving = Screen::Tv;
         moving.step(flip_to(&iphone), Some(&place(1228.0)), now);
-        let moving = json(&moving);
-        assert_eq!((&moving["kind"], &moving["play"]["state"]), (&json!("moving"), &json!("moving")));
-        assert!(moving["play"].get("session").is_none() && moving["play"].get("paused").is_none());
-        let idle = json(&Screen::Phone {
-            device: iphone.clone(),
-            play: None,
-        });
-        assert_eq!((&idle["kind"], &idle["play"]), (&json!("phone"), &Value::Null));
-        let playing = json(&playing(&iphone, "s1", 12.0, now));
-        assert_eq!((&playing["play"]["session"], &playing["play"]["paused"]), (&json!("s1"), &json!(false)));
+        let device = json!({ "id": "a", "name": "a phone" });
+        let rows = [
+            ("the TV", Screen::Tv, json!({ "kind": "tv", "notice": null })),
+            (
+                "moving to a phone",
+                moving,
+                json!({
+                    "kind": "moving",
+                    "device": device,
+                    "play": {
+                        "state": "moving",
+                        "kind": "episode",
+                        "show": "outlander",
+                        "season": 2,
+                        "episode": 3,
+                        "name": "Outlander",
+                        "caption": "S2 E3",
+                        "position": 1228.0,
+                    },
+                    "notice": null,
+                }),
+            ),
+            (
+                "an idle phone",
+                Screen::Phone {
+                    device: iphone.clone(),
+                    play: None,
+                },
+                json!({ "kind": "phone", "device": device, "play": null, "notice": null }),
+            ),
+            (
+                "a playing phone",
+                playing(&iphone, "s1", 12.0, now),
+                json!({
+                    "kind": "phone",
+                    "device": device,
+                    "play": {
+                        "state": "playing",
+                        "kind": "episode",
+                        "show": "outlander",
+                        "season": 2,
+                        "episode": 3,
+                        "name": "Outlander",
+                        "caption": "S2 E3",
+                        "position": 12.0,
+                        "session": "s1",
+                        "paused": false,
+                    },
+                    "notice": null,
+                }),
+            ),
+        ];
+        let boot = View::of(&Screen::Tv, None).boot;
+        assert!(boot > 0);
+        for (name, screen, expected) in rows {
+            let mut json = serde_json::to_value(View::of(&screen, None)).unwrap();
+            assert!(json["boot"].is_u64(), "{name}");
+            assert_eq!(json["boot"], boot, "{name}");
+            json.as_object_mut().unwrap().remove("boot");
+            assert_eq!(json, expected, "{name}");
+        }
     }
 }

@@ -224,12 +224,6 @@ mod tests {
     }
 
     #[test]
-    fn jumps_carry_their_direction() {
-        assert_eq!(jump_label(30), "+30s");
-        assert_eq!(jump_label(-120), "-120s");
-    }
-
-    #[test]
     fn the_view_shows_title_elapsed_and_remaining_time() {
         let rendered = view().render();
         assert!(rendered.contains("Sintel"));

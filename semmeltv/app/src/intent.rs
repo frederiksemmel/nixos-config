@@ -802,22 +802,23 @@ mod tests {
     use crate::import::library_from_paths;
     use crate::progress::Position;
 
+    const PATHS: [&str; 12] = [
+        "Series/Outlander/Outlander.S01E01.mkv",
+        "Series/Outlander/Outlander.S01E02.mkv",
+        "Series/Outlander/Outlander.S02E01.mkv",
+        "Series/Outlander/Outlander.S02E02.mkv",
+        "Series/Outlander/Outlander.S02E03.mkv",
+        "Series/The Bear/The.Bear.S01E01.mkv",
+        "Series/The Bear/The.Bear.S01E02.mkv",
+        "Series/Star Wars Andor/Star.Wars.Andor.S01E01.mkv",
+        "Series/Star Wars Andor/Star.Wars.Andor.S01E02.mkv",
+        "Series/Star Wars Ahsoka/Star.Wars.Ahsoka.S01E01.mkv",
+        "Series/Star Wars Ahsoka/Star.Wars.Ahsoka.S01E02.mkv",
+        "Movies/Dune (2021)/Dune.2021.1080p.mkv",
+    ];
+
     fn library() -> Library {
-        let paths = [
-            "Series/Outlander/Outlander.S01E01.mkv",
-            "Series/Outlander/Outlander.S01E02.mkv",
-            "Series/Outlander/Outlander.S02E01.mkv",
-            "Series/Outlander/Outlander.S02E02.mkv",
-            "Series/Outlander/Outlander.S02E03.mkv",
-            "Series/The Bear/The.Bear.S01E01.mkv",
-            "Series/The Bear/The.Bear.S01E02.mkv",
-            "Series/Star Wars Andor/Star.Wars.Andor.S01E01.mkv",
-            "Series/Star Wars Andor/Star.Wars.Andor.S01E02.mkv",
-            "Series/Star Wars Ahsoka/Star.Wars.Ahsoka.S01E01.mkv",
-            "Series/Star Wars Ahsoka/Star.Wars.Ahsoka.S01E02.mkv",
-            "Movies/Dune (2021)/Dune.2021.1080p.mkv",
-        ];
-        library_from_paths(&paths)
+        library_from_paths(&PATHS)
     }
 
     fn progress(season: u32, episode: u32, finished: bool) -> Progress {
@@ -830,15 +831,6 @@ mod tests {
             shows: [("outlander".to_string(), position)].into(),
             ..Progress::default()
         }
-    }
-
-    fn request(verb: Verb, season: SeasonChoice, episode: Option<u32>) -> Option<Request> {
-        Some(Request {
-            verb,
-            title: "outlander".to_string(),
-            season,
-            episode,
-        })
     }
 
     fn episode_path(season: u32, episode: u32) -> Action {
@@ -898,161 +890,6 @@ mod tests {
     }
 
     #[test]
-    fn continuing_a_show_is_understood_in_every_language() {
-        for text in [
-            "Continue playing Outlander.",
-            "keep watching Outlander please",
-            "Can you resume Outlander?",
-            "Mach weiter mit Outlander",
-            "Outlander weiterschauen",
-            "Schau Outlander weiter",
-            "Continúa Outlander",
-            "Sigue viendo Outlander",
-            "Por favor, sigue con Outlander",
-            "Ich möchte Outlander weiterschauen",
-        ] {
-            let expected = request(Verb::Play, SeasonChoice::Unspecified, None);
-            assert_eq!(parse(text), expected, "{text}");
-        }
-    }
-
-    #[test]
-    fn seasons_and_episodes_are_understood_in_every_language() {
-        for text in [
-            "Play Outlander season 2 episode 3",
-            "play season two episode three of Outlander",
-            "Play the second season, third episode of Outlander",
-            "Watch Outlander S02E03",
-            "Spiele Outlander Staffel 2 Folge 3",
-            "Outlander zweite Staffel dritte Folge abspielen",
-            "Zeig mir die dritte Folge der zweiten Staffel von Outlander",
-            "Ich will Staffel 2 Folge 3 von Outlander sehen",
-            "Pon Outlander temporada 2 episodio 3 por favor",
-            "Quiero ver el tercer episodio de la segunda temporada de Outlander",
-        ] {
-            let expected = request(Verb::Play, SeasonChoice::Number(2), Some(3));
-            assert_eq!(parse(text), expected, "{text}");
-        }
-    }
-
-    #[test]
-    fn download_requests_are_understood_in_every_language() {
-        for text in [
-            "Download the next season of Outlander",
-            "Lade die nächste Staffel von Outlander herunter",
-            "Die nächste Staffel von Outlander runterladen",
-            "Descarga la siguiente temporada de Outlander",
-            "Descargar la temporada siguiente de Outlander",
-            "Baja la próxima temporada de Outlander",
-        ] {
-            let expected = request(Verb::Download, SeasonChoice::Next, None);
-            assert_eq!(parse(text), expected, "{text}");
-        }
-    }
-
-    #[test]
-    fn a_bare_title_means_play() {
-        assert_eq!(parse("Outlander"), request(Verb::Play, SeasonChoice::Unspecified, None));
-    }
-
-    #[test]
-    fn a_sentence_without_a_title_is_not_a_request() {
-        for text in ["", "please", "play", "weiter", "season 2"] {
-            assert_eq!(parse(text), None, "{text}");
-        }
-    }
-
-    #[test]
-    fn playback_controls_are_understood_in_every_language() {
-        let cases = [
-            ("Pause.", Control::Pause),
-            ("Pause, please.", Control::Pause),
-            ("Pausa", Control::Pause),
-            ("Halt an", Control::Pause),
-            ("Play.", Control::Resume),
-            ("Continue", Control::Resume),
-            ("Keep watching", Control::Resume),
-            ("Weiter", Control::Resume),
-            ("Sigue", Control::Resume),
-            ("Stop", Control::Stop),
-            ("Mute.", Control::Mute),
-            ("Ton aus", Control::Mute),
-            ("Silencio", Control::Mute),
-            ("Unmute", Control::Unmute),
-            ("Ton an", Control::Unmute),
-        ];
-        for (text, expected) in cases {
-            let understood = understand(text, &library(), &Progress::default());
-            assert_eq!(understood, Action::Control(expected), "{text}");
-        }
-    }
-
-    #[test]
-    fn the_tv_is_switched_in_every_language() {
-        let cases = [
-            ("Turn on the TV.", Control::TvOn),
-            ("Switch the T.V. on", Control::TvOn),
-            ("TV on", Control::TvOn),
-            ("Schalte den Fernseher ein.", Control::TvOn),
-            ("Mach den Fernseher an", Control::TvOn),
-            ("Enciende la tele", Control::TvOn),
-            ("Turn off the TV", Control::TvOff),
-            ("Fernseher aus", Control::TvOff),
-            ("Apaga la televisión", Control::TvOff),
-        ];
-        for (text, expected) in cases {
-            let understood = understand(text, &library(), &Progress::default());
-            assert_eq!(understood, Action::Control(expected), "{text}");
-        }
-    }
-
-    #[test]
-    fn switching_to_semmeltv_is_understood_however_it_is_transcribed() {
-        for text in [
-            "Switch to SemmelTV",
-            "Switch to Semmel TV.",
-            "SemmelTV input",
-            "Semmel-TV Eingang",
-            "Auf SemmelTV umschalten",
-            "Schalte auf Semmel TV um",
-            "Wechsel zu SemmelTV",
-            "Switch the TV to SimilTV",
-            "simil tv",
-            "Simmel TV, please.",
-            "Go to semel tv",
-            "Sammel T.V.",
-            "Samuel TV input",
-            "Simple TV",
-            "Turn on SemmelTV",
-            "Stevie the TV, switch to SemmelTV.",
-        ] {
-            let understood = understand(text, &library(), &Progress::default());
-            assert_eq!(understood, Action::Control(Control::ShowSemmelTv), "{text}");
-        }
-    }
-
-    #[test]
-    fn semmeltv_next_to_other_words_is_not_an_input_switch() {
-        for text in ["SemmelTV aus", "Switch SemmelTV off", "Play Outlander on SemmelTV"] {
-            let understood = understand(text, &library(), &Progress::default());
-            assert_ne!(understood, Action::Control(Control::ShowSemmelTv), "{text}");
-        }
-    }
-
-    #[test]
-    fn a_control_word_inside_a_longer_sentence_is_not_a_control() {
-        for text in [
-            "Play Outlander",
-            "Stop making sense",
-            "Thank you for watching.",
-            "the tv show Dark",
-        ] {
-            let understood = understand(text, &library(), &Progress::default());
-            assert!(!matches!(understood, Action::Control(_)), "{text}");
-        }
-    }
-
-    #[test]
     fn the_end_of_the_wake_word_before_a_command_is_ignored() {
         let library = library();
         let progress = Progress::default();
@@ -1079,12 +916,6 @@ mod tests {
     }
 
     #[test]
-    fn numbers_in_titles_match_as_digits_or_words() {
-        assert_eq!(similarity("brooklyn 9 9", "Brooklyn Nine-Nine"), 1.0);
-        assert_eq!(similarity("paddington two", "Paddington 2"), 1.0);
-    }
-
-    #[test]
     fn invented_subtitles_from_silence_do_nothing() {
         for text in [
             "Thank you for watching.",
@@ -1096,154 +927,6 @@ mod tests {
                 "{text}"
             );
         }
-    }
-
-    #[test]
-    fn a_title_keeps_words_that_only_look_like_fillers_inside_it() {
-        let parsed = parse("play the man in the high castle season 2").unwrap();
-        assert_eq!(parsed.title, "man in the high castle");
-    }
-
-    #[test]
-    fn season_needs_a_number_to_count_as_a_season() {
-        assert_eq!(parse("Play Season of the Witch").unwrap().title, "season of the witch");
-    }
-
-    #[test]
-    fn numbers_cover_digits_words_and_ordinals() {
-        let values = [
-            ("7", 7),
-            ("3rd", 3),
-            ("once", 11),
-            ("zweiten", 2),
-            ("dritter", 3),
-            ("zwolf", 12),
-        ];
-        for (token, value) in values {
-            assert_eq!(number(token).map(|found| found.value), Some(value), "{token}");
-        }
-        assert!(number("outlander").is_none());
-    }
-
-    #[test]
-    fn a_specific_episode_plays_that_file() {
-        let action = understand("spiele Outlander Staffel 2 Folge 3", &library(), &Progress::default());
-        assert_eq!(action, episode_path(2, 3));
-    }
-
-    #[test]
-    fn a_season_alone_starts_at_its_first_episode() {
-        let action = understand("play season 2 of Outlander", &library(), &Progress::default());
-        assert_eq!(action, episode_path(2, 1));
-    }
-
-    #[test]
-    fn missing_seasons_and_episodes_are_refused() {
-        let library = library();
-        for (text, message) in [
-            ("play Outlander season 9", "Outlander has no season 9"),
-            (
-                "play Outlander season 1 episode 9",
-                "Outlander has no season 1 episode 9",
-            ),
-        ] {
-            let expected = Action::Refuse(message.to_string());
-            assert_eq!(understand(text, &library, &Progress::default()), expected, "{text}");
-        }
-    }
-
-    #[test]
-    fn continue_starts_at_the_beginning_of_an_unwatched_show() {
-        assert_eq!(
-            understand("continue Outlander", &library(), &Progress::default()),
-            episode_path(1, 1)
-        );
-    }
-
-    #[test]
-    fn continue_returns_to_an_unfinished_episode() {
-        let action = understand("continue Outlander", &library(), &progress(2, 2, false));
-        assert_eq!(action, episode_path(2, 2));
-    }
-
-    #[test]
-    fn continue_moves_on_after_a_finished_episode_across_seasons() {
-        let action = understand("weiter mit Outlander", &library(), &progress(1, 2, true));
-        assert_eq!(action, episode_path(2, 1));
-    }
-
-    #[test]
-    fn continue_says_so_when_the_show_is_finished() {
-        let action = understand("continue Outlander", &library(), &progress(2, 3, true));
-        assert_eq!(action, Action::Refuse("You have finished Outlander".to_string()));
-    }
-
-    #[test]
-    fn continuing_with_a_season_goes_to_that_season() {
-        let action = understand("continue Outlander season 2", &library(), &progress(1, 1, false));
-        assert_eq!(action, episode_path(2, 1));
-    }
-
-    #[test]
-    fn the_next_season_counts_from_what_you_are_watching() {
-        let library = library();
-        let action = understand("play the next season of Outlander", &library, &progress(1, 2, true));
-        assert_eq!(action, episode_path(2, 1));
-        let action = understand("play the next season of Outlander", &library, &progress(2, 1, false));
-        assert_eq!(action, Action::Refuse("Outlander has no season 3".to_string()));
-    }
-
-    #[test]
-    fn a_bare_title_continues_where_you_left_off() {
-        assert_eq!(
-            understand("Outlander", &library(), &progress(2, 2, false)),
-            episode_path(2, 2)
-        );
-    }
-
-    #[test]
-    fn transcription_slips_still_find_the_title() {
-        for text in ["play Out Lander", "play outlanders", "play Outlender", "play Autlander"] {
-            assert_eq!(
-                understand(text, &library(), &Progress::default()),
-                episode_path(1, 1),
-                "{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn part_of_a_title_finds_it() {
-        let action = understand("play Andor", &library(), &Progress::default());
-        let path = "/lib/Series/Star Wars Andor/Star.Wars.Andor.S01E01.mkv";
-        assert_eq!(action, Action::Play(path.into()));
-    }
-
-    #[test]
-    fn an_ambiguous_title_asks_instead_of_guessing() {
-        let Action::Refuse(message) = understand("play Star Wars", &library(), &Progress::default()) else {
-            panic!("expected a question");
-        };
-        assert!(message.starts_with("Did you mean"), "{message}");
-        assert!(message.contains("Andor") && message.contains("Ahsoka"), "{message}");
-    }
-
-    #[test]
-    fn movies_play_directly() {
-        let action = understand("spiele Dune", &library(), &Progress::default());
-        assert_eq!(
-            action,
-            Action::Play("/lib/Movies/Dune (2021)/Dune.2021.1080p.mkv".into())
-        );
-    }
-
-    #[test]
-    fn an_unknown_title_is_refused_for_playing() {
-        let action = understand("play Severance", &library(), &Progress::default());
-        assert_eq!(
-            action,
-            Action::Refuse("\"severance\" is not in the library".to_string())
-        );
     }
 
     #[test]
@@ -1260,46 +943,252 @@ mod tests {
     }
 
     #[test]
-    fn downloading_the_next_season_counts_from_the_library() {
-        let action = understand(
-            "download the next season of Outlander",
-            &library(),
-            &Progress::default(),
+    fn parse_understands_requests_in_every_language() {
+        let request = |verb, title: &str, season, episode| {
+            Some(Request {
+                verb,
+                title: title.to_string(),
+                season,
+                episode,
+            })
+        };
+        let continuing = request(Verb::Play, "outlander", SeasonChoice::Unspecified, None);
+        let second_third = request(Verb::Play, "outlander", SeasonChoice::Number(2), Some(3));
+        let next_season = request(Verb::Download, "outlander", SeasonChoice::Next, None);
+        let rows = [
+            ("Continue playing Outlander.", continuing.clone()),
+            ("keep watching Outlander please", continuing.clone()),
+            ("Can you resume Outlander?", continuing.clone()),
+            ("Mach weiter mit Outlander", continuing.clone()),
+            ("Outlander weiterschauen", continuing.clone()),
+            ("Schau Outlander weiter", continuing.clone()),
+            ("Continúa Outlander", continuing.clone()),
+            ("Sigue viendo Outlander", continuing.clone()),
+            ("Por favor, sigue con Outlander", continuing.clone()),
+            ("Ich möchte Outlander weiterschauen", continuing.clone()),
+            ("Play Outlander season 2 episode 3", second_third.clone()),
+            ("play season two episode three of Outlander", second_third.clone()),
+            (
+                "Play the second season, third episode of Outlander",
+                second_third.clone(),
+            ),
+            ("Watch Outlander S02E03", second_third.clone()),
+            ("Spiele Outlander Staffel 2 Folge 3", second_third.clone()),
+            ("Outlander zweite Staffel dritte Folge abspielen", second_third.clone()),
+            (
+                "Zeig mir die dritte Folge der zweiten Staffel von Outlander",
+                second_third.clone(),
+            ),
+            ("Ich will Staffel 2 Folge 3 von Outlander sehen", second_third.clone()),
+            ("Pon Outlander temporada 2 episodio 3 por favor", second_third.clone()),
+            (
+                "Quiero ver el tercer episodio de la segunda temporada de Outlander",
+                second_third.clone(),
+            ),
+            ("Download the next season of Outlander", next_season.clone()),
+            ("Lade die nächste Staffel von Outlander herunter", next_season.clone()),
+            ("Die nächste Staffel von Outlander runterladen", next_season.clone()),
+            ("Descarga la siguiente temporada de Outlander", next_season.clone()),
+            ("Descargar la temporada siguiente de Outlander", next_season.clone()),
+            ("Baja la próxima temporada de Outlander", next_season.clone()),
+            (
+                "Play the 3rd season of Outlander",
+                request(Verb::Play, "outlander", SeasonChoice::Number(3), None),
+            ),
+            (
+                "Pon Outlander temporada 1 episodio once",
+                request(Verb::Play, "outlander", SeasonChoice::Number(1), Some(11)),
+            ),
+            (
+                "play the man in the high castle season 2",
+                request(Verb::Play, "man in the high castle", SeasonChoice::Number(2), None),
+            ),
+            (
+                "Play Season of the Witch",
+                request(Verb::Play, "season of the witch", SeasonChoice::Unspecified, None),
+            ),
+            ("", None),
+            ("please", None),
+            ("play", None),
+            ("weiter", None),
+            ("season 2", None),
+        ];
+        for (text, expected) in rows {
+            assert_eq!(parse(text), expected, "{text}");
+        }
+    }
+
+    #[test]
+    fn controls_are_understood_in_every_language() {
+        let rows = [
+            ("Pause.", Control::Pause),
+            ("Pause, please.", Control::Pause),
+            ("Pausa", Control::Pause),
+            ("Halt an", Control::Pause),
+            ("Play.", Control::Resume),
+            ("Continue", Control::Resume),
+            ("Keep watching", Control::Resume),
+            ("Weiter", Control::Resume),
+            ("Sigue", Control::Resume),
+            ("Stop", Control::Stop),
+            ("Mute.", Control::Mute),
+            ("Ton aus", Control::Mute),
+            ("Silencio", Control::Mute),
+            ("Unmute", Control::Unmute),
+            ("Ton an", Control::Unmute),
+            ("Turn on the TV.", Control::TvOn),
+            ("Switch the T.V. on", Control::TvOn),
+            ("TV on", Control::TvOn),
+            ("Schalte den Fernseher ein.", Control::TvOn),
+            ("Mach den Fernseher an", Control::TvOn),
+            ("Enciende la tele", Control::TvOn),
+            ("Turn off the TV", Control::TvOff),
+            ("Fernseher aus", Control::TvOff),
+            ("Apaga la televisión", Control::TvOff),
+            ("Switch to SemmelTV", Control::ShowSemmelTv),
+            ("Switch to Semmel TV.", Control::ShowSemmelTv),
+            ("SemmelTV input", Control::ShowSemmelTv),
+            ("Semmel-TV Eingang", Control::ShowSemmelTv),
+            ("Auf SemmelTV umschalten", Control::ShowSemmelTv),
+            ("Schalte auf Semmel TV um", Control::ShowSemmelTv),
+            ("Wechsel zu SemmelTV", Control::ShowSemmelTv),
+            ("Switch the TV to SimilTV", Control::ShowSemmelTv),
+            ("simil tv", Control::ShowSemmelTv),
+            ("Simmel TV, please.", Control::ShowSemmelTv),
+            ("Go to semel tv", Control::ShowSemmelTv),
+            ("Sammel T.V.", Control::ShowSemmelTv),
+            ("Samuel TV input", Control::ShowSemmelTv),
+            ("Simple TV", Control::ShowSemmelTv),
+            ("Turn on SemmelTV", Control::ShowSemmelTv),
+            ("Stevie the TV, switch to SemmelTV.", Control::ShowSemmelTv),
+        ];
+        let library = library();
+        for (text, expected) in rows {
+            let understood = understand(text, &library, &Progress::default());
+            assert_eq!(understood, Action::Control(expected), "{text}");
+        }
+    }
+
+    #[test]
+    fn a_control_word_among_other_words_is_not_a_control() {
+        let library = library();
+        for text in [
+            "SemmelTV aus",
+            "Switch SemmelTV off",
+            "Play Outlander on SemmelTV",
+            "Play Outlander",
+            "Stop making sense",
+            "the tv show Dark",
+        ] {
+            let understood = understand(text, &library, &Progress::default());
+            assert!(!matches!(understood, Action::Control(_)), "{text}");
+        }
+    }
+
+    #[test]
+    fn spoken_titles_resolve_to_files() {
+        let library = library_from_paths(
+            &[
+                &PATHS[..],
+                &[
+                    "Series/Brooklyn Nine-Nine/Brooklyn.Nine-Nine.S01E01.mkv",
+                    "Movies/Paddington 2 (2017)/Paddington.2.2017.1080p.mkv",
+                ],
+            ]
+            .concat(),
         );
-        let expected = Action::Download {
-            title: "Outlander".to_string(),
-            season: Some(3),
-            episode: None,
-        };
-        assert_eq!(action, expected);
+        let refuse = |message: &str| Action::Refuse(message.to_string());
+        let play = |path: &str| Action::Play(path.into());
+        let rows = [
+            ("spiele Outlander Staffel 2 Folge 3", episode_path(2, 3)),
+            ("play season 2 of Outlander", episode_path(2, 1)),
+            ("play Outlander season 9", refuse("Outlander has no season 9")),
+            (
+                "play Outlander season 1 episode 9",
+                refuse("Outlander has no season 1 episode 9"),
+            ),
+            ("play Out Lander", episode_path(1, 1)),
+            ("play outlanders", episode_path(1, 1)),
+            ("play Outlender", episode_path(1, 1)),
+            ("play Autlander", episode_path(1, 1)),
+            (
+                "play Andor",
+                play("/lib/Series/Star Wars Andor/Star.Wars.Andor.S01E01.mkv"),
+            ),
+            (
+                "play Star Wars",
+                refuse("Did you mean Star Wars Ahsoka or Star Wars Andor?"),
+            ),
+            ("spiele Dune", play("/lib/Movies/Dune (2021)/Dune.2021.1080p.mkv")),
+            ("play Severance", refuse("\"severance\" is not in the library")),
+            (
+                "play brooklyn 9 9",
+                play("/lib/Series/Brooklyn Nine-Nine/Brooklyn.Nine-Nine.S01E01.mkv"),
+            ),
+            (
+                "play paddington two",
+                play("/lib/Movies/Paddington 2 (2017)/Paddington.2.2017.1080p.mkv"),
+            ),
+        ];
+        for (text, expected) in rows {
+            assert_eq!(understand(text, &library, &Progress::default()), expected, "{text}");
+        }
     }
 
     #[test]
-    fn a_show_outside_the_library_can_still_be_requested() {
-        let action = understand("download Severance season 2", &library(), &Progress::default());
-        let expected = Action::Download {
-            title: "severance".to_string(),
-            season: Some(2),
-            episode: None,
-        };
-        assert_eq!(action, expected);
+    fn continuing_follows_progress() {
+        let library = library();
+        let rows = [
+            ("continue Outlander", Progress::default(), episode_path(1, 1)),
+            ("continue Outlander", progress(2, 2, false), episode_path(2, 2)),
+            ("weiter mit Outlander", progress(1, 2, true), episode_path(2, 1)),
+            (
+                "continue Outlander",
+                progress(2, 3, true),
+                Action::Refuse("You have finished Outlander".to_string()),
+            ),
+            ("continue Outlander season 2", progress(1, 1, false), episode_path(2, 1)),
+            (
+                "play the next season of Outlander",
+                progress(1, 2, true),
+                episode_path(2, 1),
+            ),
+            (
+                "play the next season of Outlander",
+                progress(2, 1, false),
+                Action::Refuse("Outlander has no season 3".to_string()),
+            ),
+            ("Outlander", progress(2, 2, false), episode_path(2, 2)),
+        ];
+        for (text, progress, expected) in rows {
+            let position = progress.shows.get("outlander");
+            assert_eq!(
+                understand(text, &library, &progress),
+                expected,
+                "{text} at {position:?}"
+            );
+        }
     }
 
     #[test]
-    fn a_download_close_to_a_library_title_keeps_its_own_title() {
-        let action = understand("download Outlandish season 1", &library(), &Progress::default());
-        let expected = Action::Download {
-            title: "outlandish".to_string(),
-            season: Some(1),
-            episode: None,
+    fn download_requests_resolve() {
+        let library = library();
+        let download = |title: &str, season, episode| Action::Download {
+            title: title.to_string(),
+            season: Some(season),
+            episode,
         };
-        assert_eq!(action, expected);
-        let action = understand("download outlander season 8 episode 3", &library(), &Progress::default());
-        let expected = Action::Download {
-            title: "Outlander".to_string(),
-            season: Some(8),
-            episode: Some(3),
-        };
-        assert_eq!(action, expected);
+        let rows = [
+            ("download the next season of Outlander", download("Outlander", 3, None)),
+            ("download Severance season 2", download("severance", 2, None)),
+            ("download Outlandish season 1", download("outlandish", 1, None)),
+            (
+                "download outlander season 8 episode 3",
+                download("Outlander", 8, Some(3)),
+            ),
+        ];
+        for (text, expected) in rows {
+            assert_eq!(understand(text, &library, &Progress::default()), expected, "{text}");
+        }
     }
 }

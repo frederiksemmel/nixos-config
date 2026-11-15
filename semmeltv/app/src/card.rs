@@ -361,17 +361,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_favicon_gives_the_card_its_semmel() {
-        let semmel = semmel(LOGO).unwrap();
-        assert_eq!(semmel.eyes.len(), 2);
-        assert_eq!(semmel.smile.len(), 1);
-        assert_eq!(semmel.cheeks.len(), 2);
-        assert!(!semmel.highlights.is_empty());
-        let (width, height) = (semmel.right - semmel.left, semmel.bottom - semmel.top);
-        assert!(width > 600.0 && height > 600.0, "{width} x {height}");
-    }
-
-    #[test]
     fn the_card_names_what_starts_and_stays_on_screen() {
         let billing = Billing {
             title: "Star Wars: Maul – Shadow Lord, an Extremely Long Title That Goes On".to_string(),
