@@ -13,7 +13,7 @@
   networking.hostName = "semmeltv3";
 
   services.semmeltv = {
-    offlineCacheGiB = 20;
+    offlineCacheGiB = 12;
     headphones.enable = true;
     api.enable = true;
     web = {
@@ -34,7 +34,7 @@
     };
   };
 
-  age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard.age;
+  age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard_semmeltv3.age;
   age.secrets.desec_token.file = ../../../secrets/desec_token.age;
   age.secrets.semmeltv_service_token = {
     file = ../../../secrets/semmeltv_service_token.age;

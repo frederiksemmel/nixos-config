@@ -38,6 +38,7 @@ in
     frederik
     semmeltv5
   ];
+  "mullvad_wireguard_semmeltv3.age".publicKeys = [ frederik ];
   "desec_token.age".publicKeys = [
     frederik
     semmeltv5
