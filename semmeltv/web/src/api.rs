@@ -76,6 +76,29 @@ pub struct FeedbackSummary {
     pub message: String,
     pub screenshot: Option<String>,
     pub tv_screenshot: Option<String>,
+    pub status: FeedbackStatus,
+    pub marked_at: Option<u64>,
+    pub marked_by: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum FeedbackStatus {
+    New,
+    NeedsReview { why: String, decide: String },
+    Done { resolution: Resolution },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Resolution {
+    Fixed { commit: String, what: String },
+    NoChange { why: String },
+}
+
+#[derive(Debug, Deserialize)]
+struct Remarked {
+    status: FeedbackStatus,
 }
 
 #[derive(Debug, Deserialize)]
@@ -801,6 +824,20 @@ impl Api {
         match self.get("/api/feedback").await? {
             Found::Here(list) => Ok(list),
             Found::Missing => Err("This TV keeps no feedback".to_string()),
+        }
+    }
+
+    pub async fn mark_feedback(&self, id: &str, status: &FeedbackStatus) -> Result<FeedbackStatus, String> {
+        let sent = self
+            .request(reqwest::Method::POST, &format!("/api/feedback/{id}/status"))
+            .json(status)
+            .send()
+            .await;
+        let response = sent.map_err(|error| format!("The TV is not answering: {error}"))?;
+        let text = response.text().await.unwrap_or_default();
+        match serde_json::from_str::<Remarked>(&text) {
+            Ok(remarked) => Ok(remarked.status),
+            Err(_) => Err(serde_json::from_str::<Problem>(&text).map_or(text, |problem| problem.error)),
         }
     }
 

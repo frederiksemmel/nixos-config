@@ -1633,6 +1633,79 @@ mod tests {
         assert_eq!(post(&server, "/api/feedback", json!({ "message": "  " })).0, 422);
     }
 
+    #[test]
+    fn feedback_is_new_until_someone_marks_it_and_lists_by_status() {
+        let server = serve(no_root(), None);
+        let sent = json!({ "message": "The sheet reopens" });
+        let (_, first) = post(&server, "/api/feedback", sent.clone());
+        let (_, second) = post(&server, "/api/feedback", sent);
+        let (first, second) = (first["id"].as_str().unwrap(), second["id"].as_str().unwrap());
+        let (_, list) = get(&server, "/api/feedback");
+        assert_eq!(list["reports"][0]["status"], json!({ "state": "new" }));
+        assert_eq!(list["reports"][0]["marked_at"], Value::Null);
+
+        let review = json!({ "state": "needs_review", "why": "Two ways to fix it", "decide": "Which one" });
+        let (status, marked) = post(&server, &format!("/api/feedback/{first}/status"), review.clone());
+        assert_eq!(status, 200, "{marked}");
+        assert_eq!(marked["status"], review);
+
+        let (_, new) = get(&server, "/api/feedback?state=new");
+        let ids: Vec<&str> = new["reports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|report| report["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(ids, [second]);
+        let (_, waiting) = get(&server, "/api/feedback?state=needs_review");
+        assert_eq!(waiting["reports"][0]["id"], first);
+        assert_eq!(waiting["reports"][0]["status"], review);
+        assert!(waiting["reports"][0]["marked_at"].as_u64().is_some());
+        let (_, report) = get(&server, &format!("/api/feedback/{first}"));
+        assert_eq!(report["status"], review);
+        assert_eq!(report["message"], "The sheet reopens");
+
+        let done = json!({ "state": "done", "resolution": { "kind": "no_change", "why": "Works as meant" } });
+        assert_eq!(post(&server, &format!("/api/feedback/{first}/status"), done).0, 200);
+        let (_, finished) = get(&server, "/api/feedback?state=done");
+        assert_eq!(finished["reports"][0]["id"], first);
+        assert_eq!(
+            post(
+                &server,
+                &format!("/api/feedback/{first}/status"),
+                json!({ "state": "new" })
+            )
+            .0,
+            200
+        );
+        assert_eq!(
+            get(&server, "/api/feedback?state=new").1["reports"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+
+        assert_eq!(
+            post(
+                &server,
+                "/api/feedback/20200101-000000-0000/status",
+                json!({ "state": "new" })
+            )
+            .0,
+            404
+        );
+        assert_eq!(
+            post(
+                &server,
+                &format!("/api/feedback/{first}/status"),
+                json!({ "state": "needs_review", "why": " ", "decide": "x" })
+            )
+            .0,
+            422
+        );
+    }
+
     fn no_root() -> PathBuf {
         PathBuf::from("/nonexistent")
     }

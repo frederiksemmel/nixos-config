@@ -7,6 +7,7 @@
   imports = [
     ./beast-disk-cleanup
     ./beast-claude.nix
+    ./beast-semmeltv
   ];
 
   profiles.bitwarden.headlessSshKeys.enable = true;

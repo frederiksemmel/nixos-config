@@ -44,6 +44,7 @@ pub enum Access {
     Service,
     Signed,
     Admin,
+    AdminOrService,
 }
 
 pub fn access(method: &Method, path: &str) -> Access {
@@ -56,7 +57,8 @@ pub fn access(method: &Method, path: &str) -> Access {
         | ["api", "log"] => Access::Open,
         ["api", "stream", id, ..] if *id != "open" => Access::Stream,
         ["api", "events"] if method == Method::GET => Access::Service,
-        ["api", "feedback", ..] if method == Method::GET => Access::Admin,
+        ["api", "feedback", ..] if method == Method::GET => Access::AdminOrService,
+        ["api", "feedback", _, "status"] => Access::AdminOrService,
         ["api", "storage", ..] | ["api", "tv", "pair"] | ["api", "auth", "members", ..] | ["api", "downloads", ..] => {
             Access::Admin
         }
@@ -131,7 +133,7 @@ pub async fn guard(State(gate): State<Gate>, mut request: Request, next: Next) -
         .map(str::to_string);
     if let Some(bearer) = bearer {
         let known = gate.service.as_deref().is_some_and(|service| same(service, &bearer));
-        if known && access == Access::Service {
+        if known && matches!(access, Access::Service | Access::AdminOrService) {
             request.extensions_mut().insert(Caller::Service);
             return next.run(request).await;
         }
@@ -167,7 +169,7 @@ pub async fn guard(State(gate): State<Gate>, mut request: Request, next: Next) -
             }
             return response;
         }
-        (Access::Admin, Some(person)) if !person.admin() => {
+        (Access::Admin | Access::AdminOrService, Some(person)) if !person.admin() => {
             return refuse(StatusCode::FORBIDDEN, "Only an admin can do that");
         }
         _ => {}
@@ -216,9 +218,18 @@ mod tests {
             (&post, "/api/auth/members/2/invite", Access::Admin),
             (&post, "/api/downloads/confirm", Access::Admin),
             (&post, "/api/feedback", Access::Signed),
-            (&get, "/api/feedback", Access::Admin),
-            (&get, "/api/feedback/20261115-131211-ab12", Access::Admin),
-            (&get, "/api/feedback/files/20261115-131211-ab12-tv.jpg", Access::Admin),
+            (&get, "/api/feedback", Access::AdminOrService),
+            (&get, "/api/feedback/20261115-131211-ab12", Access::AdminOrService),
+            (
+                &get,
+                "/api/feedback/files/20261115-131211-ab12-tv.jpg",
+                Access::AdminOrService,
+            ),
+            (
+                &post,
+                "/api/feedback/20261115-131211-ab12/status",
+                Access::AdminOrService,
+            ),
         ];
         for (method, path, want) in rows {
             assert_eq!(access(method, path), want, "{method} {path}");

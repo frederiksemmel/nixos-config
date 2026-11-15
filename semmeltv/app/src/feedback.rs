@@ -1,12 +1,13 @@
 use crate::audio;
 use crate::auth::Person;
+use crate::auth::gate::Caller;
 use crate::bus::{Bus, NowPlaying};
 use crate::manifest::Date;
 use crate::screen;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Extension, Json, Router};
 use base64::Engine;
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,7 @@ const LONGEST_MESSAGE: usize = 20_000;
 const LARGEST_CLIENT: usize = 400 * 1024;
 const LARGEST_PICTURE: usize = 4 * 1024 * 1024;
 const COMMAND_TIME: Duration = Duration::from_secs(4);
+const LONGEST_NOTE: usize = 4000;
 const INDEX: &str = "index.jsonl";
 const REVISION: &str = "/etc/semmeltv/revision";
 
@@ -76,6 +78,99 @@ pub struct Summary {
     message: String,
     screenshot: Option<String>,
     tv_screenshot: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Status {
+    New,
+    NeedsReview { why: String, decide: String },
+    Done { resolution: Resolution },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum Resolution {
+    Fixed { commit: String, what: String },
+    NoChange { why: String },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum Stage {
+    New,
+    NeedsReview,
+    Done,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+struct Marked {
+    status: Status,
+    at: u64,
+    by: String,
+}
+
+#[derive(Serialize)]
+struct Listed {
+    #[serde(flatten)]
+    summary: Summary,
+    status: Status,
+    marked_at: Option<u64>,
+    marked_by: Option<String>,
+}
+
+fn note(text: &str, what: &str) -> Result<String, String> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(format!("Say {what}"));
+    }
+    Ok(cut(text, LONGEST_NOTE))
+}
+
+impl Status {
+    fn stage(&self) -> Stage {
+        match self {
+            Status::New => Stage::New,
+            Status::NeedsReview { .. } => Stage::NeedsReview,
+            Status::Done { .. } => Stage::Done,
+        }
+    }
+
+    fn checked(self) -> Result<Status, String> {
+        Ok(match self {
+            Status::New => Status::New,
+            Status::NeedsReview { why, decide } => Status::NeedsReview {
+                why: note(&why, "why it needs a review")?,
+                decide: note(&decide, "what a person has to decide")?,
+            },
+            Status::Done {
+                resolution: Resolution::Fixed { commit, what },
+            } => {
+                let commit = commit.trim().to_ascii_lowercase();
+                if !(7..=40).contains(&commit.len()) || !commit.chars().all(|c| c.is_ascii_hexdigit()) {
+                    return Err(format!("{commit:?} is not a commit hash"));
+                }
+                Status::Done {
+                    resolution: Resolution::Fixed {
+                        commit,
+                        what: note(&what, "what the fix changed")?,
+                    },
+                }
+            }
+            Status::Done {
+                resolution: Resolution::NoChange { why },
+            } => Status::Done {
+                resolution: Resolution::NoChange {
+                    why: note(&why, "why nothing changes")?,
+                },
+            },
+        })
+    }
+}
+
+#[derive(Deserialize)]
+struct Filter {
+    state: Option<Stage>,
 }
 
 #[derive(Serialize)]
@@ -130,6 +225,16 @@ fn new_id(seconds: u64) -> String {
     let mut bytes = [0u8; 2];
     rand::fill(&mut bytes);
     format!("{}-{:02x}{:02x}", civil(seconds).0, bytes[0], bytes[1])
+}
+
+enum Refused {
+    Unknown,
+    Invalid(String),
+    Failed(String),
+}
+
+fn status_file(id: &str) -> String {
+    format!("{id}.status.json")
 }
 
 fn valid_id(id: &str) -> bool {
@@ -340,6 +445,47 @@ impl Feedback {
         Ok(summary)
     }
 
+    async fn marked(&self, id: &str) -> Option<Marked> {
+        let text = tokio::fs::read(self.dir.join(status_file(id))).await.ok()?;
+        serde_json::from_slice(&text).ok()
+    }
+
+    async fn listed(&self, summary: Summary) -> Listed {
+        let marked = self.marked(&summary.id).await;
+        Listed {
+            summary,
+            status: marked.as_ref().map_or(Status::New, |marked| marked.status.clone()),
+            marked_at: marked.as_ref().map(|marked| marked.at),
+            marked_by: marked.map(|marked| marked.by),
+        }
+    }
+
+    async fn mark(&self, id: &str, status: Status, by: String) -> Result<Marked, Refused> {
+        let status = status.checked().map_err(Refused::Invalid)?;
+        let _writing = self.writing.lock().await;
+        if !valid_id(id)
+            || !tokio::fs::try_exists(self.dir.join(format!("{id}.json")))
+                .await
+                .unwrap_or(false)
+        {
+            return Err(Refused::Unknown);
+        }
+        let marked = Marked {
+            status,
+            at: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_or(0, |since| since.as_secs()),
+            by,
+        };
+        let body = serde_json::to_vec_pretty(&marked).map_err(|error| Refused::Failed(error.to_string()))?;
+        let temporary = self.dir.join(format!("{}.new", status_file(id)));
+        let written = tokio::fs::write(&temporary, body).await;
+        written
+            .and(tokio::fs::rename(&temporary, self.dir.join(status_file(id))).await)
+            .map_err(|error| Refused::Failed(format!("saving the status: {error}")))?;
+        Ok(marked)
+    }
+
     async fn summaries(&self) -> Vec<Summary> {
         let text = tokio::fs::read_to_string(self.dir.join(INDEX))
             .await
@@ -352,7 +498,12 @@ impl Feedback {
     async fn prune(&self, mut index: Vec<Summary>) {
         let excess = index.len().saturating_sub(KEEP);
         for old in index.drain(..excess) {
-            let files = [Some(format!("{}.json", old.id)), old.screenshot, old.tv_screenshot];
+            let files = [
+                Some(format!("{}.json", old.id)),
+                Some(status_file(&old.id)),
+                old.screenshot,
+                old.tv_screenshot,
+            ];
             for file in files.into_iter().flatten() {
                 let _ = tokio::fs::remove_file(self.dir.join(file)).await;
             }
@@ -391,21 +542,71 @@ async fn send(State(feedback): State<Feedback>, person: Option<Extension<Person>
     }
 }
 
-async fn list(State(feedback): State<Feedback>) -> Json<Value> {
-    let mut summaries = feedback.summaries().await;
-    summaries.reverse();
-    summaries.truncate(LISTED);
-    Json(json!({ "dir": feedback.dir, "reports": summaries }))
+async fn list(State(feedback): State<Feedback>, Query(filter): Query<Filter>) -> Json<Value> {
+    let mut reports = Vec::new();
+    for summary in feedback.summaries().await.into_iter().rev() {
+        if reports.len() == LISTED {
+            break;
+        }
+        let listed = feedback.listed(summary).await;
+        if filter.state.is_none_or(|state| listed.status.stage() == state) {
+            reports.push(listed);
+        }
+    }
+    Json(json!({ "dir": feedback.dir, "reports": reports }))
+}
+
+async fn set_status(
+    State(feedback): State<Feedback>,
+    caller: Option<Extension<Caller>>,
+    Path(id): Path<String>,
+    Json(status): Json<Status>,
+) -> Response {
+    let by = match caller {
+        Some(Extension(Caller::Person(person))) => person.name,
+        Some(Extension(Caller::Service)) => "the service token".to_string(),
+        None => "someone".to_string(),
+    };
+    match feedback.mark(&id, status, by).await {
+        Ok(marked) => {
+            eprintln!(
+                "feedback: {id} is now {:?}, set by {}",
+                marked.status.stage(),
+                marked.by
+            );
+            Json(json!({ "id": id, "status": marked.status, "marked_at": marked.at, "marked_by": marked.by }))
+                .into_response()
+        }
+        Err(Refused::Unknown) => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": "There is no such report" })),
+        )
+            .into_response(),
+        Err(Refused::Invalid(problem)) => {
+            (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({ "error": problem }))).into_response()
+        }
+        Err(Refused::Failed(problem)) => {
+            eprintln!("feedback: marking {id}: {problem}");
+            (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({ "error": problem }))).into_response()
+        }
+    }
 }
 
 async fn one(State(feedback): State<Feedback>, Path(id): Path<String>) -> Response {
     if !valid_id(&id) {
         return StatusCode::NOT_FOUND.into_response();
     }
-    match tokio::fs::read(feedback.dir.join(format!("{id}.json"))).await {
-        Ok(body) => ([(header::CONTENT_TYPE, "application/json")], body).into_response(),
-        Err(_) => StatusCode::NOT_FOUND.into_response(),
-    }
+    let Ok(body) = tokio::fs::read(feedback.dir.join(format!("{id}.json"))).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    let Ok(mut report) = serde_json::from_slice::<Value>(&body) else {
+        return ([(header::CONTENT_TYPE, "application/json")], body).into_response();
+    };
+    let marked = feedback.marked(&id).await;
+    report["status"] = json!(marked.as_ref().map_or(Status::New, |marked| marked.status.clone()));
+    report["marked_at"] = json!(marked.as_ref().map(|marked| marked.at));
+    report["marked_by"] = json!(marked.map(|marked| marked.by));
+    Json(report).into_response()
 }
 
 async fn file(State(feedback): State<Feedback>, Path(name): Path<String>) -> Response {
@@ -435,6 +636,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(feedback: Feedback) -> Router<S>
     Router::new()
         .route("/api/feedback", get(list).post(send))
         .route("/api/feedback/{id}", get(one))
+        .route("/api/feedback/{id}/status", post(set_status))
         .route("/api/feedback/files/{name}", get(file))
         .layer(DefaultBodyLimit::max(BODY_LIMIT))
         .with_state(feedback)
@@ -491,5 +693,44 @@ mod tests {
             [0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10]
         );
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_status_says_its_state_and_what_a_person_or_a_commit_settled() {
+        let fixed: Status = serde_json::from_value(json!({
+            "state": "done",
+            "resolution": { "kind": "fixed", "commit": " ABC1234 ", "what": "The sheet stays shut" }
+        }))
+        .unwrap();
+        assert_eq!(
+            fixed.checked().unwrap(),
+            Status::Done {
+                resolution: Resolution::Fixed {
+                    commit: "abc1234".to_string(),
+                    what: "The sheet stays shut".to_string()
+                }
+            }
+        );
+        let review = Status::NeedsReview {
+            why: "It is a design question".to_string(),
+            decide: "Keep or drop the button".to_string(),
+        };
+        assert_eq!(
+            serde_json::to_value(&review).unwrap(),
+            json!({ "state": "needs_review", "why": "It is a design question", "decide": "Keep or drop the button" })
+        );
+        assert_eq!(serde_json::to_value(Status::New).unwrap(), json!({ "state": "new" }));
+        let no_commit = Status::Done {
+            resolution: Resolution::Fixed {
+                commit: "main".to_string(),
+                what: "x".to_string(),
+            },
+        };
+        assert!(no_commit.checked().is_err());
+        let silent = Status::Done {
+            resolution: Resolution::NoChange { why: "  ".to_string() },
+        };
+        assert!(silent.checked().is_err());
+        assert!(serde_json::from_value::<Status>(json!({ "state": "needs_review", "why": "x" })).is_err());
     }
 }

@@ -64,6 +64,7 @@ pkgs.testers.runNixOSTest {
     systemd.tmpfiles.rules = [ "L+ /var/lib/semmeltv/library - - - - ${library}" ];
 
     environment.systemPackages = [
+      pkgs.curl
       pkgs.socat
       moveMouse
     ];

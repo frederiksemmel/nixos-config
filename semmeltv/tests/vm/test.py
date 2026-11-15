@@ -17,6 +17,7 @@ SHOW = "testserie"
 SPARE_FILM = "archiv-01-2001"
 FRESH_FILM = "kinofilm-2020"
 FEEDBACK = "/var/lib/semmeltv/feedback"
+SERVICE_TOKEN = "vm-test-service-token"
 
 
 FAILED: list[str] = []
@@ -734,6 +735,37 @@ with sync_playwright() as playwright:
             )
             if sender is not phone:
                 sender.close()
+
+    with scenario("an admin and the service token set a report's status, and the page filters by it"):
+        reports = [json.loads(line) for line in tv.succeed(f"tail -n 2 {FEEDBACK}/index.jsonl").splitlines()]
+        by_hand, by_token = reports[-1]["id"], reports[-2]["id"]
+        phone.goto("/feedback")
+        row = phone.page.locator(".report").filter(has=phone.page.locator(".report-message", has_text=reports[-1]["message"]))
+        assert row.locator(".report-status b").inner_text() == "New"
+        row.get_by_role("button", name="Set status").tap()
+        row.get_by_role("button", name="Needs review").tap()
+        row.get_by_placeholder("Why it needs a person").fill("It is a design question")
+        row.get_by_placeholder("What they have to decide").fill("Keep or drop the jump")
+        row.get_by_role("button", name="Save").tap()
+        phone.until(f"""[...document.querySelectorAll(".report")].some((report) =>
+            report.querySelector(".report-copy").textContent.includes({by_hand!r})
+            && report.querySelector(".report-status b").textContent === "Needs review")""")
+        marked = json.loads(tv.succeed(f"cat {FEEDBACK}/{by_hand}.status.json"))
+        assert marked["status"] == {"state": "needs_review", "why": "It is a design question", "decide": "Keep or drop the jump"}, marked
+        assert marked["by"] == "Frederik", marked
+        done = {"state": "done", "resolution": {"kind": "fixed", "commit": "abc1234", "what": "The list keeps its place"}}
+        tv.succeed(f"printf '%s: %s %s\\n' Authorization Bearer {SERVICE_TOKEN} > /tmp/service-header")
+        tv.succeed(
+            "curl -sf -H @/tmp/service-header -H 'content-type: application/json' "
+            f"-d '{json.dumps(done)}' http://127.0.0.1:8090/api/feedback/{by_token}/status"
+        )
+        new = json.loads(tv.succeed("curl -sf -H @/tmp/service-header 'http://127.0.0.1:8090/api/feedback?state=new'"))
+        assert by_hand not in [report["id"] for report in new["reports"]] and by_token not in [report["id"] for report in new["reports"]], new
+        phone.goto("/feedback")
+        phone.page.locator(".report-filters").get_by_role("button", name="Done").tap()
+        phone.until(f"""[...document.querySelectorAll(".report")].filter((report) => !report.hidden).every((report) =>
+            report.querySelector(".report-status b").textContent.startsWith("Fixed") || report.querySelector(".report-status b").textContent.startsWith("Done"))
+            && [...document.querySelectorAll(".report")].some((report) => !report.hidden && report.querySelector(".report-copy").textContent.includes({by_token!r}))""")
 
     for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
         with scenario(f"the remote opens, closes by a swipe without a reload, and a reload brings it back closed ({engine})"):
