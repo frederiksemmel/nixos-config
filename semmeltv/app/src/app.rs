@@ -359,7 +359,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
     }
     let profile = app.borrow().profile;
     app.borrow().apply_audio(profile);
-    app.borrow().present_profile();
+    app.borrow_mut().present_profile();
     app.borrow_mut().present_home();
     app.borrow_mut().queue_downloads(false);
     app.borrow_mut().tend_storage();
@@ -583,10 +583,22 @@ impl App {
         if command == Command::Subtitles {
             return;
         }
+        if command == Command::Up {
+            app.borrow_mut().present_profile();
+        }
         let effect = app.borrow_mut().nav.apply(command);
         match effect {
             Effect::None => {}
             Effect::Moved => app.borrow().present_focus(),
+            Effect::Profile(index) => {
+                let chosen = app.borrow().profiles().get(index).map(|profile| profile.id);
+                if let Some(profile) = chosen {
+                    app.borrow_mut().become_profile(profile);
+                }
+                let mut this = app.borrow_mut();
+                this.present_profile();
+                this.present_focus();
+            }
             Effect::OpenShow => app.borrow_mut().present_show(),
             Effect::CloseShow => {
                 let this = app.borrow();
@@ -1914,7 +1926,20 @@ impl App {
         }
     }
 
-    fn present_profile(&self) {
+    fn profiles(&self) -> Vec<crate::auth::store::Profile> {
+        AuthStore::profiles(&self.db).unwrap_or_else(|error| {
+            eprintln!("profiles: {error}");
+            Vec::new()
+        })
+    }
+
+    fn present_profile(&mut self) {
+        let profiles = self.profiles();
+        let current = profiles.iter().position(|profile| profile.id == self.profile).unwrap_or(0);
+        self.nav.set_profiles(profiles.len(), current);
+        let names: Vec<slint::SharedString> = profiles.iter().map(|profile| profile.name.as_str().into()).collect();
+        self.ui.set_profile_names(Rc::new(VecModel::from(names)).into());
+        self.ui.set_profile_current(current as i32);
         self.ui.set_profile_name(self.profile_name(self.profile).into());
     }
 
@@ -1965,6 +1990,8 @@ impl App {
     }
 
     fn present_focus(&self) {
+        self.ui
+            .set_profile_focus(self.nav.profile_focus().map_or(-1, |index| index as i32));
         let home = self.nav.home_cursor();
         self.ui.set_home_row(home.row as i32);
         self.ui.set_home_cols(cols_model(home));

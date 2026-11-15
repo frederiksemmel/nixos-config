@@ -47,10 +47,18 @@ pub enum HomeRow {
     Movies,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Focus {
+    #[default]
+    Home,
+    Profiles(usize),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Effect {
     None,
     Moved,
+    Profile(usize),
     OpenShow,
     CloseShow,
     Play(PathBuf),
@@ -78,6 +86,9 @@ pub struct Nav {
     home: Cursor,
     show: Option<(usize, Cursor)>,
     heat: Option<usize>,
+    focus: Focus,
+    profiles: usize,
+    current: usize,
 }
 
 impl Nav {
@@ -93,6 +104,26 @@ impl Nav {
             home,
             show: None,
             heat: None,
+            focus: Focus::Home,
+            profiles: 0,
+            current: 0,
+        }
+    }
+
+    pub fn set_profiles(&mut self, count: usize, current: usize) {
+        self.profiles = count;
+        self.current = current.min(count.saturating_sub(1));
+        if let Focus::Profiles(index) = self.focus
+            && index >= count
+        {
+            self.focus = Focus::Profiles(self.current);
+        }
+    }
+
+    pub fn profile_focus(&self) -> Option<usize> {
+        match self.focus {
+            Focus::Profiles(index) => Some(index),
+            Focus::Home => None,
         }
     }
 
@@ -316,8 +347,34 @@ impl Nav {
             };
         }
 
+        if let Focus::Profiles(index) = self.focus {
+            return match command {
+                Command::Up if index > 0 => {
+                    self.focus = Focus::Profiles(index - 1);
+                    Effect::Moved
+                }
+                Command::Down if index + 1 < self.profiles => {
+                    self.focus = Focus::Profiles(index + 1);
+                    Effect::Moved
+                }
+                Command::Select => {
+                    self.focus = Focus::Home;
+                    Effect::Profile(index)
+                }
+                Command::Left | Command::Back => {
+                    self.focus = Focus::Home;
+                    Effect::Moved
+                }
+                _ => Effect::None,
+            };
+        }
+
         match command {
             Command::Back => Effect::None,
+            Command::Up if self.home.row == 0 && self.profiles > 1 => {
+                self.focus = Focus::Profiles(self.current);
+                Effect::Moved
+            }
             Command::Select | Command::PlayPause => self.activate_home(command),
             _ => {
                 let lengths: Vec<_> = self.rows.iter().map(|row| self.row_items(*row).len()).collect();
@@ -797,4 +854,43 @@ episodes = [
         nav.set_watching(Vec::new());
         assert!(!nav.home_rows().contains(&HomeRow::Watching));
     }
+
+    #[test]
+    fn up_from_the_top_row_picks_a_profile_and_ok_switches() {
+        let mut nav = nav();
+        nav.set_profiles(4, 1);
+        assert_eq!(nav.apply(Up), Effect::Moved);
+        assert_eq!(nav.profile_focus(), Some(1), "the picker starts on the TV's profile");
+        assert_eq!(nav.apply(Up), Effect::Moved);
+        assert_eq!(nav.apply(Up), Effect::None, "the list stops at the first profile");
+        assert_eq!(nav.apply(Down), Effect::Moved);
+        assert_eq!(nav.apply(Down), Effect::Moved);
+        assert_eq!(nav.apply(Down), Effect::Moved);
+        assert_eq!(nav.apply(Down), Effect::None, "and at the last");
+        assert_eq!(nav.apply(Right), Effect::None);
+        assert_eq!(nav.apply(Select), Effect::Profile(3));
+        assert_eq!(nav.profile_focus(), None, "choosing goes back to the rows");
+    }
+
+    #[test]
+    fn left_or_back_leave_the_picker_without_switching() {
+        for leave in [Left, Back] {
+            let mut nav = nav();
+            nav.set_profiles(3, 0);
+            nav.apply(Up);
+            nav.apply(Down);
+            assert_eq!(nav.apply(leave), Effect::Moved);
+            assert_eq!(nav.profile_focus(), None);
+            assert_eq!(nav.home_cursor().row, 0);
+        }
+    }
+
+    #[test]
+    fn with_one_profile_there_is_nothing_to_pick() {
+        let mut nav = nav();
+        nav.set_profiles(1, 0);
+        assert_eq!(nav.apply(Up), Effect::None);
+        assert_eq!(nav.profile_focus(), None);
+    }
+
 }

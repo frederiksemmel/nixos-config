@@ -749,6 +749,9 @@ export component AppWindow inherits Window {
     in property <string> empty-note;
     in property <bool> tmdb-notice;
     in property <string> profile-name;
+    in property <[string]> profile-names;
+    in property <int> profile-current;
+    in property <int> profile-focus: -1;
     in property <string> years;
     in property <string> details;
     in property <RatingsData> ratings;
@@ -794,7 +797,7 @@ export component AppWindow inherits Window {
             animate opacity { duration: 200ms; }
         }
 
-        Text {
+        if root.profile-focus < 0: Text {
             x: parent.width - 96 * root.u - self.width;
             y: 40 * root.u;
             height: 52 * root.u;
@@ -807,6 +810,50 @@ export component AppWindow inherits Window {
             animate opacity { duration: 200ms; }
         }
 
+        if root.profile-focus >= 0 && !root.show-open: Rectangle {
+            x: parent.width - 96 * root.u - self.width;
+            y: 32 * root.u;
+            width: 320 * root.u;
+            height: picks.preferred-height + 24 * root.u;
+            z: 10;
+            border-radius: 20 * root.u;
+            background: #1b1d23f2;
+            border-width: 1px;
+            border-color: #ffffff1f;
+            drop-shadow-blur: 30 * root.u;
+            drop-shadow-color: #00000099;
+
+            picks := VerticalLayout {
+                padding: 12 * root.u;
+                spacing: 4 * root.u;
+                for name[index] in root.profile-names: Rectangle {
+                    height: 60 * root.u;
+                    border-radius: 14 * root.u;
+                    background: index == root.profile-focus ? #f3f3f6 : transparent;
+                    animate background { duration: 120ms; }
+
+                    Text {
+                        x: 20 * root.u;
+                        text: name;
+                        color: index == root.profile-focus ? #0c0c10 : #c3c7d1;
+                        font-size: 28 * root.u;
+                        font-weight: index == root.profile-current ? 700 : 500;
+                        vertical-alignment: center;
+                        height: parent.height;
+                    }
+
+                    if index == root.profile-current: Text {
+                        x: parent.width - self.width - 20 * root.u;
+                        text: "Watching";
+                        color: index == root.profile-focus ? #0c0c10a0 : #8a8f9c;
+                        font-size: 20 * root.u;
+                        vertical-alignment: center;
+                        height: parent.height;
+                    }
+                }
+            }
+        }
+
         home := ShelfStack {
             x: 96 * root.u;
             y: 132 * root.u;
@@ -816,7 +863,7 @@ export component AppWindow inherits Window {
             shelves: root.home-shelves;
             focus-row: root.home-row;
             focus-cols: root.home-cols;
-            active: !root.show-open;
+            active: !root.show-open && root.profile-focus < 0;
             opacity: root.show-open ? 0 : 1;
             animate opacity { duration: 200ms; }
         }
