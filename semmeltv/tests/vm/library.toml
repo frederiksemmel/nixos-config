@@ -3,7 +3,8 @@ title = "Testserie"
 year = 2022
 episodes = [
   { season = 1, episode = 1, title = "Anfang", path = "Series/Testserie/S01/Testserie.S01E01.mkv", added = 2026-01-02, runtime = 3, video = "H.264", resolution = "360p", audio = "5.1" },
-  { season = 1, episode = 2, title = "Ende", path = "Series/Testserie/S01/Testserie.S01E02.mkv", added = 2026-01-02, runtime = 3, video = "H.264", resolution = "360p", audio = "5.1" },
+  { season = 1, episode = 2, title = "Mitte", path = "Series/Testserie/S01/Testserie.S01E02.mkv", added = 2026-01-02, runtime = 3, video = "H.264", resolution = "360p", audio = "5.1" },
+  { season = 1, episode = 3, title = "Ende", path = "Series/Testserie/S01/Testserie.S01E03.mkv", added = 2026-01-02, runtime = 3, video = "H.264", resolution = "360p", audio = "5.1" },
 ]
 
 [[movie]]
@@ -12,6 +13,116 @@ year = 2021
 path = "Movies/Testfilm/Testfilm.2021.mkv"
 added = 2026-01-01
 runtime = 4
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Kinofilm"
+year = 2020
+path = "Movies/Kinofilm/Kinofilm.2020.mkv"
+added = 2025-12-01
+runtime = 3
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 01"
+year = 2001
+path = "Movies/Archiv01/Archiv.01.mkv"
+added = 2025-06-01
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 02"
+year = 2002
+path = "Movies/Archiv02/Archiv.02.mkv"
+added = 2025-06-02
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 03"
+year = 2003
+path = "Movies/Archiv03/Archiv.03.mkv"
+added = 2025-06-03
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 04"
+year = 2004
+path = "Movies/Archiv04/Archiv.04.mkv"
+added = 2025-06-04
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 05"
+year = 2005
+path = "Movies/Archiv05/Archiv.05.mkv"
+added = 2025-06-05
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 06"
+year = 2006
+path = "Movies/Archiv06/Archiv.06.mkv"
+added = 2025-06-06
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 07"
+year = 2007
+path = "Movies/Archiv07/Archiv.07.mkv"
+added = 2025-06-07
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 08"
+year = 2008
+path = "Movies/Archiv08/Archiv.08.mkv"
+added = 2025-06-08
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 09"
+year = 2009
+path = "Movies/Archiv09/Archiv.09.mkv"
+added = 2025-06-09
+runtime = 1
+video = "H.264"
+resolution = "360p"
+audio = "5.1"
+
+[[movie]]
+title = "Archiv 10"
+year = 2010
+path = "Movies/Archiv10/Archiv.10.mkv"
+added = 2025-06-10
+runtime = 1
 video = "H.264"
 resolution = "360p"
 audio = "5.1"

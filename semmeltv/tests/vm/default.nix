@@ -7,18 +7,36 @@
 let
   library = pkgs.callPackage ./library.nix { inherit semmeltv; };
   serviceToken = pkgs.writeText "semmeltv-service-token" "vm-test-service-token";
+  hlsJs = pkgs.fetchurl {
+    url = "https://cdn.jsdelivr.net/npm/hls.js@1.5.17/dist/hls.min.js";
+    hash = "sha256-SEBU6M0D0/bReB+39AK9wxjYpMUn+TOpXGJOJ8yalHA=";
+  };
+  moveMouse = pkgs.writers.writePython3Bin "semmeltv-move-mouse" {
+    libraries = [ pkgs.python3Packages.evdev ];
+  } (builtins.readFile ./move-mouse.py);
+  proxied = {
+    proxyWebsockets = true;
+    extraConfig = ''
+      proxy_set_header Host $host:$server_port;
+      proxy_buffering off;
+      proxy_read_timeout 1h;
+    '';
+  };
 in
 pkgs.testers.runNixOSTest {
   name = "semmeltv-vm";
   enableOCR = true;
-  extraPythonPackages = ps: [ ps.playwright ];
+  extraPythonPackages = ps: [
+    ps.playwright
+    ps.pillow
+  ];
 
   nodes.tv = {
     imports = [ semmeltvModule ];
 
     virtualisation = {
       memorySize = 4096;
-      cores = 2;
+      cores = 4;
       qemu.options = [
         "-vga none"
         "-device virtio-gpu-pci"
@@ -41,7 +59,14 @@ pkgs.testers.runNixOSTest {
       };
     };
 
+    services.cage.environment.WLR_NO_HARDWARE_CURSORS = "1";
+
     systemd.tmpfiles.rules = [ "L+ /var/lib/semmeltv/library - - - - ${library}" ];
+
+    environment.systemPackages = [
+      pkgs.socat
+      moveMouse
+    ];
 
     services.nginx = {
       enable = true;
@@ -50,24 +75,41 @@ pkgs.testers.runNixOSTest {
         listen = [
           {
             addr = "0.0.0.0";
-            port = 80;
+            port = 8080;
           }
         ];
-        locations."/" = {
+        locations."/" = proxied // {
           proxyPass = "http://127.0.0.1:8091";
-          proxyWebsockets = true;
+        };
+        locations."/api" = proxied // {
+          proxyPass = "http://127.0.0.1:8090";
         };
       };
     };
-    networking.firewall.allowedTCPPorts = [ 80 ];
+    networking.firewall.allowedTCPPorts = [ 8080 ];
   };
 
   testScript = ''
     import os
+    import tempfile
     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "${pkgs.playwright-driver.browsers}"
     os.environ["PLAYWRIGHT_SKIP_VALIDATE_HOST_REQUIREMENTS"] = "true"
-    os.environ["FONTCONFIG_FILE"] = "${pkgs.makeFontsConf { fontDirectories = [ pkgs.inter ]; }}"
+    os.environ["FONTCONFIG_FILE"] = "${
+      pkgs.makeFontsConf {
+        fontDirectories = [
+          pkgs.inter
+          pkgs.dejavu_fonts
+        ];
+      }
+    }"
+    os.environ["__EGL_VENDOR_LIBRARY_DIRS"] = "${pkgs.mesa}/share/glvnd/egl_vendor.d"
+    os.environ["LIBGL_ALWAYS_SOFTWARE"] = "1"
+    os.environ["HOME"] = tempfile.mkdtemp()
+    SEMMELTV = "${pkgs.lib.getExe semmeltv}"
+    HLS_JS = "${hlsJs}"
   ''
-  + builtins.readFile ./test.py
-  + builtins.readFile ./stream.py;
+  + pkgs.lib.concatMapStrings builtins.readFile [
+    ./test.py
+    ./stream.py
+  ];
 }
