@@ -21,10 +21,17 @@ new person, `/account` adds passkeys and sets the password, and `/people` is
 the admin's list of people and invite links. The server follows the TV's
 event stream with the token in `SEMMELTV_SERVICE_TOKEN_FILE`.
 
-Before deploying a change to the page scripts or styles, run the browser test.
-It serves the app against a fake TV API with a film playing, signs in, then taps, scrolls,
-opens titles, goes Back and opens the remote in WebKit (iPhone) and Chromium
-(Android), and fails if the page stops answering:
+Before deploying a change to the page scripts or styles, run the VM test
+([../tests/vm](../tests/vm/README.md)). It runs the TV app, the API and this
+app in a NixOS VM and drives the pages in WebKit (iPhone) and Chromium (Android
+and a laptop): signing in, browsing, the remote, playing on the phone, handing
+over to the TV and back, restarts, feedback and profiles:
+
+    nix build .#checks.x86_64-linux.semmeltv-vm -L
+
+What needs Bluetooth headphones or OpenSubtitles stays in a smaller browser test
+against a fake TV API: pairing and forgetting headphones, moving the sound to
+them and back, and finding subtitles for a film:
 
     nix build .#checks.x86_64-linux.semmeltv-web-browser -L
 

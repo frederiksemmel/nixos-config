@@ -1,8 +1,6 @@
 import asyncio
-import base64
 import json
 import sys
-import time
 from pathlib import Path
 
 from aiohttp import web
@@ -11,25 +9,12 @@ HERE = Path(__file__).parent
 LIBRARY = json.loads((HERE / "library.json").read_text())
 MOVIE = json.loads((HERE / "movie.json").read_text())
 SUBTITLES = json.loads((HERE / "subtitles.json").read_text())
-STORAGE = json.loads((HERE / "storage.json").read_text())
-DOWNLOADS = json.loads((HERE / "downloads.json").read_text())
-SHOW = json.loads((HERE / "show.json").read_text())
 CARDS = {card["key"]: card for row in LIBRARY.values() for card in row}
 playing = {"paused": False, "position": 2223.0, "subtitle": 1, "delay": 0.0}
 fetched = set()
-marked = {}
 audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
 screen = {"kind": "tv", "boot": 1, "device": None, "play": None, "notice": None}
-outage = {"until": 0.0}
-screen_answers = {"delay": 0.0, "refuse": False}
-tv = {"on": True}
-opens = []
-feedback = []
-streams = {}
-progress_log = []
-ended = set()
-screen_log = []
 CONNECT_SECONDS = 1.5
 SERVICE = "fake-service-token"
 PROFILES = {
@@ -38,15 +23,11 @@ PROFILES = {
     3: {"id": 3, "name": "Ramu", "role": "viewer", "color": "#8E4EC6", "password": None},
 }
 sessions = {}
-invites = {"good-invite": 2}
-used_invites = set()
-OPEN = ("/api/auth/choices", "/api/auth/password", "/api/auth/passkey/start", "/api/auth/invite/")
+OPEN = ("/api/auth/choices", "/api/auth/password", "/api/auth/passkey/start")
 SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
 
 
 def now_playing():
-    if not tv["on"]:
-        return None
     return {
         "title": "The Endless Summer", "caption": "1966", "kind": "movie", "movie": "the-endless-summer-1966",
         "position": playing["position"], "duration": 5498.56, "paused": playing["paused"],
@@ -75,18 +56,13 @@ def profile_of(request):
 @web.middleware
 async def gate(request, handler):
     path = request.path
-    if path.startswith("/api/") and time.monotonic() < outage["until"] and not request.headers.get("x-fake-harness"):
-        return web.Response(status=502, text="Bad Gateway")
-    if not path.startswith("/api/") or path.startswith(OPEN) or path.startswith("/api/stream/") and path != "/api/stream/open":
+    if not path.startswith("/api/") or path.startswith(OPEN):
         return await handler(request)
-    if request.headers.get("x-fake-harness") or path == "/api/events" and request.headers.get("authorization") == f"Bearer {SERVICE}":
+    if path == "/api/events" and request.headers.get("authorization") == f"Bearer {SERVICE}":
         return await handler(request)
     who = caller(request)
     if who is None:
         return web.json_response({"error": "Not signed in"}, status=401)
-    admin_only = path.startswith(("/api/storage", "/api/auth/members", "/api/tv/pair")) or path == "/api/feedback" and request.method == "GET"
-    if admin_only and who["role"] != "admin":
-        return web.json_response({"error": "Only an admin can do that"}, status=403)
     return await handler(request)
 
 
@@ -130,56 +106,14 @@ async def auth_passkey_start(request):
     return web.json_response({"error": f"{profile['name']} has no passkey for this address yet", "ok": False, "password": True}, status=422)
 
 
-async def auth_switch(request):
-    profile = (await request.json())["profile"]
-    found = tokens(request)
-    target = [token for token in found if sessions[token] == profile]
-    if not target or PROFILES[profile]["role"] == "admin":
-        return web.json_response({"error": f"Sign in as {PROFILES[profile]['name']}", "ok": False, "sign_in": True}, status=401)
-    response = web.json_response({"ok": True, "person": person(PROFILES[profile])})
-    response.set_cookie("semmeltv_session", ".".join([target[0], *[token for token in found if token != target[0]]]), path="/")
-    return response
 
 
-async def auth_sign_out(request):
-    found = tokens(request)
-    if found:
-        sessions.pop(found[0], None)
-    response = web.json_response({"ok": True, "person": None})
-    response.set_cookie("semmeltv_session", ".".join(found[1:]), path="/")
-    return response
 
-
-async def auth_invite(request):
-    token = request.match_info["token"]
-    profile = invites.get(token)
-    if profile is None:
-        return web.json_response({"error": "This invite link is not valid", "ok": False}, status=404)
-    if token in used_invites:
-        return web.json_response({"error": "This invite link was already used", "ok": False}, status=410)
-    if request.method == "GET":
-        return web.json_response({"person": person(PROFILES[profile])})
-    used_invites.add(token)
-    return signed_in(request, PROFILES[profile])
-
-
-async def auth_members(request):
-    return web.json_response({"members": [
-        {**person(profile), "password": True, "passkeys": 0, "sessions": 1, "last_seen_at": None, "invite_expires_at": None}
-        for profile in PROFILES.values()]})
-
-
-async def auth_member_invite(request):
-    return web.json_response({"ok": True, "message": "Invite link", "link": "http://127.0.0.1:3000/invite/good-invite", "expires_in_days": 7})
 
 
 async def tv_profile(request):
     return web.json_response({"profile": 1, "name": "Frederik", "mine": profile_of(request) == 1})
 
-
-async def fake_sign_out_all(request):
-    sessions.clear()
-    return web.json_response({"ok": True})
 
 
 async def events(request):
@@ -212,40 +146,16 @@ async def movie(request):
     if not card or card["kind"] != "movie":
         return web.json_response({"error": "not found"}, status=404)
     return web.json_response({**MOVIE, **card, "subtitles": 1 if card["key"] in fetched else 0,
-                              "finished": marked.get((profile_of(request), "movie", card["key"]), False)})
+                              "finished": False})
 
 
-async def show(request):
-    seasons = [dict(season, episodes=[dict(episode, watched=marked.get((profile_of(request), "show", episode["season"], episode["episode"]), episode["watched"]))
-                                      for episode in season["episodes"]])
-               for season in SHOW["seasons"]]
-    return web.json_response({**SHOW, "seasons": seasons})
 
-
-async def watched(request):
-    body = await request.json()
-    if body["kind"] == "movie":
-        marked[(profile_of(request), "movie", body["key"])] = body["watched"]
-    else:
-        marked[(profile_of(request), "show", body["season"], body["episode"])] = body["watched"]
-    return web.json_response({"message": "Marked", "ok": True, "watched": body["watched"]})
-
-
-async def forget_marks(request):
-    marked.clear()
-    return web.json_response({"ok": True})
 
 
 async def subtitles(request):
     return web.json_response(SUBTITLES)
 
 
-async def storage(request):
-    return web.json_response(STORAGE)
-
-
-async def downloads(request):
-    return web.json_response(DOWNLOADS)
 
 
 async def playback(request):
@@ -339,10 +249,6 @@ async def fail_next_connect(request):
     return web.json_response({"ok": True})
 
 
-async def subtitle_delay(request):
-    playing["delay"] = round((await request.json())["delay"], 1)
-    return web.json_response({"message": f"Subtitle delay {playing['delay']:+.1f} s", "ok": True})
-
 
 async def fetch_subtitles(request):
     body = await request.json()
@@ -354,174 +260,29 @@ async def fetch_subtitles(request):
                               "label": "English", "release": "x", "matched": "title", "shown": False})
 
 
-def film_place(position, state, session=None):
-    return {"state": state, "kind": "movie", "movie": "the-endless-summer-1966", "name": "The Endless Summer",
-            "caption": "1966", "position": position, "session": session, "paused": False}
-
-
-def place_of(body, state):
-    if body.get("movie"):
-        return film_place(0.0, state)
-    season, episode = body.get("season") or 8, body.get("episode") or 1
-    return {"state": state, "kind": "episode", "show": body["show"], "season": season, "episode": episode,
-            "name": "Brooklyn Nine-Nine", "caption": f"{episode}. Episode {episode}", "position": 0.0,
-            "session": None, "paused": False}
 
 
 async def screen_view(request):
     return web.json_response(screen)
 
 
-async def screen_command(request):
-    body = await request.json()
-    action = body["action"]
-    screen_log.append(body)
-    await asyncio.sleep(screen_answers["delay"])
-    if screen_answers["refuse"]:
-        return web.json_response({"message": "The TV said no", "ok": False}, status=422)
-    if action == "flip" and body["to"] == "phone":
-        play = film_place(playing["position"], "playing", "fake-session") if tv["on"] else None
-        tv["on"] = False
-        screen.update(kind="phone", device=body["device"], play=play)
-    elif action == "flip":
-        if screen["play"]:
-            playing["position"] = body.get("position") or screen["play"]["position"]
-            tv["on"] = True
-        screen.update(kind="tv", device=None, play=None)
-    elif action == "play":
-        tv["on"] = False
-        screen.update(kind="phone", device=body["device"], play=place_of(body, "starting"))
-    elif action in ("failed", "stop"):
-        screen.update(play=None)
-    elif action == "resume":
-        free = (screen["kind"] == "tv" and not tv["on"]) or (
-            screen["kind"] == "phone" and screen["device"]["id"] == body["device"]["id"] and not screen["play"])
-        if not free:
-            return web.json_response({"message": "Something else plays now", "ok": False}, status=422)
-        screen.update(kind="phone", device=body["device"], play={**place_of(body, "starting"), "position": body["position"]})
-    return web.json_response({"message": "done", "ok": True})
 
 
-async def restart(request):
-    body = await request.json()
-    ended.update(streams)
-    screen.update(kind="tv", boot=screen["boot"] + 1, device=None, play=None, notice=None)
-    tv["on"] = body.get("tv", False)
-    outage["until"] = time.monotonic() + body.get("down", 3)
-    return web.json_response(screen)
 
 
-async def set_screen_answers(request):
-    screen_answers.update(await request.json())
-    return web.json_response(screen_answers)
 
 
-async def stream_open(request):
-    body = await request.json()
-    opens.append(body)
-    id = f"fake-session-{len(opens)}"
-    streams[id] = body
-    common = {"id": id, "playlist": f"/api/stream/{id}/main.m3u8", "backdrop": "", "start": 0, "offset": 0, "audio": [],
-              "audio_index": None, "converted_audio": False, "subtitles": [], "subtitle_delay": 0, "credits": None,
-              "bitrate": 4000000, "heavy": False}
-    if body.get("show"):
-        season, episode = body.get("season") or 8, body.get("episode") or 1
-        following = {"season": season, "episode": episode + 1, "label": f"S{season} E{episode + 1}",
-                     "title": f"Episode {episode + 1}", "still": f"/api/shows/{body['show']}/episodes/{season}/{episode + 1}/still"}
-        return web.json_response({**common, "kind": "show", "key": body["show"], "title": "Brooklyn Nine-Nine",
-                                  "caption": f"{episode}. Episode {episode}", "season": season, "episode": episode,
-                                  "poster": f"/api/shows/{body['show']}/poster", "duration": 1300.0,
-                                  "next": following if episode < 10 else None})
-    return web.json_response({**common, "kind": "movie", "key": "the-endless-summer-1966", "title": "The Endless Summer",
-                              "caption": "1966", "season": None, "episode": None,
-                              "poster": "/api/movies/the-endless-summer-1966/poster", "duration": 5498.56, "next": None})
 
 
-async def stream_progress(request):
-    id = request.match_info["id"]
-    state = (await request.json())["state"]
-    progress_log.append({"session": id, "state": state, "play": bool(screen["play"])})
-    if id in ended:
-        return web.json_response({"error": "this video closed; open it again"}, status=404)
-    if state in ("stopped", "ended"):
-        ended.add(id)
-    play = screen["play"]
-    opened = streams.get(id, {})
-    holder = screen["kind"] == "phone" and screen["device"] and opened.get("device", {}).get("id") == screen["device"]["id"]
-    if play and state == "start":
-        play.update(state="playing", session=id)
-    elif play and state in ("stopped", "ended") and play["session"] == id:
-        screen.update(play=None)
-    elif not play and holder and state in ("playing", "paused"):
-        screen.update(play={**place_of(opened, "playing"), "session": id, "paused": state == "paused"})
-    return web.json_response({"message": "Noted", "ok": True})
 
 
-async def fake_progress_log(request):
-    return web.json_response(progress_log[-12:])
-
-
-async def set_tv(request):
-    tv["on"] = (await request.json())["on"]
-    return web.json_response(tv)
-
-
-async def drop_play(request):
-    screen.update(play=None, notice={"id": 99, "text": "Simulator went quiet, so its place is kept", "tone": "quiet"})
-    return web.json_response({"ok": True})
-
-
-async def reset_screen(request):
-    screen.update(kind="tv", device=None, play=None, notice=None)
-    tv["on"] = True
-    screen_answers.update(delay=0.0, refuse=False)
-    return web.json_response({"ok": True})
-
-
-async def fake_opens(request):
-    return web.json_response(opens)
-
-
-async def fake_screen_log(request):
-    return web.json_response(screen_log)
-
-
-async def stream_slow(request):
-    await asyncio.sleep(30)
-    return web.Response(status=404)
 
 
 async def accepted(request):
     return web.json_response({"ok": True})
 
 
-async def send_feedback(request):
-    body = await request.json()
-    if not (body.get("message") or "").strip() and not body.get("screenshot"):
-        return web.json_response({"error": "Write what happened first"}, status=422)
-    who = caller(request)
-    report = {
-        "id": f"20261115-1312{len(feedback):02d}-ab12", "at": 1794748331, "when": "2026-11-15 13:12:11 UTC",
-        "host": "semmeltv5", "person": {"id": who["id"], "name": who["name"]} if who else None,
-        "device": (body.get("client") or {}).get("device"), "page": body.get("page"),
-        "message": body["message"], "screenshot": None, "tv_screenshot": None,
-        "trail": (body.get("client") or {}).get("trail", []), "agent": (body.get("client") or {}).get("agent"),
-    }
-    shot = body.get("screenshot") or ""
-    if shot.startswith("data:image/jpeg;base64,"):
-        report["screenshot"] = f"{report['id']}-phone.jpg"
-        report["screenshot_bytes"] = len(base64.b64decode(shot.split(",", 1)[1]))
-    feedback.append(report)
-    return web.json_response({"id": report["id"]}, status=201)
 
-
-async def list_feedback(request):
-    reports = [{key: value for key, value in report.items() if key not in ("trail", "agent", "screenshot_bytes")} for report in reversed(feedback)]
-    return web.json_response({"dir": "/var/lib/semmeltv/feedback", "reports": reports})
-
-
-async def fake_feedback(request):
-    return web.json_response(feedback)
 
 
 app = web.Application(middlewares=[gate])
@@ -529,39 +290,14 @@ app.router.add_get("/api/auth/choices", auth_choices)
 app.router.add_get("/api/auth/me", auth_me)
 app.router.add_post("/api/auth/password", auth_password)
 app.router.add_post("/api/auth/passkey/start", auth_passkey_start)
-app.router.add_post("/api/auth/switch", auth_switch)
-app.router.add_post("/api/auth/sign-out", auth_sign_out)
-app.router.add_get("/api/auth/invite/{token}", auth_invite)
-app.router.add_post("/api/auth/invite/{token}", auth_invite)
-app.router.add_get("/api/auth/members", auth_members)
-app.router.add_post("/api/auth/members/{id}/invite", auth_member_invite)
-app.router.add_post("/fake/sign-out-all", fake_sign_out_all)
 app.router.add_get("/api/tv-profile", tv_profile)
 app.router.add_get("/api/events", events)
 app.router.add_get("/api/library", library)
 app.router.add_get("/api/movies/{key}", movie)
-app.router.add_get("/api/shows/{key}", show)
 app.router.add_get("/api/subtitles", subtitles)
-app.router.add_get("/api/storage", storage)
-app.router.add_get("/api/downloads", downloads)
 app.router.add_get("/api/playback", playback)
 app.router.add_get("/api/screen", screen_view)
-app.router.add_post("/api/screen", screen_command)
-app.router.add_post("/fake/screen-answers", set_screen_answers)
-app.router.add_post("/api/stream/open", stream_open)
-app.router.add_post("/api/stream/{id}/progress", stream_progress)
-app.router.add_get("/fake/opens", fake_opens)
-app.router.add_post("/fake/reset-screen", reset_screen)
-app.router.add_post("/fake/drop-play", drop_play)
-app.router.add_post("/fake/tv", set_tv)
-app.router.add_post("/fake/restart", restart)
-app.router.add_get("/fake/progress-log", fake_progress_log)
-app.router.add_get("/fake/screen-log", fake_screen_log)
-app.router.add_get("/api/stream/{tail:.*}", stream_slow)
-app.router.add_post("/api/subtitles/delay", subtitle_delay)
 app.router.add_post("/api/subtitles/fetch", fetch_subtitles)
-app.router.add_post("/api/watched", watched)
-app.router.add_post("/fake/forget-marks", forget_marks)
 app.router.add_post("/api/volume/{step}", volume)
 app.router.add_post("/api/audio", choose_output)
 app.router.add_post("/api/audio/pair", pair)
@@ -570,8 +306,5 @@ app.router.add_delete("/api/audio/pair", stop_pairing)
 app.router.add_delete("/api/audio/headphones", forget)
 app.router.add_post("/fake/fail-next-connect", fail_next_connect)
 app.router.add_post("/fake/forget-subtitles", forget_subtitles)
-app.router.add_post("/api/feedback", send_feedback)
-app.router.add_get("/api/feedback", list_feedback)
-app.router.add_get("/fake/feedback", fake_feedback)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)
