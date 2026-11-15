@@ -3,3 +3,8 @@ result
 .devenv*
 devenv.local.nix
 devenv.local.yaml
+.*/
+!/.githooks/
+!/.claude/
+/.claude/*
+!/.claude/skills/

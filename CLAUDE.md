@@ -8,7 +8,8 @@ call EnterWorktree before the first edit.
 
 Landing a change, without waiting to be asked:
 
-1. Commit on the worktree branch.
+1. Commit on the worktree branch. Stage files by path, never `git add -A` or
+   `git add .`, and never pass `--no-verify`: the hooks check for secrets.
 2. `git push origin HEAD:main`. If main moved, `git fetch` and
    `git rebase origin/main` first, then push again.
 3. ExitWorktree with `keep` (git in the main checkout is blocked while inside a

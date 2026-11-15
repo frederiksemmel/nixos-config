@@ -1,0 +1,23 @@
+#!/usr/bin/env bash
+# Rechecks every commit the push would publish, including ones committed with
+# --no-verify or before the pre-commit checks existed.
+set -euo pipefail
+
+. "$(dirname "$0")/lib.sh"
+
+zero=0000000000000000000000000000000000000000
+gitleaks=""
+
+while read -r _ local_sha _ _; do
+  [ "$local_sha" != "$zero" ] || continue
+
+  git log -z --format= --name-only --diff-filter=ACMR "$local_sha" --not --remotes |
+    check_hidden_dirs pre-push
+
+  [ -n "$gitleaks" ] || gitleaks="$(gitleaks_bin)"
+  if ! "$gitleaks" git --no-banner --redact --log-level warn -v --log-opts="$local_sha --not --remotes" .; then
+    echo "pre-push: gitleaks found what looks like a secret in the commits being pushed (above)." >&2
+    echo "Rewrite those commits before pushing. For a false positive, extend .gitleaks.toml." >&2
+    exit 1
+  fi
+done

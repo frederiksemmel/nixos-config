@@ -969,6 +969,7 @@ in
               # Evaluates every host at once and fills RAM; check one named host
               # or parse the changed files instead.
               "Bash(nix flake check:*)"
+              "Bash(*--no-verify*)"
               "Read(//home/frederik/.ssh/**)"
               "Read(//**/*.age)"
               "Read(//**/.env)"
