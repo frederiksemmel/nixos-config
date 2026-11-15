@@ -421,13 +421,38 @@ fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profi
 }
 
 fn resume_at(progress: &crate::progress::Progress, file: &PathBuf, duration: f64) -> f64 {
-    let Some(watched) = progress.files.get(file) else {
-        return 0.0;
-    };
-    if watched.finished || watched.in_credits() {
-        return 0.0;
+    let at = progress.files.get(file).map_or(0.0, crate::progress::Watched::resume_at);
+    if at < duration - 10.0 { at } else { 0.0 }
+}
+
+#[cfg(test)]
+mod resume_tests {
+    use super::resume_at;
+    use crate::progress::{Place, Progress};
+    use std::path::PathBuf;
+
+    fn place(position: f64) -> Place {
+        Place {
+            position,
+            duration: 4300.0,
+            credits: None,
+        }
     }
-    watched.stopped_at.filter(|at| *at < duration - 10.0).unwrap_or(0.0)
+
+    #[test]
+    fn a_phone_resumes_a_title_where_it_stopped_even_after_it_was_finished_once() {
+        let file = PathBuf::from("/lib/The.White.Lotus.S02E07.mkv");
+        let mut progress = Progress::default();
+        assert_eq!(resume_at(&progress, &file, 4300.0), 0.0);
+        progress.record(&file, place(977.0));
+        assert_eq!(resume_at(&progress, &file, 4300.0), 977.0);
+        progress.finish(&file);
+        assert_eq!(resume_at(&progress, &file, 4300.0), 0.0);
+        progress.record(&file, place(3657.0));
+        assert_eq!(resume_at(&progress, &file, 4300.0), 3657.0);
+        progress.record(&file, place(4295.0));
+        assert_eq!(resume_at(&progress, &file, 4300.0), 0.0);
+    }
 }
 
 async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Json<OpenBody>) -> Response {

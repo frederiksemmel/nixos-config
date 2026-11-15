@@ -131,7 +131,7 @@ fn parse_args() -> Result<Args, String> {
     while let Some(argument) = raw.next() {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
-            "ui" | "list" | "artwork" | "import" | "downloads" => args.mode = argument,
+            "ui" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
             "toasty" | "library" | "card" => {
                 args.toasty = raw.by_ref().collect();
                 args.mode = argument;
@@ -528,6 +528,19 @@ fn run() -> Result<(), String> {
         "import" => run_import(&args)?,
         "downloads" => run_downloads(&args)?,
         "toasty" => run_toasty(&args)?,
+        "progress" => {
+            let mut files: Vec<_> = stored_progress(&args).files.into_iter().collect();
+            files.sort_by(|a, b| a.0.cmp(&b.0));
+            for (file, watched) in files.iter().filter(|(_, watched)| watched.stopped_at.is_some() || watched.finished) {
+                println!(
+                    "{:>8.1} {:>8} {:>8.1}  {}",
+                    watched.stopped_at.unwrap_or(0.0),
+                    if watched.finished { "finished" } else { "" },
+                    watched.resume_at(),
+                    file.strip_prefix(&args.library).unwrap_or(file).display()
+                );
+            }
+        }
         "library" => run_library(&args)?,
         "hear" => hear(&args)?,
         "invite" => invite(&args)?,

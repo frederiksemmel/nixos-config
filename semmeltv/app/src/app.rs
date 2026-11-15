@@ -1224,10 +1224,7 @@ impl App {
     }
 
     fn resume_point(&self, file: &Path) -> f64 {
-        match self.progress.files.get(file) {
-            Some(watched) if !watched.finished && !watched.in_credits() => watched.stopped_at.unwrap_or(0.0),
-            _ => 0.0,
-        }
+        self.progress.files.get(file).map_or(0.0, crate::progress::Watched::resume_at)
     }
 
     fn screen_step(&mut self, event: screen::Event) {

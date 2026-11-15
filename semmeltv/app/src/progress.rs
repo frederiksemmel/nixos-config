@@ -49,6 +49,13 @@ impl Watched {
             _ => false,
         }
     }
+
+    pub fn resume_at(&self) -> f64 {
+        if self.in_credits() {
+            return 0.0;
+        }
+        self.stopped_at.unwrap_or(0.0)
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -235,6 +242,37 @@ mod tests {
         assert_eq!(progress.files[file].tracks, tracks);
         progress.finish(file);
         assert_eq!(progress.files[file].tracks, Tracks::default());
+    }
+
+    #[test]
+    fn a_finished_file_played_again_resumes_where_it_stopped_the_second_time() {
+        let mut progress = Progress::default();
+        let file = Path::new("/lib/The.White.Lotus.S02E07.mkv");
+        let episode = Place {
+            position: 3600.0,
+            duration: 4300.0,
+            credits: None,
+        };
+        progress.record(file, episode);
+        progress.finish(file);
+        assert_eq!(progress.files[file].resume_at(), 0.0);
+        progress.record(
+            file,
+            Place {
+                position: 3887.0,
+                ..episode
+            },
+        );
+        assert!(progress.files[file].finished);
+        assert_eq!(progress.files[file].resume_at(), 3887.0);
+        progress.record(
+            file,
+            Place {
+                position: 4200.0,
+                ..episode
+            },
+        );
+        assert_eq!(progress.files[file].resume_at(), 0.0);
     }
 
     #[test]
