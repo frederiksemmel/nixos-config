@@ -583,13 +583,15 @@ the screen, and every front end shows what it says.
 | GET | `/api/screen` | the screen, see below |
 | POST | `/api/screen` | a command, see below → `{ message, ok }` |
 
-The screen is `{ kind, boot, device, play, notice }`. `kind` is `tv` (Play goes to
-the TV, whether or not it plays), `moving` (the TV is paused while a phone
-starts the same video at the same place) or `phone` (Play goes to `device`).
-`device` is `{ id, name }`, a browser's own random id and a name such as
-"iPhone". `play` is null or what the phone plays: `{ state, kind, movie, show,
-season, episode, name, caption, position, session, paused }`, where `state` is
-`moving`, `starting` or `playing`. `boot` names this run of the app: it changes
+The screen is `{ kind, boot, notice }` plus what its kind carries. `kind` is
+`tv` (Play goes to the TV, whether or not it plays; nothing more), `moving`
+(the TV is paused while a phone starts the same video at the same place; with
+`device` and `play`) or `phone` (Play goes to `device`; with `device` and
+`play`, which may be null). `device` is `{ id, name }`, a browser's own random
+id and a name such as "iPhone". `play` is what the phone plays,
+`{ state, kind, movie | show season episode, name, caption, position }`, where
+`state` is `moving` (only on a moving screen), `starting`, or `playing`, which
+adds `session` and `paused`. `boot` names this run of the app: it changes
 whenever the app restarts, and the screen then starts over on the TV with nothing
 playing. `notice` is the last thing worth saying,
 `{ id, text, tone }` with `tone` `quiet` or `error`; a new `id` means a new

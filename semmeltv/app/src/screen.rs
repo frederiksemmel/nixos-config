@@ -541,20 +541,40 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct View {
-    pub kind: &'static str,
+    #[serde(flatten)]
+    pub on: OnScreen,
     pub boot: u64,
-    pub device: Option<Device>,
-    pub play: Option<PlayView>,
     pub notice: Option<Said>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct PlayView {
-    pub state: &'static str,
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum OnScreen {
+    Tv,
+    Moving { device: Device, play: MovingView },
+    Phone { device: Device, play: Option<PlayView> },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "state", rename = "moving")]
+pub struct MovingView {
     #[serde(flatten)]
     pub place: Place,
-    pub session: Option<String>,
-    pub paused: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum PlayView {
+    Starting {
+        #[serde(flatten)]
+        place: Place,
+    },
+    Playing {
+        #[serde(flatten)]
+        place: Place,
+        session: String,
+        paused: bool,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -566,44 +586,29 @@ pub struct Said {
 
 impl View {
     pub fn of(screen: &Screen, notice: Option<Said>) -> Self {
-        let (kind, device, play) = match screen {
-            Screen::Tv => ("tv", None, None),
-            Screen::Moving { to, place, .. } => (
-                "moving",
-                Some(to.clone()),
-                Some(PlayView {
-                    state: "moving",
-                    place: place.clone(),
-                    session: None,
-                    paused: true,
-                }),
-            ),
-            Screen::Phone { device, play } => (
-                "phone",
-                Some(device.clone()),
-                play.as_ref().map(|play| match play {
-                    PhonePlay::Starting { place, .. } => PlayView {
-                        state: "starting",
-                        place: place.clone(),
-                        session: None,
-                        paused: false,
-                    },
+        let on = match screen {
+            Screen::Tv => OnScreen::Tv,
+            Screen::Moving { to, place, .. } => OnScreen::Moving {
+                device: to.clone(),
+                play: MovingView { place: place.clone() },
+            },
+            Screen::Phone { device, play } => OnScreen::Phone {
+                device: device.clone(),
+                play: play.as_ref().map(|play| match play {
+                    PhonePlay::Starting { place, .. } => PlayView::Starting { place: place.clone() },
                     PhonePlay::Playing {
                         session, place, paused, ..
-                    } => PlayView {
-                        state: "playing",
+                    } => PlayView::Playing {
                         place: place.clone(),
-                        session: Some(session.clone()),
+                        session: session.clone(),
                         paused: *paused,
                     },
                 }),
-            ),
+            },
         };
         Self {
-            kind,
+            on,
             boot: *BOOT,
-            device,
-            play,
             notice,
         }
     }
@@ -618,6 +623,7 @@ impl Default for View {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::{Value, json};
 
     fn phone(id: &str) -> Device {
         Device {
@@ -1149,12 +1155,12 @@ mod tests {
         let tv = place(1228.0);
         let mut screen = Screen::Tv;
         screen.step(flip_to(&iphone), Some(&tv), now);
-        assert_eq!(View::of(&screen, None).kind, "moving");
+        assert!(matches!(View::of(&screen, None).on, OnScreen::Moving { .. }));
         screen.step(flip_tv(None), Some(&tv), now);
-        assert_eq!(View::of(&screen, None).kind, "tv");
+        assert_eq!(View::of(&screen, None).on, OnScreen::Tv);
         screen.step(flip_to(&iphone), Some(&tv), now);
         screen.step(Event::TvPlays, Some(&tv), now);
-        assert_eq!(View::of(&screen, None).kind, "tv");
+        assert_eq!(View::of(&screen, None).on, OnScreen::Tv);
     }
 
     #[test]
@@ -1251,5 +1257,27 @@ mod tests {
         assert_eq!(json["play"]["position"], 12.0);
         assert_eq!(json["play"]["session"], "s1");
         assert!(json["play"].get("file").is_none());
+    }
+
+    #[test]
+    fn only_a_playing_phone_has_a_session_and_a_pause_and_the_tv_has_no_device() {
+        let now = Instant::now();
+        let iphone = phone("a");
+        let json = |screen: &Screen| serde_json::to_value(View::of(screen, None)).unwrap();
+        let tv = json(&Screen::Tv);
+        assert_eq!(tv["kind"], "tv");
+        assert!(tv.get("device").is_none() && tv.get("play").is_none());
+        let mut moving = Screen::Tv;
+        moving.step(flip_to(&iphone), Some(&place(1228.0)), now);
+        let moving = json(&moving);
+        assert_eq!((&moving["kind"], &moving["play"]["state"]), (&json!("moving"), &json!("moving")));
+        assert!(moving["play"].get("session").is_none() && moving["play"].get("paused").is_none());
+        let idle = json(&Screen::Phone {
+            device: iphone.clone(),
+            play: None,
+        });
+        assert_eq!((&idle["kind"], &idle["play"]), (&json!("phone"), &Value::Null));
+        let playing = json(&playing(&iphone, "s1", 12.0, now));
+        assert_eq!((&playing["play"]["session"], &playing["play"]["paused"]), (&json!("s1"), &json!(false)));
     }
 }

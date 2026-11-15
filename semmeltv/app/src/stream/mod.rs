@@ -531,13 +531,10 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
             return problem(StatusCode::UNPROCESSABLE_ENTITY, reason);
         }
     };
-    let screen = streams.bus.screen_state();
-    let handed_here = screen.kind == "moving"
-        && screen
-            .device
-            .as_ref()
-            .zip(body.device.as_ref())
-            .is_some_and(|(to, asking)| to.id == asking.id);
+    let handed_here = match (streams.bus.screen_state().on, body.device.as_ref()) {
+        (crate::screen::OnScreen::Moving { device: to, .. }, Some(asking)) => to.id == asking.id,
+        _ => false,
+    };
     let tv_playing = streams.bus.now_playing().is_some() && !handed_here;
     {
         let mut live = streams.live.lock().unwrap();

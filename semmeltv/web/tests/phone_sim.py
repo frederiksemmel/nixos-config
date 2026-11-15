@@ -336,7 +336,7 @@ class Phone:
             now = (playback or {}).get("now_playing")
             if now and not now.get("paused") and not self.args.force:
                 sys.exit(f"The TV plays {now['title']}; not taking over (--force to anyway)")
-            if view and view.get("play") and not view["play"].get("paused") and not self.args.force:
+            if view and view.get("play") and view["play"]["state"] != "moving" and not view["play"].get("paused") and not self.args.force:
                 sys.exit(f"{view['device']['name']} plays {view['play']['name']}; not taking over (--force to anyway)")
             tasks = [asyncio.ensure_future(task) for task in (self.events(), self.fetcher(), self.clock(), self.reporter())]
             await asyncio.sleep(1)

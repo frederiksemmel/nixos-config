@@ -1,4 +1,4 @@
-use crate::api::{Api, Audio, Link, NowPlaying, Output, Pick, Playing, Screen, TvAbilities, Voice};
+use crate::api::{Api, Audio, Link, NowPlaying, Output, PhonePlay, Pick, Playing, Screen, TvAbilities, Voice};
 use crate::live::{Live, Tv};
 use crate::public::Public;
 use std::time::Duration;
@@ -553,14 +553,12 @@ fn phone_line(screen: Option<&Screen>) -> Option<(String, String)> {
     let Some(Screen::Phone { device, play: Some(play) }) = screen else {
         return None;
     };
-    let doing = if play.state == "starting" {
-        "Starting on"
-    } else if play.paused {
-        "Paused on"
-    } else {
-        "Playing on"
+    let (name, doing) = match play {
+        PhonePlay::Starting { name } => (name, "Starting on"),
+        PhonePlay::Playing { name, paused: true } => (name, "Paused on"),
+        PhonePlay::Playing { name, paused: false } => (name, "Playing on"),
     };
-    Some((play.name.clone(), format!("{doing} {}", device.name)))
+    Some((name.clone(), format!("{doing} {}", device.name)))
 }
 
 #[component]
@@ -818,6 +816,22 @@ mod tests {
             phone_line(Some(&screen)),
             Some(("Brooklyn Nine-Nine".to_string(), "Playing on laptop".to_string()))
         );
+    }
+
+    #[test]
+    fn a_starting_phone_has_no_pause_and_a_playing_one_must_say_whether_it_is_paused() {
+        let read = |json: &str| serde_json::from_str::<Screen>(json);
+        let device = r#""device":{"id":"p1","name":"laptop"}"#;
+        let starting = read(&format!(r#"{{"kind":"phone",{device},"play":{{"state":"starting","name":"Up","position":0.0}},"boot":1}}"#)).unwrap();
+        assert_eq!(phone_line(Some(&starting)).unwrap().1, "Starting on laptop");
+        let paused = read(&format!(r#"{{"kind":"phone",{device},"play":{{"state":"playing","name":"Up","session":"s","paused":true}}}}"#)).unwrap();
+        assert_eq!(phone_line(Some(&paused)).unwrap().1, "Paused on laptop");
+        assert!(read(&format!(r#"{{"kind":"phone",{device},"play":{{"state":"playing","name":"Up"}}}}"#)).is_err());
+        assert!(read(&format!(r#"{{"kind":"phone",{device},"play":{{"state":"moving","name":"Up"}}}}"#)).is_err());
+        let moving = read(&format!(r#"{{"kind":"moving",{device},"play":{{"state":"moving","name":"Up"}},"boot":1,"notice":null}}"#)).unwrap();
+        assert_eq!(mode_of(Some(&moving)).0, "moving");
+        let tv = read(r#"{"kind":"tv","boot":1,"notice":null}"#).unwrap();
+        assert_eq!(mode_of(Some(&tv)).0, "tv");
     }
 
     #[test]

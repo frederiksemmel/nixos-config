@@ -384,13 +384,10 @@ pub struct Device {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
-pub struct PhonePlay {
-    pub state: String,
-    pub name: String,
-    #[serde(default)]
-    pub caption: String,
-    #[serde(default)]
-    pub paused: bool,
+#[serde(tag = "state", rename_all = "lowercase")]
+pub enum PhonePlay {
+    Starting { name: String },
+    Playing { name: String, paused: bool },
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
