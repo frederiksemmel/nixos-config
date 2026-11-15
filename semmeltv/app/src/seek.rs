@@ -262,6 +262,19 @@ mod tests {
     }
 
     #[test]
+    fn a_cancelled_scrub_forgets_its_target_and_its_streak() {
+        let mut scrub = Scrub::default();
+        let start = Instant::now();
+        scrub.step(Direction::Forward, 100.0, FILM, start);
+        scrub.step(Direction::Forward, 100.0, FILM, after(start, 200));
+        scrub.cancel();
+        assert_eq!(scrub.target(), None);
+        assert_eq!(scrub.poll(after(start, 1000)), None);
+        let order = scrub.step(Direction::Forward, 110.0, FILM, after(start, 1100));
+        assert_eq!(order, Some(Order { to: 120.0, exact: true }));
+    }
+
+    #[test]
     fn a_seek_returns_to_a_target_it_already_visited() {
         let mut scrub = Scrub::default();
         let start = Instant::now();

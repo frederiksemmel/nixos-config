@@ -676,37 +676,62 @@ mod tests {
         }
     }
 
-    fn forgotten_keys(library: &Library, progress: &Progress) -> Vec<String> {
+    fn key<'a>(library: &'a Library, current: &Current) -> &'a str {
+        match current.item {
+            Item::Show(index) => &library.shows[index].key,
+            Item::Movie(index) => &library.movies[index].key,
+        }
+    }
+
+    fn forgotten_keys<'a>(library: &'a Library, progress: &Progress) -> Vec<&'a str> {
         forgotten(library, progress, NOW)
             .iter()
-            .map(|current| match current.item {
-                Item::Show(index) => library.shows[index].key.clone(),
-                Item::Movie(index) => library.movies[index].key.clone(),
-            })
+            .map(|current| key(library, current))
             .collect()
     }
 
     #[test]
-    fn a_long_watch_left_long_ago_ranks_above_a_film_abandoned_after_minutes() {
+    fn forgotten_titles_rank_by_the_share_watched_and_the_time_since() {
+        let film = |key: &str| PathBuf::from(format!("/lib/{key}.mkv"));
+        let cases = [
+            (
+                "a long watch left long ago above a film abandoned after minutes",
+                vec![("lost", 2, 1)],
+                vec![
+                    (film("up"), 90.0, 60),
+                    (file("lost", 2, 1), 1500.0, 90),
+                    (film("heat"), 1500.0, 1),
+                ],
+                vec![("lost", 90), ("heat", 1), ("up", 60)],
+            ),
+            (
+                "left long ago above a somewhat bigger share",
+                vec![],
+                vec![(film("heat"), 1800.0, 1), (film("up"), 1200.0, 90)],
+                vec![("up", 90), ("heat", 1)],
+            ),
+            (
+                "a much bigger share above left long ago",
+                vec![],
+                vec![(film("heat"), 1500.0, 1), (film("up"), 600.0, 60)],
+                vec![("heat", 1), ("up", 60)],
+            ),
+        ];
         let library = library();
-        let mut progress = Progress::default();
-        stop(
-            &mut progress,
-            Path::new("/lib/up.mkv"),
-            180.0,
-            6000.0,
-            Some(NOW - 60 * DAY),
-        );
-        at(&mut progress, "lost", 2, 1, false);
-        stop(&mut progress, &file("lost", 2, 1), 1500.0, 3000.0, Some(NOW - 90 * DAY));
-        stop(
-            &mut progress,
-            Path::new("/lib/heat.mkv"),
-            3000.0,
-            6000.0,
-            Some(NOW - DAY),
-        );
-        assert_eq!(forgotten_keys(&library, &progress), ["lost", "heat", "up"]);
+        for (name, series, stops, expected) in cases {
+            let mut progress = Progress::default();
+            for (show, season, episode) in series {
+                at(&mut progress, show, season, episode, false);
+            }
+            for (path, position, days) in stops {
+                stop(&mut progress, &path, position, 3000.0, Some(NOW - days * DAY));
+            }
+            let ranked: Vec<_> = forgotten(&library, &progress, NOW)
+                .iter()
+                .map(|current| (key(&library, current), (NOW - current.last_played) / DAY))
+                .collect();
+            assert_eq!(ranked, expected, "{name}");
+        }
     }
 
     #[test]
@@ -842,6 +867,29 @@ mod tests {
                 assert_eq!(current.episode, Some(episode), "{name}");
                 assert_eq!(current.fraction(), 0.0, "{name}");
             }
+        }
+    }
+
+    #[test]
+    fn a_finished_film_leaves_and_a_series_stays_until_its_last_episode() {
+        let library = library();
+        let cases = [
+            ("a film", PathBuf::from("/lib/up.mkv"), true, vec!["dark", "heat"]),
+            ("an episode", file("dark", 1, 3), false, vec!["dark", "up", "heat"]),
+            ("the last episode", file("dark", 2, 2), true, vec!["up", "heat"]),
+        ];
+        for (name, path, left, expected) in cases {
+            let mut progress = Progress::default();
+            let plays = [
+                PathBuf::from("/lib/heat.mkv"),
+                PathBuf::from("/lib/up.mkv"),
+                file("dark", 1, 1),
+            ];
+            for (now, played) in plays.iter().enumerate() {
+                record(&mut progress, &library, played, 90.0, now as u64);
+            }
+            assert_eq!(finished(&mut progress, &library, &path), left, "{name}");
+            assert_eq!(keys(&progress), expected, "{name}");
         }
     }
 

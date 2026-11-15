@@ -247,7 +247,7 @@ mod tests {
     }
 
     #[test]
-    fn a_finished_file_played_again_resumes_where_it_stopped_the_second_time() {
+    fn a_finished_file_played_again_resumes_where_and_with_the_tracks_it_stopped_the_second_time() {
         let mut progress = Progress::default();
         let file = Path::new("/lib/The.White.Lotus.S02E07.mkv");
         let episode = Place {
@@ -255,18 +255,26 @@ mod tests {
             duration: 4300.0,
             credits: None,
         };
+        let tracks = Tracks {
+            audio: Some(2),
+            subtitle: Some(3),
+            subtitles_shown: Some(true),
+        };
         progress.record(file, episode);
+        progress.keep_tracks(file, tracks);
         progress.finish(file);
         assert_eq!(progress.files[file].resume_at(), 0.0);
-        progress.record(
-            file,
-            Place {
-                position: 3887.0,
-                ..episode
-            },
-        );
+        assert_eq!(progress.files[file].tracks(), Tracks::default());
+        let again = Place {
+            position: 3887.0,
+            ..episode
+        };
+        progress.record(file, again);
+        progress.keep_tracks(file, tracks);
+        progress.record(file, again);
         assert!(!progress.files[file].finished());
         assert_eq!(progress.files[file].resume_at(), 3887.0);
+        assert_eq!(progress.files[file].tracks(), tracks);
         progress.record(
             file,
             Place {

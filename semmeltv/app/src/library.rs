@@ -581,21 +581,31 @@ episodes = [
         let dir = env::temp_dir().join(format!("semmeltv-meta-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         let (root, meta) = (dir.join("mount"), dir.join("meta"));
-        fs::create_dir_all(root.join("Movies/Up")).unwrap();
-        fs::write(root.join("Movies/Up/Up.mkv"), b"x").unwrap();
-        let poster = meta.join("Artwork/movie/14160/poster.jpg");
-        fs::create_dir_all(poster.parent().unwrap()).unwrap();
-        fs::write(&poster, b"jpeg").unwrap();
-        Manifest::parse("[[movie]]\ntitle = \"Up\"\ntmdb = 14160\npath = \"Movies/Up/Up.mkv\"\nadded = 2024-01-01\n")
+        for video in ["Movies/Up/Up.mkv", "Series/Dark/1-1.mkv"] {
+            fs::create_dir_all(root.join(video).parent().unwrap()).unwrap();
+            fs::write(root.join(video), b"x").unwrap();
+        }
+        for poster in ["Artwork/movie/14160/poster.jpg", "Artwork/tv/70523/poster.jpg"] {
+            fs::create_dir_all(meta.join(poster).parent().unwrap()).unwrap();
+            fs::write(meta.join(poster), b"jpeg").unwrap();
+        }
+        let text = "[[movie]]\ntitle = \"Up\"\ntmdb = 14160\npath = \"Movies/Up/Up.mkv\"\nadded = 2024-01-01\n"
+            .to_string()
+            + "[[show]]\ntitle = \"Dark\"\ntmdb = 70523\nepisodes = [\n"
+            + "{ season = 1, episode = 1, path = \"Series/Dark/1-1.mkv\", added = 2024-01-01 },\n]\n";
+        Manifest::parse(&text)
             .unwrap()
             .write(&meta.join(manifest::FILE_NAME))
             .unwrap();
+        assert!(!library(&movies(&[("Up", "2024-01-01")])).uses_tmdb());
         let library = load(&root, &meta).unwrap();
         assert!(library.uses_tmdb());
-        let up = &library.movies[0];
+        let (up, dark) = (&library.movies[0], &library.shows[0]);
         assert_eq!(up.path, root.join("Movies/Up/Up.mkv"));
         assert_eq!(up.poster(&meta), Some(PathBuf::from("Artwork/movie/14160/poster.jpg")));
         assert_eq!(up.poster(&root), None);
+        assert_eq!(dark.poster(&meta), Some(PathBuf::from("Artwork/tv/70523/poster.jpg")));
+        assert_eq!(dark.poster(&root), None);
         assert!(load(&meta, &root).unwrap_err().contains(&root.display().to_string()));
         fs::remove_dir_all(dir).unwrap();
     }
