@@ -651,6 +651,53 @@ with sync_playwright() as playwright:
         print(f"phone was at {at:.1f}, plays on at {view['play']['position']}")
         stop_everything(phone)
 
+    with scenario("a laptop that goes quiet for 45 s loses the screen, keeps its place, and its next report takes it back"):
+        laptop = Phone(playwright, device=None, viewport={"width": 1280, "height": 800})
+        reports: list[Any] = []
+        laptop.page.on("request", lambda request: reports.append(request.post_data_json) if request.url.endswith("/progress") else None)
+        laptop.goto(f"/movies/{FRESH_FILM}")
+        laptop.until('!!document.querySelector("main button.play[data-play-movie]")')
+        switch_to(laptop, "phone")
+        laptop.page.click("main button.play[data-play-movie]")
+        laptop.until(PLAYS, 30000)
+        eventually("the TV knows the laptop plays", lambda: (screen(phone)["play"] or {}).get("state") == "playing")
+        phone.goto("/")
+        phone.until('document.querySelector(".bar-text strong")?.textContent === "Kinofilm"')
+        eventually("the laptop has reported where it is", lambda: phone.page.wait_for_timeout(200) or [body for body in reports if (body or {}).get("state") == "playing"], timeout=20)
+        laptop.context.set_offline(True)
+        cut = time.monotonic()
+        last_report = [body for body in reports if body][-1]
+        while time.monotonic() - cut < 30:
+            view = screen(phone)
+            assert view["kind"] == "phone" and (view["play"] or {}).get("state") == "playing", f"{time.monotonic() - cut:.0f} s after the laptop went quiet the screen is {view}"
+            assert mpv("get_property", "pid") is None, "the TV doesn't take over"
+            time.sleep(2)
+        view = eventually(
+            "the TV gives up on the quiet laptop",
+            lambda: (lambda view: view if view["play"] is None else None)(screen(phone)),
+            timeout=30,
+            every=1,
+        )
+        given_up = time.monotonic() - cut
+        print(f"the TV gave up {given_up:.0f} s after the laptop went quiet")
+        assert view["kind"] == "phone" and view["device"]["name"] == "laptop", view
+        assert "went quiet, so its place is kept" in (view["notice"] or {}).get("text", ""), view
+        kept = phone.api("GET", f"/api/movies/{FRESH_FILM}")["body"]["stopped_at"]
+        assert abs(kept - last_report["position"]) < 1.5, f"the laptop last reported {last_report['position']}, the TV keeps {kept}"
+        assert mpv("get_property", "pid") is None, "the TV doesn't take over"
+        phone.until('[...document.querySelectorAll(".toast")].some((toast) => toast.textContent.includes("went quiet"))')
+        phone.until('document.querySelector(".bar-text span")?.textContent === "Nothing is playing"')
+        laptop.context.set_offline(False)
+        eventually(
+            "the laptop's next report takes the screen back",
+            lambda: (lambda view: (view["play"] or {}).get("state") == "playing" and view["device"]["name"] == "laptop")(screen(phone)),
+            timeout=30,
+        )
+        assert laptop.js('!!document.querySelector(".pp") && !document.querySelector(".pp-failed")'), "the laptop's player stays open"
+        close_player(laptop)
+        laptop.close()
+        stop_everything(phone)
+
     for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
         with scenario(f"feedback from a phone lands on the TV with its screenshot and one of the TV ({engine})"):
             sender = phone if engine == "chromium" else Phone(playwright, engine, device)
@@ -881,19 +928,23 @@ with sync_playwright() as playwright:
         switch_to(phone, "tv")
         MODE = 'document.querySelector("#mode").dataset.mode'
 
-        def slow(route):
-            time.sleep(1.5)
-            route.continue_()
-
-        phone.page.route("**/api/screen", lambda route: slow(route) if route.request.method == "POST" else route.continue_())
+        phone.js("""(() => {
+          const answered = window.fetch;
+          window.answeredFetch = answered;
+          window.fetch = (input, init = {}) => String(input).endsWith("/api/screen") && init.method === "POST"
+            ? new Promise((done) => setTimeout(done, 1500)).then(() => answered(input, init))
+            : answered(input, init);
+        })()""")
         phone.page.locator("#mode").tap()
         phone.until(f'{MODE} === "moving"', 600)
         phone.until(f'{MODE} === "phone"', 5000)
-        phone.js('document.querySelector("#mode").click()')
+        eventually("the TV agrees the screen is on the phone", lambda: screen(phone)["kind"] == "phone")
+        phone.page.locator("#mode").tap()
         phone.until(f'{MODE} === "tv"', 600)
-        phone.page.wait_for_timeout(2000)
-        assert phone.js(MODE) == "tv" and screen(phone)["kind"] == "tv"
-        phone.page.unroute("**/api/screen")
+        eventually("the TV agrees the screen is on the TV", lambda: screen(phone)["kind"] == "tv", timeout=5)
+        phone.page.wait_for_timeout(500)
+        assert phone.js(MODE) == "tv"
+        phone.js("(() => { window.fetch = window.answeredFetch; })()")
         phone.page.route(
             "**/api/screen",
             lambda route: route.fulfill(status=422, json={"message": "The TV said no", "ok": False}) if route.request.method == "POST" else route.continue_(),
