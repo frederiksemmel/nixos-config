@@ -427,6 +427,42 @@ def tv_plays_film(phone):
     phone.until('!!document.querySelector(".now-state")', 30000)
 
 
+def goes_away(phone, seconds):
+    phone.page.evaluate(
+        """async (ms) => {
+          const show = (state) => {
+            Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
+            Object.defineProperty(document, "hidden", { configurable: true, get: () => state === "hidden" });
+            document.dispatchEvent(new Event("visibilitychange"));
+          };
+          show("hidden");
+          await new Promise((done) => setTimeout(done, ms));
+          show("visible");
+        }""",
+        seconds * 1000,
+    )
+
+
+DEPLOYED = "/run/systemd/system/semmeltv-web.service.d/build.conf"
+
+
+def deploy_web(phone, build):
+    if build:
+        tv.succeed(f"mkdir -p $(dirname {DEPLOYED}) && printf '[Service]\\nEnvironment=SEMMELTV_WEB_BUILD={build}\\n' > {DEPLOYED}")
+    else:
+        tv.succeed(f"rm -f {DEPLOYED}")
+    tv.succeed("systemctl daemon-reload && systemctl restart semmeltv-web.service")
+    if build:
+
+        def serves():
+            try:
+                return phone.api("GET", "/build")["body"] == build
+            except Exception:
+                return False
+
+        eventually(f"the web app serves build {build}", serves)
+
+
 def raise_toast(phone, text):
     phone.page.evaluate("(text) => window.dispatchEvent(new CustomEvent('semmeltv:toast', { detail: { text, tone: 'info' } }))", text)
 
@@ -811,18 +847,7 @@ with sync_playwright() as playwright:
         iphone.page.locator('.skip[data-skip="forward"]').tap()
         eventually("the skip reaches the TV", lambda: (tv_position() or 0) > skipped_from + 3)
         iphone.js("document.getElementById('sheet').dataset.rendered = 'before'")
-        iphone.page.evaluate(
-            """async () => {
-              const show = (state) => {
-                Object.defineProperty(document, "visibilityState", { configurable: true, get: () => state });
-                Object.defineProperty(document, "hidden", { configurable: true, get: () => state === "hidden" });
-                document.dispatchEvent(new Event("visibilitychange"));
-              };
-              show("hidden");
-              await new Promise((done) => setTimeout(done, 5000));
-              show("visible");
-            }"""
-        )
+        goes_away(iphone, 5)
         iphone.until('!document.getElementById("sheet").dataset.rendered', 10000)
         assert iphone.js('!document.documentElement.hasAttribute("data-sheet")'), "the page comes back without the remote"
         iphone.page.locator(".bar-open").tap()
@@ -910,6 +935,7 @@ with sync_playwright() as playwright:
             toaster = phone if engine == "chromium" else Phone(playwright, engine, device)
             toaster.goto("/")
             at_home(toaster)
+            toaster.until('document.documentElement.hasAttribute("data-phone-ready")')
             assert toaster.js('!document.getElementById("microphone-note")'), "the top bar has no microphone text"
             if engine == "chromium":
                 toaster.page.locator("#microphone-talk").tap()
@@ -947,6 +973,35 @@ with sync_playwright() as playwright:
         phone.until(f'location.pathname === {href!r} && !!document.querySelector("main .detail h1") && !document.querySelector(".toast:not([data-leaving])")', 30000)
         phone.js("history.back()")
         at_home(phone)
+
+    with scenario("pages are revalidated, and a page from before a deploy reloads into the new build"):
+        iphone = Phone(playwright, "webkit", "iPhone 15")
+        try:
+            iphone.goto("/")
+            at_home(iphone)
+            page = iphone.page.request.get(PHONE + "/")
+            assert page.headers.get("cache-control") == "no-cache", page.headers
+            script = iphone.js('document.querySelector("script[src*=\'/_topcoat/assets/live-\']").src')
+            asset = iphone.page.request.get(script)
+            assert "immutable" in asset.headers.get("cache-control", ""), asset.headers
+            old_build = iphone.js("document.documentElement.dataset.build")
+            iphone.js("window.oldPage = true")
+            deploy_web(iphone, "next")
+            goes_away(iphone, 5)
+            iphone.until('document.documentElement.dataset.build === "next" && !window.oldPage && !!document.querySelector(".bar-open")')
+            assert old_build != "next", old_build
+            iphone.page.wait_for_timeout(2000)
+            iphone.js("window.oldPage = true")
+            film_page(iphone)
+            deploy_web(iphone, "after-next")
+            iphone.page.go_back()
+            iphone.until('location.pathname === "/" && document.documentElement.dataset.build === "after-next" && !window.oldPage && !!document.querySelector(".bar-open")')
+            iphone.js("window.settled = true")
+            iphone.page.wait_for_timeout(3000)
+            assert iphone.js("window.settled === true"), "a page of the serving build doesn't reload again"
+        finally:
+            deploy_web(iphone, None)
+            iphone.close()
 
     with scenario("a title that isn't there says so inside the app"):
         phone.goto("/movies/not-in-the-library")

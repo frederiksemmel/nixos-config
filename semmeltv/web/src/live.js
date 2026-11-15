@@ -2,11 +2,13 @@
 // the switch. The web app renders a pulse over it every 5 s. When the pulse
 // stops, or the page comes back from being away, the connection restarts and
 // everything it renders comes fresh from the TV; until then the page is marked
-// stale.
+// stale. A page from another build of the web app than the one now serving
+// reloads itself, when it opens and whenever the connection restarts.
 (() => {
   const STALE = 12000;
   const AWAY = 4000;
   const CHECK_EVERY = 2000;
+  const RELOADED_RECENTLY = 10000;
   const html = document.documentElement;
   const Native = window.WebSocket;
   const sockets = new Set();
@@ -40,7 +42,34 @@
     stale(false);
   }
 
+  async function sameBuild(why) {
+    const build = html.dataset.build;
+    if (!build) return;
+    let current;
+    try {
+      const response = await fetch("/build", { cache: "no-store" });
+      if (!response.ok) return;
+      current = (await response.text()).trim();
+    } catch {
+      return;
+    }
+    if (!current || current === build) return;
+    const video = document.querySelector(".pp-video");
+    if (video && !video.paused) {
+      video.addEventListener("pause", () => sameBuild(why), { once: true });
+      return;
+    }
+    try {
+      const [last, at] = (sessionStorage.getItem("semmeltv-reloaded-for") || "").split(" ");
+      if (last === current && Date.now() - Number(at) < RELOADED_RECENTLY) return;
+      sessionStorage.setItem("semmeltv-reloaded-for", `${current} ${Date.now()}`);
+    } catch {}
+    if (window.semmeltvReport) window.semmeltvReport("info", "page reloads into the new version", `${build} -> ${current}, ${why}`);
+    location.reload();
+  }
+
   function reconnect(why) {
+    sameBuild(why);
     if (window.semmeltvReport) window.semmeltvReport("info", "live connection restarts", why);
     stale(true);
     heard = Date.now();
@@ -74,4 +103,5 @@
     if (event.persisted) reconnect("back from the back-forward cache");
   });
   window.addEventListener("online", () => reconnect("the network is back"));
+  sameBuild("page opened");
 })();

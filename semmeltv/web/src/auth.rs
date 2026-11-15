@@ -10,7 +10,13 @@ use topcoat::view::{View, attributes, component, view};
 
 path_param!(token);
 
-const OPEN: [&str; 4] = ["/profiles", "/invite/", "/_topcoat/assets/", "/_topcoat/fonts/"];
+const OPEN: [&str; 5] = [
+    "/profiles",
+    "/invite/",
+    "/build",
+    "/_topcoat/assets/",
+    "/_topcoat/fonts/",
+];
 const FOR_ADMINS: [&str; 4] = ["/storage", "/downloads", "/people", "/feedback"];
 
 pub fn me(cx: &Cx) -> Option<&Me> {

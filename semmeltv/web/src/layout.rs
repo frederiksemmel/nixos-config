@@ -2,6 +2,7 @@ use crate::auth;
 use crate::brand;
 use crate::playing;
 use crate::public::Public;
+use crate::version;
 use topcoat::Result;
 use topcoat::asset::{Asset, asset};
 use topcoat::context::{Cx, app_context};
@@ -28,7 +29,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let signed_in = auth::me(cx).is_some();
     Ok(view! {
         <!DOCTYPE html>
-        <html lang="en" data-api=(public.api.as_str())>
+        <html lang="en" data-api=(public.api.as_str()) data-build=(version::id())>
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">

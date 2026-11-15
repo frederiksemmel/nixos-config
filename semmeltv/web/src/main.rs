@@ -11,6 +11,7 @@ mod public;
 mod settings;
 mod storage;
 mod subtitles;
+mod version;
 
 use std::env;
 use std::path::PathBuf;
@@ -27,7 +28,9 @@ SEMMELTV_API_URL is the TV's API (default http://127.0.0.1:8090).
 SEMMELTV_DOWNLOADS_URL is the downloads service (default http://127.0.0.1:8092).
 SEMMELTV_API_PUBLIC_URL is where browsers reach that API (default: this origin).
 SEMMELTV_SERVICE_TOKEN_FILE holds the token the server follows the TV's events with.
-SEMMELTV_WEB_ASSETS is the asset bundle; without it the app bundles itself.";
+SEMMELTV_WEB_ASSETS is the asset bundle; without it the app bundles itself.
+SEMMELTV_WEB_BUILD names this build (default: from the executable); a page
+from another build reloads itself.";
 const DEFAULT_API: &str = "http://127.0.0.1:8090";
 const DEFAULT_DOWNLOADS: &str = "http://127.0.0.1:8092";
 
@@ -61,6 +64,7 @@ fn router(
 ) -> Router {
     Router::builder()
         .discover()
+        .layer(version::Revalidate)
         .layer(auth::SignedIn)
         .app_context(api)
         .app_context(downloads)
