@@ -144,6 +144,7 @@ in
           ];
         }}";
         XCURSOR_THEME = "blank";
+        WLR_LIBINPUT_NO_DEVICES = "1";
         XCURSOR_PATH = "${blankCursor}/share/icons";
         SEMMELTV_DECODER = cfg.decoder;
       }
