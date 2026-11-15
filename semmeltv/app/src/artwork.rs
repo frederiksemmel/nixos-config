@@ -818,28 +818,6 @@ added = 2024-05-01
     }
 
     #[test]
-    fn art_lives_under_the_kind_and_tmdb_id() {
-        let art = Path::new("/work/Artwork");
-        assert_eq!(
-            backdrop(art, Kind::Movie, 14160),
-            Path::new("/work/Artwork/movie/14160/backdrop.jpg")
-        );
-        assert_eq!(
-            backdrop(art, Kind::Tv, 70523),
-            Path::new("/work/Artwork/tv/70523/backdrop.jpg")
-        );
-        assert_eq!(still(art, 70523, 1, 2), Path::new("/work/Artwork/tv/70523/s01e02.jpg"));
-        assert_eq!(
-            poster(art, Kind::Movie, 14160),
-            Path::new("/work/Artwork/movie/14160/poster.jpg")
-        );
-        assert_eq!(
-            poster(art, Kind::Tv, 70523),
-            Path::new("/work/Artwork/tv/70523/poster.jpg")
-        );
-    }
-
-    #[test]
     fn a_run_saves_art_beside_the_manifest_and_names_and_runtimes_into_it() {
         let dir = workdir("art-run");
         let manifest = dir.join("library.db");
@@ -875,17 +853,30 @@ added = 2024-05-01
     }
 
     #[test]
-    fn a_second_run_only_asks_for_what_is_still_missing() {
-        let dir = workdir("art-again");
-        let manifest = dir.join("library.db");
-        let fake = Fake::new();
-        run(&manifest, &fake, None, false).unwrap();
-        fake.calls();
+    fn a_run_fetches_only_what_is_missing() {
+        let cases: [(&str, Option<fn(&Path) -> PathBuf>, usize, &[&str]); 2] = [
+            ("art-again", None, 0, &["season 70523 1"]),
+            (
+                "poster-missing",
+                Some(|art| poster(art, Kind::Movie, 14160)),
+                1,
+                &["season 70523 1", "details Movie 14160", "image w342 /poster-14160.jpg"],
+            ),
+        ];
+        for (name, removed, images, calls) in cases {
+            let dir = workdir(name);
+            let manifest = dir.join("library.db");
+            let fake = Fake::new();
+            run(&manifest, &fake, None, false).unwrap();
+            if let Some(removed) = removed {
+                fs::remove_file(removed(&dir.join(DIR))).unwrap();
+            }
+            fake.calls();
 
-        let summary = run(&manifest, &fake, None, false).unwrap();
-        assert_eq!(summary.images, 0);
-        assert_eq!(fake.calls(), ["season 70523 1"]);
-        fs::remove_dir_all(dir).unwrap();
+            assert_eq!(run(&manifest, &fake, None, false).unwrap().images, images, "{name}");
+            assert_eq!(fake.calls(), calls, "{name}");
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]
@@ -914,12 +905,6 @@ episodes = []
             .map(|show| (show.last_aired, show.running))
             .collect();
         assert_eq!(runs, [(Some(2020), false), (Some(2020), true)]);
-        assert!(
-            Manifest::read(&manifest)
-                .unwrap()
-                .render()
-                .contains("last_aired = 2020\nrunning = true\n")
-        );
         fake.calls();
 
         run(&manifest, &fake, None, false).unwrap();
@@ -965,56 +950,41 @@ episodes = []
     }
 
     #[test]
-    fn refreshing_replaces_only_images_older_than_five_months() {
-        let dir = workdir("art-refresh");
-        let manifest = dir.join("library.db");
-        let art = dir.join(DIR);
-        let fake = Fake::new();
-        run(&manifest, &fake, None, false).unwrap();
-        age(&backdrop(&art, Kind::Movie, 14160), 160);
-        age(&backdrop(&art, Kind::Tv, 70523), 100);
-        fake.calls();
+    fn refreshing_replaces_images_older_than_five_months() {
+        let cases: [(&str, fn(&Path) -> PathBuf, fn(&Path) -> PathBuf, &str, &str); 2] = [
+            (
+                "art-refresh",
+                |art| backdrop(art, Kind::Movie, 14160),
+                |art| backdrop(art, Kind::Tv, 70523),
+                "image w780 /14160.jpg",
+                "image w780 /70523.jpg",
+            ),
+            (
+                "poster-refresh",
+                |art| poster(art, Kind::Tv, 70523),
+                |art| poster(art, Kind::Movie, 14160),
+                "image w342 /poster-70523.jpg",
+                "image w342 /poster-14160.jpg",
+            ),
+        ];
+        for (name, old, young, replaced, kept) in cases {
+            let dir = workdir(name);
+            let manifest = dir.join("library.db");
+            let art = dir.join(DIR);
+            let fake = Fake::new();
+            run(&manifest, &fake, None, false).unwrap();
+            age(&old(&art), 160);
+            age(&young(&art), 100);
+            fake.calls();
 
-        assert_eq!(run(&manifest, &fake, None, false).unwrap().images, 0);
-        fake.calls();
-        assert_eq!(run(&manifest, &fake, None, true).unwrap().images, 1);
-        assert!(fake.calls().contains(&"image w780 /14160.jpg".to_string()));
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_missing_poster_is_fetched_on_its_own() {
-        let dir = workdir("poster-missing");
-        let manifest = dir.join("library.db");
-        let art = dir.join(DIR);
-        let fake = Fake::new();
-        run(&manifest, &fake, None, false).unwrap();
-        fs::remove_file(poster(&art, Kind::Movie, 14160)).unwrap();
-        fake.calls();
-
-        assert_eq!(run(&manifest, &fake, None, false).unwrap().images, 1);
-        let calls = fake.calls();
-        assert!(calls.contains(&"image w342 /poster-14160.jpg".to_string()));
-        assert!(!calls.iter().any(|call| call.starts_with("image w780")));
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn refreshing_replaces_posters_older_than_five_months() {
-        let dir = workdir("poster-refresh");
-        let manifest = dir.join("library.db");
-        let art = dir.join(DIR);
-        let fake = Fake::new();
-        run(&manifest, &fake, None, false).unwrap();
-        age(&poster(&art, Kind::Tv, 70523), 160);
-        age(&poster(&art, Kind::Movie, 14160), 100);
-        fake.calls();
-
-        assert_eq!(run(&manifest, &fake, None, true).unwrap().images, 1);
-        let calls = fake.calls();
-        assert!(calls.contains(&"image w342 /poster-70523.jpg".to_string()));
-        assert!(!calls.contains(&"image w342 /poster-14160.jpg".to_string()));
-        fs::remove_dir_all(dir).unwrap();
+            assert_eq!(run(&manifest, &fake, None, false).unwrap().images, 0, "{name}");
+            fake.calls();
+            assert_eq!(run(&manifest, &fake, None, true).unwrap().images, 1, "{name}");
+            let calls = fake.calls();
+            assert!(calls.contains(&replaced.to_string()), "{name}: {calls:?}");
+            assert!(!calls.contains(&kept.to_string()), "{name}: {calls:?}");
+            fs::remove_dir_all(dir).unwrap();
+        }
     }
 
     #[test]

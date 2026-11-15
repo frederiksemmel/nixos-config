@@ -167,47 +167,68 @@ mod tests {
     }
 
     #[test]
-    fn season_packs_and_episodes_are_told_apart() {
-        assert_eq!(
-            parsed("Outlander (2014) S08 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence)"),
-            ("Outlander".to_string(), Some(2014), Coverage::Season(8))
-        );
-        assert_eq!(
-            parsed("Outlander.S08E10.1080p.WEB.h264-GRACE"),
+    fn release_names_give_title_year_and_coverage() {
+        let cases = [
             (
-                "Outlander".to_string(),
+                "Outlander (2014) S08 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence)",
+                "Outlander",
+                Some(2014),
+                Coverage::Season(8),
+            ),
+            (
+                "Outlander.S08E10.1080p.WEB.h264-GRACE",
+                "Outlander",
                 None,
                 Coverage::Episodes {
                     season: 8,
                     first: 10,
-                    last: 10
-                }
-            )
-        );
-        assert_eq!(
-            parsed("Outlander S08e01-10 [1080p Ita Eng Spa h265 10bit SubS] byMe7alh [MIRCrew]"),
+                    last: 10,
+                },
+            ),
             (
-                "Outlander".to_string(),
+                "Outlander S08e01-10 [1080p Ita Eng Spa h265 10bit SubS] byMe7alh [MIRCrew]",
+                "Outlander",
                 None,
                 Coverage::Episodes {
                     season: 8,
                     first: 1,
-                    last: 10
-                }
-            )
-        );
-        assert_eq!(
-            parsed("Outlander S05 1080p BluRay AV1 PTNX"),
-            ("Outlander".to_string(), None, Coverage::Season(5))
-        );
-        assert_eq!(
-            parsed("Outlander Season 8 Complete 1080p"),
-            ("Outlander".to_string(), None, Coverage::Season(8))
-        );
-        assert_eq!(
-            parsed("Outlander S01-S07 1080p BluRay x265"),
-            ("Outlander".to_string(), None, Coverage::Seasons(1, 7))
-        );
+                    last: 10,
+                },
+            ),
+            (
+                "Outlander S05 1080p BluRay AV1 PTNX",
+                "Outlander",
+                None,
+                Coverage::Season(5),
+            ),
+            (
+                "Outlander Season 8 Complete 1080p",
+                "Outlander",
+                None,
+                Coverage::Season(8),
+            ),
+            (
+                "Outlander S01-S07 1080p BluRay x265",
+                "Outlander",
+                None,
+                Coverage::Seasons(1, 7),
+            ),
+            (
+                "Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.Atmos.H.265-FLUX",
+                "Dune Part Two",
+                Some(2024),
+                Coverage::Film,
+            ),
+            (
+                "Blade Runner 2049 (2017) 1080p BrRip x264 - YIFY",
+                "Blade Runner 2049",
+                Some(2017),
+                Coverage::Film,
+            ),
+        ];
+        for (name, title, year, coverage) in cases {
+            assert_eq!(parsed(name), (title.to_string(), year, coverage), "{name}");
+        }
     }
 
     #[test]
@@ -219,46 +240,75 @@ mod tests {
     }
 
     #[test]
-    fn films_keep_title_and_year() {
-        assert_eq!(
-            parsed("Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.Atmos.H.265-FLUX"),
-            ("Dune Part Two".to_string(), Some(2024), Coverage::Film)
-        );
-        assert_eq!(
-            parsed("Blade Runner 2049 (2017) 1080p BrRip x264 - YIFY"),
-            ("Blade Runner 2049".to_string(), Some(2017), Coverage::Film)
-        );
-    }
-
-    #[test]
-    fn quality_facts_come_from_the_name() {
-        let release = Release::parse("Outlander (2014) S08 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence)");
-        assert_eq!(release.tags.video.as_deref(), Some("HEVC 10-bit"));
-        assert_eq!(release.tags.resolution.as_deref(), Some("1080p"));
-        assert_eq!(release.tags.audio.as_deref(), Some("5.1"));
-        assert_eq!(release.source, Some(Source::WebDl));
-        assert!(!release.dubbed && !release.bad_source && !release.sample);
-        assert_eq!(
-            release.info.as_deref(),
-            Some("1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence")
-        );
-        let dotted = Release::parse("Outlander.S08E10.1080p.WEB.h264-GRACE");
-        assert_eq!(dotted.tags.video.as_deref(), Some("H.264"));
-        assert_eq!(dotted.info.as_deref(), Some("1080p WEB h264-GRACE"));
-        let dubbed = Release::parse("Outlander S08e01-10 [1080p Ita Eng Spa h265 10bit SubS] byMe7alh [MIRCrew]");
-        assert!(dubbed.dubbed);
-        assert_eq!(
-            Release::parse("Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.Atmos.H.265-FLUX").info.as_deref(),
-            Some("1080p WEB-DL DDP5.1 Atmos H 265-FLUX")
-        );
-    }
-
-    #[test]
-    fn cams_and_samples_are_flagged() {
-        assert!(Release::parse("Dune Part Two 2024 HDCAM x264").bad_source);
-        assert!(Release::parse("Dune.Part.Two.2024.TS.x264").bad_source);
-        assert!(!Release::parse("Dune.Part.Two.2024.1080p.DTS-HD.MA.5.1").bad_source);
-        assert!(Release::parse("Dune.Part.Two.2024.1080p.Sample").sample);
+    fn release_facts_come_from_the_name() {
+        let cases = [
+            (
+                "Outlander (2014) S08 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence)",
+                [Some("HEVC 10-bit"), Some("1080p"), Some("5.1")],
+                Some(Source::WebDl),
+                [false, false, false],
+                Some("1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence"),
+            ),
+            (
+                "Outlander.S08E10.1080p.WEB.h264-GRACE",
+                [Some("H.264"), Some("1080p"), None],
+                Some(Source::WebDl),
+                [false, false, false],
+                Some("1080p WEB h264-GRACE"),
+            ),
+            (
+                "Outlander S08e01-10 [1080p Ita Eng Spa h265 10bit SubS] byMe7alh [MIRCrew]",
+                [Some("HEVC 10-bit"), Some("1080p"), None],
+                None,
+                [true, false, false],
+                Some("1080p Ita Eng Spa h265 10bit SubS byMe7alh MIRCrew"),
+            ),
+            (
+                "Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.Atmos.H.265-FLUX",
+                [Some("HEVC"), Some("1080p"), Some("5.1 Atmos")],
+                Some(Source::WebDl),
+                [false, false, false],
+                Some("1080p WEB-DL DDP5.1 Atmos H 265-FLUX"),
+            ),
+            (
+                "Dune Part Two 2024 HDCAM x264",
+                [Some("H.264"), None, None],
+                None,
+                [false, true, false],
+                Some("x264"),
+            ),
+            (
+                "Dune.Part.Two.2024.TS.x264",
+                [Some("H.264"), None, None],
+                None,
+                [false, true, false],
+                Some("x264"),
+            ),
+            (
+                "Dune.Part.Two.2024.1080p.DTS-HD.MA.5.1",
+                [None, Some("1080p"), Some("5.1")],
+                None,
+                [false, false, false],
+                Some("1080p DTS-HD MA 5.1"),
+            ),
+            (
+                "Dune.Part.Two.2024.1080p.Sample",
+                [None, Some("1080p"), None],
+                None,
+                [false, false, true],
+                Some("1080p Sample"),
+            ),
+        ];
+        for (name, tags, source, [dubbed, bad_source, sample], info) in cases {
+            let release = Release::parse(name);
+            let got = (
+                [&release.tags.video, &release.tags.resolution, &release.tags.audio].map(|tag| tag.as_deref()),
+                release.source,
+                [release.dubbed, release.bad_source, release.sample],
+                release.info.as_deref(),
+            );
+            assert_eq!(got, (tags, source, [dubbed, bad_source, sample], info), "{name}");
+        }
     }
 
     #[test]

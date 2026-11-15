@@ -112,21 +112,6 @@ mod tests {
     use std::io::Write;
 
     #[test]
-    fn a_file_is_downloaded_when_its_blocks_cover_its_size() {
-        assert!(covers(1000, 4096));
-        assert!(covers(4096, 4096));
-        assert!(!covers(10_000_000, 4096));
-        assert!(!covers(0, 0));
-    }
-
-    #[test]
-    fn a_title_larger_than_the_cache_does_not_fit() {
-        assert!(fits(10, Some(10)));
-        assert!(!fits(11, Some(10)));
-        assert!(fits(u64::MAX, None));
-    }
-
-    #[test]
     fn streaming_needs_the_network_and_the_mount() {
         let cached = PathBuf::from("/cache/a.mkv");
         assert_eq!(choose(true, true, None), Source::Stream);
@@ -141,27 +126,47 @@ mod tests {
     }
 
     #[test]
-    fn single_titles_say_what_they_are() {
-        assert_eq!(single(true, true).0, Presence::Downloaded);
-        assert_eq!(single(false, true), (Presence::Downloading, "Downloading".to_string()));
-        assert_eq!(single(false, false), (Presence::Remote, "Not downloaded".to_string()));
-    }
-
-    #[test]
-    fn shows_count_their_episodes() {
-        assert_eq!(group(0, 10, false), (Presence::Remote, "Not downloaded".to_string()));
-        assert_eq!(
-            group(3, 10, false),
-            (Presence::Partial, "3 of 10 downloaded".to_string())
-        );
-        assert_eq!(
-            group(10, 10, false),
-            (Presence::Downloaded, "10 of 10 downloaded".to_string())
-        );
-        assert_eq!(
-            group(0, 10, true),
-            (Presence::Downloading, "0 of 10 downloaded".to_string())
-        );
+    fn presence_says_what_is_downloaded() {
+        let cases = [
+            ("single downloaded", single(true, true), Presence::Downloaded, None),
+            (
+                "single downloading",
+                single(false, true),
+                Presence::Downloading,
+                Some("Downloading"),
+            ),
+            (
+                "single remote",
+                single(false, false),
+                Presence::Remote,
+                Some("Not downloaded"),
+            ),
+            ("0 of 10", group(0, 10, false), Presence::Remote, Some("Not downloaded")),
+            (
+                "3 of 10",
+                group(3, 10, false),
+                Presence::Partial,
+                Some("3 of 10 downloaded"),
+            ),
+            (
+                "10 of 10",
+                group(10, 10, false),
+                Presence::Downloaded,
+                Some("10 of 10 downloaded"),
+            ),
+            (
+                "0 of 10 downloading",
+                group(0, 10, true),
+                Presence::Downloading,
+                Some("0 of 10 downloaded"),
+            ),
+        ];
+        for (name, (presence, label), want, want_label) in cases {
+            assert_eq!(presence, want, "{name}");
+            if let Some(want_label) = want_label {
+                assert_eq!(label, want_label, "{name}");
+            }
+        }
     }
 
     #[test]

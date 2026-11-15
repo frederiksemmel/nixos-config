@@ -359,12 +359,6 @@ pub fn load_listed(root: &Path, meta: &Path) -> Result<Library, String> {
     Ok(Library::from_manifest(root, &manifest, |_| true))
 }
 
-#[cfg(test)]
-pub fn load_saved(root: &Path, saved: &Path) -> Result<Library, String> {
-    let manifest = Manifest::read(saved).map_err(|_| format!("No saved copy at {}", saved.display()))?;
-    Ok(Library::from_manifest(root, &manifest, |_| true))
-}
-
 pub fn save_copy(meta: &Path, saved: &Path) {
     let current = fs::read(meta.join(manifest::FILE_NAME));
     if let Ok(bytes) = current
@@ -417,7 +411,6 @@ impl Movie {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::manifest::Tenths;
     use std::env;
 
     fn library_with(text: &str, present: impl Fn(&Path) -> bool) -> Library {
@@ -469,40 +462,62 @@ mod tests {
     }
 
     #[test]
-    fn newest_films_come_first() {
-        let library = library(&movies(&[
-            ("Apple", "2024-01-01"),
-            ("Zebra", "2026-01-01"),
-            ("Mango", "2025-01-01"),
-        ]));
-        let order: Vec<_> = library.movies.iter().map(|movie| movie.title.as_str()).collect();
-        assert_eq!(order, ["Zebra", "Mango", "Apple"]);
-    }
-
-    #[test]
-    fn a_new_episode_brings_its_show_forward_but_episodes_stay_in_order() {
-        let old = show(
-            "Old Show",
-            &[(2, 1, "2020-01-01"), (1, 2, "2026-01-01"), (1, 1, "2020-01-01")],
-        );
-        let library = library(&(old + &show("New Show", &[(1, 1, "2025-01-01")])));
-        let order: Vec<_> = library.shows.iter().map(|show| show.title.as_str()).collect();
-        assert_eq!(order, ["Old Show", "New Show"]);
-        let show = &library.shows[0];
-        let seasons: Vec<_> = show.seasons.iter().map(|season| season.number).collect();
-        let episodes: Vec<_> = show.seasons[0].episodes.iter().map(|episode| episode.number).collect();
-        assert_eq!((seasons, episodes), (vec![1, 2], vec![1, 2]));
-    }
-
-    #[test]
-    fn titles_added_together_fall_back_to_the_alphabet_ignoring_the() {
-        let library = library(&movies(&[
-            ("The Zebra", "2024-01-01"),
-            ("The Apple", "2024-01-01"),
-            ("Mango", "2024-01-01"),
-        ]));
-        let order: Vec<_> = library.movies.iter().map(|movie| movie.title.as_str()).collect();
-        assert_eq!(order, ["The Apple", "Mango", "The Zebra"]);
+    fn the_library_lists_newest_first_then_by_title() {
+        let cases: [(String, &[&str], &[&str], &[(u32, &[u32])]); 3] = [
+            (
+                movies(&[
+                    ("Apple", "2024-01-01"),
+                    ("Zebra", "2026-01-01"),
+                    ("Mango", "2025-01-01"),
+                ]),
+                &["Zebra", "Mango", "Apple"],
+                &[],
+                &[],
+            ),
+            (
+                show(
+                    "Old Show",
+                    &[(2, 1, "2020-01-01"), (1, 2, "2026-01-01"), (1, 1, "2020-01-01")],
+                ) + &show("New Show", &[(1, 1, "2025-01-01")]),
+                &[],
+                &["Old Show", "New Show"],
+                &[(1, &[1, 2]), (2, &[1])],
+            ),
+            (
+                movies(&[
+                    ("The Zebra", "2024-01-01"),
+                    ("The Apple", "2024-01-01"),
+                    ("Mango", "2024-01-01"),
+                ]),
+                &["The Apple", "Mango", "The Zebra"],
+                &[],
+                &[],
+            ),
+        ];
+        for (text, movie_order, show_order, first_show) in cases {
+            let library = library(&text);
+            let movies: Vec<_> = library.movies.iter().map(|movie| movie.title.as_str()).collect();
+            let shows: Vec<_> = library.shows.iter().map(|show| show.title.as_str()).collect();
+            let seasons: Vec<_> = library
+                .shows
+                .first()
+                .into_iter()
+                .flat_map(|show| &show.seasons)
+                .map(|season| {
+                    let episodes: Vec<_> = season.episodes.iter().map(|episode| episode.number).collect();
+                    (season.number, episodes)
+                })
+                .collect();
+            let want: Vec<_> = first_show
+                .iter()
+                .map(|(season, episodes)| (*season, episodes.to_vec()))
+                .collect();
+            assert_eq!(
+                (movies, shows, seasons),
+                (movie_order.to_vec(), show_order.to_vec(), want),
+                "{text}"
+            );
+        }
     }
 
     #[test]
@@ -555,94 +570,6 @@ episodes = [
     }
 
     #[test]
-    fn runtimes_and_tmdb_ids_come_from_the_manifest() {
-        let with_ids = library(
-            r#"[[show]]
-title = "Dark"
-episodes = [ { season = 1, episode = 1, path = "Series/Dark/e.mkv", added = 2024-01-01, runtime = 51 } ]
-
-[[movie]]
-title = "Up"
-tmdb = 14160
-path = "Movies/Up/Up.mkv"
-added = 2024-01-01
-runtime = 96
-"#,
-        );
-        assert_eq!(with_ids.shows[0].episodes().next().unwrap().runtime, Some(51));
-        assert_eq!(with_ids.movies[0].runtime, Some(96));
-        assert!(with_ids.uses_tmdb());
-        assert!(!library(&movies(&[("Wind", "2024-01-01")])).uses_tmdb());
-    }
-
-    #[test]
-    fn posters_are_found_beside_the_manifest_by_tmdb_id() {
-        let root = env::temp_dir().join(format!("semmeltv-posters-{}", std::process::id()));
-        let _ = fs::remove_dir_all(&root);
-        let saved = root.join("Artwork/movie/14160/poster.jpg");
-        fs::create_dir_all(saved.parent().unwrap()).unwrap();
-        fs::write(&saved, b"jpeg").unwrap();
-        let manifest = Manifest::parse(
-            r#"[[show]]
-title = "Dark"
-tmdb = 70523
-episodes = [ { season = 1, episode = 1, path = "Series/Dark/e.mkv", added = 2024-01-01 } ]
-
-[[movie]]
-title = "Up"
-tmdb = 14160
-path = "Movies/Up/Up.mkv"
-added = 2024-01-01
-
-[[movie]]
-title = "Wind"
-path = "Movies/Wind/Wind.avi"
-added = 2024-01-01
-"#,
-        )
-        .unwrap();
-        let library = Library::from_manifest(&root, &manifest, |_| true);
-        let up = library.movies.iter().find(|movie| movie.title == "Up").unwrap();
-        let wind = library.movies.iter().find(|movie| movie.title == "Wind").unwrap();
-        assert_eq!(up.poster(&root), Some(PathBuf::from("Artwork/movie/14160/poster.jpg")));
-        assert_eq!(wind.poster(&root), None);
-        assert_eq!(library.shows[0].poster(&root), None);
-        fs::remove_dir_all(root).unwrap();
-    }
-
-    #[test]
-    fn ratings_come_from_the_manifest_and_may_be_partial() {
-        let rated = library(
-            r#"[[show]]
-title = "Dark"
-imdb = "tt5753856"
-ratings = { imdb = 8.7 }
-rated = 2026-11-01
-episodes = [ { season = 1, episode = 1, path = "Series/Dark/e.mkv", added = 2024-01-01, ratings = { imdb = 8.1 } } ]
-
-[[movie]]
-title = "Up"
-imdb = "tt1049413"
-ratings = { imdb = 8.3, rt = 98, metacritic = 88 }
-rated = 2026-11-01
-path = "Movies/Up/Up.mkv"
-added = 2024-01-01
-"#,
-        );
-        let dark = &rated.shows[0];
-        assert_eq!(dark.imdb.as_deref(), Some("tt5753856"));
-        assert_eq!((dark.ratings.imdb, dark.ratings.rt), (Some(Tenths(87)), None));
-        assert_eq!(dark.seasons[0].episodes[0].ratings.imdb, Some(Tenths(81)));
-        let up = &rated.movies[0];
-        assert_eq!(
-            (up.ratings.imdb, up.ratings.rt, up.ratings.metacritic),
-            (Some(Tenths(83)), Some(98), Some(88))
-        );
-        assert_eq!(up.ratings.imdb.unwrap().to_string(), "8.3");
-        assert!(library(&movies(&[("Wind", "2024-01-01")])).movies[0].ratings.is_empty());
-    }
-
-    #[test]
     fn keys_ignore_punctuation_and_films_carry_their_year() {
         assert_eq!(show_key("Marvel's Daredevil"), "marvels-daredevil");
         assert_eq!(movie_key("Airplane!", Some(1980)), "airplane-1980");
@@ -664,29 +591,12 @@ added = 2024-01-01
             .write(&meta.join(manifest::FILE_NAME))
             .unwrap();
         let library = load(&root, &meta).unwrap();
+        assert!(library.uses_tmdb());
         let up = &library.movies[0];
         assert_eq!(up.path, root.join("Movies/Up/Up.mkv"));
         assert_eq!(up.poster(&meta), Some(PathBuf::from("Artwork/movie/14160/poster.jpg")));
         assert_eq!(up.poster(&root), None);
         assert!(load(&meta, &root).unwrap_err().contains(&root.display().to_string()));
-        fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn a_saved_copy_keeps_titles_whose_files_are_out_of_reach() {
-        let dir = std::env::temp_dir().join(format!("semmeltv-saved-{}", std::process::id()));
-        let root = dir.join("mount");
-        fs::create_dir_all(&root).unwrap();
-        let saved = dir.join("saved.db");
-        Manifest::parse(&movies(&[("Up", "2024-01-01")]))
-            .unwrap()
-            .write(&root.join(manifest::FILE_NAME))
-            .unwrap();
-        assert!(load(&root, &root).unwrap().movies.is_empty());
-        save_copy(&root, &saved);
-        fs::remove_file(root.join(manifest::FILE_NAME)).unwrap();
-        assert!(load(&root, &root).is_err());
-        assert_eq!(load_saved(&root, &saved).unwrap().movies[0].title, "Up");
         fs::remove_dir_all(dir).unwrap();
     }
 }

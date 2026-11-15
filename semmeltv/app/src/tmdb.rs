@@ -574,35 +574,14 @@ mod tests {
     }
 
     #[test]
-    fn a_title_and_year_match_is_accepted() {
-        let records = [record(1, "Dune", "1984-12-14"), record(2, "Dune", "2021-09-15")];
-        assert_eq!(id(classify("Dune", Some(2021), &records)), Some(2));
-        assert_eq!(id(classify("Dune", Some(2022), &records)), Some(2));
-    }
-
-    #[test]
-    fn punctuation_does_not_block_a_match() {
-        let records = [record(7, "Marvel's Daredevil", "2015-04-10")];
-        assert_eq!(id(classify("Marvels Daredevil", None, &records)), Some(7));
-    }
-
-    #[test]
-    fn several_same_titles_without_a_year_are_unsure() {
-        let records = [record(1, "Dark", "2017-12-01"), record(2, "Dark", "2005-01-01")];
-        assert!(matches!(classify("Dark", None, &records), Lookup::Unsure(found) if found.len() == 2));
-    }
-
-    #[test]
-    fn a_far_better_known_title_wins_without_a_year() {
-        let records = [
+    fn classify_settles_a_search() {
+        let dune = [record(1, "Dune", "1984-12-14"), record(2, "Dune", "2021-09-15")];
+        let daredevil = [record(7, "Marvel's Daredevil", "2015-04-10")];
+        let dark = [record(1, "Dark", "2017-12-01"), record(2, "Dark", "2005-01-01")];
+        let chernobyl = [
             voted(196108, "Chernobyl", "2022-03-30", 6.0),
             voted(87108, "Chernobyl", "2019-05-06", 8510.0),
         ];
-        assert!(matches!(classify("Chernobyl", None, &records), Lookup::Likely(found) if found.id == 87108));
-    }
-
-    #[test]
-    fn close_or_little_known_titles_stay_unsure() {
         let close = [
             voted(1082195, "The Order", "2024-12-05", 988.0),
             voted(9616, "The Order", "2003-09-05", 393.0),
@@ -611,23 +590,29 @@ mod tests {
             voted(1, "Wind", "1998-09-18", 100.0),
             voted(2, "Wind", "2003-01-01", 1.0),
         ];
-        assert!(matches!(classify("The Order", None, &close), Lookup::Unsure(_)));
-        assert!(matches!(classify("Wind", None, &obscure), Lookup::Unsure(_)));
-    }
-
-    #[test]
-    fn a_different_title_is_unsure() {
-        let records = [record(3, "Casino Royale", "2006-11-14")];
-        assert!(matches!(
-            classify("James Bond Casino Royale", Some(2006), &records),
-            Lookup::Unsure(_)
-        ));
-    }
-
-    #[test]
-    fn a_wrong_year_is_unsure() {
-        let records = [record(3, "Wind", "1992-09-11")];
-        assert!(matches!(classify("Wind", Some(2005), &records), Lookup::Unsure(_)));
+        let casino = [record(3, "Casino Royale", "2006-11-14")];
+        let wind = [record(3, "Wind", "1992-09-11")];
+        let cases: [(&str, Option<u16>, &[Record], &str, &[u64]); 10] = [
+            ("Dune", Some(2021), &dune, "match", &[2]),
+            ("Dune", Some(2022), &dune, "match", &[2]),
+            ("Marvels Daredevil", None, &daredevil, "match", &[7]),
+            ("Dark", None, &dark, "unsure", &[1, 2]),
+            ("Chernobyl", None, &chernobyl, "likely", &[87108]),
+            ("The Order", None, &close, "unsure", &[1082195, 9616]),
+            ("Wind", None, &obscure, "unsure", &[1, 2]),
+            ("James Bond Casino Royale", Some(2006), &casino, "unsure", &[3]),
+            ("Wind", Some(2005), &wind, "unsure", &[3]),
+            ("Anything", None, &[], "nothing", &[]),
+        ];
+        for (wanted, year, records, verdict, ids) in cases {
+            let got = match classify(wanted, year, records) {
+                Lookup::Match(found) => ("match", vec![found.id]),
+                Lookup::Likely(found) => ("likely", vec![found.id]),
+                Lookup::Unsure(found) => ("unsure", found.iter().map(|found| found.id).collect()),
+                Lookup::Nothing => ("nothing", vec![]),
+            };
+            assert_eq!(got, (verdict, ids.to_vec()), "{wanted} {year:?}");
+        }
     }
 
     #[test]
@@ -650,27 +635,6 @@ mod tests {
         assert_eq!(season.episode(1).unwrap().still_path.as_deref(), Some("/a.jpg"));
         assert!(season.episode(2).unwrap().name.is_none());
         assert!(season.episode(3).is_none());
-    }
-
-    #[test]
-    fn details_and_seasons_carry_their_runtimes() {
-        let found = |json| Found::from(&serde_json::from_str::<Record>(json).unwrap()).runtime;
-        assert_eq!(
-            found(r#"{"id":1,"title":"Up","backdrop_path":null,"runtime":96}"#),
-            Some(96)
-        );
-        assert_eq!(
-            found(r#"{"id":1,"title":"Soon","backdrop_path":null,"runtime":0}"#),
-            None
-        );
-        assert_eq!(
-            found(r#"{"id":1,"title":"Soon","backdrop_path":null,"runtime":null}"#),
-            None
-        );
-        assert_eq!(
-            found(r#"{"id":2,"name":"Dark","backdrop_path":null,"episode_run_time":[60]}"#),
-            None
-        );
         let json = r#"{"episodes":[{"episode_number":1,"name":null,"still_path":null,"runtime":52},
             {"episode_number":2,"name":null,"still_path":null,"runtime":null}]}"#;
         let season: Season = serde_json::from_str(json).unwrap();
@@ -679,16 +643,81 @@ mod tests {
     }
 
     #[test]
-    fn a_show_knows_when_it_last_aired_and_whether_it_still_runs() {
-        let found = |json| Found::from(&serde_json::from_str::<Record>(json).unwrap());
-        let ended = found(r#"{"id":2,"name":"Dark","last_air_date":"2020-06-27","status":"Ended"}"#);
-        assert_eq!((ended.last_aired, ended.running), (Some(2020), false));
-        let canceled = found(r#"{"id":3,"name":"Firefly","last_air_date":"2002-12-20","status":"Canceled"}"#);
-        assert_eq!((canceled.last_aired, canceled.running), (Some(2002), false));
-        let running = found(r#"{"id":4,"name":"Severance","last_air_date":"2025-03-21","status":"Returning Series"}"#);
-        assert_eq!((running.last_aired, running.running), (Some(2025), true));
-        let film = found(r#"{"id":1,"title":"Up","release_date":"2009-05-28"}"#);
-        assert_eq!((film.last_aired, film.running), (None, false));
+    fn a_tmdb_record_fills_runtime_years_and_original_title() {
+        let cases = [
+            (
+                r#"{"id":1,"title":"Up","backdrop_path":null,"runtime":96}"#,
+                Some(96),
+                None,
+                false,
+                None,
+            ),
+            (
+                r#"{"id":1,"title":"Soon","backdrop_path":null,"runtime":0}"#,
+                None,
+                None,
+                false,
+                None,
+            ),
+            (
+                r#"{"id":1,"title":"Soon","backdrop_path":null,"runtime":null}"#,
+                None,
+                None,
+                false,
+                None,
+            ),
+            (
+                r#"{"id":2,"name":"Dark","backdrop_path":null,"episode_run_time":[60]}"#,
+                None,
+                None,
+                false,
+                None,
+            ),
+            (
+                r#"{"id":2,"name":"Dark","last_air_date":"2020-06-27","status":"Ended"}"#,
+                None,
+                Some(2020),
+                false,
+                None,
+            ),
+            (
+                r#"{"id":3,"name":"Firefly","last_air_date":"2002-12-20","status":"Canceled"}"#,
+                None,
+                Some(2002),
+                false,
+                None,
+            ),
+            (
+                r#"{"id":4,"name":"Severance","last_air_date":"2025-03-21","status":"Returning Series"}"#,
+                None,
+                Some(2025),
+                true,
+                None,
+            ),
+            (
+                r#"{"id":1,"title":"Up","release_date":"2009-05-28"}"#,
+                None,
+                None,
+                false,
+                None,
+            ),
+            (
+                r#"{"id":1,"title":"Amélie","original_title":"Le Fabuleux Destin d'Amélie Poulain","original_language":"fr"}"#,
+                None,
+                None,
+                false,
+                Some(("Le Fabuleux Destin d'Amélie Poulain", "fr")),
+            ),
+        ];
+        for (json, runtime, last_aired, running, original) in cases {
+            let found = Found::from(&serde_json::from_str::<Record>(json).unwrap());
+            assert_eq!(found.runtime, runtime, "{json}");
+            assert_eq!((found.last_aired, found.running), (last_aired, running), "{json}");
+            if let Some((title, language)) = original {
+                assert_eq!(found.about.original_title.as_deref(), Some(title), "{json}");
+                assert_eq!(found.about.language.as_deref(), Some(language), "{json}");
+            }
+        }
     }
 
     #[test]
@@ -779,21 +808,5 @@ mod tests {
         assert_eq!(about.cast[0].character.as_deref(), Some("Jake Peralta"));
         assert_eq!(about.cast[1].name, "Adam Sandler");
         assert_eq!(about.trailer, None);
-    }
-
-    #[test]
-    fn an_original_title_is_kept_only_when_it_differs() {
-        let json = r#"{"id":1,"title":"Amélie","original_title":"Le Fabuleux Destin d'Amélie Poulain","original_language":"fr"}"#;
-        let about = Found::from(&serde_json::from_str::<Record>(json).unwrap()).about;
-        assert_eq!(
-            about.original_title.as_deref(),
-            Some("Le Fabuleux Destin d'Amélie Poulain")
-        );
-        assert_eq!(about.language.as_deref(), Some("fr"));
-    }
-
-    #[test]
-    fn no_results_is_nothing() {
-        assert_eq!(classify("Anything", None, &[]), Lookup::Nothing);
     }
 }

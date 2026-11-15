@@ -347,18 +347,53 @@ mod tests {
     }
 
     #[test]
-    fn episodes_go_to_the_canonical_place_and_keep_their_release_facts() {
-        let file = Path::new("Outlander (2014) S08 (1080p)/Outlander (2014) - S08E01 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence).mkv");
-        let place = destination(&outlander(), file, Some("1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence")).unwrap();
-        assert_eq!(
-            place,
-            "Series/Outlander/Season 08/Outlander (2014) - S08E01 - Hello꞉ Goodbye (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence).mkv"
-        );
-        let dotted = Path::new("Outlander.S08E02.1080p.WEB.h264-GRACE.mkv");
-        assert_eq!(
-            destination(&outlander(), dotted, None).unwrap(),
-            "Series/Outlander/Season 08/Outlander (2014) - S08E02 (1080p WEB h264-GRACE).mkv"
-        );
+    fn files_go_to_their_canonical_place() {
+        let dune = Target {
+            kind: Kind::Movie,
+            tmdb: 693134,
+            imdb: None,
+            title: "Dune: Part Two".to_string(),
+            original: None,
+            year: Some(2024),
+            season: None,
+            episode: None,
+            runtime: Some(167),
+            episodes: Vec::new(),
+            folder: None,
+        };
+        let known = Target {
+            folder: Some("Outlander Folder".to_string()),
+            ..outlander()
+        };
+        let cases = [
+            (
+                outlander(),
+                "Outlander (2014) S08 (1080p)/Outlander (2014) - S08E01 (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence).mkv",
+                Some("1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence"),
+                "Series/Outlander/Season 08/Outlander (2014) - S08E01 - Hello꞉ Goodbye (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence).mkv",
+            ),
+            (
+                outlander(),
+                "Outlander.S08E02.1080p.WEB.h264-GRACE.mkv",
+                None,
+                "Series/Outlander/Season 08/Outlander (2014) - S08E02 (1080p WEB h264-GRACE).mkv",
+            ),
+            (
+                known,
+                "Outlander.S08E01.1080p.x265.mkv",
+                None,
+                "Series/Outlander Folder/Season 08/Outlander (2014) - S08E01 - Hello꞉ Goodbye (1080p x265).mkv",
+            ),
+            (
+                dune,
+                "Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.Atmos.H.265-FLUX.mkv",
+                None,
+                "Movies/Dune꞉ Part Two (2024)/Dune꞉ Part Two (2024) (1080p WEB-DL DDP5.1 Atmos H 265-FLUX).mkv",
+            ),
+        ];
+        for (target, file, release, want) in cases {
+            assert_eq!(destination(&target, Path::new(file), release).unwrap(), want, "{file}");
+        }
     }
 
     #[test]
@@ -383,38 +418,6 @@ mod tests {
     }
 
     #[test]
-    fn a_known_show_keeps_its_folder() {
-        let target = Target {
-            folder: Some("Outlander Folder".to_string()),
-            ..outlander()
-        };
-        let place = destination(&target, Path::new("Outlander.S08E01.1080p.x265.mkv"), None).unwrap();
-        assert!(place.starts_with("Series/Outlander Folder/Season 08/"));
-    }
-
-    #[test]
-    fn films_go_into_a_title_and_year_folder() {
-        let target = Target {
-            kind: Kind::Movie,
-            tmdb: 693134,
-            imdb: None,
-            title: "Dune: Part Two".to_string(),
-            original: None,
-            year: Some(2024),
-            season: None,
-            episode: None,
-            runtime: Some(167),
-            episodes: Vec::new(),
-            folder: None,
-        };
-        let file = Path::new("Dune.Part.Two.2024.1080p.WEB-DL.DDP5.1.Atmos.H.265-FLUX.mkv");
-        assert_eq!(
-            destination(&target, file, None).unwrap(),
-            "Movies/Dune꞉ Part Two (2024)/Dune꞉ Part Two (2024) (1080p WEB-DL DDP5.1 Atmos H 265-FLUX).mkv"
-        );
-    }
-
-    #[test]
     fn the_importer_reads_the_canonical_names_back() {
         let paths = [
             "Series/Outlander/Season 08/Outlander (2014) - S08E01 - Hello꞉ Goodbye (1080p AMZN WEB-DL x265 10bit EAC3 5.1 Silence).mkv",
@@ -431,10 +434,7 @@ mod tests {
         let parsed = parse::build(&entries);
         let show = &parsed.shows[0];
         assert_eq!((show.title.as_str(), show.year), ("Outlander", Some(2014)));
-        assert_eq!(
-            (show.episodes[0].season, show.episodes[0].number),
-            (8, 1)
-        );
+        assert_eq!((show.episodes[0].season, show.episodes[0].number), (8, 1));
         assert_eq!(show.episodes[0].title.as_deref(), Some("Hello: Goodbye"));
         let movie = &parsed.movies[0];
         assert_eq!((movie.title.as_str(), movie.year), ("Dune: Part Two", Some(2024)));

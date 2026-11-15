@@ -181,74 +181,90 @@ mod tests {
         ]}"#;
 
     #[test]
-    fn a_film_has_imdb_both_tomato_scores_and_metacritic() {
-        let found = parse(200, FILM).unwrap().unwrap();
-        assert_eq!(found.imdb.as_deref(), Some("tt1049413"));
-        assert_eq!(
-            found.scores,
-            Scores {
-                imdb: Some(Tenths(83)),
-                rt: Some(98),
-                popcorn: Some(90),
-                metacritic: Some(88),
-                letterboxd: Some(Tenths(41)),
-                ebert: None,
+    fn mdblist_ratings_become_scores() {
+        let cases = [
+            (
+                FILM,
+                Found {
+                    imdb: Some("tt1049413".to_string()),
+                    scores: Scores {
+                        imdb: Some(Tenths(83)),
+                        rt: Some(98),
+                        popcorn: Some(90),
+                        metacritic: Some(88),
+                        letterboxd: Some(Tenths(41)),
+                        ebert: None,
+                    },
+                },
+            ),
+            (
+                SHOW,
+                Found {
+                    imdb: Some("tt5753856".to_string()),
+                    scores: Scores {
+                        imdb: Some(Tenths(87)),
+                        rt: Some(95),
+                        popcorn: Some(93),
+                        ..Scores::default()
+                    },
+                },
+            ),
+            (
+                r#"{"ratings":[{"source":"tomatoes","value":0,"score":0},{"source":"imdb","value":0}]}"#,
+                Found::default(),
+            ),
+            (
+                r#"{"ratings":[{"source":"imdb","score":81},{"source":"popcorn","score":"77"}]}"#,
+                Found {
+                    imdb: None,
+                    scores: Scores {
+                        imdb: Some(Tenths(81)),
+                        popcorn: Some(77),
+                        ..Scores::default()
+                    },
+                },
+            ),
+            (r#"{"imdb_id":"","ratings":[]}"#, Found::default()),
+        ];
+        for (json, want) in cases {
+            assert_eq!(parse(200, json), Ok(Some(want)), "{json}");
+        }
+    }
+
+    #[test]
+    fn mdblist_answers_are_found_unknown_stop_or_failed() {
+        let cases = [
+            (404, r#"{"error":"Not found."}"#, "unknown", Some("")),
+            (
+                200,
+                r#"{"response":false,"error":"Movie not found"}"#,
+                "unknown",
+                Some(""),
+            ),
+            (
+                429,
+                r#"{"error":"Daily API limit exceeded!"}"#,
+                "stop",
+                Some("Daily API limit exceeded!"),
+            ),
+            (401, "<html>", "stop", Some("HTTP 401")),
+            (403, "{}", "stop", None),
+            (200, r#"{"response":false,"error":"Invalid API key!"}"#, "stop", None),
+            (500, "oops", "failed", Some("HTTP 500")),
+            (200, "<html>", "failed", None),
+        ];
+        for (status, body, outcome, reason) in cases {
+            let (got, why) = match parse(status, body) {
+                Ok(None) => ("unknown", String::new()),
+                Ok(Some(_)) => ("found", String::new()),
+                Err(Error::Stop(why)) => ("stop", why),
+                Err(Error::Failed(why)) => ("failed", why),
+            };
+            assert_eq!(got, outcome, "{status} {body}");
+            if let Some(reason) = reason {
+                assert_eq!(why, reason, "{status} {body}");
             }
-        );
-    }
-
-    #[test]
-    fn a_show_has_rotten_tomatoes_too_and_empty_sources_are_absent() {
-        let scores = parse(200, SHOW).unwrap().unwrap().scores;
-        assert_eq!(
-            (scores.imdb, scores.rt, scores.popcorn, scores.metacritic),
-            (Some(Tenths(87)), Some(95), Some(93), None)
-        );
-    }
-
-    #[test]
-    fn a_zero_counts_as_no_score() {
-        let json = r#"{"ratings":[{"source":"tomatoes","value":0,"score":0},{"source":"imdb","value":0}]}"#;
-        assert!(parse(200, json).unwrap().unwrap().scores.is_empty());
-    }
-
-    #[test]
-    fn the_normalised_score_stands_in_for_a_missing_value() {
-        let json = r#"{"ratings":[{"source":"imdb","score":81},{"source":"popcorn","score":"77"}]}"#;
-        let scores = parse(200, json).unwrap().unwrap().scores;
-        assert_eq!((scores.imdb, scores.popcorn), (Some(Tenths(81)), Some(77)));
-    }
-
-    #[test]
-    fn only_a_real_imdb_id_is_kept() {
-        let found = parse(200, r#"{"imdb_id":"","ratings":[]}"#).unwrap().unwrap();
-        assert_eq!(found, Found::default());
-    }
-
-    #[test]
-    fn an_unknown_title_is_not_an_error() {
-        assert_eq!(parse(404, r#"{"error":"Not found."}"#), Ok(None));
-        assert_eq!(parse(200, r#"{"response":false,"error":"Movie not found"}"#), Ok(None));
-    }
-
-    #[test]
-    fn limits_and_a_bad_key_stop_the_run() {
-        assert_eq!(
-            parse(429, r#"{"error":"Daily API limit exceeded!"}"#),
-            Err(Error::Stop("Daily API limit exceeded!".to_string()))
-        );
-        assert_eq!(parse(401, "<html>"), Err(Error::Stop("HTTP 401".to_string())));
-        assert!(matches!(parse(403, "{}"), Err(Error::Stop(_))));
-        assert!(matches!(
-            parse(200, r#"{"response":false,"error":"Invalid API key!"}"#),
-            Err(Error::Stop(_))
-        ));
-    }
-
-    #[test]
-    fn other_failures_skip_only_this_title() {
-        assert_eq!(parse(500, "oops"), Err(Error::Failed("HTTP 500".to_string())));
-        assert!(matches!(parse(200, "<html>"), Err(Error::Failed(_))));
+        }
     }
 
     #[test]

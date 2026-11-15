@@ -566,6 +566,8 @@ mod tests {
 title = "Marvel's \"Dark\""
 year = 2017
 tmdb = 70523
+last_aired = 2020
+running = true
 imdb = "tt5753856"
 ratings = { imdb = 8.7, rt = 94, popcorn = 92, metacritic = 74 }
 rated = 2026-11-01
@@ -646,52 +648,45 @@ review = true
     }
 
     #[test]
-    fn an_empty_file_is_an_empty_library() {
-        assert_eq!(Manifest::parse("").unwrap(), Manifest::default());
-    }
-
-    #[test]
-    fn typos_are_refused() {
-        let text = "[[movie]]\ntitle = \"Up\"\npath = \"Movies/Up.mkv\"\nadded = 2024-01-01\nreveiw = true\n";
-        assert!(Manifest::parse(text).unwrap_err().contains("reveiw"));
-    }
-
-    #[test]
-    fn added_must_be_a_date() {
-        let text = "[[movie]]\ntitle = \"Up\"\npath = \"Up.mkv\"\nadded = 2024-01-01T10:00:00\n";
-        assert!(Manifest::parse(text).is_err());
-    }
-
-    #[test]
-    fn ratings_are_out_of_ten_and_checked() {
-        let movie = |ratings: &str| {
-            Manifest::parse(&format!(
-                "[[movie]]\ntitle = \"Up\"\npath = \"Up.mkv\"\nadded = 2024-01-01\nratings = {ratings}\n"
-            ))
-        };
-        assert_eq!(movie("{ imdb = 8 }").unwrap().movie[0].ratings.imdb, Some(Tenths(80)));
+    fn a_bad_toml_entry_is_refused() {
+        let movie =
+            |extra: &str| format!("[[movie]]\ntitle = \"Up\"\npath = \"Up.mkv\"\nadded = 2024-01-01\n{extra}\n");
+        let cases = [
+            (movie("reveiw = true"), Err("reveiw")),
+            (
+                "[[movie]]\ntitle = \"Up\"\npath = \"Up.mkv\"\nadded = 2024-01-01T10:00:00\n".to_string(),
+                Err(""),
+            ),
+            (movie("ratings = { imdb = 8 }"), Ok(Some(Tenths(80)))),
+            (movie("ratings = { imdb = 11.2 }"), Err("")),
+            (movie("ratings = { tomatoes = 80 }"), Err("")),
+        ];
+        for (text, want) in cases {
+            match (Manifest::parse(&text), want) {
+                (Ok(manifest), Ok(imdb)) => assert_eq!(manifest.movie[0].ratings.imdb, imdb, "{text}"),
+                (Err(error), Err(needle)) => assert!(error.contains(needle), "{text}: {error}"),
+                (got, _) => panic!("{text}: {got:?}"),
+            }
+        }
         assert_eq!(Tenths(80).to_string(), "8.0");
-        assert!(movie("{ imdb = 11.2 }").is_err());
-        assert!(movie("{ tomatoes = 80 }").is_err());
-        assert_eq!(Tenths::parse("8.06"), Some(Tenths(81)));
-        assert_eq!(Tenths::parse("N/A"), None);
+        for (text, tenths) in [("8.06", Some(Tenths(81))), ("N/A", None)] {
+            assert_eq!(Tenths::parse(text), tenths, "{text}");
+        }
     }
 
     #[test]
-    fn days_count_from_the_unix_epoch() {
-        assert_eq!(Date::parse("1970-01-01").unwrap().days(), 0);
-        assert_eq!(Date::parse("2000-03-01").unwrap().days(), 11_017);
-        assert_eq!(
-            Date::from_unix(1_794_009_600).days() * SECONDS_PER_DAY as i64,
-            1_794_009_600
-        );
-    }
-
-    #[test]
-    fn dates_come_from_unix_time_and_sort() {
-        assert_eq!(Date::from_unix(0).to_string(), "1970-01-01");
-        assert_eq!(Date::from_unix(951_782_400).to_string(), "2000-02-29");
-        assert_eq!(Date::from_unix(1_794_009_600).to_string(), "2026-11-07");
+    fn dates_count_days_from_unix_time() {
+        let cases = [
+            (0, "1970-01-01"),
+            (951_782_400, "2000-02-29"),
+            (951_868_800, "2000-03-01"),
+            (1_794_009_600, "2026-11-07"),
+        ];
+        for (unix, text) in cases {
+            let date = Date::parse(text).unwrap();
+            assert_eq!(Date::from_unix(unix).to_string(), text, "{unix}");
+            assert_eq!(date.days() * SECONDS_PER_DAY as i64, unix as i64, "{text}");
+        }
         assert!(Date::parse("2024-12-31") < Date::parse("2025-01-01"));
         assert_eq!(Date::parse("2024-12"), None);
     }

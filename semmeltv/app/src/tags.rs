@@ -149,7 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn real_release_names_give_their_tags() {
+    fn release_names_give_their_tags() {
         for (name, video, resolution, audio) in [
             (
                 "Anyone.But.You.2023.REPACK.1080p.WEB-DL.DD5.1.H.264-EniaHD.mkv",
@@ -232,22 +232,14 @@ mod tests {
             ("Up.2009.720p.BluRay.x264.AAC2.0-YTS.mp4", "H.264", "720p", "2.0"),
             ("Dune.2021.4K.WEB-DL.DDP5.1.AV1.mkv", "AV1", "2160p", "5.1"),
             ("DARK.S01E03.WEBRip.x264-ION10.mp4", "H.264", "", ""),
+            ("Chernobyl S01E01 1 23 45.mkv", "", "", ""),
+            ("Marvels Daredevil S02E06.mp4", "", "", ""),
+            ("Ip Man 4.mp4", "", "", ""),
+            ("Mr Hollands Opus 1995.mkv", "", "", ""),
+            ("Atmos.mkv", "", "", ""),
+            ("Fantastic Beasts The Crimes of Grindelwald.mp4", "", "", ""),
         ] {
             assert_eq!(tags(name), expect(video, resolution, audio), "{name}");
-        }
-    }
-
-    #[test]
-    fn a_name_without_tags_gives_nothing() {
-        for name in [
-            "Chernobyl S01E01 1 23 45.mkv",
-            "Marvels Daredevil S02E06.mp4",
-            "Ip Man 4.mp4",
-            "Mr Hollands Opus 1995.mkv",
-            "Atmos.mkv",
-            "Fantastic Beasts The Crimes of Grindelwald.mp4",
-        ] {
-            assert_eq!(tags(name), expect("", "", ""), "{name}");
         }
     }
 

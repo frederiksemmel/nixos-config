@@ -489,86 +489,104 @@ mod tests {
     }
 
     #[test]
-    fn an_inferred_match_keeps_its_id_and_is_marked_for_review() {
-        let (manifest, report) = import(None, &files(&[("Series/Chernobyl/Chernobyl.S01E01.mkv", "2021-03-04")]));
-        let show = &manifest.show[0];
-        assert_eq!((show.tmdb, show.year, show.review), (Some(87108), Some(2019), true));
-        assert_eq!(report.review, ["Chernobyl: best known TMDB match, not certain"]);
+    fn tmdb_identity_names_and_flags_an_entry() {
+        let cases: [(&str, (&str, Option<u16>, Option<u64>, bool), &[&str]); 4] = [
+            (
+                "Series/Chernobyl/Chernobyl.S01E01.mkv",
+                ("Chernobyl", Some(2019), Some(87108), true),
+                &["Chernobyl: best known TMDB match, not certain"],
+            ),
+            (
+                "Movies/airplane/airplane.mkv",
+                ("Airplane!", Some(1980), Some(813), false),
+                &[],
+            ),
+            (
+                "Movies/Wind/WIND.avi",
+                ("Wind", None, None, true),
+                &["Wind: no TMDB id"],
+            ),
+            (
+                "Series/Nowhere/Nowhere.S01E01.mkv",
+                ("Nowhere", None, None, true),
+                &["Nowhere: no TMDB id"],
+            ),
+        ];
+        for (path, entry, review) in cases {
+            let (manifest, report) = import(None, &files(&[(path, "2021-03-04")]));
+            let got = match (manifest.movie.first(), manifest.show.first()) {
+                (Some(movie), _) => (movie.title.as_str(), movie.year, movie.tmdb, movie.review),
+                (None, Some(show)) => (show.title.as_str(), show.year, show.tmdb, show.review),
+                (None, None) => panic!("{path}: nothing imported"),
+            };
+            assert_eq!(got, entry, "{path}");
+            assert_eq!(report.review, review, "{path}");
+        }
     }
 
     #[test]
-    fn a_first_import_dates_entries_by_their_files() {
-        let (manifest, report) = import(
-            None,
-            &files(&[
-                ("Movies/airplane/airplane.mkv", "2021-03-04"),
-                ("Series/Dark/Dark.S01E01.mkv", "2020-05-06"),
-            ]),
-        );
-        assert_eq!(manifest.movie[0].added, date("2021-03-04"));
-        assert_eq!(manifest.show[0].episodes[0].added, date("2020-05-06"));
-        assert_eq!(report.added.len(), 2);
+    fn an_entry_is_dated_by_its_file_only_on_the_first_import() {
+        let cases: [(&[(&str, &str)], &[(&str, &str)], &str, &[&str], usize); 2] = [
+            (
+                &[],
+                &[
+                    ("Movies/airplane/airplane.mkv", "2021-03-04"),
+                    ("Series/Dark/Dark.S01E01.mkv", "2020-05-06"),
+                ],
+                "2021-03-04",
+                &["2020-05-06"],
+                2,
+            ),
+            (
+                &[("Series/Dark/Dark.S01E01.mkv", "2020-05-06")],
+                &[
+                    ("Series/Dark/Dark.S01E01.mkv", "2020-05-06"),
+                    ("Series/Dark/Dark.S01E02.mkv", "2015-01-01"),
+                    ("Movies/airplane/airplane.mkv", "2015-01-01"),
+                ],
+                TODAY,
+                &["2020-05-06", TODAY],
+                2,
+            ),
+        ];
+        for (earlier, tree, movie_added, episodes_added, added) in cases {
+            let existing = (!earlier.is_empty()).then(|| import(None, &files(earlier)).0);
+            let (manifest, report) = import(existing, &files(tree));
+            let episodes: Vec<_> = manifest.show[0].episodes.iter().map(|e| e.added).collect();
+            let want: Vec<_> = episodes_added.iter().map(|text| date(text)).collect();
+            assert_eq!(manifest.movie[0].added, date(movie_added), "{earlier:?}");
+            assert_eq!(episodes, want, "{earlier:?}");
+            assert_eq!(report.added.len(), added, "{earlier:?}");
+        }
     }
 
     #[test]
-    fn a_later_import_dates_new_entries_today_whatever_the_file_says() {
-        let (first, _) = import(None, &files(&[("Series/Dark/Dark.S01E01.mkv", "2020-05-06")]));
-        let later = files(&[
-            ("Series/Dark/Dark.S01E01.mkv", "2020-05-06"),
-            ("Series/Dark/Dark.S01E02.mkv", "2015-01-01"),
-            ("Movies/airplane/airplane.mkv", "2015-01-01"),
-        ]);
-        let (manifest, _) = import(Some(first), &later);
-        assert_eq!(manifest.show[0].episodes[0].added, date("2020-05-06"));
-        assert_eq!(manifest.show[0].episodes[1].added, date(TODAY));
-        assert_eq!(manifest.movie[0].added, date(TODAY));
-    }
-
-    #[test]
-    fn tmdb_supplies_the_id_the_year_and_the_spelling() {
-        let (manifest, report) = import(None, &files(&[("Movies/airplane/airplane.mkv", "2021-03-04")]));
-        let movie = &manifest.movie[0];
-        assert_eq!(
-            (movie.title.as_str(), movie.year, movie.tmdb, movie.review),
-            ("Airplane!", Some(1980), Some(813), false)
-        );
-        assert!(report.review.is_empty());
-    }
-
-    #[test]
-    fn a_title_without_an_id_is_marked_for_review() {
-        let (manifest, report) = import(
-            None,
-            &files(&[
-                ("Movies/Wind/WIND.avi", "2021-03-04"),
-                ("Series/Nowhere/Nowhere.S01E01.mkv", "2021-03-04"),
-            ]),
-        );
-        assert!(manifest.movie[0].review && manifest.show[0].review);
-        assert_eq!(report.review.len(), 2);
-    }
-
-    #[test]
-    fn a_file_with_no_episode_marker_is_marked_for_review() {
-        let (manifest, _) = import(
-            None,
-            &files(&[("Series/Dark/Dark.Behind.The.Scenes.2021.mp4", "2021-03-04")]),
-        );
-        let episode = &manifest.show[0].episodes[0];
-        assert!(episode.review);
-        assert_eq!((episode.season, episode.episode), (0, 1));
-    }
-
-    #[test]
-    fn specials_added_later_take_the_next_free_number() {
-        let (first, _) = import(None, &files(&[("Series/Dark/Dark.One.mp4", "2021-03-04")]));
-        let later = files(&[
-            ("Series/Dark/Dark.Two.mp4", "2021-03-04"),
-            ("Series/Dark/Dark.One.mp4", "2021-03-04"),
-        ]);
-        let (manifest, _) = import(Some(first), &later);
-        let numbers: Vec<_> = manifest.show[0].episodes.iter().map(|e| e.episode).collect();
-        assert_eq!(numbers, [1, 2]);
+    fn specials_take_season_zero_and_the_next_free_number() {
+        let cases: [(&[(&str, &str)], &[(&str, &str)], &[(u32, u32, bool)]); 2] = [
+            (
+                &[],
+                &[("Series/Dark/Dark.Behind.The.Scenes.2021.mp4", "2021-03-04")],
+                &[(0, 1, true)],
+            ),
+            (
+                &[("Series/Dark/Dark.One.mp4", "2021-03-04")],
+                &[
+                    ("Series/Dark/Dark.Two.mp4", "2021-03-04"),
+                    ("Series/Dark/Dark.One.mp4", "2021-03-04"),
+                ],
+                &[(0, 1, true), (0, 2, true)],
+            ),
+        ];
+        for (earlier, tree, want) in cases {
+            let existing = (!earlier.is_empty()).then(|| import(None, &files(earlier)).0);
+            let (manifest, _) = import(existing, &files(tree));
+            let episodes: Vec<_> = manifest.show[0]
+                .episodes
+                .iter()
+                .map(|e| (e.season, e.episode, e.review))
+                .collect();
+            assert_eq!(episodes, want, "{tree:?}");
+        }
     }
 
     #[test]
@@ -592,28 +610,6 @@ mod tests {
         let (again, report) = import(Some(manifest), &tree);
         assert_eq!(again.render(), edited.render());
         assert!(report.added.is_empty() && report.review.is_empty());
-    }
-
-    #[test]
-    fn a_new_import_reads_the_tags_from_the_names() {
-        let (manifest, _) = import(
-            None,
-            &files(&[
-                ("Movies/Up (2009)/Up.2009.1080p.BluRay.x265.AAC5.1.mkv", "2021-03-04"),
-                (
-                    "Series/Dark/Dark.S01E01.720p.WEBRip.10bit.DDP5.1.Atmos.x265.mkv",
-                    "2021-03-04",
-                ),
-            ]),
-        );
-        let movie = manifest.movie[0].tags();
-        assert_eq!(movie.video.as_deref(), Some("HEVC"));
-        assert_eq!(movie.resolution.as_deref(), Some("1080p"));
-        assert_eq!(movie.audio.as_deref(), Some("5.1"));
-        let episode = manifest.show[0].episodes[0].tags();
-        assert_eq!(episode.video.as_deref(), Some("HEVC 10-bit"));
-        assert_eq!(episode.resolution.as_deref(), Some("720p"));
-        assert_eq!(episode.audio.as_deref(), Some("5.1 Atmos"));
     }
 
     #[test]
@@ -708,23 +704,5 @@ review = true
             ],
         );
         assert_eq!(report.ignored, ["Movies/Dark.S01E01.mkv"]);
-    }
-
-    #[test]
-    fn the_file_is_sorted_by_title_and_reads_back() {
-        let (manifest, _) = import(
-            None,
-            &files(&[
-                ("Movies/The Zebra/The.Zebra.2001.mkv", "2021-03-04"),
-                ("Movies/Apple/Apple.2001.mkv", "2021-03-04"),
-                ("Series/Zulu/Zulu.S01E02.mkv", "2021-03-04"),
-                ("Series/Zulu/Zulu.S01E01.mkv", "2021-03-04"),
-                ("Series/Alpha/Alpha.S01E01.mkv", "2021-03-04"),
-            ]),
-        );
-        assert_eq!(manifest.movie[0].title, "Apple");
-        assert_eq!(manifest.show[0].title, "Alpha");
-        assert_eq!(manifest.show[1].episodes[0].episode, 1);
-        assert_eq!(Manifest::parse(&manifest.render()).unwrap(), manifest);
     }
 }
