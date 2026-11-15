@@ -440,6 +440,11 @@ async def fake_progress_log(request):
     return web.json_response(progress_log[-12:])
 
 
+async def set_tv(request):
+    tv["on"] = (await request.json())["on"]
+    return web.json_response(tv)
+
+
 async def drop_play(request):
     screen.update(play=None, notice={"id": 99, "text": "Simulator went quiet, so its place is kept", "tone": "quiet"})
     return web.json_response({"ok": True})
@@ -498,6 +503,7 @@ app.router.add_post("/api/stream/{id}/progress", stream_progress)
 app.router.add_get("/fake/opens", fake_opens)
 app.router.add_post("/fake/reset-screen", reset_screen)
 app.router.add_post("/fake/drop-play", drop_play)
+app.router.add_post("/fake/tv", set_tv)
 app.router.add_get("/fake/progress-log", fake_progress_log)
 app.router.add_get("/fake/screen-log", fake_screen_log)
 app.router.add_get("/api/stream/{tail:.*}", stream_slow)

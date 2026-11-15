@@ -19,6 +19,7 @@ const REPORT: Asset = asset!("./report.js");
 const ACT: Asset = asset!("./act.js");
 const PHONE_STYLE: Asset = asset!("./phone.css");
 const AUTH: Asset = asset!("./auth.js");
+const LIVE: Asset = asset!("./live.js");
 
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
@@ -44,6 +45,9 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <link rel="stylesheet" href=(PHONE_STYLE)>
                 <script src=(REPORT)></script>
                 <script src=(ACT)></script>
+                if signed_in {
+                    <script src=(LIVE)></script>
+                }
                 topcoat::runtime::script()
                 <script type="module" src=(TOAST)></script>
                 <script type="module" src=(AUTH)></script>
@@ -96,6 +100,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     )
                 </main>
                 playing::player()
+                playing::pulse()
                 }
             </body>
         </html>

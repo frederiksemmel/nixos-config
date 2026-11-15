@@ -33,7 +33,6 @@ const DEVICE_KEY = "semmeltv.device";
 const RECONNECT = 2000;
 let player = null;
 let screen = { kind: "tv", device: null, play: null, notice: null };
-let tvPlaying = null;
 let seenNotice = undefined;
 let socket = null;
 let pending = null;
@@ -168,9 +167,12 @@ function pickOfPlay(play) {
   return play.kind === "movie" ? { movie: play.movie } : { show: play.show, season: play.season, episode: play.episode };
 }
 
-function pickOfPlaying(playing) {
-  if (!playing || (!playing.movie && !playing.show)) return null;
-  return playing.movie ? { movie: playing.movie } : { show: playing.show, season: playing.season, episode: playing.episode };
+function tvPick() {
+  const state = document.querySelector(".now-state");
+  if (!state || !state.dataset.key) return null;
+  const [movie, show, season, episode] = state.dataset.key.split("|");
+  if (movie) return { movie };
+  return show ? { show, season: Number(season), episode: Number(episode) } : null;
 }
 
 function ours(view) {
@@ -251,20 +253,28 @@ function reconcile() {
 function listen() {
   if (socket && socket.readyState <= 1) return;
   const base = api ? api.replace(/^http/, "ws") : location.origin.replace(/^http/, "ws");
-  socket = new WebSocket(`${base}/api/events`);
-  socket.addEventListener("open", () => {
+  const mine = new WebSocket(`${base}/api/events`);
+  socket = mine;
+  mine.addEventListener("open", () => {
     request("GET", "/api/screen").then(adopt).catch(() => {});
   });
-  socket.addEventListener("message", (message) => {
+  mine.addEventListener("message", (message) => {
     let event;
     try { event = JSON.parse(message.data); } catch { return; }
     if (event.type === "screen") adopt(event.screen);
-    if (event.type === "playback") tvPlaying = event.now_playing;
   });
-  socket.addEventListener("close", () => {
+  mine.addEventListener("close", () => {
+    if (socket !== mine) return;
     socket = null;
     setTimeout(listen, RECONNECT);
   });
+}
+
+function relisten() {
+  const old = socket;
+  socket = null;
+  if (old) old.close();
+  listen();
 }
 
 function note(message, detail) {
@@ -320,7 +330,7 @@ function canWatchHere() {
 function flip() {
   if (screen.kind === "tv") {
     if (!canWatchHere()) return;
-    const pick = pickOfPlaying(tvPlaying);
+    const pick = tvPick();
     if (pick) openPlayer(pick, { waiting: true });
     switchTo("phone", { action: "flip", to: "phone" });
   } else {
@@ -1268,6 +1278,8 @@ document.addEventListener("visibilitychange", () => {
   listen();
   request("GET", "/api/screen").then(adopt).catch(() => {});
 });
+
+window.addEventListener("semmeltv:reconnect", relisten);
 
 new MutationObserver(render).observe(html, { attributes: true, childList: true });
 new MutationObserver(render).observe(document.body, { childList: true, subtree: true });

@@ -1,5 +1,5 @@
 use crate::api::{Api, Audio, Link, NowPlaying, Output, Pick, Screen, TvAbilities, Voice};
-use crate::live::Live;
+use crate::live::{Live, Tv};
 use crate::public::Public;
 use std::time::Duration;
 use topcoat::Result;
@@ -486,7 +486,7 @@ async fn bar_progress(cx: &Cx) -> Result<impl View> {
     Ok(live! {
         let mut playback = app_context::<Live>(cx).playback.clone();
         loop {
-            let width = playback.borrow_and_update().as_ref().map_or(0.0, percent);
+            let width = playback.borrow_and_update().playing().map_or(0.0, percent);
             let token = emit! { <span class="bar-progress" aria-hidden="true"><i style=(format!("width:{width:.2}%"))></i></span> }?;
             if !connected(cx) || playback.changed().await.is_err() {
                 break Ok(token);
@@ -509,6 +509,27 @@ fn mode_of(screen: Option<&Screen>) -> (&'static str, String) {
         Some(Screen::Moving { device }) => ("moving", format!("Moving to {}", device.name)),
         _ => ("tv", "Watching on the TV. Switch to this device".to_string()),
     }
+}
+
+const PULSE: Duration = Duration::from_secs(5);
+
+/// Renders a new mark every few seconds over the page's live connection, so
+/// live.js can tell a working connection from one that silently died.
+#[shard]
+pub async fn pulse(cx: &Cx) -> Result<impl View> {
+    Ok(live! {
+        loop {
+            let at = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |since| since.as_millis())
+                .to_string();
+            let token = emit! { <i class="pulse" id="pulse" hidden=(true) data-at=(at.as_str())></i> }?;
+            if !connected(cx) {
+                break Ok(token);
+            }
+            tokio::time::sleep(PULSE).await;
+        }
+    })
 }
 
 #[shard]
@@ -552,11 +573,11 @@ async fn bar_info(cx: &Cx) -> Result<impl View> {
         let mut playback = app_context::<Live>(cx).playback.clone();
         let mut screen = app_context::<Live>(cx).screen.clone();
         'shown: loop {
-            let now = playback.borrow_and_update().clone();
+            let tv = playback.borrow_and_update().clone();
             let elsewhere = phone_line(screen.borrow_and_update().as_ref());
-            let shown = (look(now.as_ref()), elsewhere.clone());
-            let token = match now {
-                Some(now) => {
+            let shown = (look(tv.playing()), elsewhere.clone(), tv.known());
+            let token = match tv {
+                Tv::Playing(now) => {
                     let art = poster(&now).map(|path| public.url(&path));
                     emit! {
                         <span class="bar-art">
@@ -573,7 +594,14 @@ async fn bar_info(cx: &Cx) -> Result<impl View> {
                             data-delay=(delay_value(now.subtitle_delay)) data-fetch=(fetch_body(&now)) hidden=(true)></i>
                     }?
                 }
-                None => match elsewhere {
+                Tv::Unknown => emit! {
+                    <span class="bar-art idle">tv_icon()</span>
+                    <span class="bar-text">
+                        <strong>"TV remote"</strong>
+                        <span>"Can't reach the TV"</span>
+                    </span>
+                }?,
+                Tv::Idle => match elsewhere {
                     Some((title, line)) => emit! {
                         <span class="bar-art idle">phone_icon()</span>
                         <span class="bar-text">
@@ -601,7 +629,8 @@ async fn bar_info(cx: &Cx) -> Result<impl View> {
                 if changed.is_err() {
                     break 'shown Ok(token);
                 }
-                if (look(playback.borrow().as_ref()), phone_line(screen.borrow().as_ref())) != shown {
+                let tv = playback.borrow().clone();
+                if (look(tv.playing()), phone_line(screen.borrow().as_ref()), tv.known()) != shown {
                     break;
                 }
             }
@@ -616,11 +645,11 @@ async fn sheet_now(cx: &Cx) -> Result<impl View> {
         let mut playback = app_context::<Live>(cx).playback.clone();
         let mut screen = app_context::<Live>(cx).screen.clone();
         'shown: loop {
-            let now = playback.borrow_and_update().clone();
+            let tv = playback.borrow_and_update().clone();
             let elsewhere = phone_line(screen.borrow_and_update().as_ref());
-            let shown = (look(now.as_ref()), elsewhere.clone());
-            let token = match now {
-                Some(now) => {
+            let shown = (look(tv.playing()), elsewhere.clone(), tv.known());
+            let token = match tv {
+                Tv::Playing(now) => {
                     let art = picture(&now).map(|path| public.url(&path));
                     let fallback = poster(&now).map(|path| public.url(&path.replace("/poster", "/backdrop")));
                     emit! {
@@ -638,7 +667,13 @@ async fn sheet_now(cx: &Cx) -> Result<impl View> {
                         </div>
                     }?
                 }
-                None => match elsewhere {
+                Tv::Unknown => emit! {
+                    <div class="now idle">
+                        <h2>"TV remote"</h2>
+                        <span>"Can't reach the TV right now. This shows what it plays again as soon as it answers."</span>
+                    </div>
+                }?,
+                Tv::Idle => match elsewhere {
                     Some((title, line)) => {
                         let line = format!("{line}. The TV keys below still work.");
                         emit! {
@@ -667,7 +702,8 @@ async fn sheet_now(cx: &Cx) -> Result<impl View> {
                 if changed.is_err() {
                     break 'shown Ok(token);
                 }
-                if (look(playback.borrow().as_ref()), phone_line(screen.borrow().as_ref())) != shown {
+                let tv = playback.borrow().clone();
+                if (look(tv.playing()), phone_line(screen.borrow().as_ref()), tv.known()) != shown {
                     break;
                 }
             }
@@ -680,7 +716,7 @@ async fn track(cx: &Cx) -> Result<impl View> {
     Ok(live! {
         let mut playback = app_context::<Live>(cx).playback.clone();
         loop {
-            let now = playback.borrow_and_update().clone().unwrap_or_default();
+            let now = playback.borrow_and_update().playing().cloned().unwrap_or_default();
             let at = format!("{:.2}%", percent(&now));
             let time = if now.duration >= 3600.0 { "scrub-time long" } else { "scrub-time" };
             let token = emit! {

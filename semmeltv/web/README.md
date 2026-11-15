@@ -42,5 +42,12 @@ temporary directory at startup.
 Pages render on the server. Search, season tabs and buttons are Topcoat runtime
 expressions, and play buttons call procedures. The now-playing bar and the voice
 feedback are live regions that the server updates over Topcoat's WebSocket.
+They are the page's one picture of the TV: the server keeps what the TV plays
+as Unknown, Idle or Playing, from the TV's event stream, and phone.js and
+player.js read the rendered state rather than keeping their own. A pulse
+region changes every 5 s; `src/live.js` restarts the WebSocket when the pulse
+stops for 12 s or the page comes back from being away (a phone that slept), and
+marks the page `data-live="stale"` until the pulse is back, which dims the
+bar's and the remote's playing state and holds their controls.
 The microphone is plain JavaScript (`src/microphone.js`), because Topcoat's
 runtime cannot reach `getUserMedia` or audio worklets.

@@ -238,6 +238,7 @@ def marks_episodes(page, engine):
     until(page, engine, "tapping an episode's check flips it",
           f'document.querySelectorAll("main .episode-row .mark-seen")[1].getAttribute("aria-pressed") === "{after}"', 3000)
     check(engine, "and does not start the episode", page.evaluate("location.pathname") == "/shows/brooklyn-nine-nine")
+    until(page, engine, "and the TV confirms it", '!document.querySelector("main .episode-row .mark-seen[data-act=pending]")', 5000)
     page.reload(wait_until="commit")
     until(page, engine, "the episode stays flipped after a reload",
           f'document.querySelectorAll("main .episode-row .mark-seen")[1]?.getAttribute("aria-pressed") === "{after}"', 8000)
@@ -677,6 +678,70 @@ def desktop(p):
     browser.close()
 
 
+def tv_power(on):
+    import json
+    request = urllib.request.Request(FAKE + "/fake/tv", data=json.dumps({"on": on}).encode(),
+                                     headers={"content-type": "application/json"}, method="POST")
+    urllib.request.urlopen(request).close()
+
+
+AWAY = """(away) => {
+  Object.defineProperty(document, "visibilityState", { configurable: true, get: () => away ? "hidden" : "visible" });
+  document.dispatchEvent(new Event("visibilitychange"));
+}"""
+
+
+def stale_tv(p, engine, device):
+    browser = getattr(p, "webkit" if engine == "webkit" else "chromium").launch()
+    page = browser.new_context(**p.devices[device]).new_page()
+    page.set_default_timeout(8000)
+    page.route("**/api/**", forward)
+    connections = []
+
+    def live(route):
+        server = route.connect_to_server()
+        state = {"dead": False}
+        connections.append(state)
+        server.on_message(lambda message: None if state["dead"] else route.send(message))
+
+    def kill():
+        for state in connections:
+            state["dead"] = True
+
+    page.route_web_socket(lambda url: "/api/" not in url, live)
+    fake("/fake/reset-screen")
+    tv_power(True)
+    page.goto(BASE + "/", wait_until="commit")
+    sign_in(page, engine, "Frederik", "frederik-pass", "the live connection")
+    until(page, engine, "the live connection: signed in", 'location.pathname === "/" && !!document.querySelector(".bar-text")', 8000)
+    title = 'document.querySelector(".bar-text strong")?.textContent'
+    line = 'document.querySelector(".bar-text span")?.textContent'
+    until(page, engine, "the bar shows what the TV plays", f'{title} === "The Endless Summer"', 8000)
+    page.wait_for_timeout(1500)
+
+    kill()
+    tv_power(False)
+    page.wait_for_timeout(2500)
+    check(engine, "while the live connection is dead, the page can't know the TV stopped",
+          page.evaluate(f'{title} === "The Endless Summer"'))
+    page.evaluate(AWAY, True)
+    page.wait_for_timeout(4500)
+    page.evaluate(AWAY, False)
+    until(page, engine, "back from the lock screen, the bar shows the TV stopped", f'{line} === "Nothing is playing"', 4000)
+    until(page, engine, "and isn't marked stale once the TV answered", '!document.documentElement.dataset.live', 4000)
+
+    tv_power(True)
+    page.reload(wait_until="commit")
+    until(page, engine, "a fresh page shows the TV playing again", f'{title} === "The Endless Summer"', 8000)
+    page.wait_for_timeout(1500)
+    kill()
+    tv_power(False)
+    until(page, engine, "a connection that dies while the page shows is noticed and the bar catches up",
+          f'{line} === "Nothing is playing"', 20000)
+    until(page, engine, "and the bar's controls work again", '!document.documentElement.dataset.live', 4000)
+    browser.close()
+
+
 PLAYING = """() => {
   const video = document.querySelector(".pp-video");
   let paused = false;
@@ -790,6 +855,8 @@ with sync_playwright() as p:
     run(p, "chromium", "Pixel 7")
     desktop(p)
     laptop_player(p)
+    stale_tv(p, "webkit", "iPhone 15")
+    stale_tv(p, "chromium", "Pixel 7")
     invite(p)
 
 print("PASS" if not failures else "FAIL: " + ", ".join(failures))

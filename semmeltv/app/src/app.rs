@@ -144,7 +144,12 @@ pub struct Setup {
     pub headphones: bool,
 }
 
-struct Playing {
+/// What the TV plays: the running player, what it shows, the file and whose
+/// progress it moves. One value, so the TV never holds a player without the
+/// rest or the rest without a player.
+struct OnTv {
+    player: Player,
+    shown: NowPlaying,
     file: PathBuf,
     owner: ProfileId,
 }
@@ -157,9 +162,8 @@ struct App {
     profile: ProfileId,
     art: PathBuf,
     images: Sender<Job<Target>>,
-    player: Option<Player>,
+    on_tv: Option<OnTv>,
     progress: Progress,
-    playing: Option<Playing>,
     message_timer: Timer,
     voice_timer: Timer,
     store: Store,
@@ -182,7 +186,6 @@ struct App {
     led: Option<Led>,
     bus: Bus,
     shared: Arc<Shared>,
-    now_playing: Option<NowPlaying>,
     subtitles: Subtitles,
     television: Television,
     downloads: Option<Downloads>,
@@ -289,9 +292,8 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         profile,
         art: art.clone(),
         images,
-        player: None,
+        on_tv: None,
         progress,
-        playing: None,
         message_timer: Timer::default(),
         voice_timer: Timer::default(),
         store,
@@ -313,7 +315,6 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
         led,
         bus: bus.clone(),
         shared: shared.clone(),
-        now_playing: None,
         subtitles,
         television: television.clone(),
         downloads,
@@ -430,7 +431,7 @@ pub fn run(setup: Setup) -> Result<(), slint::PlatformError> {
 
     let resized = Rc::downgrade(&app);
     ui.on_resized(move || {
-        if resized.upgrade().is_some_and(|app| app.borrow().player.is_none()) {
+        if resized.upgrade().is_some_and(|app| app.borrow().on_tv.is_none()) {
             thread::spawn(display::show_ui);
         }
     });
@@ -559,7 +560,7 @@ impl App {
             app.borrow_mut().cancel_voice();
             return;
         }
-        if let Some(player) = &app.borrow().player {
+        if let Some(player) = app.borrow().player() {
             player.command(command);
             return;
         }
@@ -596,7 +597,7 @@ impl App {
                 self.refresh_offline();
                 self.tend_storage();
             }
-            Change::Library(result) if self.player.is_some() => self.deferred = Some(result),
+            Change::Library(result) if self.on_tv.is_some() => self.deferred = Some(result),
             Change::Library(result) => self.reload(result),
         }
     }
@@ -728,8 +729,12 @@ impl App {
             finished,
         ) {
             Ok(player) => {
-                self.player = Some(player);
-                self.now_playing = Some(self.now_playing_for(path));
+                self.on_tv = Some(OnTv {
+                    player,
+                    shown: self.now_playing_for(path),
+                    file: path.to_path_buf(),
+                    owner: self.profile,
+                });
                 self.publish_playback();
                 self.paused_for_tv.set(false);
                 self.wake_tv();
@@ -748,7 +753,7 @@ impl App {
     }
 
     fn move_audio(&self, route: &audio::Route) {
-        if let Some(player) = &self.player {
+        if let Some(player) = self.player() {
             player.set_audio_device(&route.device);
             player.say(&route.said);
         }
@@ -798,10 +803,6 @@ impl App {
             };
             (show.key.clone(), position)
         });
-        self.playing = Some(Playing {
-            file: path.to_path_buf(),
-            owner: self.profile,
-        });
         if let Some((key, position)) = show {
             self.progress.shows.insert(key, position);
         }
@@ -810,24 +811,18 @@ impl App {
     }
 
     fn record_place(&mut self) {
-        if let Some(owner) = self.playing.as_ref().map(|playing| playing.owner) {
+        if let Some(owner) = self.on_tv.as_ref().map(|tv| tv.owner) {
             self.as_profile(owner, Self::record_owners_place);
         }
     }
 
     fn record_owners_place(&mut self) {
-        if let (Some(player), Some(playing)) = (&self.player, &self.playing) {
-            self.progress.record(&playing.file, player.place());
-            self.progress.keep_tracks(&playing.file, player.tracks());
-            self.progress.played(&playing.file, watching::now());
+        if let Some(OnTv { player, file, .. }) = &self.on_tv {
+            self.progress.record(file, player.place());
+            self.progress.keep_tracks(file, player.tracks());
+            self.progress.played(file, watching::now());
             let library = self.nav.library();
-            let joined = watching::record(
-                &mut self.progress,
-                library,
-                &playing.file,
-                player.played(),
-                watching::now(),
-            );
+            let joined = watching::record(&mut self.progress, library, file, player.played(), watching::now());
             self.save_progress();
             if joined {
                 self.queue_downloads(false);
@@ -838,16 +833,15 @@ impl App {
     fn finish_playback(&mut self, success: bool, ended: bool) {
         self.stopping_tv = false;
         self.record_place();
-        self.player = None;
-        self.now_playing = None;
+        let ended_play = self.on_tv.take().map(|OnTv { file, owner, .. }| (file, owner));
         self.publish_playback();
-        if let Some(playing) = self.playing.take() {
-            self.as_profile(playing.owner, |app| {
+        if let Some((file, owner)) = ended_play {
+            self.as_profile(owner, |app| {
                 let library = app.nav.library();
                 if ended {
-                    watching::complete(&mut app.progress, library, &playing.file);
+                    watching::complete(&mut app.progress, library, &file);
                     app.save_progress();
-                } else if watching::stopped(&mut app.progress, library, &playing.file) {
+                } else if watching::stopped(&mut app.progress, library, &file) {
                     app.save_progress();
                 }
             });
@@ -893,7 +887,7 @@ impl App {
         }
         if heard == Heard::Listening {
             self.bus.voice(VoiceEvent::Listening);
-            if let Some(player) = self.player.as_ref().filter(|player| !player.muted()) {
+            if let Some(OnTv { player, .. }) = self.on_tv.as_ref().filter(|tv| !tv.player.muted()) {
                 player.set_muted(true);
                 self.unmute_after_listening = true;
             }
@@ -914,7 +908,7 @@ impl App {
         };
         if std::mem::take(&mut self.unmute_after_listening)
             && action != Some(Action::Control(Control::Mute))
-            && let Some(player) = &self.player
+            && let Some(player) = self.player()
         {
             player.set_muted(false);
         }
@@ -960,7 +954,7 @@ impl App {
             led.set(false);
         }
         if std::mem::take(&mut self.unmute_after_listening)
-            && let Some(player) = &self.player
+            && let Some(player) = self.player()
         {
             player.set_muted(false);
         }
@@ -968,7 +962,7 @@ impl App {
         self.voice_timer.stop();
         self.ui.set_voice_transcript("".into());
         self.ui.set_voice_status("".into());
-        if let Some(player) = &self.player {
+        if let Some(player) = self.player() {
             player.hide_toast();
         }
     }
@@ -991,7 +985,7 @@ impl App {
             }
             Request::Control(control) => Action::Control(control),
             Request::PlayPause => {
-                let paused = self.player.as_ref().is_some_and(|player| player.state().paused);
+                let paused = self.player().is_some_and(|player| player.state().paused);
                 Action::Control(if paused { Control::Resume } else { Control::Pause })
             }
             Request::Seek(seek) => return self.seek(seek),
@@ -1030,7 +1024,7 @@ impl App {
         let ok = match &action {
             Action::Play(_) => true,
             Action::Control(control) if control.is_tv() => true,
-            Action::Control(_) => self.player.is_some(),
+            Action::Control(_) => self.on_tv.is_some(),
             Action::Download { .. } => self.downloads.is_some(),
             Action::Refuse(_) => false,
         };
@@ -1043,7 +1037,7 @@ impl App {
         let manifest = library::read_manifest(&cache.manifest)?;
         let library = Library::from_manifest(&cache.library, &manifest, |_| true);
         let activity = storage::Activity {
-            playing: self.playing.as_ref().map(|playing| playing.file.as_path()),
+            playing: self.on_tv.as_ref().map(|tv| tv.file.as_path()),
             queued: &self.requested,
         };
         Ok(storage::titles(
@@ -1201,8 +1195,8 @@ impl App {
         if self.stopping_tv {
             return None;
         }
-        let (player, playing) = (self.player.as_ref()?, self.playing.as_ref()?);
-        self.place_of(&playing.file, player.place().position)
+        let tv = self.on_tv.as_ref()?;
+        self.place_of(&tv.file, tv.player.place().position)
     }
 
     fn resume_point(&self, file: &Path) -> f64 {
@@ -1226,7 +1220,7 @@ impl App {
         for effect in effects {
             match effect {
                 screen::Effect::PauseTv => {
-                    self.paused_for_handoff = self.player.as_ref().is_some_and(|player| !player.state().paused);
+                    self.paused_for_handoff = self.player().is_some_and(|player| !player.state().paused);
                     self.control(Control::Pause);
                 }
                 screen::Effect::ResumeTv => {
@@ -1235,7 +1229,7 @@ impl App {
                     }
                 }
                 screen::Effect::StopTv => {
-                    self.stopping_tv = self.player.is_some();
+                    self.stopping_tv = self.on_tv.is_some();
                     self.control(Control::Stop);
                 }
                 screen::Effect::PlayTv(place) => {
@@ -1358,7 +1352,7 @@ impl App {
                 None => eprintln!("screen: a report for {} is not in the library", report.file.display()),
             }
         }
-        if self.playing.as_ref().is_some_and(|playing| playing.file == report.file) {
+        if self.on_tv.as_ref().is_some_and(|tv| tv.file == report.file) {
             eprintln!(
                 "stream {}: {:?} at {:.0} s not recorded, the TV plays {}",
                 report.session.get(..8).unwrap_or(&report.session),
@@ -1452,7 +1446,7 @@ impl App {
     }
 
     fn change_subtitles(&self, change: subtitles::Change) -> Outcome {
-        match (&self.player, change) {
+        match (self.player(), change) {
             (Some(player), change) => {
                 let answer = player.subtitles(change);
                 Outcome {
@@ -1472,7 +1466,7 @@ impl App {
     }
 
     fn speed(&self, speed: f64) -> Outcome {
-        let Some(player) = &self.player else {
+        let Some(player) = self.player() else {
             return Outcome {
                 message: NOTHING_PLAYING.to_string(),
                 ok: false,
@@ -1488,7 +1482,7 @@ impl App {
     }
 
     fn seek(&self, seek: Seek) -> Outcome {
-        let Some(player) = &self.player else {
+        let Some(player) = self.player() else {
             return Outcome {
                 message: NOTHING_PLAYING.to_string(),
                 ok: false,
@@ -1533,12 +1527,12 @@ impl App {
         }
     }
 
+    fn player(&self) -> Option<&Player> {
+        self.on_tv.as_ref().map(|tv| &tv.player)
+    }
+
     fn publish_playback(&self) {
-        let now_playing = self
-            .player
-            .as_ref()
-            .zip(self.now_playing.as_ref())
-            .map(|(player, base)| {
+        let now_playing = self.on_tv.as_ref().map(|OnTv { player, shown: base, .. }| {
                 let state = player.state();
                 NowPlaying {
                     position: state.position,
@@ -1596,7 +1590,7 @@ impl App {
                     Control::TvOff => return "Turn the TV off".to_string(),
                     Control::ShowSemmelTv => return "Switch the TV to SemmelTV".to_string(),
                 };
-                match self.player {
+                match self.on_tv {
                     Some(_) => name.to_string(),
                     None => format!("{name}, but {}", NOTHING_PLAYING.to_lowercase()),
                 }
@@ -1606,8 +1600,8 @@ impl App {
 
     fn act(&mut self, action: Action) {
         match action {
-            Action::Play(path) => match &self.player {
-                Some(player) => {
+            Action::Play(path) => match &self.on_tv {
+                Some(OnTv { player, .. }) => {
                     self.queued = Some(path);
                     player.command(Command::Back);
                 }
@@ -1620,7 +1614,7 @@ impl App {
     }
 
     fn control(&self, control: Control) {
-        let player = self.player.as_ref();
+        let player = self.player();
         match (control, player) {
             (Control::TvOn | Control::TvOff | Control::ShowSemmelTv, _) => {
                 let sent = if control == Control::TvOff {
@@ -1677,7 +1671,7 @@ impl App {
     }
 
     fn pause_for_tv(&self) {
-        if let Some(player) = &self.player
+        if let Some(player) = self.player()
             && !player.state().paused
         {
             player.set_paused(true);
@@ -1687,7 +1681,7 @@ impl App {
 
     fn resume_after_tv(&self) {
         if self.paused_for_tv.replace(false)
-            && let Some(player) = &self.player
+            && let Some(player) = self.player()
         {
             player.set_paused(false);
         }
@@ -1768,7 +1762,7 @@ impl App {
             return false;
         };
         if std::mem::take(&mut self.unmute_after_listening)
-            && let Some(player) = &self.player
+            && let Some(player) = self.player()
         {
             player.set_muted(false);
         }
@@ -1802,7 +1796,7 @@ impl App {
     }
 
     fn tell(&self, text: &str) {
-        match &self.player {
+        match self.player() {
             Some(player) => player.say(text),
             None => self.show_message(text.to_string()),
         }
@@ -1833,14 +1827,14 @@ impl App {
         }
         self.profile = profile;
         self.progress = self.load_progress(profile);
-        if self.playing.is_none() {
+        if self.on_tv.is_none() {
             self.subtitles.set_owner(profile);
         }
         self.shared.set_tv_profile(profile);
         if let Err(error) = self.db.set_setting(TV_PROFILE, Some(&profile.0.to_string())) {
             eprintln!("tv profile: {error}");
         }
-        if self.playing.is_none() {
+        if self.on_tv.is_none() {
             self.apply_audio(profile);
         }
         self.present_profile();
@@ -1895,7 +1889,7 @@ impl App {
     }
 
     fn show_voice(&self, heard: &str, status: &str, hold: Option<Duration>) {
-        if let Some(player) = &self.player {
+        if let Some(player) = self.player() {
             player.toast(heard, status, hold.unwrap_or(VOICE_WAITING_TIME));
         }
         self.ui.set_voice_transcript(heard.into());

@@ -1977,3 +1977,6 @@ semmel-shell {
 .invite-link[hidden] { display: none; }
 .add-member .setting-row { grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px; }
 .role-select { min-height: 44px; padding: 0 10px; border-radius: 12px; border: 1px solid var(--line); background: var(--raised); color: var(--text); }
+
+html[data-live="stale"] :is(.bar-art, .bar-text, .bar-toggle, #sheet .now, .sheet-playback) { opacity: 0.45; transition: opacity 0.2s; }
+html[data-live="stale"] :is(.bar-toggle, .sheet-playback button) { pointer-events: none; }

@@ -112,9 +112,38 @@ pub fn audio_notices(before: Option<&Audio>, after: &Audio) -> Vec<(String, Stri
     found
 }
 
+/// What the TV plays, as far as the web app knows: nothing is known until the
+/// TV's event stream answers, and nothing is known again once it drops.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub enum Tv {
+    #[default]
+    Unknown,
+    Idle,
+    Playing(NowPlaying),
+}
+
+impl Tv {
+    pub fn playing(&self) -> Option<&NowPlaying> {
+        match self {
+            Self::Playing(now) => Some(now),
+            _ => None,
+        }
+    }
+
+    pub fn known(&self) -> bool {
+        !matches!(self, Self::Unknown)
+    }
+}
+
+impl From<Option<NowPlaying>> for Tv {
+    fn from(now: Option<NowPlaying>) -> Self {
+        now.map_or(Self::Idle, Self::Playing)
+    }
+}
+
 #[derive(Clone)]
 pub struct Live {
-    pub playback: watch::Receiver<Option<NowPlaying>>,
+    pub playback: watch::Receiver<Tv>,
     pub voice: watch::Receiver<Option<Voice>>,
     pub audio: watch::Receiver<Option<Audio>>,
     pub notices: watch::Receiver<Notices>,
@@ -122,7 +151,7 @@ pub struct Live {
 }
 
 pub fn follow(url: String, service: Option<String>) -> Live {
-    let (playback, playback_seen) = watch::channel(None);
+    let (playback, playback_seen) = watch::channel(Tv::Unknown);
     let (voice, voice_seen) = watch::channel(None);
     let (audio, audio_seen) = watch::channel(None);
     let (notices, notices_seen) = watch::channel(Notices::default());
@@ -144,7 +173,7 @@ pub fn follow(url: String, service: Option<String>) -> Live {
                         let Message::Text(text) = message else { continue };
                         match serde_json::from_str(&text) {
                             Ok(Event::Playback { now_playing }) => {
-                                playback.send_if_modified(|current| replace(current, now_playing));
+                                playback.send_if_modified(|current| replace(current, Tv::from(now_playing)));
                             }
                             Ok(Event::Voice(event)) => {
                                 if let Some(notice) = voice_notice(&event) {
@@ -165,7 +194,7 @@ pub fn follow(url: String, service: Option<String>) -> Live {
                             Err(error) => eprintln!("events: {error}: {text}"),
                         }
                     }
-                    playback.send_replace(None);
+                    playback.send_replace(Tv::Unknown);
                     audio.send_replace(None);
                     screen.send_replace(None);
                 }
@@ -206,6 +235,16 @@ fn replace<T: PartialEq>(current: &mut T, new: T) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn nothing_is_known_of_the_tv_until_it_answers() {
+        assert_eq!(Tv::default(), Tv::Unknown);
+        assert!(!Tv::Unknown.known());
+        assert_eq!(Tv::from(None), Tv::Idle);
+        assert!(Tv::Idle.known() && Tv::Idle.playing().is_none());
+        let now = NowPlaying::default();
+        assert_eq!(Tv::from(Some(now.clone())).playing(), Some(&now));
+    }
     use crate::api::{Headphones, Link, Pairing};
 
     fn audio(output: Output, pairing: Option<PairState>, error: Option<&str>) -> Audio {
