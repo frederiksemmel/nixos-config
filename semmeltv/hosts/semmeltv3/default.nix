@@ -19,6 +19,7 @@
 
   services.semmeltv = {
     offlineCacheGiB = null;
+    decoder = "v4l2m2m";
     headphones.enable = true;
     api.enable = true;
     web = {

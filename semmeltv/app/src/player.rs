@@ -541,12 +541,9 @@ impl Player {
             .arg("--no-resume-playback")
             .arg("--no-save-position-on-quit")
             .arg("--keep-open")
-            .arg("--hwdec=drm")
+            .args(video_args(env::var("SEMMELTV_DECODER").ok().as_deref()))
             .arg(format!("--audio-device={audio_device}"))
             .arg(format!("--af=lavfi=[{}]", audio::STEREO))
-            .arg("--gpu-context=wayland")
-            .arg("--profile=fast")
-            .arg("--video-sync=display-resample")
             .arg("--no-osc")
             .arg(format!("--background-color={}", card::BACKGROUND))
             .arg(format!("--osd-font={OSD_FONT}"))
@@ -684,6 +681,18 @@ impl Player {
             .lock()
             .unwrap()
             .toast(heading, message, Instant::now() + time);
+    }
+}
+
+fn video_args(decoder: Option<&str>) -> &'static [&'static str] {
+    match decoder {
+        Some("v4l2m2m") => &["--hwdec=v4l2m2m", "--vo=dmabuf-wayland", "--video-sync=audio"],
+        _ => &[
+            "--hwdec=drm",
+            "--gpu-context=wayland",
+            "--profile=fast",
+            "--video-sync=display-resample",
+        ],
     }
 }
 
@@ -954,6 +963,16 @@ mod tests {
             ["--start=1234.500", "--aid=2", "--sid=3", "--sub-visibility=no"]
         );
         assert!(resume_args(0.0, Tracks::default()).is_empty());
+    }
+
+    #[test]
+    fn a_v4l2m2m_tv_hands_decoded_frames_to_cage_and_others_render_them() {
+        assert_eq!(
+            video_args(Some("v4l2m2m")),
+            ["--hwdec=v4l2m2m", "--vo=dmabuf-wayland", "--video-sync=audio"]
+        );
+        assert_eq!(video_args(None)[0], "--hwdec=drm");
+        assert_eq!(video_args(Some("drm")), video_args(None));
     }
 
     #[test]
