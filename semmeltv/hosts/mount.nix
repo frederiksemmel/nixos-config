@@ -135,6 +135,7 @@ in
         ExecStart = lib.getExe mount;
         ExecStopPost = "-/run/wrappers/bin/fusermount3 -uz ${library}";
         Restart = "on-failure";
+        SuccessExitStatus = 143;
         RestartSec = 30;
       };
     };
