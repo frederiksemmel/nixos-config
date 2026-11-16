@@ -22,6 +22,7 @@ const PHONE_STYLE: Asset = asset!("./phone.css");
 const AUTH: Asset = asset!("./auth.js");
 const LIVE: Asset = asset!("./live.js");
 const FEEDBACK: Asset = asset!("./feedback.js");
+const DRAFTS: Asset = asset!("./drafts.js");
 
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
@@ -49,6 +50,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <script src=(ACT)></script>
                 if signed_in {
                     <script src=(LIVE)></script>
+                    <script src=(DRAFTS)></script>
                 }
                 topcoat::runtime::script()
                 <script type="module" src=(TOAST)></script>

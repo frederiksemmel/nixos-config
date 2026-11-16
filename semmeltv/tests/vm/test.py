@@ -890,9 +890,19 @@ with sync_playwright() as playwright:
             report.querySelector(".report-copy").textContent.includes({settled['id']!r})
             && [...report.querySelectorAll(".comment:not([hidden]) .comment-who b")].map((name) => name.textContent).join() === "Claude,Frederik")""")
 
-    with scenario("a comment typed but not sent survives a reload, and is forgotten once sent"):
+    with scenario("a comment typed before the page's scripts ran survives them and a reload, and is forgotten once sent"):
         draft = f'textarea[data-draft="{settled["id"]}:comment"]'
+        runtime = "**/_topcoat/assets/topcoat-*.js"
+        held = []
+        phone.context.route(runtime, lambda route: held.append(route))
+        phone.goto("/feedback")
         phone.page.locator(draft).fill("Half a thought before the TV restarts")
+        assert held and phone.js("document.readyState") != "complete", "typed while Topcoat's runtime was still loading"
+        phone.context.unroute(runtime)
+        for route in held:
+            route.continue_()
+        phone.until(f"""{LOADED} && document.querySelector({draft!r}).value === 'Half a thought before the TV restarts'
+            && !document.querySelector({draft!r}).form.querySelector("button[type=submit]").disabled""")
         phone.goto("/feedback")
         phone.until(f"document.querySelector({draft!r})?.value === 'Half a thought before the TV restarts'")
         row = phone.page.locator(".report").filter(has=phone.page.locator(".report-message", has_text=settled["message"]))

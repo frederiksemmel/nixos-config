@@ -66,3 +66,9 @@ The trail lives in `sessionStorage`, so it survives reloads. The speech bubble
 in the top bar (`src/feedback.js`) sends the trail with what was typed or
 dictated, and an optional screenshot, to the TV's `/api/feedback`. Admins read
 the reports on `/feedback`; see the [app README](../app/README.md#feedback).
+
+`src/drafts.js` keeps what is typed into a `textarea[data-draft]` in
+`localStorage` until it is sent, and brings it back after a reload. It is a
+classic script in the head, so it keeps text typed before Topcoat's runtime has
+loaded, and it restores at `DOMContentLoaded`, after hydration has written the
+signals' values into the fields.
