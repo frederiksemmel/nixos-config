@@ -1,4 +1,4 @@
-{ pkgs, ... }:
+{ lib, pkgs, ... }:
 let
   router = "192.168.1.1";
   logDir = "/var/log/blocky";
@@ -88,7 +88,7 @@ in
       clientLookup.upstream = router;
       blocking = {
         denylists.ads = [
-          "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro-onlydomains.txt"
+          "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro.txt"
         ];
         clientGroupsBlock.default = [ "ads" ];
         blockType = "zeroIp";
@@ -109,6 +109,17 @@ in
       prometheus.enable = true;
     };
   };
+
+  systemd.services.blocky.serviceConfig = {
+    DynamicUser = lib.mkForce false;
+    User = "blocky";
+    Group = "blocky";
+  };
+  users.users.blocky = {
+    isSystemUser = true;
+    group = "blocky";
+  };
+  users.groups.blocky = { };
 
   networking.firewall.interfaces.end0 = {
     allowedTCPPorts = [ 53 ];
