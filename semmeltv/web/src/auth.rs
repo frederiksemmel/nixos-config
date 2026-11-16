@@ -1,4 +1,4 @@
-use crate::api::{Api, CONTROL_TV, Choice, Me, Member, Person};
+use crate::api::{Api, CONTROL_TV, Choice, HEADPHONES, Me, Member, Person};
 use crate::layout::back;
 use topcoat::Result;
 use topcoat::context::{Cx, try_request_context};
@@ -25,6 +25,10 @@ pub fn me(cx: &Cx) -> Option<&Me> {
 
 pub fn controls_tv(cx: &Cx) -> bool {
     me(cx).is_some_and(|me| me.person.controls_tv())
+}
+
+pub fn uses_headphones(cx: &Cx) -> bool {
+    me(cx).is_some_and(|me| me.person.uses_headphones())
 }
 
 pub fn admin(cx: &Cx) -> Result<()> {
@@ -330,7 +334,15 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
         (false, true) => "Viewer, controls the TV".to_string(),
         (false, false) => "Viewer, can't control the TV".to_string(),
     });
-    let capability = format!("/api/auth/members/{}/capabilities/{CONTROL_TV}", person.id);
+    if !person.admin() {
+        facts.push(if person.uses_headphones() {
+            "uses headphones".to_string()
+        } else {
+            "no headphones".to_string()
+        });
+    }
+    let control = format!("/api/auth/members/{}/capabilities/{CONTROL_TV}", person.id);
+    let headphones = format!("/api/auth/members/{}/capabilities/{HEADPHONES}", person.id);
     facts.push(match member.passkeys {
         0 => "no passkey".to_string(),
         1 => "1 passkey".to_string(),
@@ -364,9 +376,14 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
                 <button type="button" class="pill" data-invite=(person.id.to_string()) data-name=(person.name.as_str())>"Invite link"</button>
                 if !person.admin() {
                     if person.controls_tv() {
-                        <button type="button" class="pill quiet" data-capability=(capability) data-method="DELETE">"Take TV control away"</button>
+                        <button type="button" class="pill quiet" data-capability=(control) data-method="DELETE">"Take TV control away"</button>
                     } else {
-                        <button type="button" class="pill" data-capability=(capability) data-method="PUT">"Give TV control"</button>
+                        <button type="button" class="pill" data-capability=(control) data-method="PUT">"Give TV control"</button>
+                    }
+                    if person.uses_headphones() {
+                        <button type="button" class="pill quiet" data-capability=(headphones) data-method="DELETE">"Take headphones away"</button>
+                    } else {
+                        <button type="button" class="pill" data-capability=(headphones) data-method="PUT">"Give headphones"</button>
                     }
                 }
                 if member.sessions > 0 {
@@ -389,7 +406,7 @@ async fn people_page(cx: &Cx) -> Result<impl View> {
         <article class="page people">
             back(href: "/profiles")
             <h1>"People"</h1>
-            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote, voice and sound. Admins do all that, and download, remove titles, pair the TV and manage people."</p>
+            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote, voice and sound, and only those you give headphones pair and listen on Bluetooth headphones. Admins do all that, and download, remove titles, pair the TV and manage people."</p>
             match members {
                 Ok(members) => {
                     <section class="settings">

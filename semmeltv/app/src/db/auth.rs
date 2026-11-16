@@ -47,6 +47,7 @@ fn role(role: Role) -> models::Role {
 fn capability(capability: Capability) -> models::Capability {
     match capability {
         Capability::ControlTv => models::Capability::ControlTv,
+        Capability::Headphones => models::Capability::Headphones,
     }
 }
 
@@ -56,6 +57,7 @@ fn granted(grants: &[Grant], id: i64) -> BTreeSet<Capability> {
         .filter(|grant| grant.profile_id == id)
         .map(|grant| match grant.capability {
             models::Capability::ControlTv => Capability::ControlTv,
+            models::Capability::Headphones => Capability::Headphones,
         })
         .collect()
 }
@@ -487,7 +489,17 @@ mod tests {
         assert_eq!(everyone[1].granted, granted);
         assert!(everyone[2].granted.is_empty());
 
+        assert!(db.set_granted(mami, Capability::Headphones, true).await.unwrap());
+        assert_eq!(
+            db.profile(mami).await.unwrap().unwrap().granted,
+            BTreeSet::from([Capability::ControlTv, Capability::Headphones])
+        );
         assert!(db.set_granted(mami, Capability::ControlTv, false).await.unwrap());
+        assert_eq!(
+            db.profile(mami).await.unwrap().unwrap().granted,
+            BTreeSet::from([Capability::Headphones])
+        );
+        assert!(db.set_granted(mami, Capability::Headphones, false).await.unwrap());
         assert!(db.profile(mami).await.unwrap().unwrap().granted.is_empty());
 
         db.set_granted(mami, Capability::ControlTv, true).await.unwrap();

@@ -1444,6 +1444,7 @@ with sync_playwright() as playwright:
         assert phone.api("POST", "/api/play", {"movie": FILM})["status"] == 403, "a viewer without TV control can't play on the TV"
         flip = {"action": "flip", "to": "tv", "device": {"id": "vm-mami", "name": "phone"}}
         assert phone.api("POST", "/api/screen", flip)["status"] == 403, "nor move what plays to the TV"
+        assert phone.api("POST", "/api/audio/pair")["status"] == 403, "a viewer without headphones can't pair them"
         phone.goto(f"/shows/{SHOW}")
         phone.until('!!document.querySelector("main .episode-row")')
         assert phone.js('!document.querySelector("main .season-downloads")'), "a viewer is offered no season downloads"
@@ -1456,14 +1457,28 @@ with sync_playwright() as playwright:
         phone.until(f'location.pathname === "/" && {AVATAR} === "F"')
         phone.until(WATCHING)
         phone.goto("/people")
-        phone.page.locator(".member", has_text="Mami").locator("[data-capability]").tap()
-        phone.until('[...document.querySelectorAll(".member")].some((row) => row.textContent.includes("Mami") && row.textContent.includes("controls the TV"))')
+        mami_row = '[...document.querySelectorAll(".member")].find((row) => row.textContent.includes("Mami"))'
+        phone.until(f'{mami_row}?.textContent.includes("no headphones")')
+        phone.page.locator(".member", has_text="Mami").locator('[data-capability$="/control-tv"]').tap()
+        phone.until(f'{mami_row}.textContent.includes("controls the TV") && {mami_row}.textContent.includes("no headphones")')
         phone.goto("/profiles")
         phone.until('[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Mami") && choice.textContent.includes("On this device"))')
         phone.page.locator(".profile-choice", has_text="Mami").tap()
         phone.until(f'location.pathname === "/" && {AVATAR} === "M"')
         phone.goto("/settings")
         phone.until('!!document.querySelector("#mode") && !!document.querySelector(\'[data-post="/api/tv-profile"]\')')
+        assert phone.api("POST", "/api/audio/pair")["status"] == 403, "TV control doesn't bring headphones with it"
+        phone.goto("/profiles")
+        password_sign_in(phone, "Frederik", "frederik-pass")
+        phone.until(f'location.pathname === "/" && {AVATAR} === "F"')
+        phone.goto("/people")
+        phone.page.locator(".member", has_text="Mami").locator('[data-capability$="/headphones"]').tap()
+        phone.until(f'{mami_row}.textContent.includes("uses headphones")')
+        phone.goto("/profiles")
+        phone.until('[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Mami") && choice.textContent.includes("On this device"))')
+        phone.page.locator(".profile-choice", has_text="Mami").tap()
+        phone.until(f'location.pathname === "/" && {AVATAR} === "M"')
+        assert phone.api("POST", "/api/audio/pair")["status"] == 404, "with headphones granted, only this TV's lack of Bluetooth refuses the pairing"
         phone.goto("/profiles")
         password_sign_in(phone, "Frederik", "frederik-pass")
         phone.until(f'location.pathname === "/" && {AVATAR} === "F"')

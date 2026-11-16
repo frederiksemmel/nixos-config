@@ -162,6 +162,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
     let (paired, pair) = pairing(abilities.paired);
     let admin = crate::auth::me(cx).is_some_and(|me| me.person.admin());
     let controls_tv = crate::auth::controls_tv(cx);
+    let uses_headphones = crate::auth::uses_headphones(cx);
     let shown = api.tv_profile().await.ok();
     Ok(view! {
         <article class="page">
@@ -213,7 +214,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     Err(error) => <p class="setting-note">(error)</p>,
                 }
             </section>
-            if controls_tv {
+            if uses_headphones {
                 headphones_settings()
             }
             if admin {

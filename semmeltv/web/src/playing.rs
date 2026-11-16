@@ -226,6 +226,7 @@ async fn play_pause() -> Result<impl View> {
 pub async fn player(cx: &Cx) -> Result<impl View> {
     let abilities = Api::of(cx).tv_abilities().await.unwrap_or_default();
     let dialogue = Api::of(cx).dialogue().await.ok();
+    let uses_headphones = crate::auth::uses_headphones(cx);
     Ok(view! {
         <div class="player">
             <section class="bar" aria-label="Now playing">
@@ -304,7 +305,9 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                                 "Stop playing"
                             </button>
                         </section>
-                        sound()
+                        if uses_headphones {
+                            sound()
+                        }
                         if let Some(on) = dialogue {
                             <section class="pick dialogue" aria-label="Dialogue mode">
                                 <div class="setting-group">dialogue_switch(on: on)</div>

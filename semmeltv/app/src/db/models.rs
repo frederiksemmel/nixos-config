@@ -10,6 +10,7 @@ pub enum Role {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]
 pub enum Capability {
     ControlTv,
+    Headphones,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]

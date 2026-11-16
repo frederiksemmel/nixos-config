@@ -942,14 +942,23 @@ pub struct Person {
 }
 
 pub const CONTROL_TV: &str = "control-tv";
+pub const HEADPHONES: &str = "headphones";
 
 impl Person {
     pub fn admin(&self) -> bool {
         self.role == Role::Admin
     }
 
+    pub fn can(&self, capability: &str) -> bool {
+        self.capabilities.iter().any(|granted| granted == capability)
+    }
+
     pub fn controls_tv(&self) -> bool {
-        self.capabilities.iter().any(|capability| capability == CONTROL_TV)
+        self.can(CONTROL_TV)
+    }
+
+    pub fn uses_headphones(&self) -> bool {
+        self.can(HEADPHONES)
     }
 
     pub fn initial(&self) -> String {
@@ -1108,7 +1117,7 @@ mod tests {
     }
 
     #[test]
-    fn a_person_controls_the_tv_only_with_that_capability() {
+    fn a_person_controls_the_tv_and_uses_headphones_only_with_those_capabilities() {
         let read = |capabilities: Value| {
             serde_json::from_value::<Person>(json!({
                 "id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "capabilities": capabilities
@@ -1116,6 +1125,9 @@ mod tests {
             .unwrap()
         };
         assert!(read(json!(["control-tv"])).controls_tv());
+        assert!(!read(json!(["control-tv"])).uses_headphones());
+        assert!(read(json!(["headphones"])).uses_headphones());
+        assert!(!read(json!(["headphones"])).controls_tv());
         assert!(!read(json!([])).controls_tv());
     }
 

@@ -25,17 +25,27 @@ impl Role {
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
     /// Play on the TV and use its remote: playback, volume, the TV's power,
-    /// its sound output and headphones, the microphone, and moving what
-    /// plays between the TV and a phone.
+    /// the microphone, and moving what plays between the TV and a phone.
     ControlTv,
+    /// Pair Bluetooth headphones with the TV, forget them, send the TV's
+    /// sound to them and set their sound delay.
+    Headphones,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 1] = [Capability::ControlTv];
+    pub const ALL: [Capability; 2] = [Capability::ControlTv, Capability::Headphones];
 
     pub fn name(self) -> &'static str {
         match self {
             Capability::ControlTv => "control-tv",
+            Capability::Headphones => "headphones",
+        }
+    }
+
+    pub fn refusal(self) -> &'static str {
+        match self {
+            Capability::ControlTv => "Only someone allowed to control this TV can do that",
+            Capability::Headphones => "Only someone allowed to use headphones on this TV can do that",
         }
     }
 

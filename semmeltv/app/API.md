@@ -36,13 +36,16 @@ With it set, every request passes one gate in the app before anything else:
 - Controlling the TV needs the `control-tv` capability, else 403 "Only someone
   allowed to control this TV can do that": `/api/play`, `/api/command`,
   `/api/listen`, `/api/microphone`, `/api/volume/*`, any change under
-  `/api/playback/*`, `/api/tv/*` and `/api/tv-profile`, `POST /api/audio`,
-  `/api/audio/pair`, `/api/audio/headphones`, `/api/audio/delay`,
-  `/api/audio/track` and `/api/subtitles/track|toggle|delay`. Reading them,
-  dialogue mode and the subtitle style stay open to everyone signed in. On
-  `POST /api/screen`, someone without it can't `flip`, and their `play` is
-  taken only while nothing else plays (the TV plays nothing and no other phone
-  plays), else 422 "Something else plays now".
+  `/api/playback/*`, `/api/tv/*` and `/api/tv-profile`, `/api/audio/track`
+  and `/api/subtitles/track|toggle|delay`. Reading them, dialogue mode and the
+  subtitle style stay open to everyone signed in. On `POST /api/screen`,
+  someone without it can't `flip`, and their `play` is taken only while
+  nothing else plays (the TV plays nothing and no other phone plays), else 422
+  "Something else plays now".
+- The TV's Bluetooth headphones need the `headphones` capability, else 403
+  "Only someone allowed to use headphones on this TV can do that": `POST
+  /api/audio`, `/api/audio/pair`, `/api/audio/headphones` and
+  `/api/audio/delay`. `GET /api/audio` stays open.
 - `GET /api/events` also takes `Authorization: Bearer <token>`, the token in
   `SEMMELTV_SERVICE_TOKEN_FILE`, which is how the web app's server follows the
   TV. The token opens nothing else.
@@ -87,7 +90,7 @@ Argon2id.
 
 A person is `{ id, name, role, color, capabilities }`, `role` being `admin` or
 `viewer`. `capabilities` lists what the person may do on this TV beyond
-browsing and watching on their own device; the only one is `control-tv`. An
+browsing and watching on their own device: `control-tv` and `headphones`. An
 admin has every capability; a viewer only those granted, none at first. Each
 TV keeps its own grants.
 Passkeys use WebAuthn with user verification (Face ID, Touch ID, a screen

@@ -509,6 +509,8 @@ async fn set_capability(gate: &Gate, id: i64, name: &str, on: bool) -> Response 
             let message = match (capability, person.can(capability)) {
                 (Capability::ControlTv, true) => format!("{} can control the TV", person.name),
                 (Capability::ControlTv, false) => format!("{} can't control the TV", person.name),
+                (Capability::Headphones, true) => format!("{} can use headphones on the TV", person.name),
+                (Capability::Headphones, false) => format!("{} can't use headphones on the TV", person.name),
             };
             Json(json!({ "ok": true, "message": message, "person": person })).into_response()
         }

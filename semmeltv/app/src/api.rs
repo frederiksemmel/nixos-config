@@ -1370,7 +1370,7 @@ async fn screen_command(
     };
     match command {
         Some(command) => ask(&api.core, Request::Screen(command, profile)).await,
-        None => problem(StatusCode::FORBIDDEN, auth::gate::CANNOT_CONTROL.to_string()),
+        None => problem(StatusCode::FORBIDDEN, auth::Capability::ControlTv.refusal().to_string()),
     }
 }
 
