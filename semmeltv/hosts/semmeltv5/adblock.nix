@@ -90,6 +90,12 @@ in
         denylists.ads = [
           "https://cdn.jsdelivr.net/gh/hagezi/dns-blocklists@latest/wildcard/pro.txt"
         ];
+        allowlists.ads = [
+          ''
+            sentry.io
+            *.sentry.io
+          ''
+        ];
         clientGroupsBlock.default = [ "ads" ];
         blockType = "zeroIp";
         loading = {
