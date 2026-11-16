@@ -267,8 +267,6 @@ in
     networkConfig = {
       DHCP = "yes";
       MulticastDNS = "yes";
-      # NOTE remove this in public networks
-      DNS = "9.9.9.9 1.1.1.1";
     };
   };
   # Wired uplinks only. This laptop has no built-in Ethernet, so a wired link is a USB
