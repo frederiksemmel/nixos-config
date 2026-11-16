@@ -1238,7 +1238,7 @@ html:has(.sound[data-output="headphones"]) .bar-phones { display: grid; }
 
 .pill:active { opacity: 0.8; }
 .pill.play-tv { display: none; }
-html[data-phone-ready]:is([data-mode="phone"], :has(.mode[data-mode="phone"])) .pill.play-tv { display: inline-flex; justify-self: start; margin-top: 2px; }
+html[data-phone-ready][data-controls-tv="true"]:is([data-mode="phone"], :has(.mode[data-mode="phone"])) .pill.play-tv { display: inline-flex; justify-self: start; margin-top: 2px; }
 .pill.handoff { display: none; }
 html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inline-flex; justify-self: start; }
 .pill.quiet { background: transparent; border: 1px solid var(--line); color: var(--text); }

@@ -69,6 +69,7 @@ pub enum ScreenCommand {
     Play {
         device: screen::Device,
         pick: Pick,
+        takes_over: bool,
     },
     Resume {
         device: screen::Device,

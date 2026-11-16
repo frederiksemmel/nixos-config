@@ -1,7 +1,8 @@
 use super::Db;
-use super::models::{self, Invite as StoredInvite, Passkey, Profile as StoredProfile, Session as StoredSession};
-use crate::auth::store::{Invite, NewProfile, Profile, Role, Session, StoreError, Stored, StoredPasskey};
+use super::models::{self, Grant, Invite as StoredInvite, Passkey, Profile as StoredProfile, Session as StoredSession};
+use crate::auth::store::{Capability, Invite, NewProfile, Profile, Role, Session, StoreError, Stored, StoredPasskey};
 use crate::profile::ProfileId;
+use std::collections::BTreeSet;
 use toasty_core::driver::operation::TransactionMode;
 
 fn stored<T>(result: toasty::Result<T>) -> Stored<T> {
@@ -43,9 +44,26 @@ fn role(role: Role) -> models::Role {
     }
 }
 
-fn profile(stored: StoredProfile) -> Profile {
+fn capability(capability: Capability) -> models::Capability {
+    match capability {
+        Capability::ControlTv => models::Capability::ControlTv,
+    }
+}
+
+fn granted(grants: &[Grant], id: i64) -> BTreeSet<Capability> {
+    grants
+        .iter()
+        .filter(|grant| grant.profile_id == id)
+        .map(|grant| match grant.capability {
+            models::Capability::ControlTv => Capability::ControlTv,
+        })
+        .collect()
+}
+
+fn profile(stored: StoredProfile, grants: &[Grant]) -> Profile {
     Profile {
         id: ProfileId(stored.id),
+        granted: granted(grants, stored.id),
         name: stored.name,
         role: match stored.role {
             models::Role::Admin => Role::Admin,
@@ -100,13 +118,53 @@ impl Db {
                 .exec(&mut db)
                 .await,
         )?;
-        Ok(rows.into_iter().map(profile).collect())
+        let grants = stored(Grant::all().exec(&mut db).await)?;
+        Ok(rows.into_iter().map(|row| profile(row, &grants)).collect())
     }
 
     pub async fn profile(&self, id: ProfileId) -> Stored<Option<Profile>> {
         let mut db = self.db.clone();
-        let row = stored(StoredProfile::filter_by_id(id.0).first().exec(&mut db).await)?;
-        Ok(row.map(profile))
+        let Some(row) = stored(StoredProfile::filter_by_id(id.0).first().exec(&mut db).await)? else {
+            return Ok(None);
+        };
+        let grants = stored(Grant::filter(Grant::fields().profile_id().eq(id.0)).exec(&mut db).await)?;
+        Ok(Some(profile(row, &grants)))
+    }
+
+    pub async fn set_granted(&self, id: ProfileId, granted: Capability, on: bool) -> Stored<bool> {
+        let mut db = self.db.clone();
+        let changed = async {
+            let mut transaction = db.transaction().await?;
+            if StoredProfile::filter_by_id(id.0)
+                .first()
+                .exec(&mut transaction)
+                .await?
+                .is_none()
+            {
+                return Ok(false);
+            }
+            let fields = Grant::fields();
+            let this = fields
+                .profile_id()
+                .eq(id.0)
+                .and(fields.capability().eq(capability(granted)));
+            let found = Grant::filter(this.clone()).first().exec(&mut transaction).await?;
+            match (found.is_some(), on) {
+                (false, true) => {
+                    toasty::create!(Grant {
+                        profile_id: id.0,
+                        capability: capability(granted),
+                    })
+                    .exec(&mut transaction)
+                    .await?;
+                }
+                (true, false) => Grant::filter(this).delete().exec(&mut transaction).await?,
+                _ => {}
+            }
+            transaction.commit().await?;
+            Ok::<_, toasty::Error>(true)
+        };
+        stored(changed.await)
     }
 
     pub async fn create_profile(&self, new: NewProfile, at: u64) -> Stored<Profile> {
@@ -129,7 +187,7 @@ impl Db {
             .exec(&mut db)
             .await,
         )?;
-        Ok(profile(row))
+        Ok(profile(row, &[]))
     }
 
     pub async fn delete_profile(&self, id: ProfileId) -> Stored<bool> {
@@ -413,5 +471,29 @@ mod tests {
         assert_eq!(names, ["Frederik", "Mami", "Miriam", "Ramu"]);
         assert!(people[0].admin());
         assert!(people[1..].iter().all(|person| !person.admin()));
+    }
+
+    #[tokio::test]
+    async fn a_grant_stays_with_its_profile_until_taken_back_or_the_profile_goes() {
+        let (_, db) = auth().await;
+        let mami = ProfileId(2);
+        assert!(db.profile(mami).await.unwrap().unwrap().granted.is_empty());
+
+        assert!(db.set_granted(mami, Capability::ControlTv, true).await.unwrap());
+        assert!(db.set_granted(mami, Capability::ControlTv, true).await.unwrap());
+        let granted = BTreeSet::from([Capability::ControlTv]);
+        assert_eq!(db.profile(mami).await.unwrap().unwrap().granted, granted);
+        let everyone = db.profiles().await.unwrap();
+        assert_eq!(everyone[1].granted, granted);
+        assert!(everyone[2].granted.is_empty());
+
+        assert!(db.set_granted(mami, Capability::ControlTv, false).await.unwrap());
+        assert!(db.profile(mami).await.unwrap().unwrap().granted.is_empty());
+
+        db.set_granted(mami, Capability::ControlTv, true).await.unwrap();
+        assert!(db.delete_profile(mami).await.unwrap());
+        assert!(!db.set_granted(mami, Capability::ControlTv, true).await.unwrap());
+        let mut handle = db.db.clone();
+        assert!(Grant::all().exec(&mut handle).await.unwrap().is_empty());
     }
 }

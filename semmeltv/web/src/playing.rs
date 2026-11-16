@@ -12,7 +12,7 @@ use topcoat::view::{View, attributes, component, emit, live, view};
 const SETTLE: Duration = Duration::from_secs(4);
 const FRESH: Duration = Duration::from_secs(10);
 const SCRUB: Asset = asset!("./scrub.js");
-const PLAYER: Asset = asset!("./player.js");
+pub const PLAYER: Asset = asset!("./player.js");
 const LOCK_SCREEN: Asset = asset!("./lockscreen.js");
 const DIRECTIONS: [&str; 2] = ["back", "forward"];
 const ALLOWED_CONTROLS: [&str; 4] = ["pause", "resume", "toggle", "stop"];

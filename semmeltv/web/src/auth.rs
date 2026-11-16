@@ -1,4 +1,4 @@
-use crate::api::{Api, Choice, Me, Member, Person};
+use crate::api::{Api, CONTROL_TV, Choice, Me, Member, Person};
 use crate::layout::back;
 use topcoat::Result;
 use topcoat::context::{Cx, try_request_context};
@@ -21,6 +21,10 @@ const FOR_ADMINS: [&str; 4] = ["/storage", "/downloads", "/people", "/feedback"]
 
 pub fn me(cx: &Cx) -> Option<&Me> {
     try_request_context::<Me>(cx)
+}
+
+pub fn controls_tv(cx: &Cx) -> bool {
+    me(cx).is_some_and(|me| me.person.controls_tv())
 }
 
 pub fn admin(cx: &Cx) -> Result<()> {
@@ -256,7 +260,7 @@ async fn account_page(cx: &Cx) -> Result<impl View> {
             <div class="account-head">
                 avatar(person: &me.person, size: "large")
                 <h1>(me.person.name.as_str())</h1>
-                <p class="setting-note">(if me.person.admin() { "Admin: everything, including downloads, storage and people" } else { "Watches, plays and uses the remote" })</p>
+                <p class="setting-note">(role_note(&me.person))</p>
             </div>
             <p class="setting-note">"Safari, the SemmelTV app on your home screen and links opened from inside other apps each sign in on their own. Your passkey and password work in all of them."</p>
             <section class="settings">
@@ -309,15 +313,24 @@ async fn account_page(cx: &Cx) -> Result<impl View> {
     })
 }
 
+fn role_note(person: &Person) -> &'static str {
+    match (person.admin(), person.controls_tv()) {
+        (true, _) => "Admin: everything, including the TV, downloads, storage and people",
+        (false, true) => "Watches, plays on the TV and uses its remote",
+        (false, false) => "Watches on this phone or laptop; the TV's remote isn't yours on this TV",
+    }
+}
+
 #[component]
 async fn member_row(member: &Member, own: bool) -> Result<impl View> {
     let person = &member.person;
     let mut facts = Vec::new();
-    facts.push(if person.admin() {
-        "Admin".to_string()
-    } else {
-        "Viewer".to_string()
+    facts.push(match (person.admin(), person.controls_tv()) {
+        (true, _) => "Admin".to_string(),
+        (false, true) => "Viewer, controls the TV".to_string(),
+        (false, false) => "Viewer, can't control the TV".to_string(),
     });
+    let capability = format!("/api/auth/members/{}/capabilities/{CONTROL_TV}", person.id);
     facts.push(match member.passkeys {
         0 => "no passkey".to_string(),
         1 => "1 passkey".to_string(),
@@ -349,6 +362,13 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
             </div>
             <div class="member-actions">
                 <button type="button" class="pill" data-invite=(person.id.to_string()) data-name=(person.name.as_str())>"Invite link"</button>
+                if !person.admin() {
+                    if person.controls_tv() {
+                        <button type="button" class="pill quiet" data-capability=(capability) data-method="DELETE">"Take TV control away"</button>
+                    } else {
+                        <button type="button" class="pill" data-capability=(capability) data-method="PUT">"Give TV control"</button>
+                    }
+                }
                 if member.sessions > 0 {
                     <button type="button" class="pill quiet" data-post=(format!("/api/auth/members/{}/sign-out", person.id)) data-done="hide">"Sign out everywhere"</button>
                 }
@@ -369,7 +389,7 @@ async fn people_page(cx: &Cx) -> Result<impl View> {
         <article class="page people">
             back(href: "/profiles")
             <h1>"People"</h1>
-            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers watch, play and use the remote; only admins download, remove titles, pair the TV and manage people."</p>
+            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote, voice and sound. Admins do all that, and download, remove titles, pair the TV and manage people."</p>
             match members {
                 Ok(members) => {
                     <section class="settings">

@@ -1,10 +1,10 @@
 use super::gate::{self, Gate};
-use super::{Auth, Person, Refusal, Resolved, Role};
+use super::{Auth, Capability, Person, Refusal, Resolved, Role};
 use crate::profile::ProfileId;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router};
 use serde::Deserialize;
 use serde_json::json;
@@ -28,6 +28,10 @@ pub fn routes<S: Clone + Send + Sync + 'static>(gate: Gate) -> Router<S> {
         .route("/api/auth/members/{id}", delete(delete_member))
         .route("/api/auth/members/{id}/invite", post(invite))
         .route("/api/auth/members/{id}/sign-out", post(sign_out_member))
+        .route(
+            "/api/auth/members/{id}/capabilities/{capability}",
+            put(grant).delete(take_back),
+        )
         .with_state(gate)
 }
 
@@ -480,6 +484,34 @@ async fn sign_out_member(State(gate): State<Gate>, Path(id): Path<i64>) -> Respo
     };
     match done.await {
         Ok(name) => Json(json!({ "ok": true, "message": format!("{name} is signed out everywhere") })).into_response(),
+        Err(refusal) => refused(refusal),
+    }
+}
+
+async fn grant(State(gate): State<Gate>, Path((id, capability)): Path<(i64, String)>) -> Response {
+    set_capability(&gate, id, &capability, true).await
+}
+
+async fn take_back(State(gate): State<Gate>, Path((id, capability)): Path<(i64, String)>) -> Response {
+    set_capability(&gate, id, &capability, false).await
+}
+
+async fn set_capability(gate: &Gate, id: i64, name: &str, on: bool) -> Response {
+    let Some(capability) = Capability::named(name) else {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("No capability {name}"), "ok": false })),
+        )
+            .into_response();
+    };
+    match gate.auth.grant(ProfileId(id), capability, on).await {
+        Ok(person) => {
+            let message = match (capability, person.can(capability)) {
+                (Capability::ControlTv, true) => format!("{} can control the TV", person.name),
+                (Capability::ControlTv, false) => format!("{} can't control the TV", person.name),
+            };
+            Json(json!({ "ok": true, "message": message, "person": person })).into_response()
+        }
         Err(refusal) => refused(refusal),
     }
 }

@@ -27,9 +27,10 @@ const FEEDBACK: Asset = asset!("./feedback.js");
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let public = app_context::<Public>(cx);
     let signed_in = auth::me(cx).is_some();
+    let controls_tv = auth::controls_tv(cx);
     Ok(view! {
         <!DOCTYPE html>
-        <html lang="en" data-api=(public.api.as_str()) data-build=(version::id())>
+        <html lang="en" data-api=(public.api.as_str()) data-build=(version::id()) data-controls-tv=(controls_tv.to_string())>
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
@@ -52,8 +53,10 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 topcoat::runtime::script()
                 <script type="module" src=(TOAST)></script>
                 <script type="module" src=(AUTH)></script>
-                if signed_in {
+                if controls_tv {
                     <script type="module" src=(MICROPHONE)></script>
+                }
+                if signed_in {
                     <script type="module" src=(APP)></script>
                     <script type="module" src=(PHONE)></script>
                     <script type="module" src=(FEEDBACK)></script>
@@ -68,17 +71,19 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 } else {
                 <header class="top">
                     link(href: "/", attrs: attributes! { cx => class="brand" }, <img src=(brand::WORDMARK) alt="SemmelTV">)
-                    playing::mode_switch()
-                    <span class="mode-note" id="mode-note" role="status"></span>
-                    <div class="microphone" id="microphone" data-state="idle">
-                        <button class="microphone-talk" id="microphone-talk" type="button" aria-label="Talk to the TV" aria-pressed="false">
-                            <svg viewBox="0 0 24 24" aria-hidden="true">
-                                <path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15Z"></path>
-                                <path d="M18.5 11.5a6.5 6.5 0 0 1-13 0M12 18v3.5" fill="none"></path>
-                            </svg>
-                            <i class="microphone-level" id="microphone-level"></i>
-                        </button>
-                    </div>
+                    if controls_tv {
+                        playing::mode_switch()
+                        <span class="mode-note" id="mode-note" role="status"></span>
+                        <div class="microphone" id="microphone" data-state="idle">
+                            <button class="microphone-talk" id="microphone-talk" type="button" aria-label="Talk to the TV" aria-pressed="false">
+                                <svg viewBox="0 0 24 24" aria-hidden="true">
+                                    <path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15Z"></path>
+                                    <path d="M18.5 11.5a6.5 6.5 0 0 1-13 0M12 18v3.5" fill="none"></path>
+                                </svg>
+                                <i class="microphone-level" id="microphone-level"></i>
+                            </button>
+                        </div>
+                    }
                     <button class="top-link feedback-open" id="feedback-open" type="button" aria-label="Send feedback" aria-haspopup="dialog">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                             <path d="M7 16.5H5.5a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h13a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H12l-5 4Z"></path>
@@ -107,7 +112,11 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                         (slot)
                     )
                 </main>
-                playing::player()
+                if controls_tv {
+                    playing::player()
+                } else {
+                    <script type="module" src=(playing::PLAYER)></script>
+                }
                 playing::pulse()
                 }
             </body>

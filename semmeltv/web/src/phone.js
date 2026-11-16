@@ -35,6 +35,7 @@ const icons = {
 const html = document.documentElement;
 const DEVICE_KEY = "semmeltv.device";
 const RECONNECT = 2000;
+const controlsTv = html.dataset.controlsTv === "true";
 let player = null;
 let screen = { kind: "tv", device: null, play: null, notice: null };
 let seenNotice = undefined;
@@ -198,7 +199,7 @@ function ours(view) {
 function render() {
   const kind = isLaptop() ? "laptop" : "phone";
   if (html.dataset.device !== kind) html.dataset.device = kind;
-  const mode = screen.kind === "tv" ? "tv" : "phone";
+  const mode = screen.kind === "tv" && controlsTv ? "tv" : "phone";
   if (html.dataset.mode !== mode) html.dataset.mode = mode;
   if (!html.hasAttribute("data-phone-ready")) html.dataset.phoneReady = "";
   if (player && !player.closed) {
@@ -421,6 +422,7 @@ class Player {
     this.airplay.hidden = true;
     this.pip.hidden = !(document.pictureInPictureEnabled || this.video.webkitSupportsPresentationMode);
     this.tvButton = button("pp-icon pp-tv", "Continue on TV", icons.tv);
+    this.tvButton.hidden = !controlsTv;
     const top = element("div", "pp-top");
     top.append(this.closeButton, this.titleText, this.airplay, this.pip, this.tvButton);
 
@@ -1472,7 +1474,7 @@ window.addEventListener("click", (event) => {
     flip();
     return;
   }
-  if (screen.kind === "tv") return;
+  if (screen.kind === "tv" && controlsTv) return;
   const target = event.target.closest("[data-play-movie], [data-play-show]");
   if (!target) return;
   const pick = pickFrom(target);

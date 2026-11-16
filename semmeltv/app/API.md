@@ -33,6 +33,16 @@ With it set, every request passes one gate in the app before anything else:
   an `Origin` outside the list gets 403, whatever its cookie.
 - Storage, `/api/tv/pair`, `/api/auth/members/...`, downloads and reading
   feedback need an admin, else 403 "Only an admin can do that".
+- Controlling the TV needs the `control-tv` capability, else 403 "Only someone
+  allowed to control this TV can do that": `/api/play`, `/api/command`,
+  `/api/listen`, `/api/microphone`, `/api/volume/*`, any change under
+  `/api/playback/*`, `/api/tv/*` and `/api/tv-profile`, `POST /api/audio`,
+  `/api/audio/pair`, `/api/audio/headphones`, `/api/audio/delay`,
+  `/api/audio/track` and `/api/subtitles/track|toggle|delay`. Reading them,
+  dialogue mode and the subtitle style stay open to everyone signed in. On
+  `POST /api/screen`, someone without it can't `flip`, and their `play` is
+  taken only while nothing else plays (the TV plays nothing and no other phone
+  plays), else 422 "Something else plays now".
 - `GET /api/events` also takes `Authorization: Bearer <token>`, the token in
   `SEMMELTV_SERVICE_TOKEN_FILE`, which is how the web app's server follows the
   TV. The token opens nothing else.
@@ -72,8 +82,14 @@ Argon2id.
 | DELETE | `/api/auth/members/{id}` | | admin: the profile and all its state go |
 | POST | `/api/auth/members/{id}/invite` | | admin: `{ ok, link, expires_in_days }` |
 | POST | `/api/auth/members/{id}/sign-out` | | admin: ends all of that person's sessions |
+| PUT | `/api/auth/members/{id}/capabilities/{capability}` | | admin: grants it, `{ ok, message, person }` |
+| DELETE | `/api/auth/members/{id}/capabilities/{capability}` | | admin: takes it back, `{ ok, message, person }` |
 
-A person is `{ id, name, role, color }`, `role` being `admin` or `viewer`.
+A person is `{ id, name, role, color, capabilities }`, `role` being `admin` or
+`viewer`. `capabilities` lists what the person may do on this TV beyond
+browsing and watching on their own device; the only one is `control-tv`. An
+admin has every capability; a viewer only those granted, none at first. Each
+TV keeps its own grants.
 Passkeys use WebAuthn with user verification (Face ID, Touch ID, a screen
 lock); a passkey belongs to the address it was made on, so the tailnet and the
 home address each need their own. `credential` is the browser's

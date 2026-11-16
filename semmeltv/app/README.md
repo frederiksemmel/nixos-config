@@ -395,6 +395,7 @@ async: the core and the API await them.
 | Table | Holds | Per |
 | --- | --- | --- |
 | `profiles` | Frederik (admin), Mami, Miriam, Ramu (viewers): name, role, password hash, colour | |
+| `capabilities` | what an admin granted a viewer on this TV, such as `control_tv` | profile |
 | `passkeys`, `sessions`, `invites` | sign-in, kept by the auth code | profile |
 | `video_places` | an episode's or film's stopping point, when it was last played, finished, audio and subtitle track, subtitles shown | profile |
 | `series_places` | the last episode started per show, and whether it finished | profile |
@@ -436,13 +437,19 @@ it needs the app's models. Review the SQL it writes before committing it.
 
 ## Profiles
 
-Four people use the TV: Frederik, the admin, and Mami, Miriam and Ramu, who are
-viewers. Viewers browse, play, watch on their phone, use the remote, the
-microphone and the TV/phone switch, pair their own headphones and keep their
-own subtitle style. Only an admin downloads, removes titles from the TV's
-storage, pairs the TV for volume, and adds, invites, signs out or removes
-people. Everyone signs in, at home and on the tailnet alike; the API
-documents how ([Sign-in](API.md#sign-in)).
+Frederik is the admin; Mami, Miriam, Ramu and Chris are viewers. Viewers
+browse, watch on their own phone or laptop while nothing else plays, set
+dialogue mode and keep their own subtitle style. Playing on the TV is a
+capability an admin grants per person and per TV, on the People page
+(`control-tv`): with it a viewer also plays on the TV, uses its remote, the
+microphone and the TV/phone switch, the TV's sound and their headphones, and a
+phone of theirs takes over from whatever plays. New profiles start without it;
+on semmeltv5 only Chris has it (migration `0006` granted it). Without it the
+web app shows none of those controls, and the API refuses them. Only an admin
+downloads, removes titles from the TV's storage, pairs the TV for volume, and
+adds, invites, signs out or removes people, and grants or takes back
+capabilities; an admin has every capability. Everyone signs in, at home and on
+the tailnet alike; the API documents how ([Sign-in](API.md#sign-in)).
 
 Per profile: Currently Watching, Started and Forgotten and what was dismissed
 from it, every file's stopping point, last play, finish and chosen audio and

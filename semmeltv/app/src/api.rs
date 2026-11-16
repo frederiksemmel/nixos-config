@@ -27,7 +27,7 @@ use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{delete, get, post};
-use axum::{Json, Router, middleware};
+use axum::{Extension, Json, Router, middleware};
 use serde::{Deserialize, Serialize};
 use std::path::{Path as FsPath, PathBuf};
 use std::process::Stdio;
@@ -113,6 +113,7 @@ impl TryFrom<ScreenRequest> for ScreenCommand {
             } => Self::Play {
                 device,
                 pick: pick_of(movie, show, season, episode)?,
+                takes_over: true,
             },
             ScreenRequest::Resume {
                 device,
@@ -1341,10 +1342,35 @@ async fn screen_view(State(api): State<Api>) -> Json<screen::View> {
     Json(api.core.screen())
 }
 
-async fn screen_command(State(api): State<Api>, Who(profile): Who, Json(request): Json<ScreenRequest>) -> Response {
-    match ScreenCommand::try_from(request) {
-        Ok(command) => ask(&api.core, Request::Screen(command, profile)).await,
-        Err(error) => problem(StatusCode::UNPROCESSABLE_ENTITY, error),
+fn without_control(command: ScreenCommand) -> Option<ScreenCommand> {
+    match command {
+        ScreenCommand::Flip { .. } => None,
+        ScreenCommand::Play { device, pick, .. } => Some(ScreenCommand::Play {
+            device,
+            pick,
+            takes_over: false,
+        }),
+        other => Some(other),
+    }
+}
+
+async fn screen_command(
+    State(api): State<Api>,
+    Who(profile): Who,
+    person: Option<Extension<auth::Person>>,
+    Json(request): Json<ScreenRequest>,
+) -> Response {
+    let command = match ScreenCommand::try_from(request) {
+        Ok(command) => command,
+        Err(error) => return problem(StatusCode::UNPROCESSABLE_ENTITY, error),
+    };
+    let command = match person {
+        Some(Extension(person)) if !person.can(auth::Capability::ControlTv) => without_control(command),
+        _ => Some(command),
+    };
+    match command {
+        Some(command) => ask(&api.core, Request::Screen(command, profile)).await,
+        None => problem(StatusCode::FORBIDDEN, auth::gate::CANNOT_CONTROL.to_string()),
     }
 }
 
@@ -1482,6 +1508,27 @@ mod tests {
         assert!(read(json!({ "action": "play", "device": device })).is_err());
         assert!(read(json!({ "action": "play", "device": device, "movie": "dune-2021", "season": 1 })).is_err());
         assert!(read(json!({ "action": "stop", "device": device, "movie": "dune-2021" })).is_err());
+    }
+
+    #[test]
+    fn without_tv_control_a_phone_plays_only_on_itself_and_never_moves_the_screen() {
+        let read =
+            |body: Value| ScreenCommand::try_from(serde_json::from_value::<ScreenRequest>(body).unwrap()).unwrap();
+        let device = json!({ "id": "p1", "name": "phone" });
+        let play = read(json!({ "action": "play", "device": device, "movie": "dune-2021" }));
+        assert!(matches!(play, ScreenCommand::Play { takes_over: true, .. }));
+        assert!(matches!(
+            without_control(play),
+            Some(ScreenCommand::Play { takes_over: false, .. })
+        ));
+        for to in ["phone", "tv"] {
+            assert_eq!(
+                without_control(read(json!({ "action": "flip", "device": device, "to": to }))),
+                None
+            );
+        }
+        let stop = read(json!({ "action": "stop", "device": device }));
+        assert_eq!(without_control(stop.clone()), Some(stop));
     }
 
     struct Server {

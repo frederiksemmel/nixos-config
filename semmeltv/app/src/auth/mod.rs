@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use std::fmt;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-pub use store::Role;
+pub use store::{Capability, Role};
 use store::{Invite, NewProfile, Profile, Session, StoreError, StoredPasskey};
 use webauthn_rs::prelude::{
     CreationChallengeResponse, Passkey, PasskeyAuthentication, PasskeyRegistration, PublicKeyCredential,
@@ -39,21 +39,31 @@ pub struct Person {
     pub name: String,
     pub role: Role,
     pub color: String,
+    pub capabilities: Vec<Capability>,
 }
 
 impl Person {
     pub fn admin(&self) -> bool {
         self.role == Role::Admin
     }
+
+    pub fn can(&self, capability: Capability) -> bool {
+        self.capabilities.contains(&capability)
+    }
 }
 
 impl From<&Profile> for Person {
     fn from(profile: &Profile) -> Self {
+        let capabilities = match profile.role {
+            Role::Admin => Capability::ALL.to_vec(),
+            Role::Viewer => profile.granted.iter().copied().collect(),
+        };
         Person {
             id: profile.id,
             name: profile.name.clone(),
             role: profile.role,
             color: profile.color.clone().unwrap_or_else(|| color_for(profile.id)),
+            capabilities,
         }
     }
 }
@@ -720,6 +730,13 @@ impl Auth {
         }
     }
 
+    pub async fn grant(&self, profile: ProfileId, capability: Capability, on: bool) -> Outcome<Person> {
+        if !self.db().set_granted(profile, capability, on).await? {
+            return Err(Refusal::UnknownProfile);
+        }
+        self.person(profile).await
+    }
+
     pub async fn delete_profile(&self, by: ProfileId, profile: ProfileId) -> Outcome<()> {
         if by == profile {
             return Err(Refusal::Yourself);
@@ -1020,6 +1037,31 @@ mod tests {
         assert_eq!(rig.auth.people().await.unwrap().len(), before + 1);
         rig.auth.delete_profile(FREDERIK, oma.id).await.unwrap();
         assert_eq!(rig.auth.people().await.unwrap().len(), before);
+    }
+
+    #[tokio::test]
+    async fn an_admin_can_do_everything_and_a_viewer_only_what_was_granted() {
+        let rig = Rig::new().await;
+        assert!(rig.auth.person(FREDERIK).await.unwrap().can(Capability::ControlTv));
+        assert!(!rig.auth.person(MAMI).await.unwrap().can(Capability::ControlTv));
+        let oma = rig.auth.create_profile("Oma", Role::Viewer).await.unwrap();
+        assert!(oma.capabilities.is_empty());
+
+        let mami = rig.auth.grant(MAMI, Capability::ControlTv, true).await.unwrap();
+        assert!(mami.can(Capability::ControlTv));
+        let members = rig.auth.members().await.unwrap();
+        assert_eq!(members[1].person.capabilities, [Capability::ControlTv]);
+        assert_eq!(
+            serde_json::to_value(&members[1]).unwrap()["capabilities"],
+            serde_json::json!(["control-tv"])
+        );
+
+        let mami = rig.auth.grant(MAMI, Capability::ControlTv, false).await.unwrap();
+        assert!(!mami.can(Capability::ControlTv));
+        assert_eq!(
+            rig.auth.grant(ProfileId(999), Capability::ControlTv, true).await,
+            Err(Refusal::UnknownProfile)
+        );
     }
 
     #[tokio::test]

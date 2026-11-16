@@ -1,5 +1,6 @@
 use crate::profile::ProfileId;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeSet;
 use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,11 +19,37 @@ impl Role {
     }
 }
 
+/// Something a profile may do beyond browsing and watching on its own
+/// device. An admin may do all of them; anyone else only what was granted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Capability {
+    /// Play on the TV and use its remote: playback, volume, the TV's power,
+    /// its sound output and headphones, the microphone, and moving what
+    /// plays between the TV and a phone.
+    ControlTv,
+}
+
+impl Capability {
+    pub const ALL: [Capability; 1] = [Capability::ControlTv];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Capability::ControlTv => "control-tv",
+        }
+    }
+
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|capability| capability.name() == name)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Profile {
     pub id: ProfileId,
     pub name: String,
     pub role: Role,
+    pub granted: BTreeSet<Capability>,
     pub color: Option<String>,
     pub password_hash: Option<String>,
     pub created_at: u64,

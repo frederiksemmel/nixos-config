@@ -1,4 +1,4 @@
-use super::{Auth, Person, Resolved, SESSION_LIFETIME};
+use super::{Auth, Capability, Person, Resolved, SESSION_LIFETIME};
 use crate::profile::ProfileId;
 use axum::Json;
 use axum::extract::{FromRequestParts, Request, State};
@@ -11,6 +11,7 @@ use sha2::{Digest, Sha256};
 use std::convert::Infallible;
 
 pub const COOKIE: &str = "semmeltv_session";
+pub const CANNOT_CONTROL: &str = "Only someone allowed to control this TV can do that";
 
 #[derive(Clone)]
 pub struct Gate {
@@ -43,6 +44,7 @@ pub enum Access {
     Stream,
     Service,
     Signed,
+    Control,
     Admin,
     AdminOrService,
 }
@@ -61,6 +63,12 @@ pub fn access(method: &Method, path: &str) -> Access {
         ["api", "feedback", _, "status" | "comments"] => Access::AdminOrService,
         ["api", "storage", ..] | ["api", "tv", "pair"] | ["api", "auth", "members", ..] | ["api", "downloads", ..] => {
             Access::Admin
+        }
+        ["api", "play" | "command" | "listen" | "microphone" | "volume", ..]
+        | ["api", "audio", "pair" | "headphones" | "delay" | "track"]
+        | ["api", "subtitles", "track" | "toggle" | "delay"] => Access::Control,
+        ["api", "playback", _] | ["api", "tv", _] | ["api", "tv-profile" | "audio"] if writes(method) => {
+            Access::Control
         }
         _ => Access::Signed,
     }
@@ -172,6 +180,9 @@ pub async fn guard(State(gate): State<Gate>, mut request: Request, next: Next) -
         (Access::Admin | Access::AdminOrService, Some(person)) if !person.admin() => {
             return refuse(StatusCode::FORBIDDEN, "Only an admin can do that");
         }
+        (Access::Control, Some(person)) if !person.can(Capability::ControlTv) => {
+            return refuse(StatusCode::FORBIDDEN, CANNOT_CONTROL);
+        }
         _ => {}
     }
 
@@ -195,8 +206,41 @@ mod tests {
 
     #[test]
     fn every_route_has_its_access() {
-        let (get, post) = (Method::GET, Method::POST);
+        let (get, post, put, delete) = (Method::GET, Method::POST, Method::PUT, Method::DELETE);
         let rows = [
+            (&post, "/api/command", Access::Control),
+            (&post, "/api/listen", Access::Control),
+            (&get, "/api/microphone", Access::Control),
+            (&get, "/api/playback", Access::Signed),
+            (&post, "/api/playback/seek", Access::Control),
+            (&post, "/api/playback/toggle", Access::Control),
+            (&post, "/api/playback/skip-segment", Access::Control),
+            (&get, "/api/tv", Access::Signed),
+            (&post, "/api/tv/volume-up", Access::Control),
+            (&post, "/api/tv/mute", Access::Control),
+            (&get, "/api/tv-profile", Access::Signed),
+            (&post, "/api/tv-profile", Access::Control),
+            (&get, "/api/screen", Access::Signed),
+            (&post, "/api/screen", Access::Signed),
+            (&post, "/api/volume/up", Access::Control),
+            (&get, "/api/audio", Access::Signed),
+            (&post, "/api/audio", Access::Control),
+            (&post, "/api/audio/pair", Access::Control),
+            (&delete, "/api/audio/pair", Access::Control),
+            (&delete, "/api/audio/headphones", Access::Control),
+            (&post, "/api/audio/delay", Access::Control),
+            (&post, "/api/audio/track", Access::Control),
+            (&get, "/api/audio/dialogue", Access::Signed),
+            (&post, "/api/audio/dialogue", Access::Signed),
+            (&get, "/api/subtitles", Access::Signed),
+            (&put, "/api/subtitles", Access::Signed),
+            (&post, "/api/subtitles/track", Access::Control),
+            (&post, "/api/subtitles/toggle", Access::Control),
+            (&post, "/api/subtitles/delay", Access::Control),
+            (&post, "/api/subtitles/fetch", Access::Signed),
+            (&post, "/api/watched", Access::Signed),
+            (&post, "/api/stream/abc/progress", Access::Stream),
+            (&put, "/api/auth/members/2/capabilities/control-tv", Access::Admin),
             (&get, "/api/auth/choices", Access::Open),
             (&post, "/api/auth/password", Access::Open),
             (&post, "/api/auth/passkey/start", Access::Open),
@@ -208,12 +252,12 @@ mod tests {
             (&get, "/api/events", Access::Service),
             (&get, "/api/library", Access::Signed),
             (&get, "/api/movies/dune/poster", Access::Signed),
-            (&post, "/api/play", Access::Signed),
+            (&post, "/api/play", Access::Control),
             (&get, "//api/auth/choices/../../library", Access::Signed),
             (&get, "/api/storage", Access::Admin),
             (&post, "/api/storage/remove", Access::Admin),
             (&post, "/api/tv/pair", Access::Admin),
-            (&post, "/api/tv/on", Access::Signed),
+            (&post, "/api/tv/on", Access::Control),
             (&get, "/api/auth/members", Access::Admin),
             (&post, "/api/auth/members/2/invite", Access::Admin),
             (&post, "/api/downloads/confirm", Access::Admin),

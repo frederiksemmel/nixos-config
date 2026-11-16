@@ -937,11 +937,19 @@ pub struct Person {
     pub name: String,
     pub role: Role,
     pub color: String,
+    #[serde(default)]
+    pub capabilities: Vec<String>,
 }
+
+pub const CONTROL_TV: &str = "control-tv";
 
 impl Person {
     pub fn admin(&self) -> bool {
         self.role == Role::Admin
+    }
+
+    pub fn controls_tv(&self) -> bool {
+        self.capabilities.iter().any(|capability| capability == CONTROL_TV)
     }
 
     pub fn initial(&self) -> String {
@@ -1097,6 +1105,18 @@ mod tests {
                 movie: "dune-2021".to_string()
             }
         );
+    }
+
+    #[test]
+    fn a_person_controls_the_tv_only_with_that_capability() {
+        let read = |capabilities: Value| {
+            serde_json::from_value::<Person>(json!({
+                "id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "capabilities": capabilities
+            }))
+            .unwrap()
+        };
+        assert!(read(json!(["control-tv"])).controls_tv());
+        assert!(!read(json!([])).controls_tv());
     }
 
     #[test]

@@ -279,6 +279,19 @@ document.addEventListener("click", (event) => {
         location.reload();
       },
     });
+    return;
+  }
+  const capability = event.target.closest("[data-capability]");
+  if (capability) {
+    event.preventDefault();
+    window.semmeltvAct({
+      key: `capability:${capability.dataset.capability}`,
+      mark: capability,
+      send: async () => {
+        await call(capability.dataset.capability, undefined, capability.dataset.method);
+        location.reload();
+      },
+    });
   }
 });
 

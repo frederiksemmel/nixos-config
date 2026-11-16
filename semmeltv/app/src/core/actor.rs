@@ -1049,7 +1049,14 @@ impl Actor {
                 self.screen_step(event, by).await;
                 Outcome::done(format!("Watching on {name}"))
             }
-            ScreenCommand::Play { device, pick } => {
+            ScreenCommand::Play {
+                device,
+                pick,
+                takes_over,
+            } => {
+                if !takes_over && !self.screen.free_for(&device, self.tv_place().as_ref()) {
+                    return Outcome::refused("Something else plays now");
+                }
                 let place = match self.screen_place(&pick, None, by).await {
                     Ok(place) => place,
                     Err(refusal) => return refusal,

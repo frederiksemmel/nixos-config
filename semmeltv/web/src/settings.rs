@@ -161,6 +161,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
     let abilities = api.tv_abilities().await.unwrap_or_default();
     let (paired, pair) = pairing(abilities.paired);
     let admin = crate::auth::me(cx).is_some_and(|me| me.person.admin());
+    let controls_tv = crate::auth::controls_tv(cx);
     let shown = api.tv_profile().await.ok();
     Ok(view! {
         <article class="page">
@@ -179,6 +180,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     Err(error) => <p class="setting-note">(error)</p>,
                 }
             </section>
+            if controls_tv {
             <section class="settings">
                 <h2>"TV"</h2>
                 <div class="setting-group">
@@ -203,6 +205,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     }
                 </div>
             </section>
+            }
             <section class="settings">
                 <h2>"Sound"</h2>
                 match dialogue {
@@ -210,7 +213,9 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     Err(error) => <p class="setting-note">(error)</p>,
                 }
             </section>
-            headphones_settings()
+            if controls_tv {
+                headphones_settings()
+            }
             if admin {
             <section class="settings">
                 <h2>"Library"</h2>

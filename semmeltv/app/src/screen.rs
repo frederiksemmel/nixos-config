@@ -240,6 +240,16 @@ impl Screen {
         !matches!(self, Self::Phone { .. })
     }
 
+    /// Whether `device` can play here without stopping anything: the TV
+    /// plays nothing and no other phone plays or is being handed to.
+    pub fn free_for(&self, device: &Device, tv: Option<&Place>) -> bool {
+        match self {
+            Self::Tv => tv.is_none(),
+            Self::Moving { .. } => false,
+            Self::Phone { device: holder, play } => holder == device || play.is_none(),
+        }
+    }
+
     pub fn step(&mut self, event: Event, tv: Option<&Place>, now: Instant) -> Vec<Effect> {
         let (next, mut effects) = transition(std::mem::take(self), event, tv, now);
         *self = next;
@@ -725,6 +735,27 @@ mod tests {
         effects
             .iter()
             .any(|effect| matches!(effect, Effect::Tell(Notice { tone: told, .. }) if *told == tone))
+    }
+
+    #[test]
+    fn a_phone_finds_the_screen_free_only_where_nothing_else_plays() {
+        let now = Instant::now();
+        let (mine, other) = (phone("a"), phone("b"));
+        assert!(Screen::Tv.free_for(&mine, None));
+        assert!(!Screen::Tv.free_for(&mine, Some(&place(10.0))));
+        let moving = Screen::Moving {
+            to: other.clone(),
+            place: place(10.0),
+            since: now,
+        };
+        assert!(!moving.free_for(&mine, None));
+        let idle = Screen::Phone {
+            device: other.clone(),
+            play: None,
+        };
+        assert!(idle.free_for(&mine, None));
+        assert!(!playing(&other, "s1", 5.0, now).free_for(&mine, None));
+        assert!(playing(&mine, "s1", 5.0, now).free_for(&mine, None));
     }
 
     #[test]

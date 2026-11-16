@@ -1440,7 +1440,10 @@ with sync_playwright() as playwright:
         phone.goto("/settings")
         phone.until('!!document.querySelector("main .settings")')
         assert phone.js("""!document.querySelector('main a[href="/storage"], main a[href="/downloads"], [data-post="/api/tv/pair"]')"""), "a viewer has no Storage, Downloads or TV pairing"
-        assert phone.js("""!!document.querySelector('[data-post="/api/tv-profile"]')"""), "a viewer can put her profile on the TV"
+        assert phone.js("""!document.querySelector('[data-post="/api/tv-profile"], #mode, #microphone, .player')"""), "a viewer without TV control sees no TV controls"
+        assert phone.api("POST", "/api/play", {"movie": FILM})["status"] == 403, "a viewer without TV control can't play on the TV"
+        flip = {"action": "flip", "to": "tv", "device": {"id": "vm-mami", "name": "phone"}}
+        assert phone.api("POST", "/api/screen", flip)["status"] == 403, "nor move what plays to the TV"
         phone.goto(f"/shows/{SHOW}")
         phone.until('!!document.querySelector("main .episode-row")')
         assert phone.js('!document.querySelector("main .season-downloads")'), "a viewer is offered no season downloads"
@@ -1452,10 +1455,15 @@ with sync_playwright() as playwright:
         password_sign_in(phone, "Frederik", "frederik-pass")
         phone.until(f'location.pathname === "/" && {AVATAR} === "F"')
         phone.until(WATCHING)
+        phone.goto("/people")
+        phone.page.locator(".member", has_text="Mami").locator("[data-capability]").tap()
+        phone.until('[...document.querySelectorAll(".member")].some((row) => row.textContent.includes("Mami") && row.textContent.includes("controls the TV"))')
         phone.goto("/profiles")
         phone.until('[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Mami") && choice.textContent.includes("On this device"))')
         phone.page.locator(".profile-choice", has_text="Mami").tap()
         phone.until(f'location.pathname === "/" && {AVATAR} === "M"')
+        phone.goto("/settings")
+        phone.until('!!document.querySelector("#mode") && !!document.querySelector(\'[data-post="/api/tv-profile"]\')')
         phone.goto("/profiles")
         password_sign_in(phone, "Frederik", "frederik-pass")
         phone.until(f'location.pathname === "/" && {AVATAR} === "F"')

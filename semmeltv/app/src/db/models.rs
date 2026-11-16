@@ -8,6 +8,11 @@ pub enum Role {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]
+pub enum Capability {
+    ControlTv,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]
 pub enum Kind {
     Series,
     Movie,
@@ -50,6 +55,8 @@ pub struct Profile {
     pub created_at: i64,
 
     #[has_many]
+    pub grants: Deferred<Vec<Grant>>,
+    #[has_many]
     pub passkeys: Deferred<Vec<Passkey>>,
     #[has_many]
     pub sessions: Deferred<Vec<Session>>,
@@ -69,6 +76,16 @@ pub struct Profile {
     pub subtitle_settings: Deferred<Option<SubtitleSettings>>,
     #[has_one]
     pub audio_prefs: Deferred<Option<AudioPrefs>>,
+}
+
+#[derive(Debug, toasty::Model)]
+#[table = "capabilities"]
+#[key(profile_id, capability)]
+pub struct Grant {
+    pub profile_id: i64,
+    pub capability: Capability,
+    #[belongs_to(key = profile_id, references = id)]
+    pub profile: Deferred<Profile>,
 }
 
 #[derive(Debug, toasty::Model)]
@@ -212,6 +229,7 @@ pub struct Setting {
 pub fn all() -> toasty::ModelSet {
     toasty::models!(
         Profile,
+        Grant,
         Passkey,
         Session,
         Invite,

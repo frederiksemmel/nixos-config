@@ -317,12 +317,13 @@ async fn home(cx: &Cx) -> Result<impl View> {
     let rating = signal(cx, String::new);
     let year = signal(cx, String::new);
     let said = signal(cx, String::new);
+    let controls_tv = crate::auth::controls_tv(cx);
     Ok(view! {
         <div class="search">
             <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="6.5"></circle><path d="m16 16 4.5 4.5"></path></svg>
             <input
                 type="search"
-                placeholder="Search, or tell the TV"
+                placeholder=(if controls_tv { "Search, or tell the TV" } else { "Search" })
                 autocomplete="off"
                 autocapitalize="off"
                 spellcheck="false"
@@ -332,15 +333,17 @@ async fn home(cx: &Cx) -> Result<impl View> {
                 @input=$(|e: Event| query.set(e.target.value))
             >
         </div>
-        <div class="tell" :hidden=$(query.get().trim().is_empty())>
-            <button type="button" @click=$(async |_e| {
-                let answer = tell(query.get()).await;
-                said.set(answer);
-            })>
-                "Tell the TV: “" $(query.get().trim().to_owned()) "”"
-            </button>
-        </div>
-        <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
+        if controls_tv {
+            <div class="tell" :hidden=$(query.get().trim().is_empty())>
+                <button type="button" @click=$(async |_e| {
+                    let answer = tell(query.get()).await;
+                    said.set(answer);
+                })>
+                    "Tell the TV: “" $(query.get().trim().to_owned()) "”"
+                </button>
+            </div>
+            <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
+        }
         <div class="sections" :hidden=$(!query.get().trim().is_empty())>
             sections(section: section.clone(), rating: rating.clone(), year: year.clone())
         </div>
