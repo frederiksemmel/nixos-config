@@ -1,8 +1,41 @@
 {
+  config,
   lib,
   pkgs,
   ...
 }:
+let
+  imv = lib.getExe config.programs.imv.package;
+  mpv = lib.getExe config.programs.mpv.finalPackage;
+
+  openOnFstux = pkgs.writeShellApplication {
+    name = "open-on-fstux";
+    runtimeInputs = [
+      pkgs.openssh
+      pkgs.coreutils
+      pkgs.getent
+      pkgs.gawk
+      pkgs.iproute2
+    ];
+    text = ''
+      mode=$1
+      shift
+      if [ -n "''${WAYLAND_DISPLAY:-}" ]; then
+        case $mode in
+          image) exec ${imv} -- "$@" ;;
+          video) exec ${mpv} -- "$@" ;;
+        esac
+      fi
+      fstux=$(getent ahostsv4 fstux | awk '{ print $1; exit }')
+      if [ -z "$fstux" ] || [ -z "$(ss -Htn state established "( sport = :22 and dst $fstux )")" ]; then
+        echo "beast has no display, and fstux is not connected over ssh" >&2
+        exit 1
+      fi
+      for f in "$@"; do printf '%s\0' "$(realpath -- "$f")"; done \
+        | ssh -o ConnectTimeout=5 fstux open-from-beast "$mode"
+    '';
+  };
+in
 {
   imports = [
     ./beast-disk-cleanup
@@ -21,6 +54,33 @@
     IdentitiesOnly = true;
   };
   programs.ssh.settings."office-windows".IdentityFile = lib.mkForce "~/.ssh/id_fstux";
+
+  # yazi on beast shows images and videos on fstux's screen while beast has no
+  # display of its own and fstux is connected over ssh.
+  programs.yazi.settings = {
+    opener = lib.genAttrs [ "image" "video" ] (mode: [
+      {
+        run = "${lib.getExe openOnFstux} ${mode} %s";
+        desc = "${if mode == "image" then "imv" else "mpv"}, on fstux over ssh";
+      }
+    ]);
+    open.prepend_rules = [
+      {
+        mime = "image/*";
+        use = [
+          "image"
+          "reveal"
+        ];
+      }
+      {
+        mime = "video/*";
+        use = [
+          "video"
+          "reveal"
+        ];
+      }
+    ];
+  };
 
   nix.package = pkgs.nix;
   nix.settings = {
