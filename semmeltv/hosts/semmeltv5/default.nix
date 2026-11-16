@@ -8,6 +8,7 @@
   imports = with nixos-raspberrypi.nixosModules; [
     ../common.nix
     ../mount.nix
+    ./adblock.nix
     ./wake.nix
     ./phone-mic.nix
     ./speech.nix
