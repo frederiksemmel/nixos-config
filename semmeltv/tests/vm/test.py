@@ -890,7 +890,7 @@ with sync_playwright() as playwright:
             report.querySelector(".report-copy").textContent.includes({settled['id']!r})
             && [...report.querySelectorAll(".comment:not([hidden]) .comment-who b")].map((name) => name.textContent).join() === "Claude,Frederik")""")
 
-    with scenario("a comment typed before the page's scripts ran survives them and a reload, and is forgotten once sent"):
+    with scenario("a comment typed before the page's scripts ran survives them and a reload"):
         draft = f'textarea[data-draft="{settled["id"]}:comment"]'
         runtime = "**/_topcoat/assets/topcoat-*.js"
         held = []
@@ -905,15 +905,35 @@ with sync_playwright() as playwright:
             && !document.querySelector({draft!r}).form.querySelector("button[type=submit]").disabled""")
         phone.goto("/feedback")
         phone.until(f"document.querySelector({draft!r})?.value === 'Half a thought before the TV restarts'")
+
+    with scenario("a comment whose send fails stays and says so, and is forgotten only once the TV confirmed it"):
+        draft = f'textarea[data-draft="{settled["id"]}:comment"]'
+        text = "Half a thought before the TV restarts"
+        kept = f"localStorage.getItem('semmeltv.draft.{settled['id']}:comment')"
+        shown = f'[...document.querySelectorAll(".comment.person:not([hidden]) .comment-text")].some((said) => said.textContent === {text!r})'
+        procedures = "**/_topcoat/runtime/procedures/*"
         row = phone.page.locator(".report").filter(has=phone.page.locator(".report-message", has_text=settled["message"]))
+        phone.context.route(procedures, lambda route: route.abort("internetdisconnected"))
         row.get_by_role("button", name="Comment").tap()
-        phone.until(f"""[...document.querySelectorAll(".comment.person:not([hidden]) .comment-text")].some((text) => text.textContent === "Half a thought before the TV restarts")
-            && document.querySelector({draft!r}).value === \"\"""")
-        phone.page.wait_for_timeout(2500)
+        phone.until('[...document.querySelectorAll(".toast")].some((toast) => toast.textContent.includes("Not sent"))')
+        phone.context.unroute(procedures)
+        assert phone.js(f"document.querySelector({draft!r}).value") == text, "a failed send leaves the text in the field"
+        assert phone.js(kept) == text, "a failed send keeps the draft"
+        assert not phone.js(shown), "a failed send shows no comment"
         phone.goto("/feedback")
-        phone.page.wait_for_timeout(1000)
+        phone.until(f"{LOADED} && document.querySelector({draft!r}).value === {text!r}")
+        held = []
+        phone.context.route(procedures, lambda route: held.append(route))
+        with phone.page.expect_request(lambda request: "/_topcoat/runtime/procedures/" in request.url):
+            row.get_by_role("button", name="Comment").tap()
+        assert phone.js(kept) == text and held, "a send on its way keeps the draft"
+        phone.context.unroute(procedures)
+        for route in held:
+            route.continue_()
+        phone.until(f"{shown} && document.querySelector({draft!r}).value === '' && {kept} === null")
+        phone.goto("/feedback")
+        phone.until(LOADED)
         assert phone.js(f"document.querySelector({draft!r}).value") == "", "a sent comment is no draft"
-        assert phone.js(f"localStorage.getItem('semmeltv.draft.{settled['id']}:comment')") is None
 
     for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
         with scenario(f"the remote opens, closes by a swipe without a reload, and a reload brings it back closed ({engine})"):

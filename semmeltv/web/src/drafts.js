@@ -32,13 +32,45 @@
     if (event.target.matches?.(FIELDS)) keep(event.target);
   });
 
+  function forget(form) {
+    for (const field of form.querySelectorAll(FIELDS)) {
+      try {
+        localStorage.removeItem(DRAFTS + field.dataset.draft);
+      } catch {}
+    }
+  }
+
+  const sending = new Map();
+
   document.addEventListener("submit", (event) => {
-    const fields = [...(event.target.querySelectorAll?.(FIELDS) || [])];
-    setTimeout(() => fields.forEach(keep), 2000);
+    const form = event.target;
+    if (form.querySelector?.(FIELDS)) sending.set(form, form.dataset.sent);
+  });
+
+  function confirmed(records) {
+    for (const { target } of records) {
+      if (!sending.has(target) || target.dataset.sent === sending.get(target)) continue;
+      sending.delete(target);
+      forget(target);
+    }
+  }
+
+  function unsent(reason) {
+    return reason instanceof TypeError || /^Procedure call failed/.test(reason?.message || "");
+  }
+
+  window.addEventListener("unhandledrejection", (event) => {
+    if (!sending.size || !unsent(event.reason)) return;
+    event.preventDefault();
+    sending.clear();
+    window.dispatchEvent(new CustomEvent("semmeltv:toast", {
+      detail: { id: "unsent", text: "Not sent", detail: "SemmelTV didn't answer. Your text is still there; send it again.", tone: "error" },
+    }));
   });
 
   document.addEventListener("DOMContentLoaded", () => {
     restore();
     new MutationObserver(restore).observe(document.documentElement, { childList: true, subtree: true });
+    new MutationObserver(confirmed).observe(document.documentElement, { subtree: true, attributes: true, attributeFilter: ["data-sent"] });
   });
 })();

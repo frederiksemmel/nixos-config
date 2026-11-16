@@ -198,6 +198,8 @@ async fn report_row(
     let words = signal(cx, String::new);
     let mine = signal(cx, String::new);
     let answer = signal(cx, String::new);
+    let sent = signal(cx, || 0usize);
+    let saved = signal(cx, || 0usize);
     let thread: Vec<(&'static str, String, String, &str)> = report
         .comments
         .iter()
@@ -243,7 +245,7 @@ async fn report_row(
                     <p class="comment-text">$(mine.get())</p>
                 </li>
             </ol>
-            <form class="report-say" @submit=$(async |e: Event| {
+            <form class="report-say" :data-sent=$(sent.get()) @submit=$(async |e: Event| {
                 e.prevent_default();
                 let reply = say(speaker.to_owned(), words.get(), mine.get()).await;
                 if reply.0 {
@@ -253,6 +255,7 @@ async fn report_row(
                     mine.set(reply.4);
                     words.set("".to_owned());
                     answer.set("".to_owned());
+                    sent.set(sent.get() + 1);
                 } else {
                     answer.set(reply.1);
                 }
@@ -269,7 +272,7 @@ async fn report_row(
                 <button type="button" class="pill quiet" data-copy=(copy.as_str())>"Copy for Claude"</button>
                 <button type="button" class="pill quiet" @click=$(|_e| editing.set(true))>"Set status"</button>
             </div>
-            <form class="report-edit" :hidden=$(!editing.get()) @submit=$(async |e: Event| {
+            <form class="report-edit" :hidden=$(!editing.get()) :data-sent=$(saved.get()) @submit=$(async |e: Event| {
                 e.prevent_default();
                 let answer = mark(id.to_owned(), choice.get(), first.get(), second.get()).await;
                 if answer.0 {
@@ -281,6 +284,7 @@ async fn report_row(
                     first.set("".to_owned());
                     second.set("".to_owned());
                     editing.set(false);
+                    saved.set(saved.get() + 1);
                 } else {
                     said.set(answer.1);
                 }

@@ -71,4 +71,7 @@ the reports on `/feedback`; see the [app README](../app/README.md#feedback).
 `localStorage` until it is sent, and brings it back after a reload. It is a
 classic script in the head, so it keeps text typed before Topcoat's runtime has
 loaded, and it restores at `DOMContentLoaded`, after hydration has written the
-signals' values into the fields.
+signals' values into the fields. It forgets a form's drafts only once the
+server has confirmed the send: the page counts confirmed sends in the form's
+`data-sent`. A send that fails on the way (offline, a 5xx, a restarting TV)
+leaves the text in place and shows a "Not sent" toast.
