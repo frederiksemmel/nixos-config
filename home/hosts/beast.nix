@@ -85,7 +85,7 @@ in
       "flakes"
     ];
     accept-flake-config = true;
-    builders = "ssh://eu.nixbuild.net x86_64-linux,aarch64-linux - 100 4 benchmark,big-parallel";
+    builders = "ssh://eu.nixbuild.net aarch64-linux - 100 4 benchmark,big-parallel";
     builders-use-substitutes = true;
     substituters = [
       "https://cache.nixos.org"
