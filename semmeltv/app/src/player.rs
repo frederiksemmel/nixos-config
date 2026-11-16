@@ -1,3 +1,4 @@
+mod fade;
 mod health;
 pub mod renderer;
 
@@ -231,6 +232,8 @@ struct Playback {
     on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
     health: Health,
+    fader: Option<fade::Fader>,
+    wanted_paused: Option<bool>,
 }
 
 impl Playback {
@@ -245,10 +248,12 @@ impl Playback {
             Command::Back => self.send(json!(["quit", STOPPED_EXIT_CODE])),
             Command::Select => {
                 self.scrub.cancel();
-                let message = self.select();
-                self.send(message);
+                match self.select() {
+                    Some(skip) => self.send(skip),
+                    None => self.toggle_pause(),
+                }
             }
-            Command::PlayPause => self.send(json!(["cycle", "pause"])),
+            Command::PlayPause => self.toggle_pause(),
             Command::Left => self.step(Direction::Back, now),
             Command::Right => self.step(Direction::Forward, now),
             Command::Up => self.jump(LONG_JUMP, now),
@@ -293,11 +298,21 @@ impl Playback {
         }
     }
 
-    fn select(&self) -> Value {
-        match segments::at(&self.segments, self.position) {
-            Some(segment) => json!(["seek", segment.end, "absolute"]),
-            None => json!(["cycle", "pause"]),
+    fn select(&self) -> Option<Value> {
+        segments::at(&self.segments, self.position).map(|segment| json!(["seek", segment.end, "absolute"]))
+    }
+
+    fn set_paused(&mut self, paused: bool) {
+        self.wanted_paused = Some(paused);
+        match &self.fader {
+            Some(fader) => fader.set_paused(paused),
+            None => self.send(json!(["set_property", "pause", paused])),
         }
+    }
+
+    fn toggle_pause(&mut self) {
+        let paused = self.wanted_paused.unwrap_or(self.phase.paused());
+        self.set_paused(!paused);
     }
 
     fn skip_segment(&mut self, now: Instant) -> bool {
@@ -813,7 +828,7 @@ impl Player {
 
     pub fn set_paused(&self, paused: bool) {
         match &self.backend {
-            Backend::Mpv(playback) => playback.lock().unwrap().send(json!(["set_property", "pause", paused])),
+            Backend::Mpv(playback) => playback.lock().unwrap().set_paused(paused),
             Backend::TvSet { session, .. } => session.set_paused(paused),
         }
     }
@@ -934,6 +949,7 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             let events = stream.try_clone();
             {
                 let mut playback = shared.lock().unwrap();
+                playback.fader = stream.try_clone().ok().map(fade::Fader::start);
                 playback.stream = Some(stream);
                 playback.open_card(Instant::now());
             }
@@ -1546,9 +1562,30 @@ mod tests {
     #[test]
     fn ok_skips_while_a_prompt_shows_and_pauses_otherwise() {
         let mut playback = during_the_intro();
-        assert_eq!(playback.select(), json!(["seek", 20.0, "absolute"]));
+        assert_eq!(playback.select(), Some(json!(["seek", 20.0, "absolute"])));
         playback.position = 20.0;
-        assert_eq!(playback.select(), json!(["cycle", "pause"]));
+        assert_eq!(playback.select(), None);
+    }
+
+    #[test]
+    fn play_pause_toggles_from_what_was_last_asked_not_yet_from_what_mpv_reported() {
+        let sent = sent_by(
+            |playback| {
+                playback.command(Command::PlayPause, Instant::now());
+                playback.command(Command::PlayPause, Instant::now());
+                playback.command(Command::Select, Instant::now());
+            },
+            playing(),
+        );
+        let pauses: Vec<_> = sent.into_iter().filter(|command| command[1] == "pause").collect();
+        assert_eq!(
+            pauses,
+            [
+                json!(["set_property", "pause", true]),
+                json!(["set_property", "pause", false]),
+                json!(["set_property", "pause", true]),
+            ]
+        );
     }
 
     #[test]

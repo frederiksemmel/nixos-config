@@ -1260,10 +1260,12 @@ with sync_playwright() as playwright:
         assert locked.js("window.sounds.length === 0 && !navigator.mediaSession.metadata"), "nothing reaches the lock screen before a tap"
         locked.page.locator(".bar-toggle").tap()
         eventually("the tap pauses the TV", lambda: mpv("get_property", "pause") is True)
+        assert mpv("get_property", "volume") == 0, "the sound faded out before the pause"
         locked.until('navigator.mediaSession.metadata?.artist === "Testserie" && navigator.mediaSession.metadata.title.includes("Anfang")')
         locked.until("window.sounds.length === 1 && window.sounds[0].paused")
         locked.js('window.mediaKeys.play({ action: "play" })')
         eventually("the lock screen's play resumes the TV", lambda: mpv("get_property", "pause") is False)
+        eventually("the sound fades back in to full", lambda: mpv("get_property", "volume") == 100)
         locked.until("!window.sounds[0].paused && window.sounds[0].loop")
         locked.js('window.mediaKeys.seekto({ action: "seekto", seekTime: 60 })')
         eventually("the lock screen seeks the TV", lambda: 58 < (tv_position() or 0) < 75)
