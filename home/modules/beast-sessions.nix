@@ -5,41 +5,33 @@
   ...
 }:
 let
+  systemdRun = "${pkgs.systemd}/bin/systemd-run --user --collect --quiet";
+
   # Opens beast's files in this desktop session. Beast's open-on-fstux runs it over
-  # `ssh fstux` with the paths NUL-separated on stdin. Videos stream over sftp,
-  # images are copied here for as long as imv shows them.
-  openFromBeast = pkgs.writeShellApplication {
-    name = "open-from-beast";
-    runtimeInputs = [
-      pkgs.openssh
-      pkgs.coreutils
-      pkgs.gnugrep
-      pkgs.gnused
-      pkgs.systemd
-    ];
-    text = ''
-      mode=''${1:-}
-      mapfile -d "" paths
-      eval "$(systemctl --user show-environment | grep -E '^(SSH_AUTH_SOCK|WAYLAND_DISPLAY|DISPLAY)=' | sed 's/^/export /')"
-      case $mode in
-        video)
-          urls=()
-          for p in "''${paths[@]}"; do urls+=("sftp://beast$p"); done
-          systemd-run --user --collect --quiet -- ${lib.getExe config.programs.mpv.finalPackage} -- "''${urls[@]}"
-          ;;
-        image)
-          dir=$(mktemp -d "''${XDG_RUNTIME_DIR:?}/from-beast.XXXXXX")
-          scp -q "''${paths[@]/#/beast:}" "$dir/"
-          systemd-run --user --collect --quiet --property="ExecStopPost=${pkgs.coreutils}/bin/rm -rf $dir" \
-            -- ${lib.getExe config.programs.imv.package} "$dir"
-          ;;
-        *)
-          echo "usage: open-from-beast image|video < NUL-separated paths on beast" >&2
-          exit 2
-          ;;
-      esac
-    '';
-  };
+  # `ssh fstux`. Videos stream over sftp, images are copied here for as long as
+  # imv shows them.
+  openFromBeast = pkgs.writers.writeNuBin "open-from-beast" ''
+    def main [mode: string, ...paths: string] {
+      let session = ^${pkgs.systemd}/bin/systemctl --user show-environment
+        | lines
+        | parse "{name}={value}"
+        | where name in [SSH_AUTH_SOCK WAYLAND_DISPLAY DISPLAY]
+        | reduce --fold {} {|var, acc| $acc | insert $var.name $var.value }
+      with-env $session {
+        match $mode {
+          video => {
+            ^${systemdRun} -- ${lib.getExe config.programs.mpv.finalPackage} -- ...($paths | each {|p| $"sftp://beast($p)" })
+          }
+          image => {
+            let dir = mktemp --directory --tmpdir-path $env.XDG_RUNTIME_DIR from-beast.XXXXXX
+            ^${pkgs.openssh}/bin/scp -q ...($paths | each {|p| $"beast:($p)" }) $dir
+            ^${systemdRun} $"--property=ExecStopPost=${pkgs.coreutils}/bin/rm -rf ($dir)" -- ${lib.getExe config.programs.imv.package} $dir
+          }
+          _ => { error make --unspanned { msg: "usage: open-from-beast image|video ...paths-on-beast" } }
+        }
+      }
+    }
+  '';
 in
 {
   options.profiles.beastSessions.enable = lib.mkEnableOption "the laptop's side of beast: the beast nushell command for Claude sessions on beast in terminal windows that reattach after the connection drops, and open-from-beast showing beast's images and videos here";

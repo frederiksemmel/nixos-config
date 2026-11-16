@@ -8,33 +8,29 @@ let
   imv = lib.getExe config.programs.imv.package;
   mpv = lib.getExe config.programs.mpv.finalPackage;
 
-  openOnFstux = pkgs.writeShellApplication {
-    name = "open-on-fstux";
-    runtimeInputs = [
-      pkgs.openssh
-      pkgs.coreutils
-      pkgs.getent
-      pkgs.gawk
-      pkgs.iproute2
-    ];
-    text = ''
-      mode=$1
-      shift
-      if [ -n "''${WAYLAND_DISPLAY:-}" ]; then
-        case $mode in
-          image) exec ${imv} -- "$@" ;;
-          video) exec ${mpv} -- "$@" ;;
-        esac
-      fi
-      fstux=$(getent ahostsv4 fstux | awk '{ print $1; exit }')
-      if [ -z "$fstux" ] || [ -z "$(ss -Htn state established "( sport = :22 and dst $fstux )")" ]; then
-        echo "beast has no display, and fstux is not connected over ssh" >&2
-        exit 1
-      fi
-      for f in "$@"; do printf '%s\0' "$(realpath -- "$f")"; done \
-        | ssh -o ConnectTimeout=5 fstux open-from-beast "$mode"
-    '';
-  };
+  # fstux's login shell is nushell, so the paths reach its open-from-beast as nuon.
+  openOnFstux = pkgs.writers.writeNuBin "open-on-fstux" ''
+    def main [mode: string, ...files: path] {
+      let files = $files | path expand
+      if "WAYLAND_DISPLAY" in $env {
+        match $mode {
+          image => { ^${imv} -- ...$files }
+          video => { ^${mpv} -- ...$files }
+        }
+        return
+      }
+      let fstux = try {
+        ^${pkgs.getent}/bin/getent ahostsv4 fstux | lines | first | split row --regex '\s+' | first
+      } catch { "" }
+      let connected = $fstux != "" and (
+        ^${pkgs.iproute2}/bin/ss -Htn state established $"sport = :22 and dst ($fstux)" | str trim | is-not-empty
+      )
+      if not $connected {
+        error make --unspanned { msg: "beast has no display, and fstux is not connected over ssh" }
+      }
+      ^${pkgs.openssh}/bin/ssh -o ConnectTimeout=5 fstux $"open-from-beast ($mode | to nuon) ...($files | to nuon)"
+    }
+  '';
 in
 {
   imports = [
