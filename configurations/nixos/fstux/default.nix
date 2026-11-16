@@ -188,6 +188,15 @@ in
     enable = true;
     themePackages = [ pkgs.plymouth-spades-vision ];
     theme = "spades-vision";
+    # The throbber plays its frames at 90 fps, once per refresh of the 90 Hz panel,
+    # and loops them every 1.8 s, the spinner's period in sv-panel.
+    package = pkgs.plymouth.overrideAttrs (old: {
+      postPatch = (old.postPatch or "") + ''
+        substituteInPlace src/libply-splash-graphics/ply-throbber.c \
+          --replace-fail "#define FRAMES_PER_SECOND 30" "#define FRAMES_PER_SECOND 90" \
+          --replace-fail "#define THROBBER_DURATION 2.0" "#define THROBBER_DURATION 1.8"
+      '';
+    });
     # The HiDPI auto scale would upscale the frames, which are rendered at native size.
     extraConfig = "DeviceScale=1";
   };

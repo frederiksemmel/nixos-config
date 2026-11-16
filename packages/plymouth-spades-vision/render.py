@@ -1,4 +1,4 @@
-"""Render sv-panel's LogoSpinner as a PNG sequence: white on black, 30 fps.
+"""Render sv-panel's LogoSpinner as a PNG sequence: white on black, 90 fps.
 
 Usage: render.py <blackjackeye>/sv-panel/src/lib/components/LogoSpinner.svelte frames 216
 Needs a python with playwright and PLAYWRIGHT_BROWSERS_PATH set to playwright-driver.browsers.
@@ -11,7 +11,7 @@ from pathlib import Path
 from playwright.sync_api import sync_playwright
 
 svelte, out_dir, size = Path(sys.argv[1]), Path(sys.argv[2]), int(sys.argv[3])
-FPS, PERIOD_MS = 30, 1800
+FPS, PERIOD_MS = 90, 1800
 
 src = svelte.read_text()
 svg = re.search(r"<svg.*?</svg>", src, re.S).group(0).replace("class={className}", 'id="logo"')

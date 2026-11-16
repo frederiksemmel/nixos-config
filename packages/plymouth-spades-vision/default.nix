@@ -11,7 +11,7 @@ let
   ];
 in
 # The Spades Vision logo spinner from sv-panel, looping on black. The frames are
-# rendered by render.py; Plymouth plays them at a fixed 30 fps.
+# rendered by render.py at 90 fps, the rate fstux's plymouth plays its throbber at.
 runCommand "plymouth-spades-vision" { } ''
   theme=$out/share/plymouth/themes/spades-vision
   mkdir -p $theme
