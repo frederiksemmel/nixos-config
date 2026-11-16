@@ -25,7 +25,7 @@ use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, Subtitles};
 use crate::tv::{self, Television};
-use crate::up_next::{Press, UpNext};
+use crate::up_next::{self, Press, UpNext};
 use crate::voice::{self, Heard, Voice};
 use crate::watching;
 use std::collections::HashSet;
@@ -260,10 +260,7 @@ impl Actor {
         match signal {
             Signal::Heard(heard) => self.hear(heard).await,
             Signal::Saved => self.record_place().await,
-            Signal::Finished(finish) => {
-                self.finish_playback(finish != Finish::Failed, finish == Finish::Ended)
-                    .await;
-            }
+            Signal::Finished(finish) => self.finish_playback(finish).await,
             Signal::Poll { online } => {
                 let reconnected = online && !self.online;
                 self.online = online;
@@ -540,6 +537,7 @@ impl Actor {
             match started {
                 Ok(player) => {
                     let handed_off = player.handed_off();
+                    player.offer_next(up_next::follows(&self.library, path));
                     self.on_tv = Some(OnTv {
                         player,
                         shown: self.now_playing_for(path),
@@ -661,7 +659,8 @@ impl Actor {
         self.keep(owner, progress).await;
     }
 
-    async fn finish_playback(&mut self, success: bool, ended: bool) {
+    async fn finish_playback(&mut self, finish: Finish) {
+        let ended = matches!(finish, Finish::Ended | Finish::Next);
         self.record_place().await;
         let ended_play = self.on_tv.take().map(|OnTv { file, owner, .. }| (file, owner));
         self.publish_playback();
@@ -679,7 +678,7 @@ impl Actor {
             }
         }
         self.subtitles.set_owner(self.profile);
-        if !success {
+        if finish == Finish::Failed {
             self.show_message("This video could not be played".to_string());
         }
         self.publish_home();
@@ -689,7 +688,10 @@ impl Actor {
             self.play(&path).await;
         } else if let Some((file, owner)) = ended_play.filter(|_| ended) {
             self.up_next = UpNext::after(&self.library, &file, owner, Instant::now());
-            if let Some(up) = &self.up_next {
+            if finish == Finish::Next {
+                eprintln!("up next: Play next plays it now");
+                self.play_up_next().await;
+            } else if let Some(up) = &self.up_next {
                 eprintln!("up next: {} in {:?}", up.file.display(), crate::up_next::COUNTDOWN);
                 self.core.bus.up_next(Some(up.card.clone()));
             }
@@ -1237,6 +1239,7 @@ impl Actor {
         Outcome::done(match kind {
             Kind::Intro => "Skipped the intro",
             Kind::Recap => "Skipped the recap",
+            Kind::Next => "Playing the next episode",
         })
     }
 

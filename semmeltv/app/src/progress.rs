@@ -33,6 +33,17 @@ pub enum Viewing {
     Finished,
 }
 
+/// Where the credits start in a file of `duration` seconds: at the `known`
+/// start when it lies in the second half, or else estimated from the length.
+pub fn credits_start(duration: f64, known: Option<f64>) -> Option<f64> {
+    if duration <= 0.0 {
+        return None;
+    }
+    let found = known.filter(|start| (duration / 2.0..duration).contains(start));
+    let estimated = ((duration - CREDITS_FREE) / CREDITS_DIVISOR).min(CREDITS_LONGEST);
+    found.or((estimated > 0.0).then_some(duration - estimated))
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Watched {
     pub viewing: Viewing,
@@ -61,10 +72,7 @@ impl Watched {
     }
 
     pub fn credits_start(&self) -> Option<f64> {
-        let duration = self.duration.filter(|duration| *duration > 0.0)?;
-        let found = self.credits.filter(|start| (duration / 2.0..duration).contains(start));
-        let estimated = ((duration - CREDITS_FREE) / CREDITS_DIVISOR).min(CREDITS_LONGEST);
-        found.or((estimated > 0.0).then_some(duration - estimated))
+        credits_start(self.duration?, self.credits)
     }
 
     pub fn in_credits(&self) -> bool {

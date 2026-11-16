@@ -331,6 +331,10 @@ mod tests {
             serde_json::to_value(Skip::from(Kind::Recap)).unwrap(),
             json!({ "kind": "recap", "label": "Skip recap" })
         );
+        assert_eq!(
+            serde_json::to_value(Skip::from(Kind::Next)).unwrap(),
+            json!({ "kind": "next", "label": "Play next" })
+        );
     }
 
     #[test]

@@ -848,6 +848,7 @@ async fn marks(State(streams): State<Streams>, Path(id): Path<String>) -> Respon
                         kind: match segment.kind {
                             SegmentKind::Recap => "recap",
                             SegmentKind::Intro => "intro",
+                            SegmentKind::Next => "next",
                         },
                         label: segment.kind.label(),
                         start: segment.start,

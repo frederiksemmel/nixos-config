@@ -1292,6 +1292,50 @@ with sync_playwright() as playwright:
             phone.api("POST", "/api/watched", {"kind": "show", "key": SHOW, "season": 1, "episode": 2, "watched": False})
             eventually("episode 2 starts over again", lambda: stopped() is None)
 
+    with scenario("Play next shows from where the credits start, and the remote and OK both play the next episode at once"):
+        credits = json.dumps({"credits": [{"start_ms": 120000, "end_ms": None}]})
+        tv.succeed(f"mkdir -p /run/fake-introdb/v4 && echo {shlex.quote(credits)} > /run/fake-introdb/v4/media")
+        try:
+            PILL = 'document.querySelector(".skip-prompt button:not([hidden])")'
+            skip = lambda: phone.api("GET", "/api/playback")["body"]["now_playing"]["skip"]
+            episodes = lambda: phone.api("GET", f"/api/shows/{SHOW}")["body"]["seasons"][0]["episodes"]
+            phone.goto("/")
+            at_home(phone)
+            phone.page.locator(".bar-open").tap()
+            phone.until('document.documentElement.hasAttribute("data-sheet")', 3000)
+            counted = tv_said("^up next: /")
+            phone.api("POST", "/api/play", {"show": SHOW, "season": 1, "episode": 1})
+            tv_starts_at()
+            tv_seek(phone, 100)
+            assert skip() is None, "no Play next before the credits"
+            tv_seek(phone, 125)
+            phone.until(f"{PILL}?.textContent === 'Play next'", 30000)
+            assert skip() == {"kind": "next", "label": "Play next"}
+            tv_shows("Play next")
+            phone.shot("remote-play-next")
+            tv.screenshot("tv-play-next")
+            phone.page.locator(".skip-prompt button").tap()
+            eventually("the remote's Play next plays episode 2", lambda: tv_episode(phone) == 2, timeout=20)
+            assert tv_said("^up next: /") == counted, "Play next does not count down"
+            eventually("episode 1 counts as watched", lambda: episodes()[0]["watched"])
+            tv_starts_at()
+            tv_seek(phone, 125)
+            tv_shows("Play next")
+            tv.send_key("ret")
+            eventually("OK on Play next plays episode 3", lambda: tv_episode(phone) == 3, timeout=20)
+            assert tv_said("^up next: /") == counted, "OK on Play next does not count down"
+            tv_starts_at()
+            tv_seek(phone, 125)
+            time.sleep(3)
+            assert skip() is None, "no Play next on the last episode"
+            phone.page.locator(".sheet-close").tap()
+            phone.until('!document.documentElement.hasAttribute("data-sheet")', 3000)
+        finally:
+            tv.succeed("rm -f /run/fake-introdb/v4/media")
+            stop_everything(phone)
+            phone.api("POST", "/api/watched", {"kind": "show", "key": SHOW, "season": 1, "episode": 2, "watched": False})
+            eventually("episode 2 starts over again", lambda: episodes()[1]["stopped_at"] is None)
+
     with scenario("the TV/phone switch moves at the tap and snaps back when the TV refuses"):
         phone.goto("/")
         at_home(phone)

@@ -1,5 +1,5 @@
 use crate::command::Command;
-use crate::library::Library;
+use crate::library::{Episode, Library, Show};
 use crate::profile::ProfileId;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -53,15 +53,24 @@ pub enum Press {
     Nothing,
 }
 
+/// Whether an episode comes up next once the one at `playing` ends.
+pub fn follows(library: &Library, playing: &Path) -> bool {
+    next_episode(library, playing).is_some()
+}
+
+fn next_episode<'a>(library: &'a Library, ended: &Path) -> Option<(&'a Show, &'a Episode)> {
+    let (show, episode) = library.find_episode(ended)?;
+    if episode.season == 0 {
+        return None;
+    }
+    Some((show, show.episode_after(episode.season, episode.number)?))
+}
+
 impl UpNext {
     /// The next regular episode of the show whose episode `ended`, across
     /// seasons, or nothing after a special or the last episode in the library.
     pub fn after(library: &Library, ended: &Path, owner: ProfileId, now: Instant) -> Option<Self> {
-        let (show, episode) = library.find_episode(ended)?;
-        if episode.season == 0 {
-            return None;
-        }
-        let next = show.episode_after(episode.season, episode.number)?;
+        let (show, next) = next_episode(library, ended)?;
         Some(Self {
             file: next.path.clone(),
             owner,
@@ -93,7 +102,7 @@ impl UpNext {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::library::{Episode, Season, Show};
+    use crate::library::Season;
 
     fn episode(season: u32, number: u32, title: &str) -> Episode {
         Episode {
@@ -163,6 +172,16 @@ mod tests {
             UpNext::after(&library, Path::new("/lib/Movies/Up.mkv"), ProfileId::FIRST, now),
             None
         );
+    }
+
+    #[test]
+    fn an_episode_follows_wherever_one_is_up_next() {
+        let library = library();
+        assert!(follows(&library, &path(1, 1)));
+        assert!(follows(&library, &path(1, 2)));
+        assert!(!follows(&library, &path(2, 1)));
+        assert!(!follows(&library, &path(0, 1)));
+        assert!(!follows(&library, Path::new("/lib/Movies/Up.mkv")));
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub struct Title {
 pub enum Kind {
     Recap,
     Intro,
+    Next,
 }
 
 impl Kind {
@@ -23,6 +24,7 @@ impl Kind {
         match self {
             Self::Recap => "Skip recap",
             Self::Intro => "Skip intro",
+            Self::Next => "Play next",
         }
     }
 }

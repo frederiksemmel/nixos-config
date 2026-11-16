@@ -7,7 +7,7 @@ use crate::card::{self, Billing};
 use crate::command::Command;
 use crate::display::{self, Video};
 use crate::overlay::{self, View};
-use crate::progress::{Place, Tracks};
+use crate::progress::{self, Place, Tracks};
 use crate::seek::{self, Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
 use crate::sidecar;
@@ -26,6 +26,7 @@ use std::time::{Duration, Instant};
 const POLL: Duration = Duration::from_millis(50);
 const STOPPED_EXIT_CODE: i32 = 10;
 const ENDED_EXIT_CODE: i32 = 11;
+const NEXT_EXIT_CODE: i32 = 12;
 const SIGNALLED_EXIT_CODE: i32 = 4;
 const SAVE_EVERY: f64 = 30.0;
 const PLAY_STEP: f64 = 2.0;
@@ -70,6 +71,7 @@ type Shared = Arc<Mutex<Playback>>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Finish {
     Ended,
+    Next,
     Stopped,
     Failed,
 }
@@ -78,6 +80,7 @@ impl Finish {
     fn from_exit_code(code: Option<i32>) -> Self {
         match code {
             Some(ENDED_EXIT_CODE) => Self::Ended,
+            Some(NEXT_EXIT_CODE) => Self::Next,
             Some(0 | SIGNALLED_EXIT_CODE | STOPPED_EXIT_CODE) => Self::Stopped,
             _ => Self::Failed,
         }
@@ -219,6 +222,7 @@ struct Playback {
     segments: Vec<Segment>,
     credits: Option<f64>,
     chapter_credits: Option<f64>,
+    next: bool,
     prompt: Option<Kind>,
     matched: bool,
     scrub: Scrub,
@@ -298,8 +302,21 @@ impl Playback {
         }
     }
 
+    fn offer(&self) -> Option<Kind> {
+        if let Some(segment) = segments::at(&self.segments, self.position) {
+            return Some(segment.kind);
+        }
+        let credits = progress::credits_start(self.duration, self.chapter_credits.or(self.credits));
+        (self.next && credits.is_some_and(|start| self.position >= start)).then_some(Kind::Next)
+    }
+
     fn select(&self) -> Option<Value> {
-        segments::at(&self.segments, self.position).map(|segment| json!(["seek", segment.end, "absolute"]))
+        match self.offer()? {
+            Kind::Next => Some(json!(["quit", NEXT_EXIT_CODE])),
+            Kind::Recap | Kind::Intro => {
+                segments::at(&self.segments, self.position).map(|segment| json!(["seek", segment.end, "absolute"]))
+            }
+        }
     }
 
     fn set_paused(&mut self, paused: bool) {
@@ -324,7 +341,7 @@ impl Playback {
     }
 
     fn update_prompt(&mut self) {
-        let prompt = segments::at(&self.segments, self.position).map(|segment| segment.kind);
+        let prompt = self.offer();
         if prompt != self.prompt {
             self.prompt = prompt;
             self.send(prompt_command(prompt));
@@ -795,6 +812,12 @@ impl Player {
         match &self.backend {
             Backend::Mpv(playback) => playback.lock().unwrap().command(command, Instant::now()),
             Backend::TvSet { session, .. } => session.key(command),
+        }
+    }
+
+    pub fn offer_next(&self, next: bool) {
+        if let Backend::Mpv(playback) = &self.backend {
+            playback.lock().unwrap().next = next;
         }
     }
 
@@ -1599,6 +1622,59 @@ mod tests {
         past.update_prompt();
         let sent = sent_by(|playback| assert!(!playback.skip_segment(Instant::now())), past);
         assert_eq!(sent, Vec::<Value>::new());
+    }
+
+    fn in_the_last_minutes(next: bool) -> Playback {
+        Playback {
+            position: 2700.0,
+            duration: 3000.0,
+            credits: Some(2800.0),
+            next,
+            ..Playback::default()
+        }
+    }
+
+    #[test]
+    fn play_next_shows_from_where_the_credits_start_while_an_episode_follows() {
+        let offered = |playback: Playback, position| Playback { position, ..playback }.offer();
+        let known = || in_the_last_minutes(true);
+        assert_eq!(offered(known(), 2799.0), None);
+        assert_eq!(offered(known(), 2800.0), Some(Kind::Next));
+        assert_eq!(offered(known(), 2999.0), Some(Kind::Next));
+        let chapter = || Playback {
+            chapter_credits: Some(2900.0),
+            ..known()
+        };
+        assert_eq!(offered(chapter(), 2850.0), None);
+        assert_eq!(offered(chapter(), 2900.0), Some(Kind::Next));
+        let estimated = || Playback {
+            credits: None,
+            ..known()
+        };
+        assert_eq!(offered(estimated(), 2879.0), None);
+        assert_eq!(offered(estimated(), 2880.0), Some(Kind::Next));
+        assert_eq!(offered(in_the_last_minutes(false), 2900.0), None);
+        let short = Playback {
+            duration: 180.0,
+            credits: None,
+            ..known()
+        };
+        assert_eq!(offered(short, 179.0), None);
+    }
+
+    #[test]
+    fn ok_and_the_phone_play_the_next_episode_while_play_next_shows() {
+        let mut ok = in_the_last_minutes(true);
+        ok.position = 2850.0;
+        ok.update_prompt();
+        let sent = sent_by(|playback| playback.command(Command::Select, Instant::now()), ok);
+        assert!(sent.contains(&json!(["quit", NEXT_EXIT_CODE])), "{sent:?}");
+        let mut phone = in_the_last_minutes(true);
+        phone.position = 2850.0;
+        phone.update_prompt();
+        let sent = sent_by(|playback| assert!(playback.skip_segment(Instant::now())), phone);
+        assert!(sent.contains(&json!(["quit", NEXT_EXIT_CODE])), "{sent:?}");
+        assert_eq!(Finish::from_exit_code(Some(NEXT_EXIT_CODE)), Finish::Next);
     }
 
     #[test]
