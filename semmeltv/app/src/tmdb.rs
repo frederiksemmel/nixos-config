@@ -407,17 +407,22 @@ fn clear_winner<'a>(records: &[&'a Record]) -> Option<&'a Record> {
         .then_some(*first)
 }
 
+fn without_article(title: &str) -> String {
+    let title = normalize(title);
+    title.strip_prefix("the ").map(str::to_string).unwrap_or(title)
+}
+
 fn classify(wanted: &str, year: Option<u16>, records: &[Record]) -> Lookup {
     if records.is_empty() {
         return Lookup::Nothing;
     }
-    let wanted = normalize(wanted);
+    let wanted = without_article(wanted);
     let same_title: Vec<&Record> = records
         .iter()
         .filter(|record| {
             [&record.title, &record.original_title]
                 .into_iter()
-                .any(|name| name.as_deref().is_some_and(|name| normalize(name) == wanted))
+                .any(|name| name.as_deref().is_some_and(|name| without_article(name) == wanted))
         })
         .collect();
     let chosen: Vec<&Record> = match year {
@@ -612,7 +617,17 @@ mod tests {
         ];
         let casino = [record(3, "Casino Royale", "2006-11-14")];
         let wind = [record(3, "Wind", "1992-09-11")];
-        let cases: [(&str, Option<u16>, &[Record], &str, &[u64]); 10] = [
+        let naked_gun = [
+            voted(1035259, "The Naked Gun", "2025-07-30", 2101.0),
+            voted(
+                37136,
+                "The Naked Gun: From the Files of Police Squad!",
+                "1988-12-02",
+                4783.0,
+            ),
+            voted(192544, "Naked Gun", "1956-11-01", 10.0),
+        ];
+        let cases: [(&str, Option<u16>, &[Record], &str, &[u64]); 12] = [
             ("Dune", Some(2021), &dune, "match", &[2]),
             ("Dune", Some(2022), &dune, "match", &[2]),
             ("Marvels Daredevil", None, &daredevil, "match", &[7]),
@@ -623,6 +638,8 @@ mod tests {
             ("James Bond Casino Royale", Some(2006), &casino, "unsure", &[3]),
             ("Wind", Some(2005), &wind, "unsure", &[3]),
             ("Anything", None, &[], "nothing", &[]),
+            ("naked gun", None, &naked_gun, "likely", &[1035259]),
+            ("Naked Gun", Some(1956), &naked_gun, "match", &[192544]),
         ];
         for (wanted, year, records, verdict, ids) in cases {
             let got = match classify(wanted, year, records) {
