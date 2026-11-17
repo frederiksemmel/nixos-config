@@ -31,8 +31,9 @@ With it set, every request passes one gate in the app before anything else:
   which its random session id already guards. Opening a stream does need one.
 - A request that changes something (any method but GET, HEAD and OPTIONS) with
   an `Origin` outside the list gets 403, whatever its cookie.
-- Storage, `/api/tv/pair`, `/api/auth/members/...`, downloads and reading
-  feedback need an admin, else 403 "Only an admin can do that".
+- Storage, `/api/tv/pair`, `/api/auth/members/...`, stopping a download
+  (`/api/downloads/jobs/{id}/stop`) and reading feedback need an admin, else
+  403 "Only an admin can do that".
 - Controlling the TV needs the `control-tv` capability, else 403 "Only someone
   allowed to control this TV can do that": `/api/play`, `/api/command`,
   `/api/listen`, `/api/microphone`, `/api/volume/*`, any change under
@@ -46,6 +47,9 @@ With it set, every request passes one gate in the app before anything else:
   "Only someone allowed to use headphones on this TV can do that": `POST
   /api/audio`, `/api/audio/pair`, `/api/audio/headphones` and
   `/api/audio/delay`. `GET /api/audio` stays open.
+- Downloading needs the `download` capability, else 403 "Only someone allowed
+  to download on this TV can do that": the rest of `/api/downloads/*`. The
+  web app checks the same capability before it calls the downloads service.
 - `GET /api/events` also takes `Authorization: Bearer <token>`, the token in
   `SEMMELTV_SERVICE_TOKEN_FILE`, which is how the web app's server follows the
   TV. The token opens nothing else.
@@ -90,7 +94,8 @@ Argon2id.
 
 A person is `{ id, name, role, color, capabilities }`, `role` being `admin` or
 `viewer`. `capabilities` lists what the person may do on this TV beyond
-browsing and watching on their own device: `control-tv` and `headphones`. An
+browsing and watching on their own device: `control-tv`, `headphones` and
+`download`. An
 admin has every capability; a viewer only those granted, none at first. Each
 TV keeps its own grants.
 Passkeys use WebAuthn with user verification (Face ID, Touch ID, a screen

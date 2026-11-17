@@ -60,9 +60,11 @@ pub fn access(method: &Method, path: &str) -> Access {
         ["api", "events"] if method == Method::GET => Access::Service,
         ["api", "feedback", ..] if method == Method::GET => Access::AdminOrService,
         ["api", "feedback", _, "status" | "comments"] => Access::AdminOrService,
-        ["api", "storage", ..] | ["api", "tv", "pair"] | ["api", "auth", "members", ..] | ["api", "downloads", ..] => {
-            Access::Admin
-        }
+        ["api", "storage", ..]
+        | ["api", "tv", "pair"]
+        | ["api", "auth", "members", ..]
+        | ["api", "downloads", "jobs", _, "stop"] => Access::Admin,
+        ["api", "downloads", ..] => Access::Needs(Capability::Download),
         ["api", "audio", "pair" | "headphones" | "delay"] => Access::Needs(Capability::Headphones),
         ["api", "audio"] if writes(method) => Access::Needs(Capability::Headphones),
         ["api", "play" | "command" | "listen" | "microphone" | "volume", ..]
@@ -266,7 +268,10 @@ mod tests {
             (&post, "/api/tv/on", Access::Needs(Capability::ControlTv)),
             (&get, "/api/auth/members", Access::Admin),
             (&post, "/api/auth/members/2/invite", Access::Admin),
-            (&post, "/api/downloads/confirm", Access::Admin),
+            (&post, "/api/downloads/confirm", Access::Needs(Capability::Download)),
+            (&get, "/api/downloads", Access::Needs(Capability::Download)),
+            (&post, "/api/downloads/jobs/abc/stop", Access::Admin),
+            (&put, "/api/auth/members/2/capabilities/download", Access::Admin),
             (&post, "/api/feedback", Access::Signed),
             (&get, "/api/feedback", Access::AdminOrService),
             (&get, "/api/feedback/20261115-131211-ab12", Access::AdminOrService),

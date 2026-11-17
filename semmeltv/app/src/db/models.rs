@@ -11,6 +11,7 @@ pub enum Role {
 pub enum Capability {
     ControlTv,
     Headphones,
+    Download,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]

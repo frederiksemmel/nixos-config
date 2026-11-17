@@ -447,9 +447,12 @@ whatever plays. New profiles start without it; on semmeltv5 only Chris has it
 (migration `0006` granted it). Using the TV's Bluetooth headphones is a second
 capability (`headphones`): pairing and forgetting them in Settings, sending the
 sound to them and setting their timing in the remote's sheet. Nobody but the
-admin has it until it is granted on the People page. Without a capability the
-web app shows none of its controls, and the API refuses them. Only an admin
-downloads, removes titles from the TV's storage, pairs the TV for volume, and
+admin has it until it is granted on the People page. Downloading is a third
+(`download`, migration `0008`): Settings > Downloads to find films and seasons
+and follow the running downloads, and a show's "More seasons" buttons; nobody
+but the admin has it until it is granted. Without a capability the web app
+shows none of its controls, and the API refuses them. Only an admin stops a
+download, removes titles from the TV's storage, pairs the TV for volume, and
 adds, invites, signs out or removes people, and grants or takes back
 capabilities; an admin has every capability. Everyone signs in, at home and on
 the tailnet alike; the API documents how ([Sign-in](API.md#sign-in)).

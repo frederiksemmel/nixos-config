@@ -1,4 +1,4 @@
-use crate::api::{Api, CONTROL_TV, Choice, HEADPHONES, Me, Member, Person};
+use crate::api::{Api, CONTROL_TV, Choice, DOWNLOAD, HEADPHONES, Me, Member, Person};
 use crate::layout::back;
 use topcoat::Result;
 use topcoat::context::{Cx, try_request_context};
@@ -17,7 +17,8 @@ const OPEN: [&str; 5] = [
     "/_topcoat/assets/",
     "/_topcoat/fonts/",
 ];
-const FOR_ADMINS: [&str; 4] = ["/storage", "/downloads", "/people", "/feedback"];
+const FOR_ADMINS: [&str; 3] = ["/storage", "/people", "/feedback"];
+const FOR_DOWNLOADERS: [&str; 1] = ["/downloads"];
 
 pub fn me(cx: &Cx) -> Option<&Me> {
     try_request_context::<Me>(cx)
@@ -29,6 +30,18 @@ pub fn controls_tv(cx: &Cx) -> bool {
 
 pub fn uses_headphones(cx: &Cx) -> bool {
     me(cx).is_some_and(|me| me.person.uses_headphones())
+}
+
+pub fn downloads(cx: &Cx) -> bool {
+    me(cx).is_some_and(|me| me.person.downloads())
+}
+
+pub fn may_download(cx: &Cx) -> Result<()> {
+    if downloads(cx) {
+        Ok(())
+    } else {
+        Err(topcoat::Error::msg("Only someone allowed to download can do that"))
+    }
 }
 
 pub fn admin(cx: &Cx) -> Result<()> {
@@ -49,10 +62,18 @@ fn open(path: &str) -> bool {
         })
 }
 
-fn for_admins(path: &str) -> bool {
-    FOR_ADMINS
+fn under(prefixes: &[&str], path: &str) -> bool {
+    prefixes
         .iter()
         .any(|prefix| path == *prefix || path.starts_with(&format!("{prefix}/")))
+}
+
+fn for_admins(path: &str) -> bool {
+    under(&FOR_ADMINS, path)
+}
+
+fn for_downloaders(path: &str) -> bool {
+    under(&FOR_DOWNLOADERS, path)
 }
 
 fn sign_in_link(path_and_query: &str) -> String {
@@ -89,7 +110,7 @@ impl Layer for SignedIn {
             let found = Api::of(cx).me().await;
             match found {
                 Ok(Some(me)) => {
-                    if for_admins(&path) && !me.person.admin() {
+                    if (for_admins(&path) && !me.person.admin()) || (for_downloaders(&path) && !me.person.downloads()) {
                         return Err(redirect("/").into());
                     }
                     if let Some(token) = path.strip_prefix("/invite/") {
@@ -340,9 +361,15 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
         } else {
             "no headphones".to_string()
         });
+        facts.push(if person.downloads() {
+            "downloads".to_string()
+        } else {
+            "no downloads".to_string()
+        });
     }
     let control = format!("/api/auth/members/{}/capabilities/{CONTROL_TV}", person.id);
     let headphones = format!("/api/auth/members/{}/capabilities/{HEADPHONES}", person.id);
+    let download = format!("/api/auth/members/{}/capabilities/{DOWNLOAD}", person.id);
     facts.push(match member.passkeys {
         0 => "no passkey".to_string(),
         1 => "1 passkey".to_string(),
@@ -385,6 +412,11 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
                     } else {
                         <button type="button" class="pill" data-capability=(headphones) data-method="PUT">"Give headphones"</button>
                     }
+                    if person.downloads() {
+                        <button type="button" class="pill quiet" data-capability=(download) data-method="DELETE">"Stop downloads"</button>
+                    } else {
+                        <button type="button" class="pill" data-capability=(download) data-method="PUT">"Let download"</button>
+                    }
                 }
                 if member.sessions > 0 {
                     <button type="button" class="pill quiet" data-post=(format!("/api/auth/members/{}/sign-out", person.id)) data-done="hide">"Sign out everywhere"</button>
@@ -406,7 +438,7 @@ async fn people_page(cx: &Cx) -> Result<impl View> {
         <article class="page people">
             back(href: "/profiles")
             <h1>"People"</h1>
-            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote, voice and sound, and only those you give headphones pair and listen on Bluetooth headphones. Admins do all that, and download, remove titles, pair the TV and manage people."</p>
+            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote, voice and sound, only those you give headphones pair and listen on Bluetooth headphones, and only those you let download find films and seasons and add them to the library. Admins do all that, and stop downloads, remove titles, pair the TV and manage people."</p>
             match members {
                 Ok(members) => {
                     <section class="settings">
@@ -455,15 +487,17 @@ mod tests {
             ("/settings", "signed"),
             ("/storagex", "signed"),
             ("/storage", "admin"),
-            ("/downloads", "admin"),
+            ("/downloads", "download"),
+            ("/downloadsx", "signed"),
             ("/people", "admin"),
             ("/feedback", "admin"),
         ];
         for (path, want) in rows {
-            let got = match (open(path), for_admins(path)) {
-                (true, _) => "open",
-                (false, true) => "admin",
-                (false, false) => "signed",
+            let got = match (open(path), for_admins(path), for_downloaders(path)) {
+                (true, _, _) => "open",
+                (false, true, _) => "admin",
+                (false, false, true) => "download",
+                (false, false, false) => "signed",
             };
             assert_eq!(got, want, "{path}");
         }

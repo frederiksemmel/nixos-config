@@ -6,7 +6,7 @@ use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 
 fn downloads(cx: &Cx) -> Result<&Downloads> {
-    crate::auth::admin(cx)?;
+    crate::auth::may_download(cx)?;
     Ok(app_context::<Downloads>(cx))
 }
 use topcoat::router::page;
@@ -287,6 +287,7 @@ pub async fn dismiss(cx: &Cx, proposal: String) -> Result<String> {
 
 #[procedure]
 pub async fn stop(cx: &Cx, job: String) -> Result<String> {
+    crate::auth::admin(cx)?;
     Ok(downloads(cx)?
         .outcome(&format!("/api/downloads/jobs/{job}/stop"), json!({}))
         .await)
@@ -329,7 +330,7 @@ fn percent(job: &Job) -> f64 {
 async fn job_row(cx: &Cx, job: &Job) -> Result<impl View> {
     let said = signal(cx, String::new);
     let id = job.id.clone();
-    let stoppable = job.stage.stoppable();
+    let stoppable = job.stage.stoppable() && crate::auth::admin(cx).is_ok();
     let last = job.log.last().cloned().unwrap_or_default();
     let sending = job.sending.filter(|_| job.stage.active());
     Ok(view! {
@@ -502,8 +503,7 @@ pub async fn proposal_view(cx: &Cx, id: String, shown: Signal<String>) -> Result
 
 #[component]
 pub async fn season_downloads(cx: &Cx, show: u64, title: &str) -> Result<impl View> {
-    let admin = crate::auth::me(cx).is_some_and(|me| me.person.admin());
-    let missing = if admin {
+    let missing = if crate::auth::downloads(cx) {
         app_context::<Downloads>(cx).missing(show).await.unwrap_or_default()
     } else {
         Vec::new()

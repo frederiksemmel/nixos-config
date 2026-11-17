@@ -30,15 +30,20 @@ pub enum Capability {
     /// Pair Bluetooth headphones with the TV, forget them, send the TV's
     /// sound to them and set their sound delay.
     Headphones,
+    /// Find films and seasons and download them into the library, and watch
+    /// how the downloads are going. Stopping a download, the TV's storage
+    /// and removing titles stay with the admin.
+    Download,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 2] = [Capability::ControlTv, Capability::Headphones];
+    pub const ALL: [Capability; 3] = [Capability::ControlTv, Capability::Headphones, Capability::Download];
 
     pub fn name(self) -> &'static str {
         match self {
             Capability::ControlTv => "control-tv",
             Capability::Headphones => "headphones",
+            Capability::Download => "download",
         }
     }
 
@@ -46,6 +51,7 @@ impl Capability {
         match self {
             Capability::ControlTv => "Only someone allowed to control this TV can do that",
             Capability::Headphones => "Only someone allowed to use headphones on this TV can do that",
+            Capability::Download => "Only someone allowed to download on this TV can do that",
         }
     }
 

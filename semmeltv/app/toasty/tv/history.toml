@@ -39,3 +39,8 @@ snapshot_name = "0006_snapshot.toml"
 id = 2553355889094938045
 name = "0007_capability-headphones.sql"
 snapshot_name = "0007_snapshot.toml"
+
+[[migrations]]
+id = 2164668266622733622
+name = "0008_capability-download.sql"
+snapshot_name = "0008_snapshot.toml"

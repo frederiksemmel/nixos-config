@@ -1239,6 +1239,8 @@ with sync_playwright() as playwright:
         phone.until('!!document.querySelector("main .episode-row")')
         phone.until('document.querySelector("main .season-downloads")?.textContent.includes("Season 2 is downloading")')
         assert phone.js('!document.querySelector("main .season-downloads button")'), "no button once every missing season is downloading"
+        phone.goto("/downloads")
+        phone.until('[...document.querySelectorAll("main .download-job button")].some((button) => button.textContent.includes("Stop"))')
 
     with scenario("the remote moves the TV's subtitles half a second at a time"):
         tv_plays_film(phone)
@@ -1490,6 +1492,8 @@ with sync_playwright() as playwright:
         assert phone.js('!document.querySelector("main .season-downloads")'), "a viewer is offered no season downloads"
         phone.goto("/storage")
         phone.until('location.pathname === "/"')
+        phone.goto("/downloads")
+        phone.until('location.pathname === "/"')
         phone.page.locator(".profile-link").tap()
         phone.until('location.pathname === "/profiles" && document.querySelector(".profile-choice.active .profile-name")?.textContent === "Mami"')
         centred(phone, "the signed-in picker")
@@ -1513,12 +1517,22 @@ with sync_playwright() as playwright:
         phone.until(f'location.pathname === "/" && {AVATAR} === "F"')
         phone.goto("/people")
         phone.page.locator(".member", has_text="Mami").locator('[data-capability$="/headphones"]').tap()
-        phone.until(f'{mami_row}.textContent.includes("uses headphones")')
+        phone.until(f'{mami_row}.textContent.includes("uses headphones") && {mami_row}.textContent.includes("no downloads")')
+        phone.page.locator(".member", has_text="Mami").locator('[data-capability$="/download"]').tap()
+        phone.until(f'{mami_row}.textContent.includes("uses headphones") && !{mami_row}.textContent.includes("no downloads")')
         phone.goto("/profiles")
         phone.until('[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Mami") && choice.textContent.includes("On this device"))')
         phone.page.locator(".profile-choice", has_text="Mami").tap()
         phone.until(f'location.pathname === "/" && {AVATAR} === "M"')
         assert phone.api("POST", "/api/audio/pair")["status"] == 404, "with headphones granted, only this TV's lack of Bluetooth refuses the pairing"
+        phone.goto("/settings")
+        phone.until("""!!document.querySelector('main a[href="/downloads"]')""")
+        assert phone.js("""!document.querySelector('main a[href="/storage"], main a[href="/feedback"]')"""), "downloading brings no Storage or Reports with it"
+        phone.goto(f"/shows/{SHOW}")
+        phone.until('!!document.querySelector("main .season-downloads")')
+        phone.goto("/downloads")
+        phone.until('location.pathname === "/downloads" && !!document.querySelector("main .download-job")')
+        assert phone.js('![...document.querySelectorAll("main .download-job button")].some((button) => button.textContent.includes("Stop"))'), "only an admin stops a download"
         phone.goto("/profiles")
         password_sign_in(phone, "Frederik", "frederik-pass")
         phone.until(f'location.pathname === "/" && {AVATAR} === "F"')

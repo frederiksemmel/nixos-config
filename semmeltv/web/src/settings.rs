@@ -163,6 +163,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
     let admin = crate::auth::me(cx).is_some_and(|me| me.person.admin());
     let controls_tv = crate::auth::controls_tv(cx);
     let uses_headphones = crate::auth::uses_headphones(cx);
+    let downloads = crate::auth::downloads(cx);
     let shown = api.tv_profile().await.ok();
     Ok(view! {
         <article class="page">
@@ -217,15 +218,17 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
             if uses_headphones {
                 headphones_settings()
             }
-            if admin {
+            if downloads {
             <section class="settings">
                 <h2>"Library"</h2>
                 <div class="setting-group">
-                    link(href: "/storage", attrs: attributes! { cx => class="setting row-link" },
-                        storage_icon()
-                        <span class="setting-name">"Storage" <small>"What the TV keeps offline, and the room left"</small></span>
-                        chevron()
-                    )
+                    if admin {
+                        link(href: "/storage", attrs: attributes! { cx => class="setting row-link" },
+                            storage_icon()
+                            <span class="setting-name">"Storage" <small>"What the TV keeps offline, and the room left"</small></span>
+                            chevron()
+                        )
+                    }
                     link(href: "/downloads", attrs: attributes! { cx => class="setting row-link" },
                         download_icon()
                         <span class="setting-name">"Downloads" <small>"Find a film or a season and add it to the library"</small></span>
@@ -233,6 +236,8 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     )
                 </div>
             </section>
+            }
+            if admin {
             <section class="settings">
                 <h2>"Feedback"</h2>
                 <div class="setting-group">

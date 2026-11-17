@@ -27,6 +27,15 @@ PROPOSAL = {
     "problems": [],
 }
 
+JOB = {
+    "id": "1",
+    "label": "Testserie season 2",
+    "stage": "downloading",
+    "message": "Downloading",
+    "parts": [],
+    "log": [],
+}
+
 lock = threading.Lock()
 state = {"searched": False, "confirmed": False}
 
@@ -46,7 +55,8 @@ class Downloads(BaseHTTPRequestHandler):
                 self.reply([{"number": 2, "downloading": state["confirmed"]}, {"number": 3, "downloading": True}])
             elif self.path == "/api/downloads":
                 proposals = [PROPOSAL] if state["searched"] and not state["confirmed"] else []
-                self.reply({"proposals": proposals, "jobs": [], "room": 0, "quota": 0, "free": None})
+                jobs = [JOB] if state["confirmed"] else []
+                self.reply({"proposals": proposals, "jobs": jobs, "room": 0, "quota": 0, "free": None})
             else:
                 self.reply({"error": "no such path"}, 404)
 
