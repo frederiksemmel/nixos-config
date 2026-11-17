@@ -19,6 +19,7 @@ const OPEN: [&str; 5] = [
 ];
 const FOR_ADMINS: [&str; 3] = ["/storage", "/people", "/feedback"];
 const FOR_DOWNLOADERS: [&str; 1] = ["/downloads"];
+const BEFORE_SETUP: [&str; 3] = ["/welcome", "/account", "/_topcoat"];
 
 pub fn me(cx: &Cx) -> Option<&Me> {
     try_request_context::<Me>(cx)
@@ -76,6 +77,14 @@ fn for_downloaders(path: &str) -> bool {
     under(&FOR_DOWNLOADERS, path)
 }
 
+fn set_up(me: &Me) -> bool {
+    me.password || !me.passkeys.is_empty()
+}
+
+fn waits_for_setup(path: &str) -> bool {
+    !open(path) && !under(&BEFORE_SETUP, path)
+}
+
 fn sign_in_link(path_and_query: &str) -> String {
     if path_and_query == "/" || path_and_query.is_empty() || path_and_query.starts_with("/_topcoat/") {
         "/profiles".to_string()
@@ -112,6 +121,9 @@ impl Layer for SignedIn {
                 Ok(Some(me)) => {
                     if (for_admins(&path) && !me.person.admin()) || (for_downloaders(&path) && !me.person.downloads()) {
                         return Err(redirect("/").into());
+                    }
+                    if !set_up(&me) && waits_for_setup(&path) {
+                        return Err(redirect("/welcome").into());
                     }
                     if let Some(token) = path.strip_prefix("/invite/") {
                         let invitee = Api::of(cx).invitee(token).await;
@@ -237,7 +249,7 @@ async fn invite_page(cx: &Cx) -> Result<impl View> {
                 Ok(Ok(person)) => {
                     avatar(person: &person, size: "large")
                     <h1>"Hi " (person.name.as_str())</h1>
-                    <p class="sign-in-help">"This link signs you in to SemmelTV on this device. Then you set up a passkey, so Face ID or your fingerprint signs you in next time, and a password for when a passkey isn't at hand."</p>
+                    <p class="sign-in-help">"This link signs you in to SemmelTV on this device. Then you choose how you sign in next time: a passkey, so Face ID or your fingerprint does it, a password, or both."</p>
                     <button type="button" class="pill" id="redeem" data-token=(token.as_str())>"Continue as " (person.name.as_str())</button>
                     <p class="sign-in-note" id="sign-in-note" role="status"></p>
                 },
@@ -271,6 +283,59 @@ fn civil(days: i64) -> (i64, u32, u32) {
     let day = (doy - (153 * mp + 2) / 5 + 1) as u32;
     let month = if mp < 10 { mp + 3 } else { mp - 9 } as u32;
     (yoe + era * 400 + i64::from(month <= 2), month, day)
+}
+
+#[page("/welcome")]
+async fn welcome_page(cx: &Cx) -> Result<impl View> {
+    let Some(me) = me(cx).cloned() else {
+        return Err(redirect("/profiles").into());
+    };
+    let done = set_up(&me);
+    Ok(view! {
+        <article class="page account welcome">
+            <div class="account-head">
+                avatar(person: &me.person, size: "large")
+                <h1>"Hi " (me.person.name.as_str())</h1>
+                if done {
+                    <p class="setting-note">"You're set up. Next time you sign in with what you chose here."</p>
+                } else {
+                    <p class="setting-note">"One more step: choose how you sign in next time. A passkey lets Face ID or your fingerprint do it; a password works on any device. Set up at least one."</p>
+                }
+            </div>
+            <section class="settings" id="welcome-passkey" hidden=(true)>
+                <h2>"Passkey"</h2>
+                <div class="setting-group">
+                    <div class="setting setting-row">
+                        <span class="setting-name">(if me.passkeys.is_empty() { "No passkey yet" } else { "Passkey added" })
+                            <small>"Face ID, Touch ID or your phone's screen lock signs you in"</small>
+                        </span>
+                        if me.passkeys.is_empty() {
+                            <button type="button" class="pill" id="add-passkey">"Add a passkey"</button>
+                        }
+                    </div>
+                </div>
+            </section>
+            <section class="settings">
+                <h2>"Password"</h2>
+                <form class="setting-group password-set" id="password-set" data-then="reload">
+                    <input type="text" name="username" autocomplete="username" value=(me.person.name.as_str()) hidden=(true)>
+                    <div class="setting">
+                        <label class="setting-name" for="new-password">(if me.password { "Password set" } else { "Set a password" })
+                            <small>"At least 8 characters"</small>
+                        </label>
+                        <input class="password-input" id="new-password" type="password" name="password" autocomplete="new-password" minlength="8" required=(true)>
+                    </div>
+                    <div class="setting setting-row">
+                        <span class="setting-name"></span>
+                        <button type="submit" class=(if me.password { "pill quiet" } else { "pill" })>(if me.password { "Change password" } else { "Save password" })</button>
+                    </div>
+                </form>
+            </section>
+            if done {
+                <button type="button" class="pill welcome-done" id="welcome-done">"Start watching"</button>
+            }
+        </article>
+    })
 }
 
 #[page("/account")]
@@ -491,6 +556,7 @@ mod tests {
             ("/downloadsx", "signed"),
             ("/people", "admin"),
             ("/feedback", "admin"),
+            ("/welcome", "signed"),
         ];
         for (path, want) in rows {
             let got = match (open(path), for_admins(path), for_downloaders(path)) {
@@ -501,6 +567,42 @@ mod tests {
             };
             assert_eq!(got, want, "{path}");
         }
+    }
+
+    #[test]
+    fn someone_not_set_up_reaches_only_the_setup_and_sign_in_pages() {
+        let rows = [
+            ("/", true),
+            ("/movies/dune", true),
+            ("/settings", true),
+            ("/welcome", false),
+            ("/account", false),
+            ("/profiles", false),
+            ("/invite/abc", false),
+            ("/build", false),
+            ("/_topcoat/runtime/procedures/play", false),
+            ("/_topcoat/assets/style.css", false),
+            ("/welcomex", true),
+        ];
+        for (path, sent_to_setup) in rows {
+            assert_eq!(waits_for_setup(path), sent_to_setup, "{path}");
+        }
+    }
+
+    #[test]
+    fn a_passkey_or_a_password_is_enough_setup() {
+        let person: Person =
+            serde_json::from_value(serde_json::json!({"id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD"}))
+                .unwrap();
+        let mut me = Me {
+            person,
+            others: Vec::new(),
+            passkeys: Vec::new(),
+            password: false,
+        };
+        assert!(!set_up(&me));
+        me.password = true;
+        assert!(set_up(&me));
     }
 
     #[test]

@@ -129,10 +129,17 @@ def invite(name):
 def session_cookie(name):
     request = urllib.request.Request(f"{PHONE}/api/auth/invite/{invite(name)}", data=b"", method="POST", headers={"Origin": PHONE})
     with urllib.request.urlopen(request) as response:
-        for header in response.headers.get_all("Set-Cookie") or []:
-            if header.startswith("semmeltv_session="):
-                return header.split(";")[0].split("=", 1)[1]
-    raise AssertionError(f"redeeming an invite for {name} set no session")
+        cookies = [header.split(";")[0] for header in response.headers.get_all("Set-Cookie") or []]
+    session = next((cookie.split("=", 1)[1] for cookie in cookies if cookie.startswith("semmeltv_session=")), None)
+    assert session, f"redeeming an invite for {name} set no session"
+    setup = urllib.request.Request(
+        f"{PHONE}/api/auth/account/password",
+        data=json.dumps({"password": f"{name.lower()}-vm-pass"}).encode(),
+        method="POST",
+        headers={"Origin": PHONE, "Content-Type": "application/json", "Cookie": "; ".join(cookies)},
+    )
+    urllib.request.urlopen(setup).close()
+    return session
 
 
 class Phone:
@@ -519,19 +526,29 @@ with sync_playwright() as playwright:
     CLEANUP.append(lambda: stop_everything(phone))
     CLEANUP.append(lambda: phone.goto("/"))
 
-    with scenario("an invite link signs a phone in, and Back never returns to it"):
+    with scenario("an invite link signs a phone in, makes it set up a sign-in, and Back never returns to it"):
         guest = Phone(playwright, who=None)
         guest.goto("/invite/made-up")
         guest.until('(document.querySelector("main")?.textContent || "").includes("not valid")')
-        token = invite("Frederik")
+        phone.goto("/")
+        phone.until('location.pathname === "/"')
+        assert phone.api("POST", "/api/auth/members", {"name": "Gast", "role": "viewer"})["status"] == 200
+        token = invite("Gast")
         guest.goto(f"/invite/{token}")
-        guest.until('!!document.querySelector("#redeem") && document.querySelector("main h1").textContent.includes("Frederik")')
+        guest.until('!!document.querySelector("#redeem") && document.querySelector("main h1").textContent.includes("Gast")')
         guest.page.locator("#redeem").tap()
-        guest.until('location.pathname === "/account" && !!document.querySelector("#add-passkey") && !!document.querySelector("#password-set")')
+        guest.until('location.pathname === "/welcome" && !document.querySelector("#welcome-passkey").hidden && !!document.querySelector("#password-set") && !document.querySelector("#welcome-done")')
+        assert guest.api("GET", "/api/auth/me")["body"]["person"]["name"] == "Gast"
         guest.page.go_back(wait_until="commit")
-        guest.until('location.pathname === "/" && !!document.querySelector(".profile-link")')
-        assert guest.api("GET", "/api/auth/me")["body"]["person"]["name"] == "Frederik"
+        guest.until('location.pathname === "/profiles" && !!document.querySelector(".profile-choice") && !document.querySelector("#redeem")')
+        guest.goto("/")
+        guest.until('location.pathname === "/welcome"')
         guest.goto(f"/invite/{token}")
+        guest.until('location.pathname === "/welcome"')
+        guest.page.fill("#password-set input[name=password]", "guest-pass-1")
+        guest.page.locator("#password-set [type=submit]").tap()
+        guest.until('!!document.querySelector("#welcome-done")')
+        guest.page.locator("#welcome-done").tap()
         guest.until('location.pathname === "/" && !!document.querySelector(".profile-link")')
         guest.shot("signed-in")
         guest.close()
@@ -1506,10 +1523,10 @@ with sync_playwright() as playwright:
         assert phone.js(AVATAR) == "F"
         phone.goto(f"/invite/{invite('Mami')}")
         phone.page.locator("#redeem").tap()
-        phone.until('location.pathname === "/account" && !!document.querySelector("#password-set")')
+        phone.until('location.pathname === "/welcome" && !!document.querySelector("#password-set")')
         phone.page.fill("#password-set input[name=password]", "mami-pass-1")
         phone.page.locator("#password-set [type=submit]").tap()
-        phone.until('[...document.querySelectorAll(".toast")].some((toast) => /saved/i.test(toast.textContent))')
+        phone.until('!!document.querySelector("#welcome-done")')
         phone.goto("/")
         phone.until(f'{AVATAR} === "M"')
         phone.page.wait_for_timeout(800)

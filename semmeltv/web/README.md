@@ -17,7 +17,8 @@ at once to a profile already signed in on this browser. The server forwards
 each visitor's cookie on every API call, so the API answers with that
 person's own state and refuses what their role doesn't allow; the web app
 also hides admin pages and controls from viewers. `/invite/{token}` greets a
-new person, `/account` adds passkeys and sets the password, and `/people` is
+new person and `/welcome` then holds them until they add a passkey or set a
+password, `/account` adds passkeys and sets the password, and `/people` is
 the admin's list of people and invite links. The server follows the TV's
 event stream with the token in `SEMMELTV_SERVICE_TOKEN_FILE`.
 

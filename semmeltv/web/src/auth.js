@@ -218,10 +218,15 @@ document.addEventListener("click", (event) => {
       mark: redeem,
       send: async () => {
         await call(`/api/auth/invite/${encodeURIComponent(redeem.dataset.token)}`, {});
-        history.replaceState(null, "", "/");
-        location.assign("/account?welcome=1");
+        history.replaceState(null, "", "/profiles");
+        location.assign("/welcome");
       },
     });
+    return;
+  }
+  if (event.target.closest("#welcome-done")) {
+    event.preventDefault();
+    location.replace("/");
     return;
   }
   const add = event.target.closest("#add-passkey");
@@ -323,6 +328,7 @@ document.addEventListener("submit", (event) => {
         const answer = await call("/api/auth/account/password", { password: form.elements.password.value });
         form.elements.password.value = "";
         toast(answer.message || "Password saved", "ok");
+        if (form.dataset.then === "reload") location.reload();
       },
     });
   } else if (form.id === "add-member") {
@@ -338,9 +344,12 @@ document.addEventListener("submit", (event) => {
   }
 });
 
-if (new URLSearchParams(location.search).get("welcome") && document.getElementById("add-passkey")) {
-  toast("You're signed in. Add a passkey and a password below.", "ok");
-}
+const welcomePasskey = document.getElementById("welcome-passkey");
+if (welcomePasskey && passkeys) welcomePasskey.hidden = false;
+
+window.addEventListener("pageshow", (event) => {
+  if (event.persisted && document.getElementById("redeem")) location.reload();
+});
 
 if (passkeys && document.querySelector(".profile-choice")) {
   prepareAll();
