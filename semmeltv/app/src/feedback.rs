@@ -28,6 +28,8 @@ const LARGEST_CLIENT: usize = 400 * 1024;
 const LARGEST_PICTURE: usize = 4 * 1024 * 1024;
 const COMMAND_TIME: Duration = Duration::from_secs(4);
 const LONGEST_NOTE: usize = 4000;
+const MOST_QUESTIONS: usize = 6;
+const MOST_OPTIONS: usize = 8;
 const INDEX: &str = "index.jsonl";
 const REVISION: &str = "/etc/semmeltv/revision";
 
@@ -85,9 +87,25 @@ pub struct Summary {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum Status {
     New,
-    Reopened { was: Box<Status> },
-    NeedsReview { why: String, decide: String },
-    Done { resolution: Resolution },
+    Reopened {
+        was: Box<Status>,
+    },
+    NeedsReview {
+        why: String,
+        decide: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        questions: Vec<Question>,
+    },
+    Done {
+        resolution: Resolution,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Question {
+    ask: String,
+    options: Vec<String>,
+    recommended: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -170,10 +188,16 @@ impl Status {
         Ok(match self {
             Status::New => Status::New,
             Status::Reopened { .. } => return Err("A report reopens when a person comments on it".to_string()),
-            Status::NeedsReview { why, decide } => Status::NeedsReview {
-                why: note(&why, "why it needs a review")?,
-                decide: note(&decide, "what a person has to decide")?,
-            },
+            Status::NeedsReview { why, decide, questions } => {
+                if questions.len() > MOST_QUESTIONS {
+                    return Err(format!("Ask at most {MOST_QUESTIONS} questions"));
+                }
+                Status::NeedsReview {
+                    why: note(&why, "why it needs a review")?,
+                    decide: note(&decide, "what a person has to decide")?,
+                    questions: questions.into_iter().map(Question::checked).collect::<Result<_, _>>()?,
+                }
+            }
             Status::Done {
                 resolution: Resolution::Fixed { commit, what },
             } => {
@@ -203,6 +227,28 @@ impl Status {
             settled @ (Status::NeedsReview { .. } | Status::Done { .. }) => Status::Reopened { was: Box::new(settled) },
             waiting @ (Status::New | Status::Reopened { .. }) => waiting,
         }
+    }
+}
+
+impl Question {
+    fn checked(self) -> Result<Question, String> {
+        let ask = note(&self.ask, "what each question asks")?;
+        if !(2..=MOST_OPTIONS).contains(&self.options.len()) {
+            return Err(format!("{ask:?} needs 2 to {MOST_OPTIONS} options"));
+        }
+        if self.recommended >= self.options.len() {
+            return Err(format!("{ask:?} recommends an option it doesn't have"));
+        }
+        let options = self
+            .options
+            .iter()
+            .map(|option| note(option, "each option"))
+            .collect::<Result<_, _>>()?;
+        Ok(Question {
+            ask,
+            options,
+            recommended: self.recommended,
+        })
     }
 }
 
@@ -875,6 +921,7 @@ mod tests {
         let review = Status::NeedsReview {
             why: "It is a design question".to_string(),
             decide: "Keep or drop the button".to_string(),
+            questions: Vec::new(),
         };
         assert_eq!(
             serde_json::to_value(&review).unwrap(),
@@ -940,5 +987,51 @@ mod tests {
         assert_eq!(thread.len(), 3);
         assert_eq!(thread[1], (Author::Claude, "Nothing to do".to_string()));
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn a_review_asks_questions_whose_options_a_person_picks_from() {
+        let review: Status = serde_json::from_value(json!({
+            "state": "needs_review",
+            "why": "A new feature",
+            "decide": "How the options get there",
+            "questions": [
+                { "ask": " Where do options come from? ", "options": ["Structured", " Parsed "], "recommended": 0 },
+                { "ask": "Radios or checkboxes?", "options": ["Radios", "Checkboxes"], "recommended": 1 }
+            ]
+        }))
+        .unwrap();
+        let checked = review.checked().unwrap();
+        let Status::NeedsReview { questions, .. } = &checked else {
+            panic!("{checked:?}");
+        };
+        assert_eq!(questions[0].ask, "Where do options come from?");
+        assert_eq!(questions[0].options, ["Structured", "Parsed"]);
+        assert_eq!(questions[1].recommended, 1);
+
+        let plain: Status =
+            serde_json::from_value(json!({ "state": "needs_review", "why": "x", "decide": "y" })).unwrap();
+        assert_eq!(
+            serde_json::to_value(plain.checked().unwrap()).unwrap(),
+            json!({ "state": "needs_review", "why": "x", "decide": "y" })
+        );
+
+        let asking = |questions: Vec<(Vec<&str>, usize)>| Status::NeedsReview {
+            why: "x".to_string(),
+            decide: "y".to_string(),
+            questions: questions
+                .into_iter()
+                .map(|(options, recommended)| Question {
+                    ask: "Which?".to_string(),
+                    options: options.into_iter().map(str::to_string).collect(),
+                    recommended,
+                })
+                .collect(),
+        };
+        assert!(asking(vec![(vec!["only"], 0)]).checked().is_err());
+        assert!(asking(vec![(vec!["a", "b"], 2)]).checked().is_err());
+        assert!(asking(vec![(vec!["a", " "], 0)]).checked().is_err());
+        assert!(asking(vec![(vec!["a", "b"], 1)]).checked().is_ok());
+        assert!(asking(vec![(vec!["a", "b"], 0); MOST_QUESTIONS + 1]).checked().is_err());
     }
 }

@@ -526,7 +526,11 @@ Each report has a status, kept beside it in `<id>.status.json`:
 - New, until someone marks it;
 - Reopened, when a person comments on a report that was settled; it keeps the
   status it had before;
-- Needs review, with why and what a person has to decide;
+- Needs review, with why and what a person has to decide, and optionally up
+  to 6 `questions`, each with 2 to 8 `options` and the index of the
+  `recommended` one. The Feedback page shows them as radio buttons with the
+  recommendation picked; Answer posts the picks as the person's comment, which
+  reopens the report;
 - Done, with the commit that fixed it, or why nothing changes.
 
 Each report also has a thread of comments in `<id>.comments.jsonl`. A comment
@@ -555,6 +559,8 @@ in the thread. By hand, from beast:
     semmeltv-feedback semmeltv5 thread <id>
     semmeltv-feedback semmeltv5 comment <id> "what Claude did"
     semmeltv-feedback semmeltv5 mark <id> needs-review "why" "what to decide"
+    semmeltv-feedback semmeltv5 mark <id> needs-review "why" "what to decide" \
+      --ask "Which way?" --recommend "the first" --option "the second"
     journalctl --user -u semmeltv-feedback-watch -u semmeltv-feedback-triage
 
 The same works for `semmeltv3`. A report's `tv.problems` lists what the TV

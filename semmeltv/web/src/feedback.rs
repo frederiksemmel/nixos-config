@@ -1,4 +1,4 @@
-use crate::api::{Api, CommentAuthor, FeedbackComment, FeedbackStatus, FeedbackSummary, Resolution};
+use crate::api::{Api, CommentAuthor, FeedbackComment, FeedbackStatus, FeedbackSummary, Question, Resolution};
 use crate::auth::admin;
 use crate::layout::back;
 use crate::public::Public;
@@ -63,7 +63,7 @@ fn explanation(status: &FeedbackStatus) -> String {
             before if before.is_empty() => format!("A comment reopened it. Before: {}.", badge(was)),
             before => format!("A comment reopened it. Before: {}.\n\n{before}", badge(was)),
         },
-        FeedbackStatus::NeedsReview { why, decide } => format!("{why}\n\nTo decide: {decide}"),
+        FeedbackStatus::NeedsReview { why, decide, .. } => format!("{why}\n\nTo decide: {decide}"),
         FeedbackStatus::Done {
             resolution: Resolution::Fixed { what, .. },
         } => what.clone(),
@@ -79,6 +79,7 @@ fn chosen(choice: &str, first: String, second: String) -> Option<FeedbackStatus>
         "needs_review" => FeedbackStatus::NeedsReview {
             why: first,
             decide: second,
+            questions: Vec::new(),
         },
         "fixed" => FeedbackStatus::Done {
             resolution: Resolution::Fixed {
@@ -109,18 +110,104 @@ fn thread_after(earlier: &str, text: &str) -> String {
     }
 }
 
-#[procedure]
-pub async fn say(cx: &Cx, id: String, text: String, earlier: String) -> Result<(bool, String, String, String, String)> {
-    Ok(match Api::of(cx).comment_feedback(&id, &text).await {
+struct Choice {
+    value: String,
+    group: String,
+    text: String,
+    recommended: bool,
+}
+
+fn letter(option: usize) -> char {
+    char::from(b'a' + (option % 26) as u8)
+}
+
+fn asked(status: &FeedbackStatus) -> &[Question] {
+    match status {
+        FeedbackStatus::NeedsReview { questions, .. } => questions,
+        _ => &[],
+    }
+}
+
+fn picked(questions: &[Question], picks: &str) -> Vec<usize> {
+    let mut chosen: Vec<usize> = questions.iter().map(|question| question.recommended).collect();
+    for pick in picks.split(';') {
+        let Some((question, option)) = pick.split_once('=') else {
+            continue;
+        };
+        let (Ok(question), Ok(option)) = (question.parse::<usize>(), option.parse::<usize>()) else {
+            continue;
+        };
+        if questions
+            .get(question)
+            .is_some_and(|asked| option < asked.options.len())
+        {
+            chosen[question] = option;
+        }
+    }
+    chosen
+}
+
+fn answered(questions: &[Question], chosen: &[usize], words: &str) -> String {
+    let mut text = questions
+        .iter()
+        .zip(chosen)
+        .map(|(question, &option)| format!("{}\n→ {}: {}", question.ask, letter(option), question.options[option]))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let words = words.trim();
+    if !words.is_empty() {
+        text.push_str("\n\n");
+        text.push_str(words);
+    }
+    text
+}
+
+async fn commented(cx: &Cx, id: &str, text: &str, earlier: String) -> (bool, String, String, String, String) {
+    match Api::of(cx).comment_feedback(id, text).await {
         Ok(status) => (
             true,
             stage(&status).to_string(),
             badge(&status),
             explanation(&status),
-            thread_after(&earlier, &text),
+            thread_after(&earlier, text),
         ),
         Err(problem) => (false, problem, String::new(), String::new(), earlier),
-    })
+    }
+}
+
+#[procedure]
+pub async fn choose(
+    cx: &Cx,
+    id: String,
+    picks: String,
+    words: String,
+    earlier: String,
+) -> Result<(bool, String, String, String, String)> {
+    let questions = match Api::of(cx).feedback().await {
+        Ok(list) => list
+            .reports
+            .into_iter()
+            .find(|report| report.id == id)
+            .map(|report| asked(&report.status).to_vec())
+            .unwrap_or_default(),
+        Err(problem) => return Ok((false, problem, String::new(), String::new(), earlier)),
+    };
+    if questions.is_empty() {
+        return Ok((
+            false,
+            "These questions are settled already. Reload the page to see why.".to_string(),
+            String::new(),
+            String::new(),
+            earlier,
+        ));
+    }
+    let text = answered(&questions, &picked(&questions, &picks), &words);
+    Ok(commented(cx, &id, &text, earlier).await)
+}
+
+#[procedure]
+pub async fn say(cx: &Cx, id: String, text: String, earlier: String) -> Result<(bool, String, String, String, String)> {
+    Ok(commented(cx, &id, &text, earlier).await)
 }
 
 #[procedure]
@@ -200,6 +287,29 @@ async fn report_row(
     let answer = signal(cx, String::new);
     let sent = signal(cx, || 0usize);
     let saved = signal(cx, || 0usize);
+    let picks = signal(cx, String::new);
+    let extra = signal(cx, String::new);
+    let refused = signal(cx, String::new);
+    let answers = signal(cx, || 0usize);
+    let questions: Vec<(&str, Vec<Choice>)> = asked(&report.status)
+        .iter()
+        .enumerate()
+        .map(|(index, question)| {
+            let options = question
+                .options
+                .iter()
+                .enumerate()
+                .map(|(option, text)| Choice {
+                    value: format!("{index}={option};"),
+                    group: format!("{}-question-{index}", report.id),
+                    text: format!("{}: {text}", letter(option)),
+                    recommended: option == question.recommended,
+                })
+                .collect();
+            (question.ask.as_str(), options)
+        })
+        .collect();
+    let answerer = id.clone();
     let thread: Vec<(&'static str, String, String, &str)> = report
         .comments
         .iter()
@@ -245,6 +355,47 @@ async fn report_row(
                     <p class="comment-text">$(mine.get())</p>
                 </li>
             </ol>
+            if !questions.is_empty() {
+                <form class="report-answer" :hidden=$(status.get() != "needs_review") :data-sent=$(answers.get()) @submit=$(async |e: Event| {
+                    e.prevent_default();
+                    let reply = choose(answerer.to_owned(), picks.get(), extra.get(), mine.get()).await;
+                    if reply.0 {
+                        status.set(reply.1);
+                        label.set(reply.2);
+                        note.set(reply.3);
+                        mine.set(reply.4);
+                        extra.set("".to_owned());
+                        refused.set("".to_owned());
+                        answers.set(answers.get() + 1);
+                    } else {
+                        refused.set(reply.1);
+                    }
+                })>
+                    #[key(index)]
+                    for (index, (ask, options)) in questions.iter().enumerate() {
+                        <fieldset class="report-question" data-index=(index.to_string())>
+                            <legend>(*ask)</legend>
+                            #[key(choice.value.clone())]
+                            for choice in options.iter() {
+                                <label class="report-option">
+                                    <input type="radio" name=(choice.group.as_str()) value=(choice.value.as_str()) checked=(choice.recommended)
+                                        @change=$(|e: Event| picks.push_str(e.target.value))>
+                                    <span>(choice.text.as_str())</span>
+                                    if choice.recommended {
+                                        <small>"Recommended"</small>
+                                    }
+                                </label>
+                            }
+                        </fieldset>
+                    }
+                    <textarea rows="2" maxlength="4000" placeholder="Anything to add (optional)" aria-label="Anything to add"
+                        data-draft=(format!("{}:answer", report.id))
+                        :value=$(extra.get())
+                        @input=$(|e: Event| extra.set(e.target.value))></textarea>
+                    <p class="controls-said" aria-live="polite" :hidden=$(refused.get().is_empty())>$(refused.get())</p>
+                    <button type="submit" class="pill">"Answer"</button>
+                </form>
+            }
             <form class="report-say" :data-sent=$(sent.get()) @submit=$(async |e: Event| {
                 e.prevent_default();
                 let reply = say(speaker.to_owned(), words.get(), mine.get()).await;
@@ -447,5 +598,37 @@ mod tests {
             text: "Built option a".to_string(),
         };
         assert_eq!(author(&claude), ("comment claude", "Claude".to_string()));
+    }
+
+    #[test]
+    fn picked_options_answer_a_review_and_untouched_questions_keep_the_recommendation() {
+        let question = |ask: &str, options: &[&str], recommended: usize| Question {
+            ask: ask.to_string(),
+            options: options.iter().map(|option| option.to_string()).collect(),
+            recommended,
+        };
+        let questions = vec![
+            question("Where do options come from?", &["Structured", "Parsed", "Buttons"], 0),
+            question("Radios or checkboxes?", &["Radios", "Checkboxes"], 0),
+        ];
+        let review = FeedbackStatus::NeedsReview {
+            why: "A feature".to_string(),
+            decide: "How".to_string(),
+            questions: questions.clone(),
+        };
+        assert_eq!(asked(&review), questions.as_slice());
+        assert!(asked(&FeedbackStatus::New).is_empty());
+
+        assert_eq!(picked(&questions, ""), [0, 0]);
+        assert_eq!(picked(&questions, "0=2;0=1;"), [1, 0]);
+        assert_eq!(picked(&questions, "1=1;5=0;0=9;x=1;"), [0, 1]);
+        assert_eq!(
+            answered(&questions, &[1, 0], "  and quickly "),
+            "Where do options come from?\n→ b: Parsed\n\nRadios or checkboxes?\n→ a: Radios\n\nand quickly"
+        );
+        assert_eq!(
+            answered(&questions, &[0, 1], ""),
+            "Where do options come from?\n→ a: Structured\n\nRadios or checkboxes?\n→ b: Checkboxes"
+        );
     }
 }

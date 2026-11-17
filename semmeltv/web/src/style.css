@@ -2143,6 +2143,16 @@ html[data-feedback] .feedback-open { background: var(--text); color: var(--bg); 
 .report-say { display: grid; grid-template-columns: 1fr auto; gap: 8px; align-items: end; width: 100%; }
 .report-say textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; resize: vertical; }
 .report-say .controls-said { grid-column: 1 / -1; }
+.report-answer { display: grid; gap: 10px; width: 100%; }
+.report-answer[hidden] { display: none; }
+.report-question { display: grid; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
+.report-question legend { padding: 0 0 6px; font-size: 15px; line-height: 1.4; font-weight: 600; overflow-wrap: anywhere; }
+.report-option { display: grid; grid-template-columns: auto 1fr; column-gap: 10px; align-items: start; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); font-size: 15px; line-height: 1.4; overflow-wrap: anywhere; }
+.report-option:has(input:checked) { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.report-option input { width: 20px; height: 20px; margin: 1px 0 0; accent-color: var(--accent); }
+.report-option small { grid-column: 2; color: var(--muted); font-size: 13px; }
+.report-answer textarea { width: 100%; box-sizing: border-box; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--text); font: inherit; font-size: 16px; resize: vertical; }
+.report-answer button[type="submit"] { justify-self: end; }
 
 @media (max-width: 389px) {
   .top { gap: 5px; }

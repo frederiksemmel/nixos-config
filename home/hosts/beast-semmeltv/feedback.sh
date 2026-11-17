@@ -6,12 +6,18 @@ usage: semmeltv-feedback HOST list [new|reopened|needs_review|done]
        semmeltv-feedback HOST comment ID TEXT
        semmeltv-feedback HOST pictures ID DIR
        semmeltv-feedback HOST mark ID new
-       semmeltv-feedback HOST mark ID needs-review WHY DECIDE
+       semmeltv-feedback HOST mark ID needs-review WHY DECIDE [--ask QUESTION (--option TEXT | --recommend TEXT)...]...
        semmeltv-feedback HOST mark ID fixed COMMIT WHAT
        semmeltv-feedback HOST mark ID no-change WHY
 
 A comment from this tool is signed "Claude" and never reopens a report; a
 person's comment on the admin page reopens a settled one.
+
+needs-review may ask questions: each --ask starts one, and the --option and
+--recommend flags after it are its choices in order (a, b, c, …). Every
+question has 2 to 8 choices, exactly one of them --recommend. The Feedback page
+shows each question as radio buttons with the recommendation picked, and the
+person's Answer arrives as a comment such as "QUESTION\n→ b: TEXT".
 
 HOST is semmeltv5 or semmeltv3. Talks to the TV's API on 127.0.0.1 over ssh
 with the TV's service token, which never leaves the TV.
@@ -89,8 +95,34 @@ case $command in
         body='{"state":"new"}'
         ;;
       needs-review)
-        (($# == 4)) || usage
-        body=$(jq -nc --arg why "$3" --arg decide "$4" '{state: "needs_review", why: $why, decide: $decide}')
+        (($# >= 4)) || usage
+        why=$3 decide=$4
+        shift 4
+        questions='[]'
+        while (($# > 0)); do
+          (($# >= 2)) || usage
+          case $1 in
+            --ask)
+              questions=$(jq -c --arg ask "$2" '. + [{ask: $ask, options: [], recommended: null}]' <<<"$questions")
+              ;;
+            --option | --recommend)
+              [[ $questions != '[]' ]] || usage
+              questions=$(jq -c --arg option "$2" --argjson recommend "$([[ $1 == --recommend ]] && echo true || echo false)" '
+                .[-1] |= (if $recommend then
+                    if .recommended == null then .recommended = (.options | length) else error("\(.ask): only one --recommend") end
+                  else . end
+                  | .options += [$option])' <<<"$questions") || exit 2
+              ;;
+            *) usage ;;
+          esac
+          shift 2
+        done
+        if ! jq -e 'all(.recommended != null)' <<<"$questions" >/dev/null; then
+          echo "semmeltv-feedback: every --ask needs one --recommend" >&2
+          exit 2
+        fi
+        body=$(jq -nc --arg why "$why" --arg decide "$decide" --argjson questions "$questions" \
+          '{state: "needs_review", why: $why, decide: $decide} + (if $questions == [] then {} else {questions: $questions} end)')
         ;;
       fixed)
         (($# == 4)) || usage

@@ -100,9 +100,25 @@ pub enum CommentAuthor {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum FeedbackStatus {
     New,
-    Reopened { was: Box<FeedbackStatus> },
-    NeedsReview { why: String, decide: String },
-    Done { resolution: Resolution },
+    Reopened {
+        was: Box<FeedbackStatus>,
+    },
+    NeedsReview {
+        why: String,
+        decide: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        questions: Vec<Question>,
+    },
+    Done {
+        resolution: Resolution,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Question {
+    pub ask: String,
+    pub options: Vec<String>,
+    pub recommended: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -26,6 +26,12 @@ of these statuses, set with `semmeltv-feedback`:
   line, a trail entry, a file and line). DECIDE is the question Frederik must
   answer, concrete enough to answer in one line, with the options you see and
   the one you recommend.
+  When the decision is a choice among options, also pass each question with
+  its options, so the Feedback page shows them as radio buttons:
+  `… needs-review "WHY" "DECIDE" --ask "QUESTION" --recommend "OPTION" --option "OPTION" [--ask …]`.
+  Options are lettered a, b, c in the order given; each question has 2 to 8,
+  exactly one `--recommend`, and each option says in a few words what it does.
+  DECIDE then sums the choice up in a line.
 
 A report must never stay New or Reopened when you finish. If something goes wrong halfway,
 mark it Needs review and say what happened and what state you left (for
@@ -44,7 +50,8 @@ ID`) are your main instruction, and the status it had before is in
 `.status.was`. Typical answers:
 
 - a choice among the options your earlier note listed ("1a", "b", "go with the
-  second"): that choice is Frederik's decision, so build it, even when it
+  second", or an Answer from the page: each question followed by
+  "→ LETTER: OPTION", then anything the person added): that choice is Frederik's decision, so build it, even when it
   is bigger than an easy fix, as long as it stays within the other rules
   (tests, nixbuild, semmeltv-deploy, no secrets or hosts). If it is too big
   for one run, do the first useful part, say what remains in your comment, and

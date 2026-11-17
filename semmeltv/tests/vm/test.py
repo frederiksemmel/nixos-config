@@ -935,6 +935,41 @@ with sync_playwright() as playwright:
         phone.until(LOADED)
         assert phone.js(f"document.querySelector({draft!r}).value") == "", "a sent comment is no draft"
 
+    with scenario("a review's questions are radio buttons, and Answer sends the picks as a comment"):
+        asked = json.loads(tv.succeed(f"tail -n 1 {FEEDBACK}/index.jsonl"))
+        review = {
+            "state": "needs_review",
+            "why": "A new feature",
+            "decide": "Pick the two below",
+            "questions": [
+                {"ask": "Where do the options come from?", "options": ["Structured", "Parsed", "Buttons"], "recommended": 0},
+                {"ask": "Radios or checkboxes?", "options": ["Radios", "Checkboxes"], "recommended": 0},
+            ],
+        }
+        tv.succeed(
+            "curl -sf -H @/tmp/service-header -H 'content-type: application/json' "
+            f"-d '{json.dumps(review)}' http://127.0.0.1:8090/api/feedback/{asked['id']}/status"
+        )
+        phone.goto("/feedback")
+        phone.until(LOADED)
+        row = phone.page.locator(".report").filter(has=phone.page.locator(".report-copy", has_text=asked["id"]))
+        assert row.locator(".report-question").count() == 2
+        assert row.get_by_role("radio", name="a: Structured").is_checked(), "the recommendation is picked"
+        assert row.get_by_role("radio", name="a: Radios").is_checked()
+        row.get_by_role("radio", name="b: Parsed").tap()
+        assert row.get_by_role("radio", name="b: Parsed").is_checked() and not row.get_by_role("radio", name="a: Structured").is_checked()
+        row.get_by_role("textbox", name="Anything to add").fill("and soon")
+        row.get_by_role("button", name="Answer").tap()
+        said = "Where do the options come from?\n→ b: Parsed\n\nRadios or checkboxes?\n→ a: Radios\n\nand soon"
+        phone.until(f"""[...document.querySelectorAll(".report")].some((report) =>
+            report.querySelector(".report-copy").textContent.includes({asked['id']!r})
+            && report.querySelector(".report-status b").textContent === "Reopened"
+            && report.querySelector(".report-answer").hidden
+            && report.querySelector(".comment.person:not([hidden]) .comment-text")?.textContent === {said!r})""")
+        report = json.loads(tv.succeed(f"curl -sf -H @/tmp/service-header http://127.0.0.1:8090/api/feedback/{asked['id']}"))
+        assert report["status"]["state"] == "reopened" and report["status"]["was"]["questions"][0]["options"][1] == "Parsed", report["status"]
+        assert report["comments"][-1]["text"] == said, report["comments"]
+
     for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
         with scenario(f"the remote opens, closes by a swipe without a reload, and a reload brings it back closed ({engine})"):
             remote = phone if engine == "chromium" else Phone(playwright, engine, device)
