@@ -870,10 +870,10 @@ in
             command to run myself.
         '';
 
-        # NOTE: setting `settings` makes ~/.claude/settings.json a read-only
-        # store symlink, so everything that used to live there is declared here.
-        # The CLI can no longer write it: `/config`, `/model` and `/plugin` only
-        # hold for the session unless the change is made below.
+        # ~/.claude/settings.json is a writable file: each switch merges `settings`
+        # into it, declared keys win, and keys only the CLI writes (`/effort`,
+        # `/config`, `/model`) stay until the next declaration overrides them.
+        mutableSettings = true;
         settings = {
           model = "opus";
           effortLevel = "high";
