@@ -1474,7 +1474,10 @@ in
       };
     };
 
-    programs.sioyek.enable = true;
+    programs.sioyek = {
+      enable = true;
+      config.background_color = "0.0 0.0 0.0";
+    };
 
     programs.zathura = {
       enable = true;
