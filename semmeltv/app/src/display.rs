@@ -1,5 +1,7 @@
 use serde_json::Value;
+use std::fmt;
 use std::process::{Command, Stdio};
+use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::Duration;
 
@@ -30,9 +32,21 @@ impl Mode {
             .args(["--output", &self.output, "--mode", &mode])
             .stdin(Stdio::null())
             .status();
-        if let Err(error) = result {
-            eprintln!("wlr-randr: {error}");
+        match result {
+            Ok(status) if !status.success() => eprintln!("display: wlr-randr --mode {mode}: {status}"),
+            Ok(_) => {}
+            Err(error) => eprintln!("display: wlr-randr: {error}"),
         }
+    }
+}
+
+impl fmt::Display for Mode {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "{} {}x{} @ {:.3} Hz",
+            self.output, self.width, self.height, self.refresh
+        )
     }
 }
 
@@ -129,14 +143,40 @@ fn choose_ui(outputs: &Value) -> Option<Mode> {
     output.change_to((width, height, refresh))
 }
 
-fn after_film(outputs: &Value) -> Option<Mode> {
-    let output = Output::enabled(outputs)?;
-    let &(width, height, _, _) = output.modes.iter().find(|mode| mode.3)?;
-    if (width, height) == UI_SIZE {
-        return None;
-    }
-    choose_ui(outputs)
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct Wanted {
+    film: Option<(u64, Video)>,
 }
+
+impl Wanted {
+    const MENU: Self = Self { film: None };
+
+    fn play(&mut self, player: u64, video: Video) {
+        self.film = Some((player, video));
+    }
+
+    fn stop(&mut self, player: u64) {
+        if self.film.is_some_and(|(playing, _)| playing == player) {
+            self.film = None;
+        }
+    }
+
+    fn change(&self, outputs: &Value) -> Option<Mode> {
+        match self.film {
+            Some((_, video)) => choose(outputs, video),
+            None => choose_ui(outputs),
+        }
+    }
+
+    fn purpose(&self) -> String {
+        match self.film {
+            Some((_, video)) => format!("a {}x{} video at {} fps", video.width, video.height, video.fps),
+            None => "the menu".to_string(),
+        }
+    }
+}
+
+static WANTED: Mutex<Wanted> = Mutex::new(Wanted::MENU);
 
 fn outputs() -> Option<Value> {
     let output = Command::new("wlr-randr")
@@ -147,25 +187,26 @@ fn outputs() -> Option<Value> {
     serde_json::from_slice(&output.stdout).ok()
 }
 
-pub fn match_video(video: Video) -> bool {
-    let Some(matching) = outputs().and_then(|outputs| choose(&outputs, video)) else {
-        return false;
-    };
-    matching.apply();
-    thread::sleep(SETTLE);
-    true
-}
-
-pub fn show_ui() {
-    if let Some(mode) = outputs().and_then(|outputs| choose_ui(&outputs)) {
+fn settle(change: impl FnOnce(&mut Wanted)) {
+    let mut wanted = WANTED.lock().unwrap_or_else(PoisonError::into_inner);
+    change(&mut wanted);
+    if let Some(mode) = outputs().and_then(|outputs| wanted.change(&outputs)) {
+        eprintln!("display: {mode} for {}", wanted.purpose());
         mode.apply();
+        thread::sleep(SETTLE);
     }
 }
 
-pub fn leave_film() {
-    if let Some(mode) = outputs().and_then(|outputs| after_film(&outputs)) {
-        mode.apply();
-    }
+pub fn play(player: u64, video: Video) {
+    settle(|wanted| wanted.play(player, video));
+}
+
+pub fn stop(player: u64) {
+    settle(|wanted| wanted.stop(player));
+}
+
+pub fn refresh() {
+    settle(|_| {});
 }
 
 #[cfg(test)]
@@ -268,25 +309,67 @@ mod tests {
         }
     }
 
+    fn showing(width: u64, refresh: f64) -> Value {
+        let mut outputs = tv();
+        for mode in outputs[0]["modes"].as_array_mut().unwrap() {
+            mode["current"] = json!(mode["width"] == width && mode["refresh"] == refresh);
+        }
+        outputs
+    }
+
     #[test]
-    fn after_a_film_the_menu_stays_in_its_1080p_mode() {
-        let current = |width: u64, refresh: f64| {
-            let mut outputs = tv();
-            for mode in outputs[0]["modes"].as_array_mut().unwrap() {
-                mode["current"] = json!(mode["width"] == width && mode["refresh"] == refresh);
-            }
-            outputs
-        };
+    fn the_menu_always_gets_1080p60_back() {
         let cases = [
-            ("a 1080p 23.976 film", current(1920, 23.976), None),
-            ("a 1080p 25 film", current(1920, 25.0), None),
-            ("the menu's own mode", current(1920, 60.0), None),
-            ("a 4k film", current(3840, 23.976), Some((1920, 1080, 60.0))),
-            ("a 720p film", current(1280, 60.0), Some((1920, 1080, 60.0))),
+            (
+                "after a 1080p 23.976 film",
+                showing(1920, 23.976),
+                Some((1920, 1080, 60.0)),
+            ),
+            ("after a 1080p 25 film", showing(1920, 25.0), Some((1920, 1080, 60.0))),
+            ("after a 4k film", showing(3840, 23.976), Some((1920, 1080, 60.0))),
+            ("after a 720p film", showing(1280, 60.0), Some((1920, 1080, 60.0))),
+            ("in the menu's own mode", showing(1920, 60.0), None),
         ];
         for (name, outputs, want) in cases {
-            let got = after_film(&outputs).map(|mode| (mode.width, mode.height, mode.refresh));
+            let got = Wanted::MENU
+                .change(&outputs)
+                .map(|mode| (mode.width, mode.height, mode.refresh));
             assert_eq!(got, want, "{name}");
         }
+    }
+
+    #[test]
+    fn a_film_keeps_its_mode_until_its_own_player_stops() {
+        let got = video(1920, 1080, 23.976024);
+        let mode = |wanted: &Wanted, outputs: &Value| {
+            wanted
+                .change(outputs)
+                .map(|mode| (mode.width, mode.height, mode.refresh))
+        };
+        let mut wanted = Wanted::MENU;
+        wanted.play(1, got);
+        assert_eq!(
+            mode(&wanted, &showing(1920, 60.0)),
+            Some((1920, 1080, 23.976)),
+            "playing"
+        );
+        assert_eq!(
+            mode(&wanted, &showing(3840, 30.0)),
+            Some((1920, 1080, 23.976)),
+            "after the TV reset its mode"
+        );
+        wanted.play(2, got);
+        wanted.stop(1);
+        assert_eq!(
+            mode(&wanted, &showing(1920, 23.976)),
+            None,
+            "the old player ending after the next one started"
+        );
+        wanted.stop(2);
+        assert_eq!(
+            mode(&wanted, &showing(1920, 23.976)),
+            Some((1920, 1080, 60.0)),
+            "the last player ending"
+        );
     }
 }

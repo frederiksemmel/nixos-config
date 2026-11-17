@@ -50,7 +50,6 @@ struct Screen {
     core: Core,
     nav: Nav,
     home: Arc<Home>,
-    playing: bool,
     art: PathBuf,
     images: Sender<Job<Target>>,
     message_timer: Timer,
@@ -74,7 +73,6 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
     let (events, received) = mpsc::channel();
     let mut stream = core.subscribe();
     let home = core.home();
-    let playing = core.now_playing().is_some();
     let following = core.clone();
     let handle = ui.as_weak();
     runtime.spawn(async move {
@@ -96,7 +94,6 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
         nav: Nav::new((*home.library).clone()),
         core: core.clone(),
         home,
-        playing,
         art: meta.join(artwork::DIR),
         images,
         message_timer: Timer::default(),
@@ -123,16 +120,10 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
         }
     });
 
-    let resized = Rc::downgrade(&screen);
-    ui.on_resized(move || {
-        if resized
-            .upgrade()
-            .is_some_and(|screen| screen.try_borrow().is_ok_and(|screen| !screen.playing))
-        {
-            thread::spawn(display::show_ui);
-        }
+    ui.on_resized(|| {
+        thread::spawn(display::refresh);
     });
-    thread::spawn(display::show_ui);
+    thread::spawn(display::refresh);
     ui.run()
 }
 
@@ -257,8 +248,7 @@ impl Screen {
             Event::Message(text) => self.show_message(text),
             Event::Panel(panel) => self.show_panel(panel),
             Event::UpNext(card) => self.show_up_next(card),
-            Event::Playback { now_playing } => self.playing = now_playing.is_some(),
-            Event::Voice(_) | Event::Audio(_) | Event::Screen { .. } => {}
+            Event::Playback { .. } | Event::Voice(_) | Event::Audio(_) | Event::Screen { .. } => {}
         }
     }
 

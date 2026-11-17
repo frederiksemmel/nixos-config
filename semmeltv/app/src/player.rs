@@ -19,9 +19,12 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
+
+static PLAYERS: AtomicU64 = AtomicU64::new(1);
 
 const POLL: Duration = Duration::from_millis(50);
 const STOPPED_EXIT_CODE: i32 = 10;
@@ -224,7 +227,8 @@ struct Playback {
     chapter_credits: Option<f64>,
     next: bool,
     prompt: Option<Kind>,
-    matched: bool,
+    id: u64,
+    video: Option<Video>,
     scrub: Scrub,
     shown_until: Option<Instant>,
     drawn: String,
@@ -241,6 +245,10 @@ struct Playback {
 }
 
 impl Playback {
+    fn video_changed(&mut self, video: Video) -> Option<u64> {
+        (self.video.replace(video) != Some(video)).then_some(self.id)
+    }
+
     fn send(&mut self, command: Value) {
         if let Some(stream) = self.stream.as_mut() {
             let _ = send(stream, command);
@@ -679,7 +687,9 @@ impl Player {
             .stdin(Stdio::null())
             .spawn()?;
         subtitles.started(path, sidecar::find(path));
+        let id = PLAYERS.fetch_add(1, Ordering::Relaxed);
         let playback = Shared::new(Mutex::new(Playback {
+            id,
             name,
             subtitles,
             tracks,
@@ -705,7 +715,7 @@ impl Player {
                     );
                 }
             }
-            display::leave_film();
+            display::stop(id);
             let _ = std::fs::remove_file(&socket_path);
             on_exit(finish);
         });
@@ -1013,13 +1023,9 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 playback.present(now);
             }
             Some(Event::Video(video)) => {
-                let settled = {
-                    let playback = shared.lock().unwrap();
-                    playback.phase.started() || playback.matched
-                };
-                if !settled {
-                    let matched = display::match_video(video);
-                    shared.lock().unwrap().matched = matched;
+                let changed = shared.lock().unwrap().video_changed(video);
+                if let Some(id) = changed {
+                    display::play(id, video);
                 }
             }
             Some(Event::Started) => {
@@ -1221,6 +1227,28 @@ mod tests {
         assert_eq!((dvd.width, dvd.height), (1024, 576));
         let none = r#"{"event":"property-change","id":4,"name":"current-tracks/video"}"#;
         assert_eq!(Event::parse(none), None);
+    }
+
+    #[test]
+    fn the_display_follows_the_video_track_even_after_playback_started() {
+        let film = Video {
+            width: 1920,
+            height: 1080,
+            fps: 23.976,
+        };
+        let mut playback = Playback {
+            id: 7,
+            phase: Phase::Playing { paused: false },
+            ..Playback::default()
+        };
+        assert_eq!(
+            playback.video_changed(film),
+            Some(7),
+            "first seen after playback-restart"
+        );
+        assert_eq!(playback.video_changed(film), None, "the same track again");
+        let other = Video { fps: 25.0, ..film };
+        assert_eq!(playback.video_changed(other), Some(7), "another track");
     }
 
     #[test]
