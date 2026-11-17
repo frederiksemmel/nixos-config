@@ -1477,6 +1477,10 @@ in
     programs.sioyek = {
       enable = true;
       config.background_color = "0.0 0.0 0.0";
+      bindings = {
+        screen_down = "<C-d>";
+        screen_up = "<C-u>";
+      };
     };
 
     programs.zathura = {
