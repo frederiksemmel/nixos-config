@@ -869,7 +869,7 @@ in
           "application/xhtml+xml" = browser;
           "x-scheme-handler/claude-cli" = "claude-code-url-handler.desktop";
           "inode/directory" = "org.gnome.Nautilus.desktop";
-          "application/pdf" = "org.pwmt.zathura.desktop";
+          "application/pdf" = "sioyek.desktop";
           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" = spreadsheet;
           "application/vnd.ms-excel.sheet.macroEnabled.12" = spreadsheet;
           "application/vnd.ms-excel.sheet.binary.macroEnabled.12" = spreadsheet;
@@ -1473,6 +1473,8 @@ in
         style = null;
       };
     };
+
+    programs.sioyek.enable = true;
 
     programs.zathura = {
       enable = true;

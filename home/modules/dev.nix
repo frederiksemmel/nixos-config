@@ -752,6 +752,13 @@ in
         settings = {
           sort-by = "natural";
           opener = {
+            sioyek = [
+              {
+                run = "sioyek %s";
+                desc = "Sioyek";
+                orphan = true;
+              }
+            ];
             zathura = [
               {
                 run = "zathura %s";
@@ -771,6 +778,7 @@ in
             {
               mime = "application/pdf";
               use = [
+                "sioyek"
                 "zathura"
                 "evince"
                 "reveal"
