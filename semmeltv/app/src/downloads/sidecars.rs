@@ -37,7 +37,7 @@ impl Sidecars {
             destination: format!("{folder}/{name}"),
             size: found.text.len() as u64,
         };
-        let uploaded = deliver::upload_to(&self.remote, &placed);
+        let uploaded = deliver::upload_to(&self.remote, &placed, &|_| {});
         let _ = fs::remove_file(&local);
         uploaded?;
         if let Err(error) = deliver::refresh(&self.mount_rc, &folder) {

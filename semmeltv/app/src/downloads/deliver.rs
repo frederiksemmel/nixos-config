@@ -8,9 +8,9 @@ use crate::mdblist;
 use crate::parse::{self, FileEntry};
 use crate::tmdb::{Client, Kind};
 use std::fs;
-use std::io;
+use std::io::{self, BufRead, BufReader};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 const ATTEMPTS: usize = 3;
 pub const REPLACED: &str = "Replaced";
@@ -202,11 +202,58 @@ fn remote_size(remote: &str, path: &str) -> Result<Option<u64>, String> {
     Ok(entries.first().and_then(|entry| entry["Size"].as_u64()))
 }
 
-pub fn upload_to(remote: &str, placed: &Placed) -> Result<(), String> {
-    let local = placed.local.to_string_lossy();
-    run(
-        "rclone",
-        &["copyto", &local, &format!("{remote}/{}", placed.destination)],
+fn sent(line: &str) -> Option<u64> {
+    let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+    entry["stats"]["bytes"].as_u64()
+}
+
+fn complaint(line: &str) -> Option<String> {
+    let entry: serde_json::Value = serde_json::from_str(line).ok()?;
+    matches!(entry["level"].as_str(), Some("error" | "critical"))
+        .then(|| entry["msg"].as_str().unwrap_or_default().trim().to_string())
+}
+
+fn copy_with_progress(local: &str, remote: &str, progress: &dyn Fn(u64)) -> Result<(), String> {
+    let mut child = Command::new("rclone")
+        .args([
+            "copyto",
+            local,
+            remote,
+            "--use-json-log",
+            "--stats",
+            "5s",
+            "--stats-log-level",
+            "NOTICE",
+        ])
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("rclone: {error}"))?;
+    let mut last = String::new();
+    if let Some(stderr) = child.stderr.take() {
+        for line in BufReader::new(stderr).lines().map_while(Result::ok) {
+            if let Some(bytes) = sent(&line) {
+                progress(bytes);
+            } else if let Some(said) = complaint(&line) {
+                last = said;
+            } else if !line.trim().is_empty() && !line.starts_with('{') {
+                last = line;
+            }
+        }
+    }
+    let status = child.wait().map_err(|error| format!("rclone: {error}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("rclone copyto: {last}"))
+    }
+}
+
+pub fn upload_to(remote: &str, placed: &Placed, progress: &dyn Fn(u64)) -> Result<(), String> {
+    copy_with_progress(
+        &placed.local.to_string_lossy(),
+        &format!("{remote}/{}", placed.destination),
+        progress,
     )?;
     match remote_size(remote, &placed.destination)? {
         Some(size) if size == placed.size => Ok(()),
@@ -266,8 +313,8 @@ impl Shelf {
             .ok_or_else(|| format!("no library.db in {}", self.remote))
     }
 
-    pub fn upload(&self, placed: &Placed) -> Result<(), String> {
-        upload_to(&self.remote, placed)
+    pub fn upload(&self, placed: &Placed, progress: &dyn Fn(u64)) -> Result<(), String> {
+        upload_to(&self.remote, placed, progress)
     }
 
     pub fn import(&self, target: &Target, placed: &[Placed], mode: Mode, log: &dyn Fn(String)) -> Result<(), String> {
@@ -446,6 +493,17 @@ mod tests {
     use super::super::resolve::EpisodeInfo;
     use super::*;
     use crate::parse::FileEntry;
+
+    #[test]
+    fn rclone_stats_lines_give_the_bytes_sent_and_error_lines_the_reason() {
+        let stats = r#"{"time":"2026-11-17T07:37:52+01:00","level":"notice","msg":"\nTransferred: 5.996 MiB / 19.073 MiB, 31%\n","stats":{"bytes":6287360,"totalBytes":20000000,"transferring":[{"bytes":6287360,"name":"a.mkv","size":20000000}]},"source":"accounting/stats.go:554"}"#;
+        assert_eq!(sent(stats), Some(6_287_360));
+        assert_eq!(complaint(stats), None);
+        let failed = r#"{"time":"2026-11-17T07:38:00+01:00","level":"error","msg":"Failed to copyto: quota exceeded\n","source":"cmd/cmd.go:1"}"#;
+        assert_eq!(sent(failed), None);
+        assert_eq!(complaint(failed).as_deref(), Some("Failed to copyto: quota exceeded"));
+        assert_eq!(sent("2026/11/17 07:38:00 NOTICE: plain text"), None);
+    }
 
     fn outlander() -> Target {
         Target {

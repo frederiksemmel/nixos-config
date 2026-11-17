@@ -136,6 +136,10 @@ impl Stage {
     fn stoppable(self) -> bool {
         matches!(self, Self::Checking | Self::Downloading)
     }
+
+    fn active(self) -> bool {
+        matches!(self, Self::Checking | Self::Downloading | Self::Uploading)
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -146,6 +150,27 @@ pub struct Job {
     pub message: String,
     pub parts: Vec<PartState>,
     pub log: Vec<String>,
+    #[serde(default)]
+    pub sending: Option<Sending>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub struct Sending {
+    pub sent: u64,
+    pub size: u64,
+}
+
+impl Sending {
+    fn percent(self) -> f64 {
+        if self.size == 0 {
+            return 0.0;
+        }
+        (self.sent as f64 * 100.0 / self.size as f64).clamp(0.0, 100.0)
+    }
+
+    fn line(self) -> String {
+        format!("Uploading to pCloud · {} of {}", gb(self.sent), gb(self.size))
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -306,6 +331,7 @@ async fn job_row(cx: &Cx, job: &Job) -> Result<impl View> {
     let id = job.id.clone();
     let stoppable = job.stage.stoppable();
     let last = job.log.last().cloned().unwrap_or_default();
+    let sending = job.sending.filter(|_| job.stage.active());
     Ok(view! {
         <li class="download-job" data-stage=(job.stage.name())>
             <div class="download-job-line">
@@ -315,6 +341,10 @@ async fn job_row(cx: &Cx, job: &Job) -> Result<impl View> {
             if job.stage != Stage::Done {
                 <div class="download-bar"><i style=(format!("width:{:.1}%", percent(job)))></i></div>
                 <p class="download-facts">(progress_line(job))</p>
+                if let Some(sending) = sending {
+                    <div class="download-bar"><i style=(format!("width:{:.1}%", sending.percent()))></i></div>
+                    <p class="download-facts">(sending.line())</p>
+                }
                 <p class="download-log">(last)</p>
             }
             if stoppable {
@@ -601,6 +631,20 @@ mod tests {
         let uploading = job("uploading").unwrap();
         assert!(!uploading.stage.stoppable());
         assert_eq!(percent(&uploading), 100.0);
+    }
+
+    #[test]
+    fn an_upload_in_progress_reads_as_bytes_sent_of_the_file_size() {
+        assert!(
+            job("uploading").unwrap().sending.is_none(),
+            "a TV without upload progress still reads"
+        );
+        let mut sent = job("uploading").unwrap();
+        sent.sending = serde_json::from_value(json!({ "sent": 1_200_000_000u64, "size": 4_000_000_000u64 })).unwrap();
+        let sending = sent.sending.unwrap();
+        assert_eq!(sending.percent(), 30.0);
+        assert_eq!(sending.line(), "Uploading to pCloud · 1.2 GB of 4.0 GB");
+        assert_eq!(Sending { sent: 5, size: 0 }.percent(), 0.0);
     }
 
     #[test]

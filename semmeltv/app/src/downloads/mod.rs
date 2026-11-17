@@ -195,6 +195,12 @@ impl PartState {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Sending {
+    pub sent: u64,
+    pub size: u64,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Job {
     pub id: String,
@@ -208,6 +214,8 @@ pub struct Job {
     pub parts: Vec<PartState>,
     pub placed: Vec<String>,
     pub log: Vec<String>,
+    #[serde(default)]
+    pub sending: Option<Sending>,
 }
 
 impl Job {
@@ -477,6 +485,7 @@ impl Service {
             .jobs
             .into_iter()
             .filter(|job| job.stage != Stage::Stopped)
+            .map(|job| Job { sending: None, ..job })
             .collect();
     }
 
@@ -707,6 +716,7 @@ impl Service {
                 .collect(),
             placed: Vec::new(),
             log: Vec::new(),
+            sending: None,
         };
         let verb = match mode {
             Mode::Add => "Downloading",
@@ -1008,7 +1018,19 @@ impl Service {
                 job.message = format!("Uploading to pCloud, file {} of {}", job.placed.len() + 1, job.count());
             });
         }
-        shelf.upload(place).map_err(|error| format!("Upload failed: {error}"))?;
+        self.update(id, |job| {
+            job.sending = Some(Sending {
+                sent: 0,
+                size: place.size,
+            });
+        });
+        let uploaded = shelf.upload(place, &|sent| {
+            self.update(id, |job| {
+                job.sending = Some(Sending { sent, size: place.size });
+            });
+        });
+        self.update(id, |job| job.sending = None);
+        uploaded.map_err(|error| format!("Upload failed: {error}"))?;
         log(format!("uploaded {}", place.destination));
         shelf
             .import(&job.target, std::slice::from_ref(place), job.mode, &log)
@@ -1390,7 +1412,20 @@ mod tests {
             parts,
             placed: Vec::new(),
             log: Vec::new(),
+            sending: None,
         }
+    }
+
+    #[test]
+    fn a_job_saved_without_upload_progress_still_loads_and_the_upload_shows_its_bytes() {
+        let mut saved = serde_json::to_value(dark(vec![season()])).unwrap();
+        saved.as_object_mut().unwrap().remove("sending");
+        let job: Job = serde_json::from_value(saved).unwrap();
+        assert_eq!(job.sending, None);
+        let mut job = job;
+        job.sending = Some(Sending { sent: 40, size: 100 });
+        let shown = serde_json::to_value(&job).unwrap();
+        assert_eq!(shown["sending"], serde_json::json!({ "sent": 40, "size": 100 }));
     }
 
     fn season() -> PartState {
