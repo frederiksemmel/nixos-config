@@ -13,6 +13,12 @@
 let
   cfg = config.services.semmeltv;
   blankCursor = pkgs.callPackage ../app/blank-cursor.nix { };
+  stats = pkgs.writeShellApplication {
+    name = "semmeltv-stats";
+    text = ''
+      exec sudo -u semmeltv env SEMMELTV_DB=${cfg.stateDir}/semmeltv.db ${lib.getExe cfg.package} stats "$@"
+    '';
+  };
 in
 {
   imports = [
@@ -181,6 +187,7 @@ in
     environment.systemPackages = [
       pkgs.sqlite
       blankCursor
+      stats
     ];
 
     environment.etc."semmeltv/revision" = lib.mkIf (config.system.configurationRevision != null) {

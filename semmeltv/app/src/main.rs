@@ -46,6 +46,7 @@ mod tmdb;
 mod tv;
 mod ui;
 mod up_next;
+mod usage;
 mod voice;
 mod watching;
 mod wyoming;
@@ -64,7 +65,7 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|toasty tv|library ARGS…|library show|library from-toml FILE|card SECONDS TITLE LINE…|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|card SECONDS TITLE LINE…|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -136,7 +137,7 @@ fn parse_args() -> Result<Args, String> {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
             "ui" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
-            "toasty" | "library" | "card" | "get" | "tv-set" => {
+            "toasty" | "library" | "card" | "get" | "tv-set" | "stats" => {
                 args.toasty = raw.by_ref().collect();
                 args.mode = argument;
             }
@@ -473,6 +474,33 @@ async fn invite(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
+async fn stats(args: &Args) -> Result<(), String> {
+    let days = match args.toasty.as_slice() {
+        [] => 7,
+        [days] => days
+            .parse::<u64>()
+            .ok()
+            .filter(|days| *days > 0)
+            .ok_or(format!("stats wants a number of days, not {days}"))?,
+        _ => return Err("usage: semmeltv stats [DAYS]".to_string()),
+    };
+    let db = open_db(args).await?;
+    let now = watching::now();
+    let events = db
+        .usage_since(now.saturating_sub(days * 86_400))
+        .await
+        .map_err(|error| error.to_string())?;
+    let names = db
+        .profiles()
+        .await
+        .map_err(|error| error.to_string())?
+        .into_iter()
+        .map(|profile| (profile.id, profile.name))
+        .collect();
+    print!("{}", usage::report(&events, &names, now, days, details::local_offset));
+    Ok(())
+}
+
 async fn sign_in_gate(db: &Db) -> Result<Option<auth::gate::Gate>, String> {
     let Some(origins) = env_text("SEMMELTV_ORIGINS") else {
         eprintln!("api: SEMMELTV_ORIGINS is unset, so nobody signs in and anyone who reaches the API may use it");
@@ -707,6 +735,7 @@ fn run() -> Result<(), String> {
         "library" => run_library(&args)?,
         "hear" => hear(&args)?,
         "invite" => waiting(invite(&args))??,
+        "stats" => waiting(stats(&args))??,
         "card" => print_card(&args.toasty)?,
         "tv-set" => run_tv_set(&args.toasty)?,
         _ => run_ui(args, cache)?,

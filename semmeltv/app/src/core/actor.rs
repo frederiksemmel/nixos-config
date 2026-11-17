@@ -83,6 +83,7 @@ struct OnTv {
     file: PathBuf,
     owner: ProfileId,
     hold: Hold,
+    play: String,
 }
 
 impl OnTv {
@@ -544,6 +545,7 @@ impl Actor {
                         file: path.to_path_buf(),
                         owner,
                         hold: Hold::default(),
+                        play: crate::auth::token(),
                     });
                     self.publish_playback();
                     if !handed_off {
@@ -640,6 +642,21 @@ impl Actor {
         }
         progress.played(path, watching::now());
         self.keep(owner, progress).await;
+        self.note_tv_play().await;
+    }
+
+    async fn note_tv_play(&self) {
+        let Some(tv) = &self.on_tv else {
+            return;
+        };
+        let caption = self.caption(&tv.file);
+        let noted = self
+            .db
+            .note_play(&tv.play, watching::now(), tv.owner, "TV", &caption, tv.player.played())
+            .await;
+        if let Err(error) = noted {
+            eprintln!("usage: {error}");
+        }
     }
 
     async fn record_place(&mut self) {
@@ -657,6 +674,7 @@ impl Actor {
         progress.played(&file, watching::now());
         watching::record(&mut progress, &self.library, &file, played, watching::now());
         self.keep(owner, progress).await;
+        self.note_tv_play().await;
     }
 
     async fn finish_playback(&mut self, finish: Finish) {
@@ -1180,6 +1198,15 @@ impl Actor {
             _ => {}
         }
         self.keep(by, progress).await;
+        let device = report.device.as_ref().map_or("Phone", |device| device.name.as_str());
+        let play = format!("phone-{}", report.session);
+        let noted = self
+            .db
+            .note_play(&play, now, by, device, &self.caption(file), report.played)
+            .await;
+        if let Err(error) = noted {
+            eprintln!("usage: {error}");
+        }
         Outcome::done("Kept the place")
     }
 

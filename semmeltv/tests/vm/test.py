@@ -725,6 +725,19 @@ with sync_playwright() as playwright:
         assert checked >= 10 and 0.9 < pace < 1.1, f"{checked} checks, pace {pace}"
         phone.shot("subtitles")
 
+    with scenario("semmeltv-stats on the TV counts sign-ins and lists who watched what, on the TV and the phone"):
+        def stats_listed():
+            usage_report = tv.succeed("semmeltv-stats 1")
+            plays = usage_report.split("Plays, newest first")[-1].splitlines()
+            on_phone = any("Frederik" in line and "Kinofilm" in line and " TV " not in line for line in plays)
+            on_tv = any("Frederik" in line and " TV " in line and "Testfilm" in line for line in plays)
+            return usage_report if on_phone and on_tv else None
+
+        usage_report = eventually("the stats list the phone's Kinofilm and the TV's Testfilm", stats_listed, timeout=60, every=3)
+        print(usage_report)
+        frederik = next(line for line in usage_report.splitlines() if line.startswith("Frederik")).split()
+        assert int(frederik[1]) >= 1, f"Frederik's sign-in is not counted: {frederik}"
+
     with scenario("a film moves from the phone to the TV and back, keeping its place"):
         phone_plays_film(phone)
         at = phone_time(phone)

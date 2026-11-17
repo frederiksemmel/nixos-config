@@ -44,6 +44,13 @@ pub enum Headphones {
     Paired { address: String, listening: bool },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, toasty::Embed)]
+pub enum Activity {
+    SignIn,
+    Visit,
+    Play,
+}
+
 #[derive(Debug, toasty::Model)]
 pub struct Profile {
     #[key]
@@ -228,6 +235,23 @@ pub struct Setting {
     pub value: String,
 }
 
+#[derive(Debug, toasty::Model)]
+#[table = "usage"]
+pub struct Usage {
+    #[key]
+    #[auto]
+    pub id: i64,
+    #[index]
+    pub at: i64,
+    pub activity: Activity,
+    pub profile_id: i64,
+    pub device: String,
+    pub title: String,
+    #[index]
+    pub play: String,
+    pub seconds: i64,
+}
+
 pub fn all() -> toasty::ModelSet {
     toasty::models!(
         Profile,
@@ -242,6 +266,7 @@ pub fn all() -> toasty::ModelSet {
         Dismissal,
         SubtitleSettings,
         AudioPrefs,
-        Setting
+        Setting,
+        Usage
     )
 }

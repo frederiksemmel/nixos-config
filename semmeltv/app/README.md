@@ -405,6 +405,7 @@ async: the core and the API await them.
 | `audio_prefs` | no headphones, or the paired headphones and whether the sound goes to them; dialogue mode on or off | profile |
 | `video_facts` | an episode's or film's real duration, where its credits start, its subtitle delay and how many subtitle tracks it carries | video |
 | `settings` | one value per key, such as the Samsung pairing `tv_token` | TV |
+| `usage` | who used the TV and what they watched, see [Usage](#usage) | event |
 
 Episodes, films and shows are referred to by their id in `library.db`, so a
 renamed title or a moved file keeps everyone's progress. The rest of the app
@@ -491,6 +492,23 @@ Bluetooth bonds themselves. The rules:
   headphones for the TV, and moves to the owner's if they chose headphones and
   theirs are connected. Nobody's headphones change in the middle of their
   video. Pairing never removes headphones another profile still uses.
+
+## Usage
+
+The `usage` table keeps, from migration `0009` on, one row per:
+- **sign-in**: a password, passkey or invite opening a session, with the device
+  label such as `iPhone · Safari`;
+- **visit**: a signed-in device back in the app, at most one per session and
+  hour (when its session renews);
+- **play**: an episode or film played on the TV or a phone, with the seconds
+  actually watched, which its saves and reports move forward.
+
+Rows hold the profile id, not a relation, so they outlive a deleted profile.
+`semmeltv stats [DAYS]` prints the last 7 days by default: per person the
+sign-ins, days and hours active, plays and time watched on the TV and the phone,
+then the most watched shows and films, then the plays. On a TV it is
+`semmeltv-stats [DAYS]`, and in the devenv shell `semmeltv-stats [DAYS] [HOST]`
+runs that over ssh, on semmeltv5 unless a host is given.
 
 ## HTTP API
 

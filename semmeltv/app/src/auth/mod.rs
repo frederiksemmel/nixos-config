@@ -5,6 +5,7 @@ pub mod store;
 
 use crate::db::Db;
 use crate::profile::ProfileId;
+use crate::usage::Activity;
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use serde::Serialize;
@@ -331,6 +332,12 @@ impl Auth {
         Ok(choices)
     }
 
+    async fn note(&self, at: u64, activity: Activity, profile: ProfileId, device: &str) {
+        if let Err(error) = self.db().note_usage(at, activity, profile, device).await {
+            eprintln!("usage: {error}");
+        }
+    }
+
     async fn open_session(&self, profile: ProfileId, label: &str) -> Outcome<String> {
         let token = token();
         let now = self.now();
@@ -343,6 +350,7 @@ impl Auth {
             label: label.chars().take(120).collect(),
         };
         self.db().create_session(&session).await?;
+        self.note(now, Activity::SignIn, profile, &session.label).await;
         Ok(token)
     }
 
@@ -371,6 +379,7 @@ impl Auth {
                 self.db()
                     .touch_session(&session.token_hash, now, now + SESSION_LIFETIME)
                     .await?;
+                self.note(now, Activity::Visit, session.profile, &session.label).await;
                 renewed = true;
             }
             found.push((Person::from(&profile), token.clone()));
@@ -834,6 +843,33 @@ mod tests {
         rig.pass(INVITE_LIFETIME);
         assert_eq!(rig.auth.redeem(&late, "iPhone").await, Err(Refusal::InviteExpired));
         assert_eq!(rig.auth.redeem("made-up", "iPhone").await, Err(Refusal::InviteUnknown));
+    }
+
+    #[tokio::test]
+    async fn sign_ins_and_hourly_visits_are_kept_as_usage() {
+        let rig = Rig::new().await;
+        let invite = rig.auth.invite(Some(FREDERIK), MAMI).await.unwrap();
+        let (_, session) = rig.auth.redeem(&invite, "iPhone · Safari").await.unwrap();
+        rig.pass(10 * 60);
+        rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap();
+        rig.pass(RENEW_AFTER);
+        rig.auth.resolve(std::slice::from_ref(&session)).await.unwrap();
+        let used: Vec<_> = rig
+            .db
+            .usage_since(0)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|event| (event.at, event.activity, event.profile, event.device))
+            .collect();
+        let device = "iPhone · Safari".to_string();
+        assert_eq!(
+            used,
+            [
+                (1_000_000, Activity::SignIn, MAMI, device.clone()),
+                (1_000_000 + 10 * 60 + RENEW_AFTER, Activity::Visit, MAMI, device),
+            ]
+        );
     }
 
     #[tokio::test]

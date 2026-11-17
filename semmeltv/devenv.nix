@@ -33,6 +33,11 @@ in
     SEMMELTV_MICROPHONE = "default";
   };
 
+  scripts.semmeltv-stats = {
+    description = "Who used SemmelTV and what they watched: semmeltv-stats [DAYS] [HOST], 7 days on semmeltv5 by default";
+    exec = ''ssh "''${2:-semmeltv5}" semmeltv-stats "''${1:-7}"'';
+  };
+
   tasks."semmeltv:warm-library" = {
     description = "List the pCloud library folder in one call so the app loads in seconds";
     before = [ "devenv:enterShell" ];
