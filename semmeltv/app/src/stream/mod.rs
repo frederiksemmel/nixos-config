@@ -525,7 +525,8 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         );
         problem(status, reason)
     };
-    let media = match examine(&streams, &chosen.file).await {
+    let playable = streams.core.playable(&chosen.file);
+    let media = match examine(&streams, &playable).await {
         Ok(media) => media,
         Err(error) => return refused(StatusCode::UNPROCESSABLE_ENTITY, error),
     };
@@ -593,7 +594,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     let id = new_id();
     let subtitles = subtitle_list(&streams, &chosen.file, &media, profile);
     let spec = Spec {
-        source: chosen.file.clone(),
+        source: playable,
         audio: audio.map(|audio| audio.index),
         hevc,
         copy_audio: copy_audio || audio.is_none(),

@@ -13,6 +13,7 @@ use crate::library::Library;
 use crate::manifest::{self, Date, Manifest};
 use crate::parse;
 use crate::progress::Progress;
+use crate::ready::{self, Ready};
 use crate::tmdb::{self, Kind};
 use axum::extract::{Path as UrlPath, State};
 use axum::http::StatusCode;
@@ -1024,6 +1025,21 @@ impl Service {
                 size: place.size,
             });
         });
+        let ready = self.downloads.join(ready::FILE_NAME);
+        let plays_first = job.mode == Mode::Add;
+        if plays_first {
+            if let Err(error) = Ready::add(&ready, &place.destination, &place.local) {
+                log(format!(
+                    "could not offer {} before its upload: {error}",
+                    place.destination
+                ));
+            }
+            shelf
+                .import(&job.target, std::slice::from_ref(place), job.mode, &log)
+                .map_err(|error| format!("Import failed: {error}"))?;
+            shelf.sync(&log);
+            log(format!("plays here while it uploads: {}", place.destination));
+        }
         let uploaded = shelf.upload(place, &|sent| {
             self.update(id, |job| {
                 job.sending = Some(Sending { sent, size: place.size });
@@ -1032,10 +1048,18 @@ impl Service {
         self.update(id, |job| job.sending = None);
         uploaded.map_err(|error| format!("Upload failed: {error}"))?;
         log(format!("uploaded {}", place.destination));
-        shelf
-            .import(&job.target, std::slice::from_ref(place), job.mode, &log)
-            .map_err(|error| format!("Import failed: {error}"))?;
+        if !plays_first {
+            shelf
+                .import(&job.target, std::slice::from_ref(place), job.mode, &log)
+                .map_err(|error| format!("Import failed: {error}"))?;
+        }
         shelf.show_in_library(std::slice::from_ref(place), &log);
+        if let Err(error) = Ready::remove(&ready, &place.destination) {
+            log(format!(
+                "could not drop {} from the ready list: {error}",
+                place.destination
+            ));
+        }
         self.update(id, |job| {
             job.placed.push(place.destination.clone());
             job.note(format!("in the library: {}", place.destination));

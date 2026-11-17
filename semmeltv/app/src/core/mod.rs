@@ -158,6 +158,7 @@ pub struct Setup {
     pub tv_renderer: Option<String>,
     pub handoff: Option<crate::player::renderer::Handoff>,
     pub downloads: Option<Downloads>,
+    pub ready: Option<PathBuf>,
     pub headphones: bool,
 }
 
@@ -178,6 +179,7 @@ struct Parts {
     television: Television,
     audio: Option<Audio>,
     downloads: Option<Downloads>,
+    ready: Option<(PathBuf, PathBuf)>,
 }
 
 #[derive(Clone)]
@@ -206,6 +208,7 @@ impl Core {
             tv_renderer,
             handoff,
             downloads,
+            ready,
             headphones,
         } = setup;
         let saved = cache.saved_manifest();
@@ -266,6 +269,7 @@ impl Core {
                 television,
                 audio,
                 downloads,
+                ready: ready.clone().map(|file| (root.clone(), file)),
             }),
         };
         core.set_library(Arc::new(library));
@@ -275,6 +279,7 @@ impl Core {
             meta,
             saved,
             remote,
+            ready,
         };
         let hardware = actor::Hardware {
             store,
@@ -317,6 +322,7 @@ impl Core {
                 }),
                 audio: None,
                 downloads: None,
+                ready: None,
             }),
         };
         core.set_library(Arc::new(library));
@@ -378,6 +384,13 @@ impl Core {
 
     pub fn library(&self) -> Arc<Library> {
         self.published.library.read().unwrap().clone()
+    }
+
+    pub fn playable(&self, path: &Path) -> PathBuf {
+        match &self.parts.ready {
+            Some((root, file)) => crate::ready::Ready::read(file).playable(root, path),
+            None => path.to_path_buf(),
+        }
     }
 
     pub async fn progress(&self, profile: ProfileId) -> Arc<Progress> {

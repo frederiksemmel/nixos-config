@@ -46,6 +46,13 @@ copy that it uploads only if pCloud's copy did not change meanwhile. The app
 reads nothing else: no file names, no folders. An entry whose file is missing is
 skipped. Paths are relative to the library root, and `added` is a date.
 
+A new film or episode from the downloads service enters library.db before its
+upload to pCloud. Until the upload is done, the service lists the downloaded
+copy in `ready.json` in its downloads folder (`SEMMELTV_READY`), and the TV that
+downloaded it shows the entry and plays it, on the TV and on phones, from that
+copy; the other TV skips it as missing until the file arrives. A replacement is
+uploaded first, so the old copy stays playable until the new one is there.
+
 It is not edited by hand. `semmeltv --manifest library.db library show` prints
 it as text, which is how the incoming skill shows what changed, and `library
 from-toml FILE.toml` builds one from that text. Schema changes are Toasty

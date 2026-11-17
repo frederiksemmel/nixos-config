@@ -287,7 +287,10 @@ in
           };
         };
 
-        services.cage.environment.SEMMELTV_DOWNLOADS = "http://127.0.0.1:${toString cfg.port}";
+        services.cage.environment = {
+          SEMMELTV_DOWNLOADS = "http://127.0.0.1:${toString cfg.port}";
+          SEMMELTV_READY = "${downloadDir}/ready.json";
+        };
         systemd.services.semmeltv-web = lib.mkIf semmeltv.web.enable {
           environment.SEMMELTV_DOWNLOADS_URL = "http://127.0.0.1:${toString cfg.port}";
         };

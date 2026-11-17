@@ -285,6 +285,21 @@ fn copy_dir(from: &Path, to: &Path) -> io::Result<()> {
     Ok(())
 }
 
+fn with_placed(mut files: Vec<FileEntry>, placed: &[Placed], today: Date) -> Vec<FileEntry> {
+    for placed in placed {
+        let path = PathBuf::from(&placed.destination);
+        if !files.iter().any(|file| file.path == path) {
+            files.push(FileEntry {
+                path,
+                size: placed.size,
+                modified: today,
+            });
+        }
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    files
+}
+
 fn today() -> Date {
     let elapsed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH);
     Date::from_unix(elapsed.map_or(0, |elapsed| elapsed.as_secs()))
@@ -400,7 +415,7 @@ impl Shelf {
                 &self.remote,
             ],
         )?;
-        let files = parse::read_listing(&listing)?;
+        let files = with_placed(parse::read_listing(&listing)?, placed, today());
         let mut existing =
             Manifest::read(&manifest_path).map_err(|_| "library.db on pCloud is unreadable".to_string())?;
         let retired: Vec<String> = match mode {
@@ -481,6 +496,10 @@ impl Shelf {
                 Err(error) => log(format!("could not refresh {dir} on the mount: {error}")),
             }
         }
+        self.sync(log);
+    }
+
+    pub fn sync(&self, log: &dyn Fn(String)) {
         match run("systemctl", &["start", "--no-block", &self.sync_unit]) {
             Ok(_) => log(format!("started {}", self.sync_unit)),
             Err(error) => log(format!("could not start {}: {error}", self.sync_unit)),
@@ -593,6 +612,41 @@ mod tests {
         assert_eq!(
             folders(&[place("Movies/Up (2009)/Up (2009).mkv")]),
             ["Movies", "Movies/Up (2009)"]
+        );
+    }
+
+    #[test]
+    fn a_file_not_uploaded_yet_is_imported_as_if_it_were_on_pcloud() {
+        let listed = FileEntry {
+            path: "Movies/Up (2009)/Up (2009).mkv".into(),
+            size: 7,
+            modified: Date::default(),
+        };
+        let placed = |destination: &str| Placed {
+            local: PathBuf::from("/downloads/job/file.mkv"),
+            destination: destination.to_string(),
+            size: 9,
+        };
+        let today = Date::parse("2026-11-17").unwrap();
+        let files = with_placed(
+            vec![listed.clone()],
+            &[
+                placed("Movies/Coco (2017)/Coco (2017).mkv"),
+                placed("Movies/Up (2009)/Up (2009).mkv"),
+            ],
+            today,
+        );
+        assert_eq!(
+            files,
+            [
+                FileEntry {
+                    path: "Movies/Coco (2017)/Coco (2017).mkv".into(),
+                    size: 9,
+                    modified: today,
+                },
+                listed,
+            ],
+            "the new file joins the listing once, the uploaded one stays as listed"
         );
     }
 

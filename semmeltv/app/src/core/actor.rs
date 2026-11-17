@@ -469,7 +469,9 @@ impl Actor {
             if self.screen != screen::Screen::Tv {
                 self.screen_step(screen::Event::TvPlays, owner).await;
             }
+            let here = self.core.playable(path);
             let source = match block_in_place(|| self.store.source(path, self.online)) {
+                _ if here != path => here,
                 Source::Stream => path.to_path_buf(),
                 Source::Cached(file) => file,
                 Source::Unavailable => {

@@ -33,6 +33,7 @@ mod parse;
 mod player;
 mod profile;
 mod progress;
+mod ready;
 mod screen;
 mod seek;
 mod segments;
@@ -306,6 +307,7 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
         led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
         headphones: env_text("SEMMELTV_HEADPHONES").is_some_and(|value| value == "bluetooth"),
         downloads: env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new),
+        ready: env_path("SEMMELTV_READY"),
     };
     let core = core::Core::start(setup).await;
     if let Some(config) = api {
