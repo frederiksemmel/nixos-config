@@ -1,7 +1,7 @@
 use crate::api::{
     About, Api, Card, CastMember, Episode, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard,
 };
-use crate::downloads::season_downloads;
+use crate::downloads::{search_download, season_downloads};
 use crate::layout::back;
 use crate::playing::{play_episode, play_movie, play_show, tell, tv_icon};
 use crate::public::Public;
@@ -348,6 +348,7 @@ async fn home(cx: &Cx) -> Result<impl View> {
             sections(section: section.clone(), rating: rating.clone(), year: year.clone())
         </div>
         browse(query: $(query.get()), section: $(section.get()), rating: $(rating.get()), year: $(year.get()))
+        search_download(query: query.clone())
     })
 }
 

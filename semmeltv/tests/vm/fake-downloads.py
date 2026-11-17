@@ -37,7 +37,8 @@ JOB = {
 }
 
 lock = threading.Lock()
-state = {"searched": False, "confirmed": False}
+TYPED = {**PROPOSAL, "id": "typed", "asked": "Testserie season 2"}
+state = {"searched": False, "confirmed": False, "typed": False}
 
 
 class Downloads(BaseHTTPRequestHandler):
@@ -55,6 +56,7 @@ class Downloads(BaseHTTPRequestHandler):
                 self.reply([{"number": 2, "downloading": state["confirmed"]}, {"number": 3, "downloading": True}])
             elif self.path == "/api/downloads":
                 proposals = [PROPOSAL] if state["searched"] and not state["confirmed"] else []
+                proposals += [TYPED] if state["typed"] else []
                 jobs = [JOB] if state["confirmed"] else []
                 self.reply({"proposals": proposals, "jobs": jobs, "room": 0, "quota": 0, "free": None})
             else:
@@ -63,7 +65,10 @@ class Downloads(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         with lock:
-            if self.path == "/api/downloads/search":
+            if self.path == "/api/downloads/search" and body == {"text": "Testserie season 2", "from": "web"}:
+                state["typed"] = True
+                self.reply(TYPED)
+            elif self.path == "/api/downloads/search":
                 if body.get("pick") != {"kind": "show", "tmdb": SHOW, "season": 2, "episode": None}:
                     self.reply({"id": "", "asked": "", "from": "web", "outcome": "refused", "message": f"unexpected {body}"})
                     return

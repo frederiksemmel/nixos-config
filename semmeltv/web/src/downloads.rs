@@ -10,8 +10,8 @@ fn downloads(cx: &Cx) -> Result<&Downloads> {
     Ok(app_context::<Downloads>(cx))
 }
 use topcoat::router::page;
-use topcoat::runtime::{Event, Signal, connected, procedure, shard, signal};
-use topcoat::view::{View, component, emit, live, view};
+use topcoat::runtime::{Event, Signal, connected, link, procedure, shard, signal};
+use topcoat::view::{View, attributes, component, emit, live, view};
 
 const REFRESH: Duration = Duration::from_secs(2);
 const MISSING_WAIT: Duration = Duration::from_secs(3);
@@ -533,6 +533,31 @@ pub async fn season_downloads(cx: &Cx, show: u64, title: &str) -> Result<impl Vi
                     }
                 </div>
                 <p class="setting-note" :hidden=$(!busy.get())>"Searching the indexers…"</p>
+                proposal_view(id: $(shown.get()), shown: shown.clone())
+            </section>
+        }
+    })
+}
+
+#[component]
+pub async fn search_download(cx: &Cx, query: Signal<String>) -> Result<impl View> {
+    let shown = signal(cx, String::new);
+    let busy = signal(cx, || false);
+    Ok(view! {
+        if crate::auth::downloads(cx) {
+            <section class="settings search-download" :hidden=$(query.get().trim().is_empty())>
+                <h2>"Not in the library?"</h2>
+                <p class="setting-note">"Download it: type the full title, spelled exactly as it is called, with the season for a series, like “Dark season 2”, or the year for a film, like “Dune 2021”."</p>
+                <div class="search-download-actions">
+                    <button type="button" class="pill" :disabled=$(busy.get()) @click=$(async |_e| {
+                        busy.set(true);
+                        let id = find(query.get()).await;
+                        shown.set(id);
+                        busy.set(false);
+                    })>"Download “" $(query.get().trim().to_owned()) "”"</button>
+                    link(href: "/downloads", attrs: attributes! { cx => class="pill quiet" }, "All downloads")
+                </div>
+                <p class="setting-note" :hidden=$(!busy.get())>"Searching TMDB and the indexers…"</p>
                 proposal_view(id: $(shown.get()), shown: shown.clone())
             </section>
         }

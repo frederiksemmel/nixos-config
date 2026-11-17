@@ -1767,6 +1767,8 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .detail-episodes { order: 5; }
 .detail-columns .heat { order: 6; }
 .season-downloads { order: 7; }
+.search-download { margin-top: 24px; }
+.search-download-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
 .detail-links { order: 8; }
 
 @media (min-width: 640px) {

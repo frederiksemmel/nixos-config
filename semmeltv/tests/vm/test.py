@@ -1294,6 +1294,18 @@ with sync_playwright() as playwright:
         phone.goto("/downloads")
         phone.until('[...document.querySelectorAll("main .download-job button")].some((button) => button.textContent.includes("Stop"))')
 
+    with scenario("the search box offers to download what the library lacks"):
+        phone.goto("/")
+        at_home(phone)
+        assert phone.js('document.querySelector("main .search-download").hidden'), "no download offer before typing"
+        phone.page.fill("main .search input", "Testserie season 2")
+        phone.until('!document.querySelector("main .search-download").hidden')
+        assert phone.js("""!!document.querySelector('main .search-download a[href="/downloads"]')"""), "the offer links to Downloads"
+        phone.page.locator("main .search-download-actions button").tap()
+        phone.until('!!document.querySelector("main .search-download .download-choice.best")')
+        phone.shot("search-download")
+        phone.page.fill("main .search input", "")
+
     with scenario("the remote moves the TV's subtitles half a second at a time"):
         tv_plays_film(phone)
         tv.send_key("s")
