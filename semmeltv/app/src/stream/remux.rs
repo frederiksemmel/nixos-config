@@ -25,6 +25,7 @@ pub struct Spec {
     pub hevc: bool,
     pub copy_audio: bool,
     pub dialogue: bool,
+    pub surround: bool,
     /// The embedded text subtitle tracks to write out as WebVTT on the way.
     pub subtitles: Vec<usize>,
 }
@@ -63,6 +64,8 @@ pub fn arguments(spec: &Spec, dir: &Path, at: f64) -> Vec<OsString> {
     }
     if spec.copy_audio {
         push(&["-c:a", "copy"]);
+    } else if spec.surround && !spec.dialogue {
+        push(&["-af", audio::SURROUND, "-c:a", "aac", "-b:a", "384k"]);
     } else {
         push(&["-af", audio::stereo(spec.dialogue), "-c:a", "aac", "-b:a", "256k"]);
     }
@@ -306,6 +309,7 @@ mod tests {
             hevc: true,
             copy_audio: false,
             dialogue: false,
+            surround: false,
             subtitles: vec![0, 2],
         }
     }
@@ -367,6 +371,27 @@ mod tests {
         assert!(
             dialogue.contains(&format!("-af {} -c:a aac", audio::DIALOGUE)),
             "{dialogue}"
+        );
+        let surround = Spec {
+            surround: true,
+            ..spec()
+        };
+        let kept = words(&arguments(&surround, Path::new("/d"), 0.0));
+        assert!(
+            kept.contains(&format!("-af {} -c:a aac -b:a 384k", audio::SURROUND)),
+            "{kept}"
+        );
+        let folded = words(&arguments(
+            &Spec {
+                dialogue: true,
+                ..surround
+            },
+            Path::new("/d"),
+            0.0,
+        ));
+        assert!(
+            folded.contains(&format!("-af {} -c:a aac -b:a 256k", audio::DIALOGUE)),
+            "{folded}"
         );
         let h264 = words(&arguments(
             &Spec {
@@ -460,6 +485,7 @@ mod tests {
             hevc: false,
             copy_audio: false,
             dialogue: true,
+            surround: false,
             subtitles: vec![0],
         };
         let remux = Remux::start(dir.join("stream"), spec, 7.3).await.unwrap();

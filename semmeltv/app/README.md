@@ -291,10 +291,13 @@ played from the rclone cache.
 
 ## Sound
 
-The TV and the stream to a browser without E-AC-3 both fold the sound into
-stereo with the same lavfi chain (`audio::stereo`), ending in a limiter at
--1 dBFS so loud scenes no longer clip. A stream to such a browser carries
-256 kbit/s AAC; Safari gets the file's own E-AC-3 or AC-3.
+The TV folds the sound into stereo with a lavfi chain (`audio::stereo`),
+ending in a limiter at -1 dBFS so loud scenes no longer clip. A browser gets
+the file's own AAC, E-AC-3 or AC-3 when it plays it, as Safari does. Otherwise
+a surround track stays 5.1 as 384 kbit/s AAC with the same limiter
+(`audio::SURROUND`), and the browser downmixes it for stereo speakers itself;
+a stereo track becomes 256 kbit/s AAC through `audio::stereo`. Dialogue mode
+always folds to stereo.
 
 Dialogue mode, off by default and kept per profile, makes voices easier to
 follow on TV or laptop speakers. A 5.1 track is mixed to stereo with the

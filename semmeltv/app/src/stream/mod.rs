@@ -548,6 +548,8 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         Verdict::Plays { hevc, copy_audio } => (hevc, copy_audio && !dialogue_on),
         Verdict::Refused(reason) => return refused(StatusCode::UNPROCESSABLE_ENTITY, reason),
     };
+    let surround = audio.is_some_and(|audio| audio.channels > 2);
+    let folded = surround && !copy_audio && dialogue_on;
     let handed_here = match (streams.core.screen().on, body.device.as_ref()) {
         (crate::screen::OnScreen::Moving { device: to, .. }, Some(asking)) => to.id == asking.id,
         _ => false,
@@ -599,6 +601,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         hevc,
         copy_audio: copy_audio || audio.is_none(),
         dialogue: dialogue_on,
+        surround,
         subtitles: subtitles.iter().filter_map(Subtitle::embedded).collect(),
     };
     if let Some(Source::Sidecar(path)) = subtitles
@@ -648,10 +651,11 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         file_name(&live.file),
         device_name(live.device.as_ref()),
         if hevc { "HEVC" } else { "H.264" },
-        match (copy_audio, dialogue_on) {
-            (true, _) => "copied",
-            (false, true) => "converted, dialogue mode",
-            (false, false) => "converted",
+        match (copy_audio, dialogue_on, surround) {
+            (true, _, _) => "copied",
+            (false, true, _) => "converted to stereo, dialogue mode",
+            (false, false, true) => "converted to 5.1",
+            (false, false, false) => "converted to stereo",
         }
     );
     streams.live.lock().unwrap().insert(id.clone(), live);
@@ -669,7 +673,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         duration,
         audio: media.audio.clone(),
         audio_index,
-        converted_audio: audio.is_some() && !copy_audio,
+        converted_audio: folded,
         subtitles,
         subtitle_delay: delay,
         credits,
