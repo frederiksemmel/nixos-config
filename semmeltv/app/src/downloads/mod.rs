@@ -12,7 +12,6 @@ use crate::intent::{self, Action};
 use crate::library::Library;
 use crate::manifest::{self, Date, Manifest};
 use crate::parse;
-use crate::progress::Progress;
 use crate::ready::{self, Ready};
 use crate::tmdb::{self, Kind};
 use axum::extract::{Path as UrlPath, State};
@@ -518,7 +517,7 @@ impl Service {
     fn wish_from_text(&self, text: &str) -> Result<Wish, String> {
         let manifest = self.manifest();
         let library = Library::from_manifest(Path::new("/"), &manifest, |_| true);
-        match intent::understand(&format!("download {text}"), &library, &Progress::default()) {
+        match intent::understand_typed_download(text, &library) {
             Action::Download { title, season, episode } => Ok(Wish {
                 title,
                 year: None,

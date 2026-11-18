@@ -539,7 +539,18 @@ fn strip_edges<'a, 'b>(mut tokens: &'a [&'b str], verb: &mut Verb) -> &'a [&'b s
     }
 }
 
+pub fn understand_typed_download(text: &str, library: &Library) -> Action {
+    match parse_words(text, false) {
+        Some(request) => download(&request, &find(library, &request.title)),
+        None => Action::Refuse("Say what to download".to_string()),
+    }
+}
+
 fn parse(transcript: &str) -> Option<Request> {
+    parse_words(transcript, true)
+}
+
+fn parse_words(transcript: &str, spoken: bool) -> Option<Request> {
     let folded = library::normalize(&deunicode(transcript));
     let mut words = Words::new(folded.split_whitespace().map(str::to_string).collect());
     let mut season = SeasonChoice::Unspecified;
@@ -557,8 +568,12 @@ fn parse(transcript: &str) -> Option<Request> {
         episode = Some(number);
     }
     let remaining = words.remaining();
-    let mut verb = Verb::Play;
-    let title = strip_edges(&remaining, &mut verb);
+    let mut verb = if spoken { Verb::Play } else { Verb::Download };
+    let title = if spoken {
+        strip_edges(&remaining, &mut verb)
+    } else {
+        &remaining
+    };
     if title.is_empty() {
         return None;
     }
@@ -1195,5 +1210,30 @@ mod tests {
         for (text, expected) in rows {
             assert_eq!(understand(text, &library, &Progress::default()), expected, "{text}");
         }
+    }
+
+    #[test]
+    fn typed_downloads_keep_every_word_of_the_title() {
+        let library = library();
+        let download = |title: &str, season, episode| Action::Download {
+            title: title.to_string(),
+            season,
+            episode,
+        };
+        let rows = [
+            ("Would I Lie to You?", download("would i lie to you", None, None)),
+            (
+                "would i lie to you season 2",
+                download("would i lie to you", Some(2), None),
+            ),
+            ("Get Out", download("get out", None, None)),
+            ("The Bear", download("The Bear", None, None)),
+            ("Outlander next season", download("Outlander", Some(3), None)),
+            ("Severance S02E03", download("severance", Some(2), Some(3))),
+        ];
+        for (text, expected) in rows {
+            assert_eq!(understand_typed_download(text, &library), expected, "{text}");
+        }
+        assert!(matches!(understand_typed_download("  ", &library), Action::Refuse(_)));
     }
 }
