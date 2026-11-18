@@ -4,7 +4,7 @@ use crate::tmdb::{Client, Found, Kind, Lookup, SeasonSummary};
 use serde::{Deserialize, Serialize};
 use std::path::{Component, Path};
 
-const QUESTION_OPTIONS: usize = 4;
+const QUESTION_OPTIONS: usize = 8;
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Wish {
@@ -50,6 +50,8 @@ pub struct Candidate {
     pub kind: Kind,
     pub tmdb: u64,
     pub label: String,
+    #[serde(default)]
+    pub season: Option<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -164,6 +166,7 @@ fn candidate(kind: Kind, found: &Found) -> Candidate {
         kind,
         tmdb: found.id,
         label,
+        season: None,
     }
 }
 
@@ -219,44 +222,10 @@ pub fn resolve(client: &Client, wish: &Wish, manifest: &Manifest, today: Date) -
             Lookup::Nothing => {}
         }
     }
-    if sure.is_empty() {
-        let wanted = without_article(&wish.title);
-        let named: Vec<_> = unsure
-            .iter()
-            .filter(|(_, found)| {
-                without_article(&found.name) == wanted
-                    && wish
-                        .year
-                        .is_none_or(|year| year_of(found).is_some_and(|found| found.abs_diff(year) <= 1))
-            })
-            .cloned()
-            .collect();
-        if let [only] = named.as_slice() {
-            sure.push(only.clone());
-        }
-    }
-    if sure.len() > 1 {
-        let known: Vec<_> = sure
-            .iter()
-            .filter(|(kind, found)| in_library(manifest, *kind, found.id))
-            .cloned()
-            .collect();
-        if known.len() == 1 {
-            sure = known;
-        }
-    }
-    let (kind, found) = match sure.as_slice() {
-        [only] => only.clone(),
-        [] if unsure.is_empty() => {
-            return Ok(Resolved::Refused(format!("Nothing called \"{}\" on TMDB", wish.title)));
-        }
-        _ => {
-            let options: Vec<Candidate> = sure
-                .iter()
-                .chain(unsure.iter())
-                .take(QUESTION_OPTIONS)
-                .map(|(kind, found)| candidate(*kind, found))
-                .collect();
+    let (kind, found) = match decide(wish, sure, &unsure, manifest) {
+        Decision::Pick(kind, found) => (kind, *found),
+        Decision::Nothing => return Ok(Resolved::Refused(format!("Nothing called \"{}\" on TMDB", wish.title))),
+        Decision::Ask(options) => {
             let labels: Vec<&str> = options.iter().map(|option| option.label.as_str()).collect();
             return Ok(Resolved::Question {
                 text: format!("Which one: {}?", labels.join(" or ")),
@@ -276,6 +245,92 @@ pub fn resolve(client: &Client, wish: &Wish, manifest: &Manifest, today: Date) -
         today,
         Mode::Add,
     )
+}
+
+#[derive(Debug, PartialEq)]
+enum Decision {
+    Pick(Kind, Box<Found>),
+    Ask(Vec<Candidate>),
+    Nothing,
+}
+
+/// What the TMDB lookups for a wish lead to: the one title it surely means,
+/// or a question listing the sure ones first. A sure title of one kind still
+/// asks when the other kind has titles of exactly that name.
+fn decide(wish: &Wish, mut sure: Vec<(Kind, Found)>, unsure: &[(Kind, Found)], manifest: &Manifest) -> Decision {
+    let wanted = without_article(&wish.title);
+    let named = |found: &Found| {
+        without_article(&found.name) == wanted
+            && wish
+                .year
+                .is_none_or(|year| year_of(found).is_some_and(|found| found.abs_diff(year) <= 1))
+    };
+    if sure.is_empty()
+        && let [only] = unsure
+            .iter()
+            .filter(|(_, found)| named(found))
+            .collect::<Vec<_>>()
+            .as_slice()
+    {
+        sure.push((*only).clone());
+    }
+    if sure.len() > 1 {
+        let known: Vec<_> = sure
+            .iter()
+            .filter(|(kind, found)| in_library(manifest, *kind, found.id))
+            .cloned()
+            .collect();
+        if known.len() == 1 {
+            sure = known;
+        }
+    }
+    let asked: Vec<&(Kind, Found)> = match sure.as_slice() {
+        [] if unsure.is_empty() => return Decision::Nothing,
+        [(kind, found)] => {
+            let namesakes: Vec<&(Kind, Found)> = unsure
+                .iter()
+                .filter(|(other, namesake)| other != kind && named(namesake))
+                .collect();
+            if namesakes.is_empty() {
+                return Decision::Pick(*kind, Box::new(found.clone()));
+            }
+            sure.iter().chain(namesakes).collect()
+        }
+        _ => sure.iter().chain(unsure).collect(),
+    };
+    Decision::Ask(
+        asked
+            .into_iter()
+            .take(QUESTION_OPTIONS)
+            .map(|(kind, found)| candidate(*kind, found))
+            .collect(),
+    )
+}
+
+/// The question for a series asked without a season: one option per season
+/// the library lacks, or the season itself when only one is missing.
+fn season_choice(target: &Target, missing: &[u32]) -> Result<u32, Box<Resolved>> {
+    match missing {
+        [] => Err(Box::new(Resolved::Refused(format!(
+            "The library has every season of {}",
+            target.title
+        )))),
+        [only] => Ok(*only),
+        many => Err(Box::new(Resolved::Question {
+            text: format!("Which season of {}?", target.title),
+            options: many
+                .iter()
+                .map(|number| Candidate {
+                    kind: Kind::Tv,
+                    tmdb: target.tmdb,
+                    label: format!("Season {number}"),
+                    season: Some(*number),
+                })
+                .collect(),
+            season: None,
+            episode: target.episode,
+        })),
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -346,9 +401,20 @@ fn target(
             }
         }
         Kind::Tv => {
-            let Some(number) = season else {
-                return Ok(Resolved::Refused(format!("Which season of {}?", target.title)));
+            let number = match (season, mode) {
+                (Some(number), _) => number,
+                (None, Mode::Replace) => {
+                    return Ok(Resolved::Refused(format!("Which season of {}?", target.title)));
+                }
+                (None, Mode::Add) => {
+                    let seasons = client.seasons(found.id).map_err(|error| format!("TMDB: {error}"))?;
+                    match season_choice(&target, &missing_seasons(&seasons, manifest, found.id, today)) {
+                        Ok(number) => number,
+                        Err(asked) => return Ok(*asked),
+                    }
+                }
             };
+            target.season = Some(number);
             let season = match client.season(found.id, number) {
                 Ok(season) => season,
                 Err(ureq::Error::StatusCode(404)) => {
@@ -460,6 +526,119 @@ fn missing(manifest: &Manifest, target: &Target) -> Option<Vec<u32>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn found(id: u64, name: &str, date: &str) -> Found {
+        Found {
+            id,
+            name: name.to_string(),
+            date: date.to_string(),
+            ..Found::default()
+        }
+    }
+
+    fn wish(title: &str) -> Wish {
+        Wish {
+            title: title.to_string(),
+            ..Wish::default()
+        }
+    }
+
+    fn labels(decision: &Decision) -> Vec<&str> {
+        match decision {
+            Decision::Ask(options) => options.iter().map(|option| option.label.as_str()).collect(),
+            other => panic!("no question: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_sure_film_still_asks_when_series_have_exactly_its_name() {
+        let film = (Kind::Movie, found(1, "Would I Lie to You?", "1997-03-01"));
+        let unsure = [
+            (Kind::Tv, found(2, "Would I Lie to You?", "2007-06-16")),
+            (Kind::Tv, found(3, "Would I Lie to You?", "2022-01-01")),
+            (Kind::Tv, found(4, "Would I Lie to You? at Christmas", "2010-12-01")),
+            (Kind::Movie, found(5, "Would I Lie to You? 2", "2001-01-01")),
+        ];
+        let decision = decide(
+            &wish("would i lie to you"),
+            vec![film.clone()],
+            &unsure,
+            &Manifest::default(),
+        );
+        assert_eq!(
+            labels(&decision),
+            vec![
+                "Would I Lie to You? (1997, film)",
+                "Would I Lie to You? (2007, series)",
+                "Would I Lie to You? (2022, series)"
+            ]
+        );
+        let alone = decide(
+            &wish("would i lie to you"),
+            vec![film.clone()],
+            &unsure[3..],
+            &Manifest::default(),
+        );
+        assert_eq!(alone, Decision::Pick(film.0, Box::new(film.1)));
+    }
+
+    #[test]
+    fn an_unsure_search_lists_up_to_eight_titles_sure_ones_first() {
+        let unsure: Vec<_> = (1..=10)
+            .map(|id| (Kind::Movie, found(id, "Taskmaster", &format!("{}-01-01", 1990 + id))))
+            .collect();
+        let sure = vec![(Kind::Tv, found(99, "Taskmaster", "2015-07-28"))];
+        let decision = decide(&wish("taskmaster"), sure, &unsure, &Manifest::default());
+        let labels = labels(&decision);
+        assert_eq!(labels.len(), QUESTION_OPTIONS);
+        assert_eq!(labels[0], "Taskmaster (2015, series)");
+        assert_eq!(
+            decide(&wish("x"), Vec::new(), &[], &Manifest::default()),
+            Decision::Nothing
+        );
+    }
+
+    #[test]
+    fn a_series_without_a_season_asks_for_one_of_the_missing_seasons() {
+        let target = Target {
+            kind: Kind::Tv,
+            tmdb: 7,
+            imdb: None,
+            title: "Taskmaster".to_string(),
+            original: None,
+            year: Some(2015),
+            season: None,
+            episode: None,
+            runtime: None,
+            episodes: Vec::new(),
+            folder: None,
+        };
+        assert_eq!(season_choice(&target, &[4]), Ok(4));
+        assert_eq!(
+            season_choice(&target, &[]),
+            Err(Box::new(Resolved::Refused(
+                "The library has every season of Taskmaster".to_string()
+            )))
+        );
+        let Err(asked) = season_choice(&target, &[1, 2, 3]) else {
+            panic!("no question");
+        };
+        let Resolved::Question { text, options, .. } = *asked else {
+            panic!("no question");
+        };
+        assert_eq!(text, "Which season of Taskmaster?");
+        assert_eq!(
+            options
+                .iter()
+                .map(|option| (option.label.as_str(), option.tmdb, option.season))
+                .collect::<Vec<_>>(),
+            vec![
+                ("Season 1", 7, Some(1)),
+                ("Season 2", 7, Some(2)),
+                ("Season 3", 7, Some(3))
+            ]
+        );
+    }
 
     #[test]
     fn a_dropped_article_still_names_the_title() {

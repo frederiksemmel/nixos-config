@@ -38,7 +38,23 @@ JOB = {
 
 lock = threading.Lock()
 TYPED = {**PROPOSAL, "id": "typed", "asked": "Testserie season 2"}
-state = {"searched": False, "confirmed": False, "typed": False}
+WHICH = {
+    "id": "which",
+    "asked": "Testserie",
+    "from": "web",
+    "created": 0,
+    "outcome": "question",
+    "text": "Which one: Testserie (2020, series) or Testserie (2001, film)?",
+    "options": [
+        {"kind": "show", "tmdb": SHOW, "label": "Season 2", "season": 2},
+        {"kind": "show", "tmdb": SHOW, "label": "Season 4", "season": 4},
+        {"kind": "movie", "tmdb": SHOW, "label": "Testserie (2001, film)"},
+    ],
+    "season": None,
+    "episode": None,
+}
+PICKED = {**PROPOSAL, "id": "season-4", "asked": "Testserie", "label": "Testserie season 4"}
+state = {"searched": False, "confirmed": False, "typed": False, "which": False, "picked": False}
 
 
 class Downloads(BaseHTTPRequestHandler):
@@ -57,6 +73,8 @@ class Downloads(BaseHTTPRequestHandler):
             elif self.path == "/api/downloads":
                 proposals = [PROPOSAL] if state["searched"] and not state["confirmed"] else []
                 proposals += [TYPED] if state["typed"] else []
+                proposals += [WHICH] if state["which"] else []
+                proposals += [PICKED] if state["picked"] else []
                 jobs = [JOB] if state["confirmed"] else []
                 self.reply({"proposals": proposals, "jobs": jobs, "room": 0, "quota": 0, "free": None})
             else:
@@ -68,6 +86,12 @@ class Downloads(BaseHTTPRequestHandler):
             if self.path == "/api/downloads/search" and body == {"text": "Testserie season 2", "from": "web"}:
                 state["typed"] = True
                 self.reply(TYPED)
+            elif self.path == "/api/downloads/search" and body == {"text": "Testserie", "from": "web"}:
+                state["which"] = True
+                self.reply(WHICH)
+            elif self.path == "/api/downloads/search" and body.get("pick") == {"kind": "show", "tmdb": SHOW, "season": 4, "episode": None}:
+                state["picked"] = True
+                self.reply(PICKED)
             elif self.path == "/api/downloads/search":
                 if body.get("pick") != {"kind": "show", "tmdb": SHOW, "season": 2, "episode": None}:
                     self.reply({"id": "", "asked": "", "from": "web", "outcome": "refused", "message": f"unexpected {body}"})

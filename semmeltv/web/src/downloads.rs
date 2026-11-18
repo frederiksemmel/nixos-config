@@ -28,6 +28,14 @@ pub struct Candidate {
     pub kind: String,
     pub tmdb: u64,
     pub label: String,
+    #[serde(default)]
+    pub season: Option<u32>,
+}
+
+impl Candidate {
+    fn key(&self) -> String {
+        format!("{}-{}-{}", self.kind, self.tmdb, self.season.unwrap_or(0))
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -430,10 +438,11 @@ async fn question_buttons(asked: &str, question: &Question, shown: Signal<String
     Ok(view! {
         <p class="setting-note">(question.text.as_str())</p>
         <div class="tracks">
-            #[key(option.tmdb)]
+            #[key(option.key())]
             for option in &question.options {
                 let kind = option.kind.clone();
                 let tmdb = option.tmdb;
+                let season = option.season.map_or(season, i64::from);
                 let asked = asked.clone();
                 <button type="button" class="track" @click=$(async |_e| {
                     let id = pick(kind.to_owned(), tmdb, season, episode, asked.to_owned()).await;
@@ -547,7 +556,7 @@ pub async fn search_download(cx: &Cx, query: Signal<String>) -> Result<impl View
         if crate::auth::downloads(cx) {
             <section class="settings search-download" :hidden=$(query.get().trim().is_empty())>
                 <h2>"Not in the library?"</h2>
-                <p class="setting-note">"Download it: type the full title, spelled exactly as it is called, with the season for a series, like “Dark season 2”, or the year for a film, like “Dune 2021”."</p>
+                <p class="setting-note">"Download it: type the full title, spelled as it is called, like “Taskmaster”, “Dark season 2” or “Dune 2021”. When several titles or seasons fit, pick one."</p>
                 <div class="search-download-actions">
                     <button type="button" class="pill" :disabled=$(busy.get()) @click=$(async |_e| {
                         busy.set(true);
@@ -690,6 +699,20 @@ mod tests {
             Answer::Question(Question { season: Some(2), .. })
         ));
         assert!(!question.found());
+        let seasons = read(
+            json!({ "outcome": "question", "text": "Which season of Dark?", "season": null, "episode": null,
+            "options": [{ "kind": "show", "tmdb": 7, "label": "Season 1", "season": 1 },
+                        { "kind": "show", "tmdb": 7, "label": "Season 3", "season": 3 },
+                        { "kind": "movie", "tmdb": 7, "label": "Dark (2005, film)" }] }),
+        )
+        .unwrap();
+        let Answer::Question(Question { options, .. }) = &seasons.answer else {
+            panic!("no question");
+        };
+        assert_eq!(
+            options.iter().map(Candidate::key).collect::<Vec<_>>(),
+            vec!["show-7-1", "show-7-3", "movie-7-0"]
+        );
         let empty = read(
             json!({ "outcome": "searched", "label": "Dark S2", "message": "No releases of Dark S2 found",
             "target": {}, "choices": [], "dropped": 0, "problems": [] }),

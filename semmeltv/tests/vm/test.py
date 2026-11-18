@@ -1319,6 +1319,17 @@ with sync_playwright() as playwright:
         phone.shot("search-download")
         phone.page.fill("main .search input", "")
 
+    with scenario("a title typed without its season lists the namesakes and the seasons, and a tap searches that one"):
+        phone.goto("/")
+        at_home(phone)
+        phone.page.fill("main .search input", "Testserie")
+        phone.until('!document.querySelector("main .search-download").hidden')
+        phone.page.locator("main .search-download-actions button").tap()
+        phone.until('[...document.querySelectorAll("main .search-download .tracks button")].map((button) => button.textContent.trim()).join("|") === "Season 2|Season 4|Testserie (2001, film)"')
+        phone.page.locator("main .search-download .tracks button", has_text="Season 4").tap()
+        phone.until('!!document.querySelector("main .search-download .download-choice.best")')
+        phone.page.fill("main .search input", "")
+
     with scenario("the remote moves the TV's subtitles half a second at a time"):
         tv_plays_film(phone)
         tv.send_key("s")
