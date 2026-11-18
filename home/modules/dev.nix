@@ -937,6 +937,13 @@ in
               "Bash(cargo test:*)"
               "Bash(cargo fmt:*)"
               "Bash(npm run:*)"
+              "Bash(npm ci:*)"
+              "Bash(npm install:*)"
+              "Bash(npm test:*)"
+              "Bash(rm node_modules)"
+              "Bash(rm -r node_modules)"
+              "Bash(rm -rf node_modules)"
+              "Bash(rm -fr node_modules)"
               "Bash(nix eval:*)"
               "Bash(nh:*)"
               # deploy-rs: applies frederik's home on beast.
