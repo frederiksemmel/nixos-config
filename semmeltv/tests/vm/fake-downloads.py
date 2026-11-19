@@ -58,6 +58,9 @@ MATCHES = [
     {"kind": "show", "tmdb": SHOW, "title": "Testserie", "year": 2020, "poster": None, "season": None, "owned": True},
     {"kind": "movie", "tmdb": SHOW + 1, "title": "Testserie", "year": 2001, "poster": None, "season": None, "owned": False},
 ]
+DIRECTED = [
+    {"kind": "movie", "tmdb": SHOW + 2, "title": "Regiefilm", "year": 2019, "poster": None, "season": None, "owned": False, "credit": "directed by Erika Regie"},
+]
 SEASONS = {
     **WHICH,
     "id": "seasons",
@@ -94,7 +97,7 @@ class Downloads(BaseHTTPRequestHandler):
         with lock:
             if url.path == "/api/downloads/suggest":
                 text = parse_qs(url.query).get("text", [""])[0]
-                self.reply(MATCHES if text == "Testserie" else [])
+                self.reply(MATCHES if text == "Testserie" else DIRECTED if text == "Regie" else [])
             elif self.path == f"/api/downloads/shows/{SHOW}/missing":
                 self.reply([{"number": 2, "downloading": state["confirmed"]}, {"number": 3, "downloading": True}])
             elif self.path == "/api/downloads/pcloud":

@@ -44,6 +44,8 @@ pub struct Card {
     pub ratings: Ratings,
     #[serde(default)]
     pub finished: bool,
+    #[serde(default)]
+    pub because: Option<String>,
 }
 
 impl Card {

@@ -39,6 +39,12 @@ video = "H.264"
 resolution = "360p"
 audio = "5.1"
 
+[movie.about]
+directors = ["Erika Regie"]
+cast = [
+  { name = "Max Muster", character = "Kommissar" },
+]
+
 [[movie]]
 title = "Archiv 02"
 year = 2002

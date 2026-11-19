@@ -12,6 +12,10 @@ const THROTTLE_WAIT: Duration = Duration::from_secs(2);
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 const CANDIDATES: usize = 4;
 const MATCHES: usize = 8;
+const WORKS: usize = 8;
+const SUGGESTIONS: usize = 12;
+const APPEARANCE_GENRES: [u32; 3] = [10763, 10764, 10767];
+const LEAST_EPISODES: u32 = 3;
 const CLEAR_WINNER_MIN_VOTES: f64 = 500.0;
 const CLEAR_WINNER_RATIO: f64 = 20.0;
 const CAST: usize = 10;
@@ -63,6 +67,7 @@ pub struct Match {
     pub name: String,
     pub year: Option<u16>,
     pub poster: Option<String>,
+    pub credit: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +113,21 @@ struct Record {
     release_dates: Option<Listing<Releases>>,
     content_ratings: Option<Listing<ContentRating>>,
     videos: Option<Listing<Video>>,
+    known_for_department: Option<String>,
+    job: Option<String>,
+    department: Option<String>,
+    character: Option<String>,
+    #[serde(default)]
+    genre_ids: Vec<u32>,
+    episode_count: Option<u32>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct Credited {
+    #[serde(default)]
+    cast: Vec<Record>,
+    #[serde(default)]
+    crew: Vec<Record>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -423,27 +443,102 @@ fn without_article(title: &str) -> String {
     title.strip_prefix("the ").map(str::to_string).unwrap_or(title)
 }
 
-fn matches(wanted: &str, records: &[Record]) -> Vec<Match> {
+fn title_match(record: &Record, credit: Option<String>) -> Option<Match> {
+    let kind = match record.media_type.as_deref()? {
+        "movie" => Kind::Movie,
+        "tv" => Kind::Tv,
+        _ => return None,
+    };
+    Some(Match {
+        kind,
+        id: record.id,
+        name: record.title.clone().filter(|name| !name.is_empty())?,
+        year: record_year(record),
+        poster: record.poster_path.clone(),
+        credit,
+    })
+}
+
+fn matches(wanted: &str, records: &[Record], works: Vec<Match>) -> Vec<Match> {
     let wanted = without_article(wanted);
-    let mut found: Vec<Match> = records
-        .iter()
-        .filter_map(|record| {
-            let kind = match record.media_type.as_deref()? {
-                "movie" => Kind::Movie,
-                "tv" => Kind::Tv,
-                _ => return None,
-            };
-            Some(Match {
-                kind,
-                id: record.id,
-                name: record.title.clone().filter(|name| !name.is_empty())?,
-                year: record_year(record),
-                poster: record.poster_path.clone(),
-            })
-        })
-        .collect();
+    let mut found: Vec<Match> = records.iter().filter_map(|record| title_match(record, None)).collect();
     found.sort_by_key(|found| without_article(&found.name) != wanted);
     found.truncate(MATCHES);
+    let exact = found
+        .iter()
+        .take_while(|found| without_article(&found.name) == wanted)
+        .count();
+    let rest = found.split_off(exact);
+    for work in works.into_iter().chain(rest) {
+        if !found.iter().any(|seen| seen.kind == work.kind && seen.id == work.id) {
+            found.push(work);
+        }
+    }
+    found.truncate(SUGGESTIONS);
+    found
+}
+
+fn person<'a>(wanted: &str, records: &'a [Record]) -> Option<&'a Record> {
+    let first = records.first()?;
+    let name = format!(" {}", normalize(first.title.as_deref()?));
+    let wanted = normalize(wanted);
+    (first.media_type.as_deref() == Some("person") && !wanted.is_empty() && name.contains(&format!(" {wanted}")))
+        .then_some(first)
+}
+
+fn appearance(record: &Record) -> bool {
+    let character = record.character.as_deref().map(normalize).unwrap_or_default();
+    record.genre_ids.iter().any(|genre| APPEARANCE_GENRES.contains(genre))
+        || character
+            .split(' ')
+            .any(|word| ["self", "himself", "herself", "themselves"].contains(&word))
+        || (record.media_type.as_deref() == Some("tv") && record.episode_count.unwrap_or(0) < LEAST_EPISODES)
+}
+
+fn works(person: &Record, credited: &Credited) -> Vec<Match> {
+    let name = person.title.as_deref().unwrap_or_default();
+    let department = person.known_for_department.as_deref();
+    let chosen: Vec<(&Record, String)> = if department == Some("Acting") {
+        credited
+            .cast
+            .iter()
+            .filter(|record| !appearance(record))
+            .map(|record| (record, format!("with {name}")))
+            .collect()
+    } else {
+        credited
+            .crew
+            .iter()
+            .filter(|record| match (department, record.job.as_deref()) {
+                (_, Some("Creator")) => true,
+                (Some("Directing"), job) => job == Some("Director"),
+                (department, _) => department.is_some() && record.department.as_deref() == department,
+            })
+            .map(|record| {
+                let credit = match record.job.as_deref() {
+                    Some("Director") => format!("directed by {name}"),
+                    Some("Creator") => format!("created by {name}"),
+                    Some(job) => format!("{name}, {}", job.to_lowercase()),
+                    None => name.to_string(),
+                };
+                (record, credit)
+            })
+            .collect()
+    };
+    let mut ranked: Vec<_> = chosen
+        .into_iter()
+        .filter(|(record, _)| record_year(record).is_some())
+        .collect();
+    ranked.sort_by(|a, b| b.0.vote_count.total_cmp(&a.0.vote_count));
+    let mut found: Vec<Match> = Vec::new();
+    for (record, credit) in ranked {
+        if let Some(work) = title_match(record, Some(credit))
+            && !found.iter().any(|seen| seen.kind == work.kind && seen.id == work.id)
+        {
+            found.push(work);
+        }
+    }
+    found.truncate(WORKS);
     found
 }
 
@@ -537,7 +632,15 @@ impl Client {
     }
 
     pub fn search_titles(&self, text: &str) -> Result<Vec<Match>, ureq::Error> {
-        Ok(matches(text, &self.search("multi", text, None)?))
+        let records = self.search("multi", text, None)?;
+        let works = match person(text, &records) {
+            Some(person) => {
+                let credited: Credited = self.get(&format!("{API}/person/{}/combined_credits", person.id), &[])?;
+                works(person, &credited)
+            }
+            None => Vec::new(),
+        };
+        Ok(matches(text, &records, works))
     }
 
     pub fn search_tv(&self, title: &str, year: Option<u16>) -> Result<Lookup, ureq::Error> {
@@ -895,7 +998,7 @@ mod tests {
             {"id":4,"media_type":"movie","title":"Would I Lie to You?","release_date":"1997-03-26","poster_path":null},
             {"id":5,"media_type":"movie","title":"","release_date":""}]}"#;
         let records = serde_json::from_str::<Results>(body).unwrap().results;
-        let found = matches("would i lie to you", &records);
+        let found = matches("would i lie to you", &records, Vec::new());
         assert_eq!(
             found
                 .iter()
@@ -915,6 +1018,90 @@ mod tests {
                 ..record(id, "Dune", "2021-01-01")
             })
             .collect();
-        assert_eq!(matches("dune", &many).len(), MATCHES);
+        assert_eq!(matches("dune", &many, Vec::new()).len(), MATCHES);
+    }
+
+    fn listed(found: &[Match]) -> Vec<(Kind, u64, Option<&str>)> {
+        found
+            .iter()
+            .map(|found| (found.kind, found.id, found.credit.as_deref()))
+            .collect()
+    }
+
+    #[test]
+    fn a_name_search_lists_the_directors_films_and_series_most_voted_first() {
+        let body = r#"{"page":1,"results":[
+            {"id":525,"media_type":"person","name":"Christopher Nolan","known_for_department":"Directing"},
+            {"id":9,"media_type":"movie","title":"Nolan's Story","release_date":"2020-01-01"},
+            {"id":8,"media_type":"movie","title":"Nolan","release_date":"2019-01-01"}]}"#;
+        let records = serde_json::from_str::<Results>(body).unwrap().results;
+        let person = person("nolan", &records).unwrap();
+        assert_eq!(person.id, 525);
+        let credits = r#"{"cast":[
+            {"id":11,"media_type":"movie","title":"Cameo","release_date":"2001-01-01","vote_count":90000,"character":"Man"}],
+            "crew":[
+            {"id":872585,"media_type":"movie","title":"Oppenheimer","release_date":"2023-07-19","vote_count":10000,"job":"Director","department":"Directing"},
+            {"id":27205,"media_type":"movie","title":"Inception","release_date":"2010-07-15","vote_count":38000,"job":"Director","department":"Directing","poster_path":"/i.jpg"},
+            {"id":27205,"media_type":"movie","title":"Inception","release_date":"2010-07-15","vote_count":38000,"job":"Screenplay","department":"Writing"},
+            {"id":49026,"media_type":"movie","title":"The Dark Knight Rises","release_date":"2012-07-16","vote_count":23000,"job":"Producer","department":"Production"},
+            {"id":12,"media_type":"tv","name":"Mazes","first_air_date":"2019-02-01","vote_count":20000,"job":"Creator","department":"Creator"},
+            {"id":13,"media_type":"movie","title":"Untitled","release_date":"","vote_count":0,"job":"Director","department":"Directing"}]}"#;
+        let credited: Credited = serde_json::from_str(credits).unwrap();
+        let works = works(person, &credited);
+        assert_eq!(
+            listed(&works),
+            vec![
+                (Kind::Movie, 27205, Some("directed by Christopher Nolan")),
+                (Kind::Tv, 12, Some("created by Christopher Nolan")),
+                (Kind::Movie, 872585, Some("directed by Christopher Nolan")),
+            ]
+        );
+        assert_eq!(works[0].poster.as_deref(), Some("/i.jpg"));
+        assert_eq!(works[0].year, Some(2010));
+        assert_eq!(
+            listed(&matches("nolan", &records, works)),
+            vec![
+                (Kind::Movie, 8, None),
+                (Kind::Movie, 27205, Some("directed by Christopher Nolan")),
+                (Kind::Tv, 12, Some("created by Christopher Nolan")),
+                (Kind::Movie, 872585, Some("directed by Christopher Nolan")),
+                (Kind::Movie, 9, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn an_actors_works_leave_out_talk_shows_appearances_as_themselves_and_guest_roles() {
+        let body = r#"{"results":[{"id":2037,"media_type":"person","name":"Cillian Murphy","known_for_department":"Acting"}]}"#;
+        let records = serde_json::from_str::<Results>(body).unwrap().results;
+        let credits = r#"{"cast":[
+            {"id":1,"media_type":"movie","title":"Oppenheimer","release_date":"2023-07-19","vote_count":10000,"character":"J. Robert Oppenheimer"},
+            {"id":2,"media_type":"tv","name":"Late Show","first_air_date":"2015-09-08","vote_count":90000,"genre_ids":[10767,35],"character":"Self - Guest","episode_count":2},
+            {"id":3,"media_type":"movie","title":"Making Of","release_date":"2023-01-01","vote_count":80000,"character":"Himself"},
+            {"id":4,"media_type":"tv","name":"Doctor Show","first_air_date":"2004-01-01","vote_count":70000,"character":"Patient","episode_count":1},
+            {"id":60574,"media_type":"tv","name":"Peaky Blinders","first_air_date":"2013-09-12","vote_count":9000,"character":"Thomas Shelby","episode_count":36}],
+            "crew":[{"id":5,"media_type":"movie","title":"Produced","release_date":"2020-01-01","vote_count":99999,"job":"Producer","department":"Production"}]}"#;
+        let credited: Credited = serde_json::from_str(credits).unwrap();
+        assert_eq!(
+            listed(&works(person("cillian murphy", &records).unwrap(), &credited)),
+            vec![
+                (Kind::Movie, 1, Some("with Cillian Murphy")),
+                (Kind::Tv, 60574, Some("with Cillian Murphy")),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_person_counts_only_when_they_are_the_best_result_and_their_name_holds_the_words() {
+        let body = r#"{"results":[
+            {"id":1,"media_type":"tv","name":"The Bear","first_air_date":"2022-06-23"},
+            {"id":2,"media_type":"person","name":"Bear Grylls","known_for_department":"Acting"}]}"#;
+        let records = serde_json::from_str::<Results>(body).unwrap().results;
+        assert!(person("the bear", &records).is_none());
+        let body =
+            r#"{"results":[{"id":2,"media_type":"person","name":"Bear Grylls","known_for_department":"Acting"}]}"#;
+        let records = serde_json::from_str::<Results>(body).unwrap().results;
+        assert!(person("grylls", &records).is_some());
+        assert!(person("rylls", &records).is_none());
     }
 }

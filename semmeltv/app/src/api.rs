@@ -273,6 +273,8 @@ struct Card {
     backdrop: Option<String>,
     ratings: Ratings,
     finished: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    because: Option<String>,
 }
 
 fn movie_card(root: &FsPath, progress: &Progress, movie: &Movie) -> Card {
@@ -286,6 +288,7 @@ fn movie_card(root: &FsPath, progress: &Progress, movie: &Movie) -> Card {
         backdrop: movie.tmdb.map(|_| format!("/api/movies/{}/backdrop", movie.key)),
         ratings: Ratings::from(&movie.ratings),
         finished: watching::movie_finished(progress, movie),
+        because: None,
     }
 }
 
@@ -300,6 +303,7 @@ fn show_card(root: &FsPath, progress: &Progress, show: &Show) -> Card {
         backdrop: show.tmdb.map(|_| format!("/api/shows/{}/backdrop", show.key)),
         ratings: Ratings::from(&show.ratings),
         finished: watching::show_finished(progress, show),
+        because: None,
     }
 }
 
@@ -472,7 +476,10 @@ async fn search(State(api): State<Api>, Who(profile): Who, Query(query): Query<S
     let progress = api.core.progress(profile).await;
     let results = intent::search(&library, &query.q)
         .into_iter()
-        .map(|item| card(&api.root, &progress, &library, item))
+        .map(|hit| Card {
+            because: hit.because,
+            ..card(&api.root, &progress, &library, hit.item)
+        })
         .collect();
     Json(Results { results })
 }

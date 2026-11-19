@@ -1365,6 +1365,19 @@ with sync_playwright() as playwright:
         phone.page.fill("main .download-search input", "Testserie")
         phone.until('document.querySelectorAll("main .download-match").length === 2')
 
+    with scenario("typing a director's name finds their films in the library and on TMDB, and says why"):
+        phone.goto("/")
+        at_home(phone)
+        phone.page.fill("main .search input", "Regie")
+        phone.until('[...document.querySelectorAll("main .grid .tile")].map((tile) => tile.querySelector(".tile-name").textContent.trim() + " / " + tile.querySelector(".tile-why")?.textContent.trim()).join("|") === "Archiv 01 / Director: Erika Regie"')
+        phone.until('[...document.querySelectorAll("main .search-download .download-match")].map((button) => [...button.querySelectorAll(".download-match-text > *")].map((part) => part.textContent.trim()).join(" / ")).join("|") === "Regiefilm / Film · 2019 · directed by Erika Regie"')
+        phone.shot("search-by-person")
+        phone.page.fill("main .search input", "kommissar")
+        phone.until('[...document.querySelectorAll("main .grid .tile .tile-why")].map((why) => why.textContent.trim()).join("|") === "With Max Muster as Kommissar"')
+        phone.page.fill("main .search input", "Archiv 01")
+        phone.until('document.querySelectorAll("main .grid .tile").length >= 1 && !document.querySelector("main .grid .tile .tile-why")')
+        phone.page.fill("main .search input", "")
+
     with scenario("Storage shows pCloud's space, and an admin deletes a whole film from pCloud after a second tap"):
         phone.goto("/storage")
         numbers = 'document.querySelector("main .pcloud .storage-numbers")?.textContent.trim()'

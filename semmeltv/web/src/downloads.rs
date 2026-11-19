@@ -56,6 +56,8 @@ pub struct Suggestion {
     pub poster: Option<String>,
     pub season: Option<u32>,
     pub owned: bool,
+    #[serde(default)]
+    pub credit: Option<String>,
 }
 
 impl Suggestion {
@@ -68,6 +70,7 @@ impl Suggestion {
         let mut facts = vec![what.to_string()];
         facts.extend(self.year.map(|year| year.to_string()));
         facts.extend(self.season.map(|season| format!("season {season}")));
+        facts.extend(self.credit.clone());
         if self.owned {
             facts.push("in the library".to_string());
         }
@@ -830,6 +833,14 @@ mod tests {
         assert_eq!(film.facts(), "Film · in the library");
         assert_eq!(film.poster(), None);
         assert_ne!(show.key(), film.key());
+        let directed = read(
+            json!({ "kind": "movie", "tmdb": 27205, "title": "Inception", "year": 2010,
+            "poster": null, "season": null, "owned": true, "credit": "directed by Christopher Nolan" }),
+        );
+        assert_eq!(
+            directed.facts(),
+            "Film · 2010 · directed by Christopher Nolan · in the library"
+        );
     }
 
     #[test]

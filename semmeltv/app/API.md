@@ -127,7 +127,7 @@ the first admin or one who is locked out.
 | GET | `/api/library` | `{ watching, forgotten, newest, shows, movies }`, lists of cards |
 | POST | `/api/forgotten/dismiss` | `{ kind, key }` → `{ message, ok }` |
 | POST | `/api/watched` | `{ kind, key, watched, season?, episode? }` → `{ message, ok, watched }` |
-| GET | `/api/search?q=TEXT` | `{ results }`: cards ranked by how well the title matches, prefixes first, typos forgiven |
+| GET | `/api/search?q=TEXT` | `{ results }`: cards ranked by how well the title matches, prefixes first, typos forgiven; then titles whose director, creator, cast, character, original title, network or genre match, each with `because` (like `Director: Denis Villeneuve`) |
 | GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration`, `tags`, `subtitles`, `about`, `last_played` and `last_played_label` |
 | GET | `/api/shows/{key}` | a card plus `next` (where playing carries on), `seasons` (each with `episodes`), `about`, `last_played` and `last_played_label` |
 
@@ -760,6 +760,7 @@ paths start with `/api/downloads` too.
 | Method | Path | Body | Answer |
 | --- | --- | --- | --- |
 | GET | `/api/downloads` | | `{ proposals, jobs, room, quota, free }` |
+| GET | `/api/downloads/suggest?text=` | | `[ { kind, tmdb, title, year, poster, season, owned, credit? } ]`: TMDB's films and series for the text; when TMDB's best match is a person, their films and series too, with `credit` like `directed by Christopher Nolan` |
 | POST | `/api/downloads/search` | `{ text }`, or `{ pick: { kind, tmdb, season, episode } }` | a proposal |
 | POST | `/api/downloads/confirm` | `{ proposal, choice }` | `{ message, ok, job }` |
 | POST | `/api/downloads/fetch` | `{ pick: { kind, tmdb, season, episode }, offer, mode }` | `{ message, ok, job }` |

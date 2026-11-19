@@ -108,6 +108,9 @@ async fn tile(cx: &Cx, public: &Public, card: &Card) -> Result<impl View> {
                 (card.subtitle.as_str())
                 scores(of: &card.ratings)
             </span>
+            if let Some(because) = &card.because {
+                <span class="tile-why">(because.as_str())</span>
+            }
         )
     })
 }
@@ -1182,6 +1185,18 @@ mod tests {
             card("cats", "movie", Some("2019"), Some(2.8)),
             card("lotus", "show", Some("2021–"), Some(7.9)),
         ]
+    }
+
+    #[test]
+    fn a_search_result_says_why_it_matched_and_a_shelf_card_does_not() {
+        assert_eq!(card("dune", "movie", Some("2021"), None).because, None);
+        let found: Card = serde_json::from_value(json!({
+            "kind": "movie", "key": "dune", "title": "Dune", "years": "2021", "subtitle": "2021",
+            "poster": null, "backdrop": null, "because": "Director: Denis Villeneuve",
+            "ratings": { "imdb": null, "rotten_tomatoes": null, "fresh": null, "popcorn": null, "full": null },
+        }))
+        .unwrap();
+        assert_eq!(found.because.as_deref(), Some("Director: Denis Villeneuve"));
     }
 
     fn keys(cards: &[Card]) -> Vec<&str> {

@@ -1,4 +1,5 @@
 use crate::library::{self, Episode, Library, Movie, Show};
+use crate::manifest::About;
 use crate::progress::Progress;
 use deunicode::deunicode;
 use regex::Regex;
@@ -203,6 +204,8 @@ const NUMBERS: [(u32, &[&str], &[&str]); 12] = [
 const MIN_SIMILARITY: f64 = 0.75;
 const CONTAINED_SIMILARITY: f64 = 0.9;
 const PREFIX_SIMILARITY: f64 = 0.95;
+const ABOUT_SIMILARITY: f64 = 0.85;
+const NAME_SIMILARITY: f64 = 0.85;
 const AMBIGUITY_MARGIN: f64 = 0.05;
 const MIN_CONTAINED_LENGTH: usize = 3;
 
@@ -746,7 +749,13 @@ fn missing(key: &str) -> Action {
     Action::Refuse(format!("\"{key}\" is not in the library"))
 }
 
-pub fn search(library: &Library, query: &str) -> Vec<library::Item> {
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Hit {
+    pub item: library::Item,
+    pub because: Option<String>,
+}
+
+pub fn search(library: &Library, query: &str) -> Vec<Hit> {
     let query = comparable(query);
     if query.is_empty() {
         return Vec::new();
@@ -755,21 +764,56 @@ pub fn search(library: &Library, query: &str) -> Vec<library::Item> {
         .shows
         .iter()
         .enumerate()
-        .map(|(index, show)| (library::Item::Show(index), &show.title));
+        .map(|(index, show)| (library::Item::Show(index), &show.title, &show.about));
     let movies = library
         .movies
         .iter()
         .enumerate()
-        .map(|(index, movie)| (library::Item::Movie(index), &movie.title));
+        .map(|(index, movie)| (library::Item::Movie(index), &movie.title, &movie.about));
     let mut scored: Vec<_> = shows
         .chain(movies)
-        .filter_map(|(item, title)| {
+        .filter_map(|(item, title, about)| {
             let score = typed_similarity(&query, title);
-            (score >= MIN_SIMILARITY).then(|| (score, library::sort_title(title), item))
+            let because = (score < ABOUT_SIMILARITY).then(|| about_match(&query, about)).flatten();
+            let score = if because.is_some() { ABOUT_SIMILARITY } else { score };
+            (score >= MIN_SIMILARITY).then(|| (score, library::sort_title(title), Hit { item, because }))
         })
         .collect();
     scored.sort_by(|a, b| b.0.total_cmp(&a.0).then_with(|| a.1.cmp(&b.1)));
-    scored.into_iter().map(|(_, _, item)| item).collect()
+    scored.into_iter().map(|(_, _, hit)| hit).collect()
+}
+
+fn about_match(query: &str, about: &About) -> Option<String> {
+    if query.len() < MIN_CONTAINED_LENGTH {
+        return None;
+    }
+    let words = |text: &str| format!(" {}", comparable(text)).contains(&format!(" {query}"));
+    let person = |name: &str| words(name) || similarity(query, name) >= NAME_SIMILARITY;
+    let first = |values: &[String], test: &dyn Fn(&str) -> bool| values.iter().find(|value| test(value)).cloned();
+    if let Some(name) = first(&about.directors, &person) {
+        return Some(format!("Director: {name}"));
+    }
+    if let Some(name) = first(&about.creators, &person) {
+        return Some(format!("Created by {name}"));
+    }
+    if let Some(member) = about.cast.iter().find(|member| person(&member.name)) {
+        return Some(format!("With {}", member.name));
+    }
+    if let Some((member, character)) = about.cast.iter().find_map(|member| {
+        Some((
+            member,
+            member.character.as_deref().filter(|character| words(character))?,
+        ))
+    }) {
+        return Some(format!("With {} as {character}", member.name));
+    }
+    if let Some(original) = about.original_title.as_deref().filter(|original| words(original)) {
+        return Some(format!("Original title: {original}"));
+    }
+    if let Some(network) = first(&about.networks, &words) {
+        return Some(format!("On {network}"));
+    }
+    first(&about.genres, &words).map(|genre| format!("Genre: {genre}"))
 }
 
 fn typed_similarity(query: &str, title: &str) -> f64 {
@@ -894,7 +938,7 @@ mod tests {
         let titles = |query: &str| -> Vec<String> {
             search(&library, query)
                 .into_iter()
-                .map(|item| match item {
+                .map(|hit| match hit.item {
                     library::Item::Show(index) => library.shows[index].title.clone(),
                     library::Item::Movie(index) => library.movies[index].title.clone(),
                 })
@@ -907,6 +951,76 @@ mod tests {
         assert_eq!(titles("outlnder"), ["Outlander"]);
         assert!(titles("").is_empty());
         assert!(titles("x").is_empty());
+        assert!(search(&library, "outl").iter().all(|hit| hit.because.is_none()));
+    }
+
+    #[test]
+    fn search_finds_titles_by_their_people_and_says_why() {
+        let mut library = library();
+        let member = |name: &str, character: Option<&str>| crate::manifest::Member {
+            name: name.to_string(),
+            character: character.map(str::to_string),
+            person: None,
+            imdb: None,
+        };
+        library.movies[0].about = crate::manifest::About {
+            directors: vec!["Denis Villeneuve".to_string()],
+            cast: vec![
+                member("Timothée Chalamet", Some("Paul Atreides")),
+                member("Rebecca Ferguson", Some("Lady Jessica")),
+            ],
+            genres: vec!["Science Fiction".to_string()],
+            original_title: Some("Dune: Part One".to_string()),
+            ..Default::default()
+        };
+        let outlander = library.shows.iter().position(|show| show.title == "Outlander").unwrap();
+        library.shows[outlander].about = crate::manifest::About {
+            creators: vec!["Ronald D. Moore".to_string()],
+            cast: vec![
+                member("Caitríona Balfe", Some("Claire Fraser")),
+                member("Sam Heughan", None),
+            ],
+            networks: vec!["Starz".to_string()],
+            ..Default::default()
+        };
+        let found = |query: &str| -> Vec<(String, Option<String>)> {
+            search(&library, query)
+                .into_iter()
+                .map(|hit| {
+                    let title = match hit.item {
+                        library::Item::Show(index) => library.shows[index].title.clone(),
+                        library::Item::Movie(index) => library.movies[index].title.clone(),
+                    };
+                    (title, hit.because)
+                })
+                .collect()
+        };
+        let one = |title: &str, because: &str| vec![(title.to_string(), Some(because.to_string()))];
+        assert_eq!(found("villeneuve"), one("Dune", "Director: Denis Villeneuve"));
+        assert_eq!(found("Denis Villeneuve"), one("Dune", "Director: Denis Villeneuve"));
+        assert_eq!(found("chalamet"), one("Dune", "With Timothée Chalamet"));
+        assert_eq!(found("timothee"), one("Dune", "With Timothée Chalamet"));
+        assert_eq!(found("Rebeca Ferguson"), one("Dune", "With Rebecca Ferguson"));
+        assert_eq!(
+            found("lady jessica"),
+            one("Dune", "With Rebecca Ferguson as Lady Jessica")
+        );
+        assert_eq!(found("science fic"), one("Dune", "Genre: Science Fiction"));
+        assert_eq!(found("part one"), one("Dune", "Original title: Dune: Part One"));
+        assert_eq!(found("ronald d moore"), one("Outlander", "Created by Ronald D. Moore"));
+        assert_eq!(found("ronald moore"), one("Outlander", "Created by Ronald D. Moore"));
+        assert_eq!(found("heughan"), one("Outlander", "With Sam Heughan"));
+        assert_eq!(
+            found("claire"),
+            one("Outlander", "With Caitríona Balfe as Claire Fraser")
+        );
+        assert_eq!(found("starz"), one("Outlander", "On Starz"));
+        assert_eq!(found("Fe"), Vec::new());
+        assert_eq!(
+            found("dune"),
+            vec![("Dune".to_string(), None)],
+            "a title match needs no reason"
+        );
     }
 
     #[test]

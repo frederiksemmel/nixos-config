@@ -1202,6 +1202,8 @@ pub struct Suggestion {
     pub poster: Option<String>,
     pub season: Option<u32>,
     pub owned: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credit: Option<String>,
 }
 
 fn suggestions(found: Vec<tmdb::Match>, season: Option<u32>, manifest: &Manifest) -> Vec<Suggestion> {
@@ -1216,6 +1218,7 @@ fn suggestions(found: Vec<tmdb::Match>, season: Option<u32>, manifest: &Manifest
             year: found.year,
             poster: found.poster,
             season: season.filter(|_| found.kind == Kind::Tv),
+            credit: found.credit,
         })
         .collect()
 }
@@ -1522,6 +1525,7 @@ added = 2025-01-01
             name: "Dune".to_string(),
             year: Some(2021),
             poster: None,
+            credit: (kind == Kind::Tv).then(|| "with Somebody".to_string()),
         };
         let all = suggestions(
             vec![found(Kind::Movie, 438631), found(Kind::Tv, 90228)],
@@ -1548,6 +1552,8 @@ added = 2025-01-01
         );
         let sent = serde_json::to_value(&second[0]).unwrap();
         assert_eq!(sent["kind"], "show");
+        assert_eq!(sent["credit"], "with Somebody");
+        assert!(serde_json::to_value(&all[0]).unwrap().get("credit").is_none());
     }
 
     #[test]
