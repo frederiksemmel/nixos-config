@@ -247,6 +247,8 @@ in
     mcp-servers.settings.servers.figma.url = "https://mcp.figma.com/mcp";
     # Linear's hosted MCP; same `/mcp` OAuth dance as Figma.
     mcp-servers.settings.servers.linear.url = "https://mcp.linear.app/mcp";
+    # Circleback's hosted MCP; same `/mcp` OAuth dance as Figma.
+    mcp-servers.settings.servers.circleback.url = "https://circleback.ai/api/mcp";
     # Disabled for now: devenv mcp hogs too much RAM.
     # mcp-servers.settings.servers.devenv = {
     #   command = lib.getExe pkgs.devenv;

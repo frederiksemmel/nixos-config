@@ -1031,6 +1031,9 @@ in
         "l":
           desc: Linear
           cmd: chromium --app=https://linear.app
+        "c":
+          desc: Circleback
+          cmd: chromium --app=https://circleback.ai
         "e":
           desc: Mailspring
           cmd: mailspring
