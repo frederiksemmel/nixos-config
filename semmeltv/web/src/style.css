@@ -443,15 +443,23 @@ main {
 }
 
 .row {
+  --reach: calc(var(--gutter) + max(0px, (100vw - 1280px) / 2));
   display: grid;
   grid-auto-flow: column;
   grid-auto-columns: min(72%, 300px);
   gap: 12px;
   overflow-x: auto;
   scroll-snap-type: x mandatory;
-  scroll-padding: var(--gutter);
-  margin: 0 calc(-1 * var(--gutter));
-  padding: 0 var(--gutter);
+  scroll-padding: 0 var(--reach);
+  margin: 0 calc(-1 * var(--reach));
+  padding: 0 var(--reach);
+}
+
+@media (min-width: 640px) {
+  .row {
+    --fade: min(var(--reach), 120px);
+    mask-image: linear-gradient(to right, transparent, #000 var(--fade), #000 calc(100% - var(--fade)), transparent);
+  }
 }
 
 .row.posters { grid-auto-columns: min(30%, 150px); gap: 10px; }

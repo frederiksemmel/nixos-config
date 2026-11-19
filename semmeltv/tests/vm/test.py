@@ -1725,6 +1725,26 @@ with sync_playwright() as playwright:
         desk.until(f"location.pathname === {href!r}")
         desk.close()
 
+    with scenario("on a wide laptop the rows run to the window's edges and fade into the background there"):
+        wide = Phone(playwright, device=None, viewport={"width": 1646, "height": 1029})
+        wide.goto("/")
+        wide.page.wait_for_selector(".row.posters a[data-topcoat-link]")
+        wide.page.wait_for_timeout(1000)
+        rows = wide.js("""[...document.querySelectorAll('main .row')].map((row) => {
+          const box = row.getBoundingClientRect();
+          const title = row.closest('.shelf').querySelector('h2').getBoundingClientRect();
+          const first = [...row.children].find((tile) => tile.getClientRects().length).getBoundingClientRect();
+          const style = getComputedStyle(row);
+          return { left: box.left, right: box.right, window: innerWidth, title: title.left, first: first.left,
+                   scrolled: row.scrollLeft, fade: style.maskImage || style.webkitMaskImage || '' };
+        })""")
+        assert rows, "the laptop's Home has rows"
+        for row in rows:
+            assert abs(row["left"]) < 1 and abs(row["right"] - row["window"]) < 1, f"a row runs from edge to edge of the window: {row}"
+            assert row["scrolled"] == 0 and abs(row["first"] - row["title"]) < 1, f"at rest a row's first card lines up with its title: {row}"
+            assert "linear-gradient" in row["fade"], f"a row fades out at the window's edges: {row}"
+        wide.close()
+
     with scenario("the laptop player shows its controls for the mouse and keyboard, folds and stops"):
         laptop = Phone(playwright, device=None, viewport={"width": 1280, "height": 800})
         screen_posts: list[Any] = []
