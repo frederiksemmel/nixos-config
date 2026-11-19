@@ -575,8 +575,9 @@ Beast triages New and Reopened reports on its own. The
 `semmeltv-feedback-watch` user timer asks both TVs every two minutes. When a
 report is New or Reopened, it starts
 `semmeltv-feedback-triage`, a headless Claude run whose prompt is
-`home/hosts/beast-semmeltv/prompt.md`. The run fixes and deploys what is easy,
-and marks the rest Needs review. For a reopened report, the person's newest
+`home/hosts/beast-semmeltv/prompt.md`. The run builds and deploys what a report
+clearly asks for, new features included, and marks Needs review only what is
+unclear or off limits. For a reopened report, the person's newest
 comments are its instruction, such as the option to build. Every run answers
 in the thread. By hand, from beast:
 

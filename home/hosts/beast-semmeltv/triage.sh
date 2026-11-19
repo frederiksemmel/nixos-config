@@ -8,4 +8,4 @@ echo "$reports"
 {
   cat "$PROMPT"
   printf '\n# This run\n\nRun name: %s\n\nNew reports handed to this run:\n\n%s\n' "$name" "$reports"
-} | "$CLAUDE" -p --name "$name" --permission-mode auto --strict-mcp-config
+} | "$CLAUDE" -p --name "$name" --permission-mode auto --settings "$SETTINGS" --strict-mcp-config

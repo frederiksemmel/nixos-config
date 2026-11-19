@@ -41,6 +41,13 @@ let
     text = builtins.readFile ./watch.sh;
   };
 
+  triageSettings = pkgs.writers.writeJSON "semmeltv-triage-settings.json" {
+    autoMode.allow = [
+      "$defaults"
+      "SemmelTV downloads: a SemmelTV feedback triage run running `semmeltv get search`, `semmeltv get fetch` or `semmeltv get jobs` on semmeltv5 or semmeltv3 over ssh, as the semmeltv-get skill shows (sudo -u semmeltv with the semmeltv-downloads service's environment), to download a film or series a report asks for. Frederik asked these runs to start such downloads themselves."
+    ];
+  };
+
   triage = pkgs.writeShellApplication {
     name = "semmeltv-feedback-triage";
     runtimeInputs = [
@@ -86,6 +93,7 @@ in
         path
         "CLAUDE=${lib.getExe config.programs.claude-code.finalPackage}"
         "PROMPT=${./prompt.md}"
+        "SETTINGS=${triageSettings}"
       ];
       RuntimeMaxSec = "3h";
     };

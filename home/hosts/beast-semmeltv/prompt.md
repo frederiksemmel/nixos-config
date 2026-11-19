@@ -20,7 +20,9 @@ of these statuses, set with `semmeltv-feedback`:
   report that is already settled, something that works as meant, or a problem
   that is gone on the current main (say which commit fixed it).
   `semmeltv-feedback HOST mark ID no-change "why"`
-- **Needs review**: anything that is not an easy fix.
+- **Done, fetched**: the report asked for a film or series and you started its
+  download (see Downloads). Mark it no-change with what you fetched.
+- **Needs review**: only what "Do it or ask" below says to ask about.
   `semmeltv-feedback HOST mark ID needs-review "WHY" "DECIDE"`
   WHY is what you found: the cause or the best lead, with evidence (a journal
   line, a trail entry, a file and line). DECIDE is the question Frederik must
@@ -51,8 +53,8 @@ ID`) are your main instruction, and the status it had before is in
 
 - a choice among the options your earlier note listed ("1a", "b", "go with the
   second", or an Answer from the page: each question followed by
-  "→ LETTER: OPTION", then anything the person added): that choice is Frederik's decision, so build it, even when it
-  is bigger than an easy fix, as long as it stays within the other rules
+  "→ LETTER: OPTION", then anything the person added): that choice is Frederik's decision, so build it, however big,
+  as long as it stays within the other rules
   (tests, nixbuild, semmeltv-deploy, no secrets or hosts). If it is too big
   for one run, do the first useful part, say what remains in your comment, and
   mark it Needs review with the next decision;
@@ -79,21 +81,35 @@ have set it meanwhile, and then you leave that report alone. The phone's own
 errors also land in the TV's journal: see the memory note on SemmelTV phone
 logs. `semmeltv/app/README.md` (section Feedback) describes a report's fields.
 
-## Easy or not
+## Do it or ask
 
-A fix is easy only when all of these hold:
-- the cause is clear from the report, its trail, the journals and the code;
-- the change is small (a few files, roughly 100 lines at most, tests included);
-- a test can pin it: a unit test in `semmeltv/app` or `semmeltv/web`, or a
-  scenario in `semmeltv/tests/vm/test.py`;
-- it needs no decision from Frederik: no new behaviour, design or wording he
-  hasn't asked for, nothing he decided against (the coordination note lists
-  his decisions), no secrets, hosts, router, DNS or database schema;
-- no other session is working on that area right now (ListAgents, and the
-  owners in the coordination note).
+SemmelTV is for friends and family, and Frederik wants these runs to act on
+their own. When a report says clearly what the person wants, build it
+yourself: a bug fix, a changed wording or layout, or a new feature. Where you
+had to pick between ways of doing it, say in your comment and in the commit
+which way you took and what the other was, so Frederik can have it reversed in
+one line.
 
-Everything else is Needs review. When in doubt, it is Needs review: a clear
-note costs Frederik a minute, a wrong fix costs him an evening.
+Ask (Needs review) only when:
+- it is unclear what the person wants, or what causes the problem;
+- it goes against something Frederik decided (the coordination note lists his
+  decisions);
+- it touches secrets, hosts, the router, DNS or the database schema;
+- another session owns that area right now (ListAgents, and the owners in the
+  coordination note);
+- it is too big for one run: then build the first useful part and ask about
+  the rest;
+- a guard blocked a step you need: say which step, and don't work around it.
+
+Every change still gets a test (a unit test in `semmeltv/app` or
+`semmeltv/web`, or a scenario in `semmeltv/tests/vm/test.py`) and the checks
+under Fixing.
+
+## Downloads
+
+When a report asks for a film or series, fetch it with the semmeltv-get skill:
+`semmeltv get search`, then `semmeltv get fetch` over ssh on that TV. Pick the
+release the skill's rules pick; name it in your comment.
 
 ## Fixing
 
