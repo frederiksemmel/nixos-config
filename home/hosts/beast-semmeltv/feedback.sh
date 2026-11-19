@@ -9,6 +9,9 @@ usage: semmeltv-feedback HOST list [new|reopened|needs_review|done]
        semmeltv-feedback HOST mark ID needs-review WHY DECIDE [--ask QUESTION (--option TEXT | --recommend TEXT)...]...
        semmeltv-feedback HOST mark ID fixed COMMIT WHAT
        semmeltv-feedback HOST mark ID no-change WHY
+       semmeltv-feedback HOST deploy state|now|running|finished
+       semmeltv-feedback HOST deploy failed MESSAGE
+       semmeltv-feedback HOST deploy main FILE
 
 A comment from this tool is signed "Claude" and never reopens a report; a
 person's comment on the admin page reopens a settled one.
@@ -18,6 +21,11 @@ needs-review may ask questions: each --ask starts one, and the --option and
 question has 2 to 8 choices, exactly one of them --recommend. The Feedback page
 shows each question as radio buttons with the recommendation picked, and the
 person's Answer arrives as a comment such as "QUESTION\n→ b: TEXT".
+
+deploy talks to the Deploy box on the Feedback page: state shows what the TV
+knows, now asks for a deploy as its button does, main sends main's newest
+commits (FILE, as semmeltv-deploy-watch writes it), and running, finished and
+failed tell the TV how the deploy it asked for goes.
 
 HOST is semmeltv5 or semmeltv3. Talks to the TV's API on 127.0.0.1 over ssh
 with the TV's service token, which never leaves the TV.
@@ -135,6 +143,33 @@ case $command in
       *) usage ;;
     esac
     api POST "/api/feedback/$id/status" "$body"
+    echo
+    ;;
+  deploy)
+    (($# >= 1)) || usage
+    case $1 in
+      state)
+        (($# == 1)) || usage
+        api GET /api/deploy
+        ;;
+      now)
+        (($# == 1)) || usage
+        api POST /api/deploy '{}'
+        ;;
+      running | finished)
+        (($# == 1)) || usage
+        api POST /api/deploy/progress "$(jq -nc --arg state "$1" '{state: $state}')"
+        ;;
+      failed)
+        (($# == 2)) || usage
+        api POST /api/deploy/progress "$(jq -nc --arg message "$2" '{state: "failed", message: $message}')"
+        ;;
+      main)
+        (($# == 2)) || usage
+        api POST /api/deploy/main "$(cat "$2")"
+        ;;
+      *) usage ;;
+    esac
     echo
     ;;
   *) usage ;;

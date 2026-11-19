@@ -1,4 +1,6 @@
-use crate::api::{Api, CommentAuthor, FeedbackComment, FeedbackStatus, FeedbackSummary, Question, Resolution};
+use crate::api::{
+    Api, CommentAuthor, DeployRun, DeployState, FeedbackComment, FeedbackStatus, FeedbackSummary, Question, Resolution,
+};
 use crate::auth::admin;
 use crate::layout::back;
 use crate::public::Public;
@@ -316,7 +318,7 @@ async fn report_row(
         .collect();
     let speaker = id.clone();
     Ok(view! {
-        <li class="report" :hidden=$(if shown.get() == "all" { false } else { shown.get() != status.get() })>
+        <li class="report" id=(report.id.as_str()) :hidden=$(if shown.get() == "all" { false } else { shown.get() != status.get() })>
             <p class="report-who">
                 <b>(who)</b>
                 <span>(report.device.clone().unwrap_or_default())</span>
@@ -470,10 +472,179 @@ async fn report_row(
     })
 }
 
+fn short(sha: &str) -> &str {
+    sha.get(..7).unwrap_or(sha)
+}
+
+fn plural(count: usize, one: &str, many: &str) -> String {
+    if count == 1 {
+        format!("1 {one}")
+    } else {
+        format!("{count} {many}")
+    }
+}
+
+#[derive(Debug, PartialEq)]
+struct Deployment {
+    summary: String,
+    status: String,
+    offer: bool,
+}
+
+fn deployment(state: &DeployState, now: u64) -> Deployment {
+    let main = state
+        .main
+        .as_deref()
+        .map_or("main".to_string(), |main| format!("main ({})", short(main)));
+    let (mut summary, mut offer) = match (&state.pending, &state.revision) {
+        (Some(pending), Some(_)) if pending.is_empty() && state.others == 0 => {
+            (format!("This TV runs {main}; nothing waits to deploy."), false)
+        }
+        (Some(pending), Some(revision)) if pending.is_empty() => (
+            format!(
+                "This TV runs {}. Main has {} since, only for other machines.",
+                short(revision),
+                plural(state.others, "commit", "commits")
+            ),
+            false,
+        ),
+        (Some(pending), _) => {
+            let mut text = format!(
+                "{} on main {} built but not on this TV yet.",
+                plural(pending.len(), "change", "changes"),
+                if pending.len() == 1 { "is" } else { "are" }
+            );
+            if state.others > 0 {
+                text.push_str(&format!(
+                    " Main also has {} for other machines.",
+                    plural(state.others, "commit", "commits")
+                ));
+            }
+            (text, true)
+        }
+        (None, Some(revision)) => (
+            format!(
+                "This TV runs {}, which isn't among main's newest commits. Deploy now brings it to {main}.",
+                short(revision)
+            ),
+            true,
+        ),
+        (None, None) => (
+            format!("This TV doesn't know which commit it runs. Deploy now brings it to {main}."),
+            true,
+        ),
+    };
+    if let Some(checked) = state.checked_at {
+        summary.push_str(&format!(" Beast checked main {}.", age(checked, now)));
+    }
+    let mut status = String::new();
+    if let Some(asked) = &state.asked {
+        status = format!(
+            "{} asked for a deploy {}. Beast starts it within half a minute.",
+            asked.by,
+            age(asked.at, now)
+        );
+        offer = false;
+    } else {
+        match &state.run {
+            Some(DeployRun::Running { at, by }) => {
+                status = format!(
+                    "Deploying since {}, asked by {by}. The TV app restarts when it switches; reload then.",
+                    age(*at, now)
+                );
+                offer = false;
+            }
+            Some(DeployRun::Failed { at, by, message }) => {
+                status = format!("The deploy {by} asked for failed {}: {message}", age(*at, now));
+            }
+            Some(DeployRun::Finished { at, by }) => {
+                status = format!("Deployed {}, asked by {by}.", age(*at, now));
+            }
+            None => {}
+        }
+    }
+    Deployment { summary, status, offer }
+}
+
+#[procedure]
+pub async fn deploy_now(cx: &Cx) -> Result<(bool, String)> {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs());
+    Ok(match Api::of(cx).ask_deploy().await {
+        Ok(state) => (true, deployment(&state, now).status),
+        Err(problem) => (false, problem),
+    })
+}
+
+struct Waiting {
+    subject: String,
+    meta: String,
+    reports: Vec<(String, String)>,
+}
+
+#[component]
+async fn deploy_box(cx: &Cx, state: &DeployState, now: u64) -> Result<impl View> {
+    let shown = deployment(state, now);
+    let offer = signal(cx, || shown.offer);
+    let said = signal(cx, || shown.status.clone());
+    let waiting: Vec<Waiting> = state
+        .pending
+        .iter()
+        .flatten()
+        .map(|commit| Waiting {
+            subject: commit.subject.clone(),
+            meta: format!("{} · {}", short(&commit.sha), age(commit.at, now)),
+            reports: commit
+                .reports
+                .iter()
+                .map(|report| {
+                    let who = report.person.as_deref().unwrap_or("Someone");
+                    (format!("#{}", report.id), format!("{who}: {}", report.message))
+                })
+                .collect(),
+        })
+        .collect();
+    Ok(view! {
+        <section class="deploy" aria-label="Deploy">
+            <h2>"Deploy"</h2>
+            <p class="setting-note">(shown.summary.as_str())</p>
+            if !waiting.is_empty() {
+                <ol class="deploy-commits">
+                    for commit in &waiting {
+                        <li>
+                            <b>(commit.subject.as_str())</b>
+                            <span>(commit.meta.as_str())</span>
+                            for (href, text) in &commit.reports {
+                                <a href=(href.as_str())>(text.as_str())</a>
+                            }
+                        </li>
+                    }
+                </ol>
+            }
+            <p class="deploy-said" aria-live="polite" :hidden=$(said.get().is_empty())>$(said.get())</p>
+            <div class="deploy-actions" :hidden=$(!offer.get())>
+                <button type="button" class="pill" @click=$(async |_e: Event| {
+                    let reply = deploy_now().await;
+                    said.set(reply.1);
+                    if reply.0 { offer.set(false); }
+                })>"Deploy now"</button>
+                <small>"Deploys at once, even mid-film: the TV app restarts."</small>
+            </div>
+        </section>
+    })
+}
+
 #[page("/feedback")]
 async fn feedback_page(cx: &Cx) -> Result<impl View> {
     admin(cx)?;
     let list = Api::of(cx).feedback().await;
+    let deploy = Api::of(cx)
+        .deploy_state()
+        .await
+        .ok()
+        .flatten()
+        .filter(|state| state.checked_at.is_some());
     let empty = list.as_ref().is_ok_and(|list| list.reports.is_empty());
     let shown = signal(cx, || "all".to_string());
     let tally = |value: &str| {
@@ -502,6 +673,9 @@ async fn feedback_page(cx: &Cx) -> Result<impl View> {
         <article class="page feedback-page">
             back(href: "/settings")
             <h1>"Feedback"</h1>
+            if let Some(state) = &deploy {
+                deploy_box(state: state, now: now)
+            }
             match list {
                 Ok(_) if empty => {
                     <p class="setting-note">"Nothing sent yet. The speech bubble at the top of every page sends feedback from wherever you are."</p>
@@ -535,6 +709,84 @@ async fn feedback_page(cx: &Cx) -> Result<impl View> {
 mod tests {
     use super::*;
     use crate::api::Reporter;
+
+    #[test]
+    fn the_deploy_box_says_what_waits_and_offers_a_deploy_only_when_something_does() {
+        use crate::api::{DeployAsked, PendingCommit};
+        let commit = |sha: &str| PendingCommit {
+            sha: sha.to_string(),
+            at: 0,
+            subject: "semmeltv: a deploy button".to_string(),
+            reports: Vec::new(),
+        };
+        let mut state = DeployState {
+            revision: Some("aaaaaaa1111".to_string()),
+            checked_at: Some(990),
+            main: Some("ccccccc3333".to_string()),
+            pending: Some(vec![commit("ccccccc3333"), commit("bbbbbbb2222")]),
+            others: 1,
+            asked: None,
+            run: None,
+        };
+        assert_eq!(
+            deployment(&state, 1000),
+            Deployment {
+                summary: "2 changes on main are built but not on this TV yet. Main also has 1 commit for other machines. Beast checked main just now.".to_string(),
+                status: String::new(),
+                offer: true,
+            }
+        );
+        state.run = Some(DeployRun::Failed {
+            at: 400,
+            by: "Frederik".to_string(),
+            message: "the build failed".to_string(),
+        });
+        let failed = deployment(&state, 1000);
+        assert_eq!(
+            failed.status,
+            "The deploy Frederik asked for failed 10 min ago: the build failed"
+        );
+        assert!(failed.offer);
+
+        state.asked = Some(DeployAsked {
+            at: 1000,
+            by: "Frederik".to_string(),
+        });
+        let asked = deployment(&state, 1000);
+        assert_eq!(
+            asked.status,
+            "Frederik asked for a deploy just now. Beast starts it within half a minute."
+        );
+        assert!(!asked.offer);
+        state.asked = None;
+        state.run = Some(DeployRun::Running {
+            at: 1000,
+            by: "Frederik".to_string(),
+        });
+        assert!(!deployment(&state, 1000).offer);
+
+        state.run = None;
+        state.pending = Some(Vec::new());
+        state.others = 0;
+        let current = deployment(&state, 1000);
+        assert_eq!(
+            current.summary,
+            "This TV runs main (ccccccc); nothing waits to deploy. Beast checked main just now."
+        );
+        assert!(!current.offer);
+        state.others = 2;
+        assert_eq!(
+            deployment(&state, 1000).summary,
+            "This TV runs aaaaaaa. Main has 2 commits since, only for other machines. Beast checked main just now."
+        );
+        state.pending = None;
+        let lost = deployment(&state, 1000);
+        assert_eq!(
+            lost.summary,
+            "This TV runs aaaaaaa, which isn't among main's newest commits. Deploy now brings it to main (ccccccc). Beast checked main just now."
+        );
+        assert!(lost.offer);
+    }
 
     #[test]
     fn ages_read_the_way_people_say_them() {

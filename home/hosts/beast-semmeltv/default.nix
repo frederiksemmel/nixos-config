@@ -41,6 +41,19 @@ let
     text = builtins.readFile ./watch.sh;
   };
 
+  deployWatch = pkgs.writeShellApplication {
+    name = "semmeltv-deploy-watch";
+    runtimeInputs = [
+      semmeltv-feedback
+      semmeltv-deploy
+      pkgs.coreutils
+      pkgs.git
+      pkgs.gnugrep
+      pkgs.jq
+    ];
+    text = builtins.readFile ./deploy-watch.sh;
+  };
+
   triageSettings = pkgs.writers.writeJSON "semmeltv-triage-settings.json" {
     autoMode.allow = [
       "$defaults"
@@ -66,6 +79,25 @@ in
         "SETTINGS=${triageSettings}"
       ];
     };
+  };
+
+  systemd.user.services.semmeltv-deploy-watch = {
+    Unit.Description = "Tells the TVs what is on main and deploys when a Feedback page's Deploy now asks";
+    Service = {
+      Type = "oneshot";
+      ExecStart = lib.getExe deployWatch;
+      TimeoutStartSec = "1h";
+      Environment = [ path ];
+    };
+  };
+
+  systemd.user.timers.semmeltv-deploy-watch = {
+    Unit.Description = "Asks the TVs every 20 seconds whether someone wants a deploy";
+    Timer = {
+      OnBootSec = "1min";
+      OnUnitInactiveSec = "20s";
+    };
+    Install.WantedBy = [ "timers.target" ];
   };
 
   systemd.user.timers.semmeltv-feedback-watch = {

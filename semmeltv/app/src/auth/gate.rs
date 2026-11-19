@@ -60,6 +60,7 @@ pub fn access(method: &Method, path: &str) -> Access {
         ["api", "events"] if method == Method::GET => Access::Service,
         ["api", "feedback", ..] if method == Method::GET => Access::AdminOrService,
         ["api", "feedback", _, "status" | "comments"] => Access::AdminOrService,
+        ["api", "deploy", ..] => Access::AdminOrService,
         ["api", "storage" | "usage", ..]
         | ["api", "tv", "pair"]
         | ["api", "auth", "members", ..]
@@ -294,6 +295,10 @@ mod tests {
                 "/api/feedback/20261115-131211-ab12/comments",
                 Access::AdminOrService,
             ),
+            (&get, "/api/deploy", Access::AdminOrService),
+            (&post, "/api/deploy", Access::AdminOrService),
+            (&post, "/api/deploy/main", Access::AdminOrService),
+            (&post, "/api/deploy/progress", Access::AdminOrService),
         ];
         for (method, path, want) in rows {
             assert_eq!(access(method, path), want, "{method} {path}");

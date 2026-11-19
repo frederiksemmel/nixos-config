@@ -273,6 +273,16 @@ def scrolling_pulls_the_remote(page, engine):
     page.wait_for_timeout(800)
 
 
+def deploys_from_the_feedback_page(page, engine):
+    page.goto(BASE + "/feedback", wait_until="commit")
+    until(page, engine, "the Feedback page lists what main has that the TV doesn't",
+          'document.querySelectorAll(".deploy-commits li").length === 1 && !!document.querySelector(".deploy-commits a[href^=\'#20261119-\']")')
+    page.wait_for_timeout(500)
+    page.get_by_role("button", name="Deploy now").tap()
+    until(page, engine, "Deploy now asks beast and says so",
+          'document.querySelector(".deploy-said").textContent.includes("asked for a deploy") && document.querySelector(".deploy-actions").hidden', 3000)
+
+
 def back_never_loops(page, engine):
     page.goto(BASE + "/feedback", wait_until="commit")
     until(page, engine, "a page opened directly shows", 'location.pathname === "/feedback" && !!document.querySelector("main .feedback-page a.back")')
@@ -310,6 +320,7 @@ def run(p, engine, device):
     feedback_follows_changes(page, engine)
     if engine == "chromium":
         scrolling_pulls_the_remote(page, engine)
+    deploys_from_the_feedback_page(page, engine)
     back_never_loops(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()

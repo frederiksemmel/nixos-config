@@ -1,6 +1,7 @@
 import asyncio
 import json
 import sys
+import time
 from pathlib import Path
 
 from aiohttp import web
@@ -305,6 +306,20 @@ async def comment_feedback(request):
     return web.json_response({"status": {"state": "reopened", "was": was} if was["state"] in ("needs_review", "done") else was})
 
 
+def deploy_view():
+    return {"revision": "aaaaaaa1", "checked_at": int(time.time()), "main": "ccccccc3", "others": 1, "asked": None, "run": None,
+            "pending": [{"sha": "ccccccc3", "at": int(time.time()) - 600, "subject": "semmeltv: a deploy button",
+                         "reports": [{"id": REPORTS[0]["id"], "person": "Frederik", "message": "A deploy button"}]}]}
+
+
+async def deploy_state(request):
+    return web.json_response(deploy_view())
+
+
+async def ask_deploy(request):
+    return web.json_response({**deploy_view(), "asked": {"at": int(time.time()), "by": "Frederik"}})
+
+
 async def accepted(request):
     return web.json_response({"ok": True})
 
@@ -336,5 +351,7 @@ app.router.add_post("/fake/forget-subtitles", forget_subtitles)
 app.router.add_get("/api/feedback", feedback)
 app.router.add_post("/api/feedback/{id}/status", mark_feedback)
 app.router.add_post("/api/feedback/{id}/comments", comment_feedback)
+app.router.add_get("/api/deploy", deploy_state)
+app.router.add_post("/api/deploy", ask_deploy)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)

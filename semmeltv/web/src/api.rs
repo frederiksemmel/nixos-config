@@ -141,6 +141,48 @@ pub struct FeedbackList {
     pub reports: Vec<FeedbackSummary>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct DeployState {
+    pub revision: Option<String>,
+    pub checked_at: Option<u64>,
+    pub main: Option<String>,
+    pub pending: Option<Vec<PendingCommit>>,
+    #[serde(default)]
+    pub others: usize,
+    pub asked: Option<DeployAsked>,
+    pub run: Option<DeployRun>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PendingCommit {
+    pub sha: String,
+    pub at: u64,
+    pub subject: String,
+    #[serde(default)]
+    pub reports: Vec<FixedReport>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FixedReport {
+    pub id: String,
+    pub person: Option<String>,
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DeployAsked {
+    pub at: u64,
+    pub by: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum DeployRun {
+    Running { at: u64, by: String },
+    Failed { at: u64, by: String, message: String },
+    Finished { at: u64, by: String },
+}
+
 #[derive(Debug, Deserialize)]
 pub struct WatchingCard {
     #[serde(flatten)]
@@ -993,6 +1035,28 @@ impl Api {
         match self.get("/api/feedback").await? {
             Found::Here(list) => Ok(list),
             Found::Missing => Err("This TV keeps no feedback".to_string()),
+        }
+    }
+
+    pub async fn deploy_state(&self) -> Result<Option<DeployState>, String> {
+        match self.get("/api/deploy").await? {
+            Found::Here(state) => Ok(Some(state)),
+            Found::Missing => Ok(None),
+        }
+    }
+
+    pub async fn ask_deploy(&self) -> Result<DeployState, String> {
+        let sent = self
+            .request(reqwest::Method::POST, "/api/deploy")
+            .json(&json!({}))
+            .send()
+            .await;
+        let response = sent.map_err(|error| format!("The TV is not answering: {error}"))?;
+        let ok = response.status().is_success();
+        let text = response.text().await.unwrap_or_default();
+        match serde_json::from_str::<DeployState>(&text) {
+            Ok(state) if ok => Ok(state),
+            _ => Err(serde_json::from_str::<Problem>(&text).map_or(text, |problem| problem.error)),
         }
     }
 

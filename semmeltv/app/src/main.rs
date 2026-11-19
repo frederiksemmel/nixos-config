@@ -10,6 +10,7 @@ mod client_log;
 mod command;
 mod core;
 mod db;
+mod deploy;
 mod details;
 mod display;
 mod downloads;

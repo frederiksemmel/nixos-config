@@ -616,6 +616,18 @@ one after another never roll back each other's work. By hand, from beast:
 The same works for `semmeltv3`. A report's `tv.problems` lists what the TV
 couldn't collect, such as a journal it couldn't read.
 
+The top of the Feedback page lists what main has that this TV doesn't run
+yet: each commit that changes the TVs, with the reports it fixed, and a Deploy
+now button. The `semmeltv-deploy-watch` user timer on beast asks both TVs
+every 20 seconds, sends main's newest 100 commits when the TV doesn't have
+them yet (`semmeltv-feedback HOST deploy main FILE`), and runs
+`semmeltv-deploy HOST` from origin/main when the button was pressed. It
+deploys at once, even mid-film, and tells the page whether it is running,
+finished or failed. The box stays away until beast has sent main, so the
+button never shows without beast behind it. `semmeltv-feedback HOST deploy
+state` shows what the TV knows; `journalctl --user -u semmeltv-deploy-watch`
+shows the deploys.
+
 ## Artwork
 
     semmeltv artwork --manifest DIR/library.db [--refresh]

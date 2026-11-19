@@ -31,7 +31,7 @@ const LONGEST_NOTE: usize = 4000;
 const MOST_QUESTIONS: usize = 6;
 const MOST_OPTIONS: usize = 8;
 const INDEX: &str = "index.jsonl";
-const REVISION: &str = "/etc/semmeltv/revision";
+pub const REVISION: &str = "/etc/semmeltv/revision";
 
 #[derive(Clone)]
 pub struct Feedback {
@@ -81,6 +81,15 @@ pub struct Summary {
     message: String,
     screenshot: Option<String>,
     tv_screenshot: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct Brief {
+    pub id: String,
+    pub person: Option<String>,
+    pub message: String,
+    #[serde(skip)]
+    pub fixed_in: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -532,6 +541,25 @@ impl Feedback {
         index.push(summary.clone());
         self.prune(index).await;
         Ok(summary)
+    }
+
+    pub async fn briefs(&self) -> Vec<Brief> {
+        let mut briefs = Vec::new();
+        for summary in self.summaries().await {
+            let fixed_in = match self.marked(&summary.id).await.map(|marked| marked.status) {
+                Some(Status::Done {
+                    resolution: Resolution::Fixed { commit, .. },
+                }) => Some(commit),
+                _ => None,
+            };
+            briefs.push(Brief {
+                id: summary.id,
+                person: summary.person.map(|person| person.name),
+                message: cut(&summary.message, 160),
+                fixed_in,
+            });
+        }
+        briefs
     }
 
     async fn marked(&self, id: &str) -> Option<Marked> {

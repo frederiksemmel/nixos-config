@@ -144,6 +144,7 @@ struct Api {
     stream: PathBuf,
     gate: Option<Gate>,
     feedback: crate::feedback::Feedback,
+    deploy: crate::deploy::Deploy,
 }
 
 impl Api {
@@ -159,6 +160,7 @@ struct Microphone {
 
 pub fn spawn(config: Config, core: Core) {
     let feedback = crate::feedback::Feedback::new(config.feedback, core.bus().clone(), config.grim);
+    let deploy = crate::deploy::Deploy::new(feedback.clone(), PathBuf::from(crate::feedback::REVISION));
     let api = Api {
         core,
         root: config.meta,
@@ -172,6 +174,7 @@ pub fn spawn(config: Config, core: Core) {
         stream: config.stream,
         gate: config.gate,
         feedback,
+        deploy,
     };
     let address = config.address;
     tokio::spawn(async move {
@@ -228,6 +231,7 @@ fn router(api: Api) -> Router {
         .merge(tv::routes(api.core.television().clone()))
         .merge(crate::client_log::routes())
         .merge(crate::feedback::routes(api.feedback.clone()))
+        .merge(crate::deploy::routes(api.deploy.clone()))
         .merge(storage::routes(api.core.clone()))
         .merge(stream::routes(api.core.clone(), api.stream.clone()));
     match gate {
@@ -1822,6 +1826,13 @@ mod tests {
         });
         core.publish_progress(ProfileId::FIRST, progress);
         let bus = core.bus().clone();
+        let feedback_dir = std::env::temp_dir().join(format!(
+            "semmeltv-api-feedback-{}-{}",
+            std::process::id(),
+            SERVED.fetch_add(1, Ordering::SeqCst)
+        ));
+        let revision = feedback_dir.join("revision");
+        let feedback = crate::feedback::Feedback::new(feedback_dir, bus.clone(), None);
         let api = Api {
             core: core.clone(),
             root,
@@ -1834,15 +1845,8 @@ mod tests {
             library: PathBuf::from("/lib"),
             stream: std::env::temp_dir().join(format!("semmeltv-api-stream-{}", std::process::id())),
             gate: None,
-            feedback: crate::feedback::Feedback::new(
-                std::env::temp_dir().join(format!(
-                    "semmeltv-api-feedback-{}-{}",
-                    std::process::id(),
-                    SERVED.fetch_add(1, Ordering::SeqCst)
-                )),
-                bus.clone(),
-                None,
-            ),
+            feedback: feedback.clone(),
+            deploy: crate::deploy::Deploy::new(feedback, revision),
         };
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
@@ -1902,6 +1906,59 @@ mod tests {
         assert_eq!(month["people"][0]["phone"], 600);
         assert_eq!(get(&server, "/api/usage").1["days"], 30);
         assert_eq!(get(&server, "/api/usage?days=0").1["days"], 1);
+    }
+
+    #[test]
+    fn a_deploy_is_asked_for_on_the_tv_and_beast_reports_how_it_went() {
+        let server = serve(no_root(), None);
+        let (status, refused) = post(&server, "/api/deploy", json!({}));
+        assert_eq!(status, 409, "{refused}");
+        let (_, before) = get(&server, "/api/deploy");
+        assert_eq!(before["checked_at"], Value::Null);
+        assert_eq!(before["pending"], Value::Null);
+
+        let (_, sent) = post(&server, "/api/feedback", json!({ "message": "A deploy button" }));
+        let id = sent["id"].as_str().unwrap().to_string();
+        let dir = std::path::PathBuf::from(get(&server, "/api/feedback").1["dir"].as_str().unwrap());
+        std::fs::write(dir.join("revision"), "aaaaaaa1\n").unwrap();
+        let main = json!({ "commits": [
+            { "sha": "ccccccc3", "at": 30, "subject": "semmeltv: a deploy button", "reports": [id], "tv": true },
+            { "sha": "bbbbbbb2", "at": 20, "subject": "fstux: a font", "tv": false },
+            { "sha": "aaaaaaa1", "at": 10, "subject": "semmeltv: older", "tv": true },
+        ] });
+        let (status, told) = post(&server, "/api/deploy/main", main);
+        assert_eq!(status, 200, "{told}");
+        assert_eq!(told["revision"], "aaaaaaa1");
+        assert_eq!(told["main"], "ccccccc3");
+        assert_eq!(told["others"], 1);
+        assert_eq!(told["pending"][0]["subject"], "semmeltv: a deploy button");
+        assert_eq!(told["pending"][0]["reports"][0]["id"], id.as_str());
+        assert_eq!(told["pending"][0]["reports"][0]["message"], "A deploy button");
+        assert_eq!(told["asked"], Value::Null);
+
+        let (status, asked) = post(&server, "/api/deploy", json!({}));
+        assert_eq!(status, 200, "{asked}");
+        assert_eq!(asked["asked"]["by"], "someone");
+        let (_, running) = post(&server, "/api/deploy/progress", json!({ "state": "running" }));
+        assert_eq!(running["asked"], Value::Null);
+        assert_eq!(running["run"]["state"], "running");
+        assert_eq!(running["run"]["by"], "someone");
+        assert_eq!(post(&server, "/api/deploy", json!({})).0, 409);
+        let (_, failed) = post(
+            &server,
+            "/api/deploy/progress",
+            json!({ "state": "failed", "message": "the build failed" }),
+        );
+        assert_eq!(failed["run"]["state"], "failed");
+        assert_eq!(failed["run"]["message"], "the build failed");
+        assert_eq!(post(&server, "/api/deploy", json!({})).0, 200);
+
+        std::fs::write(dir.join("revision"), "ccccccc3").unwrap();
+        let (_, now) = get(&server, "/api/deploy");
+        assert_eq!(now["pending"], json!([]));
+        assert_eq!(now["others"], 0);
+        std::fs::write(dir.join("revision"), "deadbeef").unwrap();
+        assert_eq!(get(&server, "/api/deploy").1["pending"], Value::Null);
     }
 
     #[test]
