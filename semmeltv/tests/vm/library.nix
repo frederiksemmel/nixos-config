@@ -46,11 +46,11 @@ runCommand "semmeltv-test-library"
     }
 
     film Movies/Testfilm/Testfilm.2021.mkv 240 "Film line"
-    film Movies/Kinofilm/Kinofilm.2020.mkv 180 "Kino line"
+    film Movies/Kinofilm/Kinofilm.2020.mkv 90 "Kino line"
 
     for episode in 1 2 3; do
-      clip Series/Testserie/S01/Testserie.S01E0$episode.mkv 180
-      srt 180 "Episode $episode line" > Series/Testserie/S01/Testserie.S01E0$episode.en.srt
+      clip Series/Testserie/S01/Testserie.S01E0$episode.mkv 60
+      srt 60 "Episode $episode line" > Series/Testserie/S01/Testserie.S01E0$episode.en.srt
     done
 
     for number in 01 02 03 04 05 06 07 08 09; do

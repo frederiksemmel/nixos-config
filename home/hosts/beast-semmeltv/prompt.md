@@ -91,19 +91,26 @@ yourself, without subagents.
    (for the web app: `web` and `/home/frederik/repos/nixos-config/semmeltv/web/target`).
    Other sessions share that build folder, so cargo may wait for its lock; let
    it. All must pass with no new warnings. Then `nix fmt`.
-3. Skip the VM test (`checks.x86_64-linux.semmeltv-vm`) unless it is the only
-   thing that can catch a break that would stop playback or lock people out.
-   It costs about fifteen minutes. Run it only when the change touches
+3. Skip the VM test unless it is the only thing that can catch a break that
+   would stop playback or lock people out. Run it only when the change touches
    playback on the TV or the phone, the hand-over between them, the stream,
    sign-in, nginx or a NixOS module. Wording, layout, styles, a new page or
    field, the Feedback page and anything the cargo tests cover land without it.
    Page script changes run the browser test instead:
    `nix build .#checks.x86_64-linux.semmeltv-web-browser --builders 'ssh://eu.nixbuild.net x86_64-linux,aarch64-linux - 100 4 benchmark,big-parallel' --max-jobs 0 -L`.
-   Add a VM scenario only for a playback or hand-over flow; otherwise write a
-   unit test. When you must run the VM test, run it once, right before landing,
-   on nixbuild, never locally, with `run_in_background`, and wait for its
+   The VM test is split into groups, each its own check with its own VM
+   (`semmeltv/tests/vm/groups/`, listed in its README): `tv-playback`,
+   `tv-remote`, `up-next`, `resume`, `segments`, `streams`, `phone-playback`,
+   `laptop`, `handover`, `live`, `pages`, `phone-ui`, `feedback`, `downloads`
+   and `sign-in`. Run only the group your change touches, as
+   `checks.x86_64-linux.semmeltv-vm-<group>`, or two or three if it touches
+   more; a group takes about two minutes. `checks.x86_64-linux.semmeltv-vm`
+   runs them all, for a change to the VM's NixOS setup or `common.py`. Add a
+   VM scenario only for a playback or hand-over flow, in the group of its area;
+   otherwise write a unit test. Run the VM test once, right before landing, on
+   nixbuild, never locally, with `run_in_background`, and wait for its
    completion notice instead of polling:
-   `nix build .#checks.x86_64-linux.semmeltv-vm --builders 'ssh://eu.nixbuild.net x86_64-linux,aarch64-linux - 100 4 benchmark,big-parallel,kvm,nixos-test' --max-jobs 0 -L`.
+   `nix build .#checks.x86_64-linux.semmeltv-vm-up-next --builders 'ssh://eu.nixbuild.net x86_64-linux,aarch64-linux - 100 4 benchmark,big-parallel,kvm,nixos-test' --max-jobs 0 -L`.
    A scenario that fails the same way on origin/main without your change is not
    yours: name it in your comment and go on.
 4. Push only after you have read a passing result of every check. Commit by

@@ -2,9 +2,11 @@ use crate::command::Command;
 use crate::library::{Episode, Library, Show};
 use crate::profile::ProfileId;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 
-pub const COUNTDOWN: Duration = Duration::from_secs(10);
+pub static COUNTDOWN: LazyLock<Duration> =
+    LazyLock::new(|| crate::timing::seconds("SEMMELTV_UP_NEXT_SECONDS", Duration::from_secs(10)));
 
 /// The episode that plays by itself once the countdown runs out, after the
 /// one before it ended on the TV.
@@ -81,7 +83,7 @@ impl UpNext {
                 season: next.season,
                 number: next.number,
                 starts: now,
-                ends: now + COUNTDOWN,
+                ends: now + *COUNTDOWN,
             },
         })
     }
@@ -152,7 +154,7 @@ mod tests {
         assert_eq!(up.card.show, "Dark");
         assert_eq!(up.card.episode, "S1 E2 · 2. Lies");
         assert_eq!((up.card.tmdb, up.card.season, up.card.number), (Some(70523), 1, 2));
-        assert_eq!(up.card.ends, now + COUNTDOWN);
+        assert_eq!(up.card.ends, now + *COUNTDOWN);
     }
 
     #[test]
@@ -198,12 +200,12 @@ mod tests {
     fn the_countdown_runs_out_after_ten_seconds_and_counts_whole_seconds_up() {
         let now = Instant::now();
         let up = UpNext::after(&library(), &path(1, 1), ProfileId::FIRST, now).unwrap();
-        assert!(!up.due(now + COUNTDOWN - Duration::from_millis(1)));
-        assert!(up.due(now + COUNTDOWN));
+        assert!(!up.due(now + *COUNTDOWN - Duration::from_millis(1)));
+        assert!(up.due(now + *COUNTDOWN));
         assert_eq!(up.card.seconds_left(now), 10);
         assert_eq!(up.card.seconds_left(now + Duration::from_millis(1)), 10);
         assert_eq!(up.card.seconds_left(now + Duration::from_millis(9001)), 1);
-        assert_eq!(up.card.seconds_left(now + COUNTDOWN + Duration::from_secs(1)), 0);
-        assert!((up.card.share_left(now + COUNTDOWN / 2) - 0.5).abs() < 1e-6);
+        assert_eq!(up.card.seconds_left(now + *COUNTDOWN + Duration::from_secs(1)), 0);
+        assert!((up.card.share_left(now + *COUNTDOWN / 2) - 0.5).abs() < 1e-6);
     }
 }

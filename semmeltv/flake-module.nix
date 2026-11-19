@@ -51,21 +51,23 @@ in
       ...
     }:
     {
-      checks = lib.optionalAttrs (system == "x86_64-linux") {
-        semmeltv-web-browser = pkgs.callPackage ./web/browser-test.nix {
-          inherit (self'.packages) semmeltv-web;
-        };
-        semmeltv-sync = pkgs.callPackage ./hosts/sync-test.nix { };
-        semmeltv-vm = import ./tests/vm {
+      checks = lib.optionalAttrs (system == "x86_64-linux") (
+        {
+          semmeltv-web-browser = pkgs.callPackage ./web/browser-test.nix {
+            inherit (self'.packages) semmeltv-web;
+          };
+          semmeltv-sync = pkgs.callPackage ./hosts/sync-test.nix { };
+          semmeltv-no-upload = import ./tests/no-upload {
+            inherit pkgs;
+            rqbitModule = import ./modules/rqbit.nix { inherit (inputs) nixpkgs; };
+          };
+        }
+        // import ./tests/vm {
           inherit pkgs;
           inherit (self'.packages) semmeltv;
           semmeltvModule = self.nixosModules.semmeltv;
-        };
-        semmeltv-no-upload = import ./tests/no-upload {
-          inherit pkgs;
-          rqbitModule = import ./modules/rqbit.nix { inherit (inputs) nixpkgs; };
-        };
-      };
+        }
+      );
 
       packages = {
         semmeltv = pkgs.callPackage ./app { inherit (inputs) crane; };

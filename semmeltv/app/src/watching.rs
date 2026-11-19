@@ -2,11 +2,14 @@ use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::progress::{Position, Progress, Watched};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const SERIES: usize = 3;
 pub const MOVIES: usize = 3;
-pub const ENOUGH: f64 = 60.0;
+pub static ENOUGH: LazyLock<f64> = LazyLock::new(|| {
+    crate::timing::seconds("SEMMELTV_WATCHING_SECONDS", std::time::Duration::from_secs(60)).as_secs_f64()
+});
 const A_WHILE_DAYS: f64 = 7.0;
 const UNKNOWN_AGE_DAYS: f64 = 90.0;
 const SECONDS_PER_DAY: f64 = 86_400.0;
@@ -136,7 +139,7 @@ fn identify(library: &Library, file: &Path) -> Option<(Kind, String)> {
 }
 
 pub fn record(progress: &mut Progress, library: &Library, file: &Path, played: f64, now: u64) -> bool {
-    if played < ENOUGH {
+    if played < *ENOUGH {
         return false;
     }
     let Some((kind, key)) = identify(library, file) else {

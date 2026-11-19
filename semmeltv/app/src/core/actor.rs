@@ -720,7 +720,7 @@ impl Actor {
                 eprintln!("up next: Play next plays it now");
                 self.play_up_next().await;
             } else if let Some(up) = &self.up_next {
-                eprintln!("up next: {} in {:?}", up.file.display(), crate::up_next::COUNTDOWN);
+                eprintln!("up next: {} in {:?}", up.file.display(), *crate::up_next::COUNTDOWN);
                 self.core.bus.up_next(Some(up.card.clone()));
             }
         }

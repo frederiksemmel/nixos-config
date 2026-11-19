@@ -43,6 +43,7 @@ mod stream;
 mod subfetch;
 mod subtitles;
 mod tags;
+mod timing;
 mod tmdb;
 mod together;
 mod tv;

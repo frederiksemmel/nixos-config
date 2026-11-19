@@ -5,7 +5,8 @@ use std::time::{Duration, Instant};
 
 pub const MOVING_FOR: Duration = Duration::from_secs(20);
 pub const STARTING_FOR: Duration = Duration::from_secs(30);
-pub const LOST_AFTER: Duration = Duration::from_secs(45);
+pub static LOST_AFTER: LazyLock<Duration> =
+    LazyLock::new(|| crate::timing::seconds("SEMMELTV_QUIET_SECONDS", Duration::from_secs(45)));
 
 /// Which run of the app this is: a phone that sees it change knows the app
 /// restarted, rather than someone moving or stopping what it played.
@@ -555,7 +556,7 @@ fn transition(screen: Screen, event: Event, tv: Option<&Place>, now: Instant) ->
             },
             Event::Tick,
         ) => {
-            if now.duration_since(seen) >= LOST_AFTER {
+            if now.duration_since(seen) >= *LOST_AFTER {
                 let text = format!("{} went quiet, so its place is kept", device.name);
                 (Phone { device, play: None }, vec![notice(text, Tone::Quiet)])
             } else {
@@ -952,7 +953,7 @@ mod tests {
             now + Duration::from_secs(30),
         );
         assert_eq!(screen.step(Event::Tick, None, now + Duration::from_secs(70)), vec![]);
-        let effects = screen.step(Event::Tick, None, now + Duration::from_secs(30) + LOST_AFTER);
+        let effects = screen.step(Event::Tick, None, now + Duration::from_secs(30) + *LOST_AFTER);
         assert!(is_told(&effects, Tone::Quiet));
         assert_eq!(
             screen,
@@ -1036,7 +1037,7 @@ mod tests {
             paused: false,
         };
         let mut screen = playing(&iphone, "s1", 300.0, now);
-        screen.step(Event::Tick, None, now + LOST_AFTER);
+        screen.step(Event::Tick, None, now + *LOST_AFTER);
         assert_eq!(
             screen,
             Screen::Phone {
@@ -1044,7 +1045,7 @@ mod tests {
                 play: None
             }
         );
-        let later = now + LOST_AFTER + Duration::from_secs(5);
+        let later = now + *LOST_AFTER + Duration::from_secs(5);
         assert_eq!(screen.step(report(&iphone, 352.0), None, later), vec![]);
         assert_eq!(screen, playing(&iphone, "s1", 352.0, later));
 
@@ -1246,7 +1247,7 @@ mod tests {
         );
         assert_eq!(shown(&failed), 0);
         let mut screen = playing(&iphone, "s1", 1.0, now);
-        assert_eq!(shown(&screen.step(Event::Tick, None, now + LOST_AFTER)), 0);
+        assert_eq!(shown(&screen.step(Event::Tick, None, now + *LOST_AFTER)), 0);
     }
 
     #[test]

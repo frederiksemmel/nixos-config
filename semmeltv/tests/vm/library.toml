@@ -3,9 +3,9 @@ title = "Testserie"
 year = 2022
 tmdb = 100001
 episodes = [
-  { season = 1, episode = 1, title = "Anfang", path = "Series/Testserie/S01/Testserie.S01E01.mkv", added = 2026-01-02, runtime = 3, video = "H.264", resolution = "360p", audio = "5.1" },
-  { season = 1, episode = 2, title = "Mitte", path = "Series/Testserie/S01/Testserie.S01E02.mkv", added = 2026-01-02, runtime = 3, video = "H.264", resolution = "360p", audio = "5.1" },
-  { season = 1, episode = 3, title = "Ende", path = "Series/Testserie/S01/Testserie.S01E03.mkv", added = 2026-01-02, runtime = 3, video = "H.264", resolution = "360p", audio = "5.1", downloaded_by = "Mami" },
+  { season = 1, episode = 1, title = "Anfang", path = "Series/Testserie/S01/Testserie.S01E01.mkv", added = 2026-01-02, runtime = 1, video = "H.264", resolution = "360p", audio = "5.1" },
+  { season = 1, episode = 2, title = "Mitte", path = "Series/Testserie/S01/Testserie.S01E02.mkv", added = 2026-01-02, runtime = 1, video = "H.264", resolution = "360p", audio = "5.1" },
+  { season = 1, episode = 3, title = "Ende", path = "Series/Testserie/S01/Testserie.S01E03.mkv", added = 2026-01-02, runtime = 1, video = "H.264", resolution = "360p", audio = "5.1", downloaded_by = "Mami" },
 ]
 
 [[movie]]
@@ -23,7 +23,7 @@ title = "Kinofilm"
 year = 2020
 path = "Movies/Kinofilm/Kinofilm.2020.mkv"
 added = 2025-12-01
-runtime = 3
+runtime = 2
 video = "H.264"
 resolution = "360p"
 audio = "5.1"
