@@ -266,6 +266,8 @@ new MutationObserver((records) => {
 const SETTLE_MS = 650;
 const FLICK = 0.5;
 const START_DRAG = 8;
+const WHEEL_IDLE = 140;
+const WHEEL_FRAME = 16;
 let settleTimer = 0;
 
 const dim = () => document.querySelector(".sheet-dim");
@@ -280,10 +282,15 @@ function place(offset, height) {
   dim().style.opacity = String(Math.max(0, 1 - y / height));
 }
 
+function shownAt(height) {
+  const at = new DOMMatrixReadOnly(getComputedStyle(sheet()).transform).m42;
+  return Math.min(Math.max(at, 0), height + 40);
+}
+
 function beginDrag(kind, y, pointer) {
   clearTimeout(settleTimer);
   const height = sheetHeight();
-  drag = { kind, pointer, start: y, base: kind === "open" ? height + 40 : 0, height, moved: 0, samples: [{ y, t: performance.now() }], live: false };
+  drag = { kind, pointer, start: y, base: shownAt(height), height, moved: 0, samples: [{ y, t: performance.now() }], live: false };
 }
 
 function moveDrag(y) {
@@ -302,11 +309,11 @@ function moveDrag(y) {
   place(drag.base + drag.moved, drag.height);
 }
 
-function velocity() {
+function velocity(heldStill) {
   const first = drag.samples[0];
   const last = drag.samples[drag.samples.length - 1];
   const time = last.t - first.t;
-  if (performance.now() - last.t > 100) return 0;
+  if (heldStill && performance.now() - last.t > 100) return 0;
   return time > 0 ? (last.y - first.y) / time : 0;
 }
 
@@ -325,19 +332,22 @@ function settle(open) {
   }, SETTLE_MS);
 }
 
-function endDrag() {
+function endDrag(heldStill = true) {
   if (!drag) return;
   const finished = drag;
-  const speed = velocity();
+  const speed = velocity(heldStill);
   drag = null;
-  if (!finished.live) return;
+  if (!finished.live) {
+    if (root.hasAttribute("data-sheet-drag")) settle(isOpen());
+    return;
+  }
   dragged = true;
   setTimeout(() => {
     dragged = false;
   }, 0);
-  const travelled = Math.abs(finished.moved) / finished.height;
-  if (finished.kind === "open") settle(speed < -FLICK || (travelled > 0.25 && speed <= FLICK));
-  else settle(!(speed > FLICK || (travelled > 0.25 && speed >= -FLICK)));
+  const at = Math.min(Math.max(finished.base + finished.moved, 0), finished.height + 40);
+  if (finished.kind === "open") settle(speed < -FLICK || (at < finished.height * 0.75 + 40 && speed <= FLICK));
+  else settle(!(speed > FLICK || (at > finished.height * 0.25 && speed >= -FLICK)));
 }
 
 function startsDrag(target) {
@@ -400,6 +410,45 @@ for (const name of ["touchend", "touchcancel"]) {
     if (drag && drag.pointer === "touch") endDrag();
   });
 }
+
+let wheelY = 0;
+let wheelTimer = 0;
+let wheelLast = -Infinity;
+let wheelFromTop = false;
+
+function wheelDrag(target, delta) {
+  if (!isOpen()) return delta > 0 && target.closest(".bar, #sheet") && remoteShown() ? "open" : null;
+  if (delta >= 0) return null;
+  if (target.closest(".sheet-dim, .sheet-top")) return "close";
+  const scroller = target.closest(".sheet-scroll");
+  return scroller && wheelFromTop && scroller.scrollTop < 1 ? "close" : null;
+}
+
+document.addEventListener("wheel", (event) => {
+  if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.target.closest) return;
+  const now = performance.now();
+  if (now - wheelLast > WHEEL_IDLE) {
+    const scroller = document.querySelector("#sheet .sheet-scroll");
+    wheelFromTop = !scroller || scroller.scrollTop < 1;
+  }
+  wheelLast = now;
+  const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1);
+  if (!drag) {
+    const kind = wheelDrag(event.target, delta);
+    if (!kind) return;
+    beginDrag(kind, 0, "wheel");
+    drag.samples[0].t -= WHEEL_FRAME;
+    wheelY = 0;
+  }
+  if (drag.pointer !== "wheel") return;
+  event.preventDefault();
+  wheelY -= delta;
+  moveDrag(wheelY);
+  clearTimeout(wheelTimer);
+  wheelTimer = setTimeout(() => {
+    if (drag && drag.pointer === "wheel") endDrag(false);
+  }, WHEEL_IDLE);
+}, { passive: false });
 
 markChoices();
 window.semmeltvSheetReady = true;

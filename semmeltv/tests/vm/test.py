@@ -407,6 +407,12 @@ def centred(phone, where):
     assert not off, f"{where}: labels off centre: {off[:6]}"
 
 
+def wheel(phone, dy, times):
+    for _ in range(times):
+        phone.page.mouse.wheel(0, dy)
+        phone.page.wait_for_timeout(16)
+
+
 def scrolls(phone, where):
     phone.js("window.scrollTo(0, 0)")
     phone.page.wait_for_timeout(200)
@@ -1850,7 +1856,18 @@ with sync_playwright() as playwright:
         laptop.page.mouse.up()
         laptop.until('!!document.querySelector(".pp.pp-mini")', 3000)
         assert laptop.js(f"!{VIDEO}.paused"), "dragging the player down does not pause it"
-        laptop.page.wait_for_timeout(500)
+        laptop.page.wait_for_timeout(600)
+        laptop.page.mouse.move(x, y)
+        wheel(laptop, 30, 3)
+        assert laptop.js('document.querySelector(".pp").classList.contains("pp-dragging")'), "scrolling on the bar pulls the player up with the touchpad"
+        wheel(laptop, 40, 15)
+        laptop.until('!document.querySelector(".pp-mini") && document.documentElement.classList.contains("pp-open")', 3000)
+        laptop.page.wait_for_timeout(600)
+        laptop.page.mouse.move(320, 300)
+        wheel(laptop, -40, 18)
+        laptop.until('!!document.querySelector(".pp.pp-mini")', 3000)
+        assert laptop.js(f"!{VIDEO}.paused"), "scrolling the player down folds it and keeps it playing"
+        laptop.page.wait_for_timeout(600)
         laptop.page.click(".pp-mini-stop")
         laptop.until('!document.querySelector(".pp")', 3000)
         eventually("the TV hears that the laptop stopped", lambda: screen(laptop)["play"] is None)

@@ -14,6 +14,8 @@ const JUMP = 10;
 const FLICK = 0.5;
 const START_DRAG = 8;
 const SETTLE_MS = 320;
+const WHEEL_IDLE = 140;
+const WHEEL_FRAME = 16;
 
 const HOVER_KEEPS = ".pp-top, .pp-middle button, .pp-bottom, .pp-skip, .pp-upnext, .pp-sheet";
 
@@ -593,6 +595,23 @@ class Player {
     window.addEventListener("pointermove", this.onDragMove);
     window.addEventListener("pointerup", this.onDragEnd);
     window.addEventListener("pointercancel", this.onDragEnd);
+    let wheelTimer = 0;
+    this.root.addEventListener("wheel", (event) => {
+      if (event.ctrlKey || Math.abs(event.deltaX) > Math.abs(event.deltaY)) return;
+      if (this.drag && this.drag.pointer !== "wheel") return;
+      const delta = event.deltaY * (event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? window.innerHeight : 1);
+      if (!this.drag) {
+        if (this.closed || this.leaving || !this.sheet.hidden || (this.mini ? delta <= 0 : delta >= 0)) return;
+        this.drag = { pointer: "wheel", start: 0, y: 0, moved: 0, live: false, opening: this.mini, samples: [{ y: 0, t: performance.now() - WHEEL_FRAME }] };
+      }
+      event.preventDefault();
+      this.drag.y -= delta;
+      this.dragTo(this.drag.y);
+      clearTimeout(wheelTimer);
+      wheelTimer = setTimeout(() => {
+        if (this.drag && this.drag.pointer === "wheel") this.dragEnd(false);
+      }, WHEEL_IDLE);
+    }, { passive: false });
     let pointer = "touch";
     this.root.addEventListener("pointerdown", (event) => { pointer = event.pointerType; }, true);
     this.root.addEventListener("pointermove", (event) => {
@@ -698,7 +717,7 @@ class Player {
     this.root.style.transform = `translateY(${at}px)`;
   }
 
-  dragEnd() {
+  dragEnd(heldStill = true) {
     const drag = this.drag;
     this.drag = null;
     if (!drag.live) return;
@@ -706,7 +725,7 @@ class Player {
     setTimeout(() => { this.dragged = false; }, 0);
     const first = drag.samples[0];
     const last = drag.samples[drag.samples.length - 1];
-    const held = performance.now() - last.t > 100;
+    const held = heldStill && performance.now() - last.t > 100;
     const speed = !held && last.t > first.t ? (last.y - first.y) / (last.t - first.t) : 0;
     const travelled = Math.abs(drag.moved) / drag.height;
     const open = drag.opening

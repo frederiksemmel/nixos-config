@@ -221,6 +221,58 @@ def feedback_follows_changes(page, engine):
     filters.nth(0).tap()
 
 
+def wheel(page, at, deltas):
+    page.mouse.move(*at)
+    for delta in deltas:
+        page.mouse.wheel(0, delta)
+        page.wait_for_timeout(16)
+
+
+def sheet_lift(page):
+    return page.evaluate("""(() => {
+      const match = /translateY\\(([-\\d.]+)px\\)/.exec(document.getElementById("sheet").style.transform);
+      return { dragging: document.documentElement.hasAttribute("data-sheet-drag"), y: match ? parseFloat(match[1]) : null };
+    })()""")
+
+
+def scrolling_pulls_the_remote(page, engine):
+    page.goto(BASE + "/", wait_until="commit")
+    until(page, engine, "Home shows the bar", 'location.pathname === "/" && !!document.querySelector(".bar-open")')
+    page.wait_for_timeout(500)
+    opened = 'document.documentElement.hasAttribute("data-sheet")'
+    shut = '!document.documentElement.hasAttribute("data-sheet") && !document.documentElement.hasAttribute("data-sheet-drag")'
+    box = page.locator(".bar-open").bounding_box()
+    bar = (box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+    viewport = page.viewport_size
+    middle = (viewport["width"] / 2, viewport["height"] / 2)
+    wheel(page, middle, [20] * 5)
+    page.wait_for_timeout(300)
+    check(engine, "scrolling the page doesn't pull the remote up", not page.evaluate(opened) and not sheet_lift(page)["dragging"])
+    page.evaluate("window.scrollTo(0, 0)")
+    wheel(page, bar, [6] * 12)
+    lift = sheet_lift(page)
+    check(engine, "a touchpad scroll on the bar lifts the remote with the fingers", lift["dragging"] and lift["y"] is not None and not page.evaluate(opened), str(lift))
+    wheel(page, bar, [20] * 40)
+    until(page, engine, "and lets it come up when the fingers stop", opened, 2000)
+    page.wait_for_timeout(800)
+    wheel(page, middle, [-20] * 40)
+    until(page, engine, "scrolling back on the remote's top pulls it down again", shut, 2000)
+    page.wait_for_timeout(800)
+    wheel(page, bar, [100])
+    until(page, engine, "one notch of a mouse wheel on the bar brings it up", opened, 2000)
+    page.wait_for_timeout(800)
+    scroller = page.locator("#sheet .sheet-scroll")
+    page.evaluate('document.querySelector("#sheet .sheet-scroll").scrollTop = 200')
+    scrolled = page.evaluate('document.querySelector("#sheet .sheet-scroll").scrollTop')
+    if scrolled > 0:
+        wheel(page, middle, [-20] * 20)
+        page.wait_for_timeout(300)
+        check(engine, "scrolling up inside the remote first scrolls it to its top, and stops there", page.evaluate(opened), str(scroller.evaluate("e => e.scrollTop")))
+    wheel(page, middle, [-100])
+    until(page, engine, "a new scroll down from its top closes it", shut, 2000)
+    page.wait_for_timeout(800)
+
+
 def back_never_loops(page, engine):
     page.goto(BASE + "/feedback", wait_until="commit")
     until(page, engine, "a page opened directly shows", 'location.pathname === "/feedback" && !!document.querySelector("main .feedback-page a.back")')
@@ -256,6 +308,8 @@ def run(p, engine, device):
     page.wait_for_timeout(500)
     headphones(page, engine)
     feedback_follows_changes(page, engine)
+    if engine == "chromium":
+        scrolling_pulls_the_remote(page, engine)
     back_never_loops(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
