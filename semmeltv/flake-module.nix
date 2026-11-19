@@ -61,6 +61,10 @@ in
           inherit (self'.packages) semmeltv;
           semmeltvModule = self.nixosModules.semmeltv;
         };
+        semmeltv-no-upload = import ./tests/no-upload {
+          inherit pkgs;
+          rqbitModule = import ./modules/rqbit.nix { inherit (inputs) nixpkgs; };
+        };
       };
 
       packages = {

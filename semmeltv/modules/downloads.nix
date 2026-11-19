@@ -23,14 +23,6 @@ let
   runtimeDir = "/run/semmeltv-downloads";
   remoteHost = "api.pcloud.com";
 
-  rqbit = newer.rqbit.overrideAttrs (old: {
-    cargoBuildFeatures = (old.cargoBuildFeatures or [ ]) ++ [ "disable-upload" ];
-    cargoCheckFeatures = (old.cargoCheckFeatures or [ ]) ++ [ "disable-upload" ];
-    preBuild = (old.preBuild or "") + ''
-      export AWS_LC_SYS_USE_SYSTEM=0
-    '';
-  });
-
   indexer =
     id: site: extra:
     pkgs.writeText "${id}.json" (
@@ -139,6 +131,7 @@ in
   imports = [
     vpnConfinement
     agenix
+    (import ./rqbit.nix { inherit nixpkgs; })
   ];
 
   options.services.semmeltv.downloads = {
@@ -205,20 +198,12 @@ in
 
         services.rqbit = {
           enable = true;
-          package = rqbit;
           httpHost = namespaceAddress;
           httpPort = rqbitPort;
           inherit downloadDir;
         };
 
-        systemd.services.rqbit = {
-          environment = {
-            RQBIT_DISABLE_UPLOAD = "true";
-            RQBIT_LSD_DISABLE = "true";
-            RQBIT_UPNP_PORT_FORWARD_DISABLE = "true";
-          };
-          serviceConfig.UMask = lib.mkForce "0007";
-        };
+        systemd.services.rqbit.serviceConfig.UMask = lib.mkForce "0007";
 
         users.users.semmeltv.extraGroups = [ config.services.rqbit.group ];
 

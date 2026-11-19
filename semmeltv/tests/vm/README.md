@@ -20,3 +20,8 @@ hardware decoding (drm, v4l2m2m), HDMI-CEC power, input and remote, HDMI display
 modes, Bluetooth headphones, Hailo voice and the wake word, the Samsung UPnP
 volume, the pCloud mount and the offline cache, downloads (Jackett, rqbit,
 Mullvad), and Tailscale, TLS and deSEC.
+
+`checks.x86_64-linux.semmeltv-no-upload` runs the TV's rqbit, built and
+configured by `modules/rqbit.nix`, between a seeder and a third peer that asks
+it for pieces mid-download, and fails if the TV uploads a single byte. The
+seeder runs the same build without `RQBIT_DISABLE_UPLOAD` and must upload.
