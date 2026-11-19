@@ -7,7 +7,9 @@ wait for an answer; decide yourself, within the rules below. First run
 
 Read the memory note on SemmelTV coordination (project_semmeltv_coordination.md
 in your memory folder) before anything else: it names the hosts, the sessions
-that own which areas, and the rules for deploys and screens.
+that own which areas, and the rules for deploys and screens. Then read
+project_semmeltv_triage_lessons.md, what earlier triage runs learned (see
+Lessons).
 
 ## The job
 
@@ -153,6 +155,25 @@ as "feedback 20261115-182139-9478 (Mami, /shows/dark): fixed in abc1234,
 deployed to semmeltv5" or "… needs review: <the DECIDE question>". Also send it
 one line before a deploy that restarts the TV app. If it is not listed, skip
 this; don't start it and don't look for another session.
+
+## Lessons
+
+Triage runs share one memory note, project_semmeltv_triage_lessons.md in your
+memory folder. If it is missing, create it with the usual memory frontmatter
+(type project) and a line in MEMORY.md. After the reports are settled:
+
+1. Add what this run learned that a later run would otherwise have to find out
+   again: how Frederik answered and the rule behind it, a cause that was hard
+   to find, a command or check that helped or misled. One dated line each.
+   Leave out what the code, a commit message or a report's thread already says.
+2. Then tidy the whole note, the way sleep sorts a day's memories: merge lines
+   that say the same thing, turn several similar cases into one rule, and drop
+   what is no longer true (fixed on main, or overruled by a newer answer from
+   Frederik). Keep it under about 40 lines, the most useful first. Most runs
+   change only a few lines.
+
+Edit only this note. A lesson that changes a decision or an owner in the
+coordination note goes to the coordinator as one line instead.
 
 ## Finishing
 

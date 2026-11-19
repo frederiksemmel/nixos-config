@@ -589,7 +589,9 @@ report is New or Reopened, it starts
 clearly asks for, new features included, and marks Needs review only what is
 unclear or off limits. For a reopened report, the person's newest
 comments are its instruction, such as the option to build. Every run answers
-in the thread. By hand, from beast:
+in the thread. Runs start fresh but share one memory note,
+`project_semmeltv_triage_lessons.md`: each adds what it learned and tidies the
+note so it stays short. By hand, from beast:
 
     semmeltv-feedback semmeltv5 list new
     semmeltv-feedback semmeltv5 show <id> | jq '.message, .client.trail[-40:], .tv.problems'
