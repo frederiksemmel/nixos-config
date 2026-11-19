@@ -272,6 +272,8 @@ pub struct Movie {
     pub played: Played,
     #[serde(default)]
     pub subtitles: Option<u32>,
+    #[serde(default)]
+    pub downloaded_by: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -366,6 +368,8 @@ pub struct Show {
     pub about: About,
     #[serde(flatten)]
     pub played: Played,
+    #[serde(default)]
+    pub downloaded_by: Vec<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
@@ -1152,6 +1156,24 @@ mod tests {
         assert!(!read(json!([])).controls_tv());
         assert!(read(json!(["download"])).downloads());
         assert!(!read(json!(["control-tv", "headphones"])).downloads());
+    }
+
+    #[test]
+    fn a_title_names_who_downloaded_it_and_older_tvs_name_nobody() {
+        let none = json!({ "imdb": null, "rotten_tomatoes": null, "fresh": null, "popcorn": null, "full": null });
+        let movie = json!({ "kind": "movie", "key": "up-2009", "title": "Up", "subtitle": "", "poster": null,
+            "backdrop": null, "ratings": none, "details": "", "stopped_at": null, "duration": null,
+            "runtime_minutes": null, "last_played": null, "last_played_label": null });
+        let older: Movie = serde_json::from_value(movie.clone()).unwrap();
+        assert!(older.downloaded_by.is_empty());
+        let mut newer = movie;
+        newer["downloaded_by"] = json!(["Frederik"]);
+        let newer: Movie = serde_json::from_value(newer).unwrap();
+        assert_eq!(newer.downloaded_by, ["Frederik"]);
+        let show = json!({ "kind": "show", "key": "dark", "title": "Dark", "subtitle": "", "poster": null,
+            "backdrop": null, "ratings": none, "next": null, "seasons": [], "downloaded_by": ["Frederik", "Mami"] });
+        let show: Show = serde_json::from_value(show).unwrap();
+        assert_eq!(show.downloaded_by, ["Frederik", "Mami"]);
     }
 
     #[test]

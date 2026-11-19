@@ -1238,6 +1238,18 @@ with sync_playwright() as playwright:
         tags = phone.js('[...document.querySelectorAll("meta[name$=\'mobile-web-app-capable\']")].map((meta) => meta.name + "=" + meta.content)')
         assert sorted(tags) == ["apple-mobile-web-app-capable=yes", "mobile-web-app-capable=yes"], tags
 
+    with scenario("a title's details say who downloaded it, and nothing when nobody is known"):
+        downloaded_by = """[...document.querySelectorAll("main .detail-facts > div")].filter((row) => row.querySelector("dt").textContent === "Downloaded by").map((row) => row.querySelector("dd").textContent).join("|")"""
+        phone.goto(f"/movies/{FRESH_FILM}")
+        phone.until('!!document.querySelector("main .detail-facts")')
+        assert phone.js(downloaded_by) == "Frederik", phone.js(downloaded_by)
+        phone.goto(f"/shows/{SHOW}")
+        phone.until('!!document.querySelector("main .detail-facts")')
+        assert phone.js(downloaded_by) == "Mami", phone.js(downloaded_by)
+        phone.goto(f"/movies/{FILM}")
+        phone.until('!!document.querySelector("main .detail-facts")')
+        assert phone.js(downloaded_by) == "", phone.js(downloaded_by)
+
     with scenario("a title that isn't there says so inside the app"):
         phone.goto("/movies/not-in-the-library")
         phone.until('document.querySelector("main h1")?.textContent === "Not in the library" && !!document.querySelector("header.top") && !!document.querySelector("main .trouble a[href=\'/\']")')

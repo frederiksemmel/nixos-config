@@ -58,7 +58,9 @@ it as text, which is how the incoming skill shows what changed, and `library
 from-toml FILE.toml` builds one from that text. Schema changes are Toasty
 migrations in `toasty/library/`, generated with `semmeltv toasty library
 migration generate --name …`. A TV whose app is older than the file's schema
-keeps its last good copy and says why. Printed, an entry looks like this:
+keeps its last good copy and says why. An app newer than the file reads it
+through a temporary copy with its migrations applied, leaving the file as it
+is; the next write applies them to the file itself. Printed, an entry looks like this:
 
     [[show]]
     title = "Dark"
@@ -87,6 +89,10 @@ the artwork step as well. `imdb`, `ratings` (`imdb` out of 10;
 `rt`, `popcorn` and `metacritic` out of 100) and `rated` come from the artwork
 step too; see Ratings. `review = true`, on a show, an episode or a film, marks
 something a person should check; it changes nothing in the app.
+`downloaded_by`, on an episode or a film, is the profile name of whoever asked
+the downloads service for it: the person signed in on the phone who searched or
+confirmed, the TV's profile for a voice request, or `semmeltv get fetch --by`.
+The title page lists it under Downloaded by; titles from before it have none.
 
 Home and the rows sort by `added`, shows by their newest episode. Newly Added is
 the 12 newest titles.

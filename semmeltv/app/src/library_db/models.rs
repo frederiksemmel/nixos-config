@@ -52,6 +52,7 @@ pub struct Episode {
     pub resolution: Option<String>,
     pub audio: Option<String>,
     pub review: bool,
+    pub downloaded_by: Option<String>,
 }
 
 #[derive(Debug, toasty::Model)]
@@ -73,6 +74,7 @@ pub struct Movie {
     pub resolution: Option<String>,
     pub audio: Option<String>,
     pub review: bool,
+    pub downloaded_by: Option<String>,
     #[column(type = text)]
     pub about: Json<About>,
 }

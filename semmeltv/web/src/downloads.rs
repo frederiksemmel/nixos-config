@@ -9,6 +9,10 @@ fn downloads(cx: &Cx) -> Result<&Downloads> {
     crate::auth::may_download(cx)?;
     Ok(app_context::<Downloads>(cx))
 }
+
+fn asked_by(cx: &Cx) -> Option<String> {
+    crate::auth::me(cx).map(|me| me.person.name.clone())
+}
 use topcoat::router::page;
 use topcoat::runtime::{Event, Signal, connected, link, procedure, shard, signal};
 use topcoat::view::{View, attributes, component, emit, live, view};
@@ -316,7 +320,9 @@ pub async fn find(cx: &Cx, text: String) -> Result<String> {
     if text.is_empty() {
         return Ok(String::new());
     }
-    let found = downloads(cx)?.search(json!({ "text": text, "from": "web" })).await;
+    let found = downloads(cx)?
+        .search(json!({ "text": text, "from": "web", "by": asked_by(cx) }))
+        .await;
     Ok(found.map_or_else(|error| format!("!{error}"), |proposal| proposal.id))
 }
 
@@ -326,6 +332,7 @@ pub async fn pick(cx: &Cx, kind: String, tmdb: u64, season: i64, episode: i64, a
     let body = json!({
         "text": asked,
         "from": "web",
+        "by": asked_by(cx),
         "pick": { "kind": kind, "tmdb": tmdb, "season": number(season), "episode": number(episode) },
     });
     let found = downloads(cx)?.search(body).await;
@@ -337,7 +344,7 @@ pub async fn confirm(cx: &Cx, proposal: String, choice: u32) -> Result<String> {
     Ok(downloads(cx)?
         .outcome(
             "/api/downloads/confirm",
-            json!({ "proposal": proposal, "choice": choice }),
+            json!({ "proposal": proposal, "choice": choice, "by": asked_by(cx) }),
         )
         .await)
 }

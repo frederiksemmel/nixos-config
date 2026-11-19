@@ -43,10 +43,10 @@ Done when Frederik has named one release, or decided to keep what he has.
 
 ## 4. Download
 
-    get fetch movie TMDB_ID [--replace] 'JSON_LINE'
-    get fetch show TMDB_ID --season N [--episode N] [--replace] 'JSON_LINE'
+    get fetch movie TMDB_ID [--replace] [--by NAME] 'JSON_LINE'
+    get fetch show TMDB_ID --season N [--episode N] [--replace] [--by NAME] 'JSON_LINE'
 
-`JSON_LINE` is the release's line from step 2, unchanged. Use `--replace` when the title, or that episode, is already in the library: the job then takes over the existing library entry and its id, so watch progress and resume points carry over to the new file. The old video and the subtitles named after it move to `pcloud:SemmelTV/Replaced/<old path>`. Without `--replace`, a title already in the library is refused as "already in the library".
+`JSON_LINE` is the release's line from step 2, unchanged. Use `--replace` when the title, or that episode, is already in the library: the job then takes over the existing library entry and its id, so watch progress and resume points carry over to the new file. The old video and the subtitles named after it move to `pcloud:SemmelTV/Replaced/<old path>`. Without `--replace`, a title already in the library is refused as "already in the library". `--by` names the SemmelTV profile of whoever asked for it (Frederik, or a feedback report's author); the title page then says "Downloaded by NAME".
 
 Follow the job with `get jobs` (each line has the stage, a message and the last log lines) until its stage is `done` or `failed`. A season comes one episode at a time, in order, and each episode is in the library (`placed`, and `in the library:` in the log) while the next one downloads, so Frederik can start watching before the job is done. A job that cannot read the torrent after 5 minutes found no peers; offer Frederik the next release from step 3.
 

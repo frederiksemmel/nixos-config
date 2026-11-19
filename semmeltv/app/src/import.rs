@@ -370,6 +370,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             resolution: None,
             audio: None,
             review,
+            downloaded_by: None,
         });
     }
 
@@ -419,6 +420,7 @@ impl<F: FnMut(&Query) -> Option<Identity>> Merger<F> {
             resolution: None,
             audio: None,
             review: unsure || duplicate,
+            downloaded_by: None,
             about: About::default(),
         });
     }

@@ -348,6 +348,7 @@ pub struct EpisodeEntry {
     pub audio: Option<String>,
     #[serde(default)]
     pub review: bool,
+    pub downloaded_by: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
@@ -370,6 +371,7 @@ pub struct MovieEntry {
     pub audio: Option<String>,
     #[serde(default)]
     pub review: bool,
+    pub downloaded_by: Option<String>,
     #[serde(default)]
     pub about: About,
 }
@@ -445,9 +447,13 @@ impl Manifest {
                     format!(", ratings = {}", episode.ratings.render())
                 };
                 let review = if episode.review { ", review = true" } else { "" };
+                let by = episode
+                    .downloaded_by
+                    .as_ref()
+                    .map_or(String::new(), |by| format!(", downloaded_by = {}", quoted(by)));
                 let _ = writeln!(
                     text,
-                    "  {{ season = {}, episode = {}, {title}path = {}, added = {}{runtime}{ratings}{tags}{review} }},",
+                    "  {{ season = {}, episode = {}, {title}path = {}, added = {}{runtime}{ratings}{tags}{review}{by} }},",
                     episode.season,
                     episode.episode,
                     quoted(&episode.path),
@@ -471,6 +477,9 @@ impl Manifest {
                 let _ = writeln!(text, "{key} = {}", quoted(value));
             }
             render_review(&mut text, movie.review);
+            if let Some(by) = &movie.downloaded_by {
+                let _ = writeln!(text, "downloaded_by = {}", quoted(by));
+            }
             movie.about.render(&mut text, "movie");
             let _ = writeln!(text);
         }

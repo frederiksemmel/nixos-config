@@ -531,6 +531,16 @@ fn listed(names: &[String]) -> Option<String> {
     (!names.is_empty()).then(|| names.join(", "))
 }
 
+fn downloaded_by(names: &[String]) -> Option<(&'static str, String)> {
+    let (last, rest) = names.split_last()?;
+    let names = if rest.is_empty() {
+        last.clone()
+    } else {
+        format!("{} and {last}", rest.join(", "))
+    };
+    Some(("Downloaded by", names))
+}
+
 fn stopped_at(at: Option<f64>, of: Option<f64>) -> Option<String> {
     let at = at.filter(|at| *at > 0.0)?;
     Some(match of.filter(|of| *of > 0.0) {
@@ -837,6 +847,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
     if !file.is_empty() {
         rows.push(("File", file));
     }
+    rows.extend(downloaded_by(&movie.downloaded_by));
     Ok(view! {
         <article class="title detail">
             back(href: "/")
@@ -986,6 +997,7 @@ async fn show(cx: &Cx) -> Result<impl View> {
         ));
     }
     rows.push(("In the library", show.card.subtitle.clone()));
+    rows.extend(downloaded_by(&show.downloaded_by));
     if let Some(language) = about.language.clone().filter(|language| language != "English") {
         rows.push(("Language", language));
     }
@@ -1126,6 +1138,23 @@ async fn show(cx: &Cx) -> Result<impl View> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn the_details_say_who_downloaded_a_title_and_nothing_when_nobody_is_known() {
+        assert_eq!(downloaded_by(&[]), None);
+        assert_eq!(
+            downloaded_by(&["Frederik".to_string()]),
+            Some(("Downloaded by", "Frederik".to_string()))
+        );
+        assert_eq!(
+            downloaded_by(&["Frederik".to_string(), "Mami".to_string()]),
+            Some(("Downloaded by", "Frederik and Mami".to_string()))
+        );
+        assert_eq!(
+            downloaded_by(&["Frederik".to_string(), "Mami".to_string(), "Ramu".to_string()]),
+            Some(("Downloaded by", "Frederik, Mami and Ramu".to_string()))
+        );
+    }
 
     #[test]
     fn an_episode_line_breaks_only_after_a_dot() {

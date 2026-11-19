@@ -42,6 +42,7 @@ impl Downloads {
         season: Option<u32>,
         episode: Option<u32>,
         said: String,
+        by: Option<String>,
     ) -> Result<Proposal, String> {
         let body = SearchBody {
             text: Some(said),
@@ -53,6 +54,7 @@ impl Downloads {
             }),
             pick: None,
             from: Some("voice".to_string()),
+            by,
         };
         self.post("/api/downloads/search", &body)
     }

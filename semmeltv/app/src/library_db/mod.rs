@@ -31,10 +31,34 @@ async fn read_stored(path: &Path) -> toasty::Result<Manifest> {
     if let Some(problem) = unknown_migrations(&mut db).await? {
         return Err(toasty::Error::from_args(format_args!("{problem}")));
     }
-    let mut manifest = load(&mut db).await?;
+    if missing_migrations(&mut db).await? {
+        drop(db);
+        return read_upgraded(path).await;
+    }
+    sorted(&mut db).await
+}
+
+async fn sorted(db: &mut toasty::Db) -> toasty::Result<Manifest> {
+    let mut manifest = load(db).await?;
     manifest.show.sort_by_key(|show| show.id);
     manifest.movie.sort_by_key(|movie| movie.id);
     Ok(manifest)
+}
+
+async fn read_upgraded(path: &Path) -> toasty::Result<Manifest> {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |elapsed| elapsed.as_nanos());
+    let copy = std::env::temp_dir().join(format!("semmeltv-library-{}-{nanos}.db", std::process::id()));
+    fs::copy(path, &copy).map_err(|error| toasty::Error::from_args(format_args!("{}: {error}", copy.display())))?;
+    let read = async {
+        let mut db = toasty::Db::builder().models(models::all()).build(driver(&copy)).await?;
+        MIGRATIONS.apply(&db).await?;
+        sorted(&mut db).await
+    }
+    .await;
+    let _ = fs::remove_file(&copy);
+    read
 }
 
 pub async fn write(path: &Path, manifest: &Manifest) -> io::Result<()> {
@@ -60,7 +84,7 @@ async fn write_stored(file: &Path, wanted: Manifest) -> toasty::Result<()> {
     transaction.commit().await
 }
 
-async fn unknown_migrations(db: &mut toasty::Db) -> toasty::Result<Option<String>> {
+async fn applied_migrations(db: &mut toasty::Db) -> toasty::Result<Option<HashSet<i64>>> {
     let exists = toasty::sql::query("SELECT count(*) FROM sqlite_master WHERE name = '__toasty_migrations'")
         .column_types([Type::I64])
         .exec(db)
@@ -72,18 +96,30 @@ async fn unknown_migrations(db: &mut toasty::Db) -> toasty::Result<Option<String
         .column_types([Type::I64])
         .exec(db)
         .await?;
-    let known: HashSet<i64> = MIGRATIONS
+    Ok(Some(applied.iter().filter_map(number).collect()))
+}
+
+fn known_migrations() -> HashSet<i64> {
+    MIGRATIONS
         .migrations()
         .iter()
         .map(|migration| migration.id() as i64)
-        .collect();
-    let unknown = applied
-        .iter()
-        .filter_map(number)
-        .filter(|id| !known.contains(id))
-        .count();
+        .collect()
+}
+
+async fn unknown_migrations(db: &mut toasty::Db) -> toasty::Result<Option<String>> {
+    let Some(applied) = applied_migrations(db).await? else {
+        return Ok(None);
+    };
+    let unknown = applied.difference(&known_migrations()).count();
     Ok((unknown > 0)
         .then(|| format!("the library was written by a newer SemmelTV ({unknown} migrations this one does not know)")))
+}
+
+async fn missing_migrations(db: &mut toasty::Db) -> toasty::Result<bool> {
+    Ok(applied_migrations(db)
+        .await?
+        .is_some_and(|applied| !known_migrations().is_subset(&applied)))
 }
 
 fn number(row: &Value) -> Option<i64> {
@@ -163,6 +199,7 @@ fn episode_entry(episode: Episode) -> EpisodeEntry {
         resolution: episode.resolution,
         audio: episode.audio,
         review: episode.review,
+        downloaded_by: episode.downloaded_by,
     }
 }
 
@@ -182,6 +219,7 @@ fn movie_entry(movie: Movie) -> MovieEntry {
         resolution: movie.resolution,
         audio: movie.audio,
         review: movie.review,
+        downloaded_by: movie.downloaded_by,
         about: movie.about.0,
     }
 }
@@ -312,6 +350,7 @@ async fn store(executor: &mut dyn toasty::Executor, wanted: Manifest) -> toasty:
                             resolution: episode.resolution.clone(),
                             audio: episode.audio.clone(),
                             review: episode.review,
+                            downloaded_by: episode.downloaded_by.clone(),
                         })
                         .exec(executor)
                         .await?;
@@ -331,6 +370,7 @@ async fn store(executor: &mut dyn toasty::Executor, wanted: Manifest) -> toasty:
                         resolution: episode.resolution.clone(),
                         audio: episode.audio.clone(),
                         review: episode.review,
+                        downloaded_by: episode.downloaded_by.clone(),
                     })
                     .exec(executor)
                     .await?;
@@ -368,6 +408,7 @@ async fn store(executor: &mut dyn toasty::Executor, wanted: Manifest) -> toasty:
                         resolution: movie.resolution.clone(),
                         audio: movie.audio.clone(),
                         review: movie.review,
+                        downloaded_by: movie.downloaded_by.clone(),
                         about: movie.about.clone(),
                     })
                     .exec(executor)
@@ -389,6 +430,7 @@ async fn store(executor: &mut dyn toasty::Executor, wanted: Manifest) -> toasty:
                     resolution: movie.resolution.clone(),
                     audio: movie.audio.clone(),
                     review: movie.review,
+                    downloaded_by: movie.downloaded_by.clone(),
                     about: movie.about.clone(),
                 })
                 .exec(executor)
@@ -561,6 +603,71 @@ review = true
         let first = Manifest::read(&path).unwrap();
         Manifest::parse(TOML).unwrap().write(&path).unwrap();
         assert_eq!(Manifest::read(&path).unwrap(), first);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn who_downloaded_an_episode_or_a_film_survives_a_write_and_a_read() {
+        let path = file("downloaded-by");
+        let mut manifest = Manifest::parse(TOML).unwrap();
+        manifest.show[0].episodes[1].downloaded_by = Some("Mami".to_string());
+        manifest.movie[0].downloaded_by = Some("Frederik".to_string());
+        manifest.write(&path).unwrap();
+        let read = Manifest::read(&path).unwrap();
+        assert_eq!(read.show[0].episodes[0].downloaded_by, None);
+        assert_eq!(read.show[0].episodes[1].downloaded_by.as_deref(), Some("Mami"));
+        assert_eq!(read.movie[0].downloaded_by.as_deref(), Some("Frederik"));
+        assert_eq!(without_ids(Manifest::parse(&read.render()).unwrap()), manifest);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_library_from_before_downloaded_by_is_read_untouched_and_upgraded_by_the_next_write() {
+        static FIRST: toasty::migration::MigrationSet =
+            toasty::migration::MigrationSet::new(&MIGRATIONS_BEFORE_DOWNLOADED_BY);
+        static MIGRATIONS_BEFORE_DOWNLOADED_BY: [toasty::migration::MigrationFile; 1] =
+            [toasty::migration::MigrationFile::new(
+                5746962358852197533,
+                "0000_initial.sql",
+                include_str!("../../toasty/library/migrations/0000_initial.sql"),
+            )];
+        let path = file("before-downloaded-by");
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap()
+            .block_on(async {
+                let db = toasty::Db::builder()
+                    .models(models::all())
+                    .build(driver(&path))
+                    .await
+                    .unwrap();
+                FIRST.apply(&db).await.unwrap();
+            });
+        let old = rusqlite::Connection::open(&path).unwrap();
+        old.execute(
+            "INSERT INTO movies (title, path, added, review, about) VALUES ('Up', 'Movies/Up/Up.mkv', '2024-05-01', 0, '{}')",
+            [],
+        )
+        .unwrap();
+        drop(old);
+        let before = fs::read(&path).unwrap();
+
+        let read = Manifest::read(&path).unwrap();
+        assert_eq!(
+            (read.movie[0].title.as_str(), &read.movie[0].downloaded_by),
+            ("Up", &None)
+        );
+        assert_eq!(fs::read(&path).unwrap(), before, "reading leaves the file as it was");
+
+        let mut changed = read.clone();
+        changed.movie[0].downloaded_by = Some("Frederik".to_string());
+        changed.write(&path).unwrap();
+        let again = Manifest::read(&path).unwrap();
+        assert_eq!(
+            (again.movie[0].id, again.movie[0].downloaded_by.as_deref()),
+            (read.movie[0].id, Some("Frederik"))
+        );
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 

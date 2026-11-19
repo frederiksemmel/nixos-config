@@ -88,6 +88,8 @@ pub struct Proposal {
     pub id: String,
     pub asked: String,
     pub from: String,
+    #[serde(default)]
+    pub by: Option<String>,
     pub created: u64,
     #[serde(flatten)]
     pub answer: Answer,
@@ -216,6 +218,8 @@ pub struct Job {
     pub log: Vec<String>,
     #[serde(default)]
     pub sending: Option<Sending>,
+    #[serde(default)]
+    pub by: Option<String>,
 }
 
 impl Job {
@@ -319,6 +323,26 @@ struct Saved {
 struct Book {
     proposals: Vec<Proposal>,
     jobs: Vec<Job>,
+}
+
+impl Book {
+    fn picked(
+        &self,
+        proposal: &str,
+        choice: usize,
+        by: Option<String>,
+    ) -> Result<(Target, Choice, Option<String>), &'static str> {
+        let known = self
+            .proposals
+            .iter()
+            .find(|known| known.id == proposal)
+            .ok_or("That search has expired; search again")?;
+        let Answer::Searched(Searched { target, choices, .. }) = &known.answer else {
+            return Err("Nothing to download in that search");
+        };
+        let picked = choices.get(choice).ok_or("Nothing to download in that search")?;
+        Ok((target.clone(), picked.clone(), by.or_else(|| known.by.clone())))
+    }
 }
 
 struct Service {
@@ -544,7 +568,7 @@ impl Service {
         Ok(suggestions(found, season, &self.manifest()))
     }
 
-    fn propose(&self, asked: String, from: String, resolved: Result<Resolved, String>) -> Proposal {
+    fn propose(&self, asked: String, from: String, by: Option<String>, resolved: Result<Resolved, String>) -> Proposal {
         let answer = match resolved {
             Err(message) | Ok(Resolved::Refused(message)) => Answer::Refused { message },
             Ok(Resolved::Question {
@@ -601,6 +625,7 @@ impl Service {
             id: new_id(),
             asked,
             from,
+            by,
             created: now(),
             answer,
         };
@@ -615,6 +640,7 @@ impl Service {
         let today = Date::from_unix(now());
         let manifest = self.manifest();
         let from = request.from.unwrap_or_else(|| "web".to_string());
+        let by = request.by;
         if let Some(pick) = request.pick {
             let asked = request.text.unwrap_or_else(|| pick.tmdb.to_string());
             let resolved = resolve::resolve_id(
@@ -627,7 +653,7 @@ impl Service {
                 today,
                 Mode::Add,
             );
-            return self.propose(asked, from, resolved);
+            return self.propose(asked, from, by, resolved);
         }
         let (asked, wish) = match (request.wish, request.text) {
             (Some(wish), text) => (text.unwrap_or_else(|| wish.title.clone()), Ok(wish)),
@@ -638,24 +664,16 @@ impl Service {
             (None, None) => (String::new(), Err("Say what to download".to_string())),
         };
         let resolved = wish.and_then(|wish| resolve::resolve(&self.tmdb, &wish, &manifest, today));
-        self.propose(asked, from, resolved)
+        self.propose(asked, from, by, resolved)
     }
 
-    fn confirm(&self, proposal: &str, choice: usize) -> Outcome {
-        let picked = {
-            let book = self.book.lock().unwrap();
-            let Some(known) = book.proposals.iter().find(|known| known.id == proposal) else {
-                return Outcome::no("That search has expired; search again");
-            };
-            let Answer::Searched(Searched { target, choices, .. }) = &known.answer else {
-                return Outcome::no("Nothing to download in that search");
-            };
-            choices.get(choice).cloned().map(|picked| (target.clone(), picked))
+    fn confirm(&self, proposal: &str, choice: usize, by: Option<String>) -> Outcome {
+        let picked = self.book.lock().unwrap().picked(proposal, choice, by);
+        let (target, picked, by) = match picked {
+            Ok(picked) => picked,
+            Err(reason) => return Outcome::no(reason),
         };
-        let Some((target, picked)) = picked else {
-            return Outcome::no("Nothing to download in that search");
-        };
-        let outcome = self.start(target, picked, Mode::Add);
+        let outcome = self.start(target, picked, Mode::Add, by);
         if outcome.ok {
             self.dismiss(proposal);
         }
@@ -663,7 +681,7 @@ impl Service {
     }
 
     fn fetch(&self, body: FetchBody) -> Outcome {
-        let FetchBody { pick, offer, mode } = body;
+        let FetchBody { pick, offer, mode, by } = body;
         let resolved = resolve::resolve_id(
             &self.tmdb,
             pick.kind,
@@ -675,13 +693,13 @@ impl Service {
             mode,
         );
         match resolved {
-            Ok(Resolved::Target(target)) => self.start(target, score::by_hand(&offer), mode),
+            Ok(Resolved::Target(target)) => self.start(target, score::by_hand(&offer), mode, by),
             Ok(Resolved::Refused(message)) | Err(message) => Outcome::no(&message),
             Ok(Resolved::Question { text, .. }) => Outcome::no(&text),
         }
     }
 
-    fn start(&self, target: Target, picked: Choice, mode: Mode) -> Outcome {
+    fn start(&self, target: Target, picked: Choice, mode: Mode, by: Option<String>) -> Outcome {
         let duplicate = self.book.lock().unwrap().jobs.iter().any(|job| {
             job.stage.active()
                 && job
@@ -732,6 +750,7 @@ impl Service {
             placed: Vec::new(),
             log: Vec::new(),
             sending: None,
+            by,
         };
         let verb = match mode {
             Mode::Add => "Downloading",
@@ -1049,7 +1068,13 @@ impl Service {
                 ));
             }
             shelf
-                .import(&job.target, std::slice::from_ref(place), job.mode, &log)
+                .import(
+                    &job.target,
+                    std::slice::from_ref(place),
+                    job.mode,
+                    job.by.as_deref(),
+                    &log,
+                )
                 .map_err(|error| format!("Import failed: {error}"))?;
             shelf.sync(&log);
             log(format!("plays here while it uploads: {}", place.destination));
@@ -1064,7 +1089,13 @@ impl Service {
         log(format!("uploaded {}", place.destination));
         if !plays_first {
             shelf
-                .import(&job.target, std::slice::from_ref(place), job.mode, &log)
+                .import(
+                    &job.target,
+                    std::slice::from_ref(place),
+                    job.mode,
+                    job.by.as_deref(),
+                    &log,
+                )
                 .map_err(|error| format!("Import failed: {error}"))?;
         }
         shelf.show_in_library(std::slice::from_ref(place), &log);
@@ -1170,6 +1201,8 @@ pub struct SearchBody {
     pub wish: Option<Wish>,
     pub pick: Option<Pick>,
     pub from: Option<String>,
+    #[serde(default)]
+    pub by: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1177,6 +1210,8 @@ struct ConfirmBody {
     proposal: String,
     #[serde(default)]
     choice: usize,
+    #[serde(default)]
+    by: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1184,6 +1219,8 @@ pub struct FetchBody {
     pub pick: Pick,
     pub offer: torznab::Offer,
     pub mode: Mode,
+    #[serde(default)]
+    pub by: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -1250,7 +1287,7 @@ async fn suggest(State(service): State<Shared>, Query(query): Query<SuggestQuery
 }
 
 async fn confirm(State(service): State<Shared>, Json(body): Json<ConfirmBody>) -> Response {
-    match blocking(move || service.confirm(&body.proposal, body.choice)).await {
+    match blocking(move || service.confirm(&body.proposal, body.choice, body.by)).await {
         Ok(outcome) => Json(outcome).into_response(),
         Err(response) => response,
     }
@@ -1540,6 +1577,7 @@ added = 2025-01-01
             placed: Vec::new(),
             log: Vec::new(),
             sending: None,
+            by: None,
         }
     }
 
@@ -1553,6 +1591,70 @@ added = 2025-01-01
         job.sending = Some(Sending { sent: 40, size: 100 });
         let shown = serde_json::to_value(&job).unwrap();
         assert_eq!(shown["sending"], serde_json::json!({ "sent": 40, "size": 100 }));
+    }
+
+    #[test]
+    fn a_job_saved_before_it_knew_who_asked_still_loads_and_keeps_the_person_once_known() {
+        let mut saved = serde_json::to_value(dark(vec![season()])).unwrap();
+        saved.as_object_mut().unwrap().remove("by");
+        let job: Job = serde_json::from_value(saved).unwrap();
+        assert_eq!(job.by, None);
+        let asked = Job {
+            by: Some("Mami".to_string()),
+            ..job
+        };
+        let again: Job = serde_json::from_value(serde_json::to_value(&asked).unwrap()).unwrap();
+        assert_eq!(again.by.as_deref(), Some("Mami"));
+    }
+
+    #[test]
+    fn whoever_confirms_starts_the_download_and_a_voice_offer_keeps_the_person_who_asked() {
+        let mut book = Book::default();
+        let searched = |id: &str, by: Option<&str>| Proposal {
+            id: id.to_string(),
+            asked: "dark".to_string(),
+            from: "voice".to_string(),
+            by: by.map(str::to_string),
+            created: now(),
+            answer: Answer::Searched(Searched {
+                label: "Dark season 1".to_string(),
+                target: dark(Vec::new()).target,
+                message: String::new(),
+                choices: vec![dark(Vec::new()).choice],
+                dropped: 0,
+                problems: Vec::new(),
+            }),
+        };
+        book.proposals.push(searched("tv", Some("Mami")));
+        book.proposals.push(searched("nobody", None));
+        let by = |picked: Result<(Target, Choice, Option<String>), &'static str>| picked.map(|(_, _, by)| by);
+        assert_eq!(by(book.picked("tv", 0, None)), Ok(Some("Mami".to_string())));
+        assert_eq!(
+            by(book.picked("tv", 0, Some("Frederik".to_string()))),
+            Ok(Some("Frederik".to_string()))
+        );
+        assert_eq!(by(book.picked("nobody", 0, None)), Ok(None));
+        assert_eq!(
+            by(book.picked("tv", 1, None)),
+            Err("Nothing to download in that search")
+        );
+        assert_eq!(
+            by(book.picked("gone", 0, None)),
+            Err("That search has expired; search again")
+        );
+    }
+
+    #[test]
+    fn a_search_from_an_older_caller_names_nobody() {
+        let body: SearchBody = serde_json::from_value(serde_json::json!({ "text": "dark", "from": "web" })).unwrap();
+        assert_eq!(body.by, None);
+        let fetch = serde_json::json!({
+            "pick": { "kind": "movie", "tmdb": 1, "season": null, "episode": null },
+            "offer": { "name": "Up.2009.1080p", "size": 1, "seeders": 1, "peers": 1, "infohash": "0", "magnet": "magnet:?xt=urn:btih:0", "indexer": "x" },
+            "mode": "add",
+        });
+        let fetch: FetchBody = serde_json::from_value(fetch).unwrap();
+        assert_eq!(fetch.by, None);
     }
 
     fn season() -> PartState {
@@ -1634,6 +1736,7 @@ added = 2025-01-01
             id: "p".to_string(),
             asked: "dark season 2".to_string(),
             from: "voice".to_string(),
+            by: None,
             created: 1,
             answer,
         })

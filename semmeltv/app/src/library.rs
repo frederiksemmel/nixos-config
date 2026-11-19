@@ -53,6 +53,7 @@ pub struct Episode {
     pub runtime: Option<u32>,
     pub ratings: Scores,
     pub tags: Tags,
+    pub downloaded_by: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -68,6 +69,7 @@ pub struct Movie {
     pub added: Date,
     pub runtime: Option<u32>,
     pub tags: Tags,
+    pub downloaded_by: Option<String>,
     pub about: About,
 }
 
@@ -200,6 +202,16 @@ impl Show {
         self.seasons.iter().map(|season| season.number).max().unwrap_or(0)
     }
 
+    pub fn downloaded_by(&self) -> Vec<&str> {
+        let mut names: Vec<&str> = Vec::new();
+        for name in self.episodes().filter_map(|episode| episode.downloaded_by.as_deref()) {
+            if !names.contains(&name) {
+                names.push(name);
+            }
+        }
+        names
+    }
+
     pub fn episode_count(&self) -> usize {
         self.seasons.iter().map(|season| season.episodes.len()).sum()
     }
@@ -318,6 +330,7 @@ fn build_episode(root: &Path, entry: &EpisodeEntry) -> Episode {
         runtime: entry.runtime,
         ratings: entry.ratings,
         tags: entry.tags(),
+        downloaded_by: entry.downloaded_by.clone(),
     }
 }
 
@@ -334,6 +347,7 @@ fn build_movie(root: &Path, entry: &MovieEntry) -> Movie {
         added: entry.added,
         runtime: entry.runtime,
         tags: entry.tags(),
+        downloaded_by: entry.downloaded_by.clone(),
         about: entry.about.clone(),
     }
 }
@@ -459,6 +473,37 @@ mod tests {
         assert_eq!(years(Some(2019), Some(2019), false).as_deref(), Some("2019"));
         assert_eq!(years(Some(2019), None, false).as_deref(), Some("2019"));
         assert_eq!(years(None, Some(2025), false), None);
+    }
+
+    #[test]
+    fn a_title_names_who_downloaded_it_and_a_show_everyone_once() {
+        let library = library(
+            r#"
+[[movie]]
+title = "Up"
+path = "Movies/Up/Up.mkv"
+added = 2026-11-19
+downloaded_by = "Frederik"
+
+[[movie]]
+title = "Coco"
+path = "Movies/Coco/Coco.mkv"
+added = 2024-05-01
+
+[[show]]
+title = "Dark"
+episodes = [
+  { season = 2, episode = 1, path = "Series/Dark/S02E01.mkv", added = 2026-11-19, downloaded_by = "Mami" },
+  { season = 1, episode = 1, path = "Series/Dark/S01E01.mkv", added = 2024-05-01 },
+  { season = 1, episode = 2, path = "Series/Dark/S01E02.mkv", added = 2026-11-18, downloaded_by = "Frederik" },
+  { season = 2, episode = 2, path = "Series/Dark/S02E02.mkv", added = 2026-11-19, downloaded_by = "Mami" },
+]
+"#,
+        );
+        let movie = |title: &str| library.movies.iter().find(|movie| movie.title == title).unwrap();
+        assert_eq!(movie("Up").downloaded_by.as_deref(), Some("Frederik"));
+        assert_eq!(movie("Coco").downloaded_by, None);
+        assert_eq!(library.shows[0].downloaded_by(), ["Frederik", "Mami"]);
     }
 
     #[test]

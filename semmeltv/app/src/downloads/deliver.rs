@@ -164,6 +164,27 @@ pub fn repoint(manifest: &mut Manifest, target: &Target, placed: &[Placed]) -> V
     old
 }
 
+pub fn credit(manifest: &mut Manifest, placed: &[Placed], by: Option<&str>) {
+    let Some(by) = by else {
+        return;
+    };
+    let placed = |path: &str| placed.iter().any(|place| place.destination == path);
+    let episodes = manifest
+        .show
+        .iter_mut()
+        .flat_map(|show| &mut show.episodes)
+        .filter(|episode| placed(&episode.path))
+        .map(|episode| &mut episode.downloaded_by);
+    let movies = manifest
+        .movie
+        .iter_mut()
+        .filter(|movie| placed(&movie.path))
+        .map(|movie| &mut movie.downloaded_by);
+    for downloaded_by in episodes.chain(movies) {
+        *downloaded_by = Some(by.to_string());
+    }
+}
+
 pub fn companions(video: &str, files: &[FileEntry]) -> Vec<String> {
     let path = Path::new(video);
     let (Some(folder), Some(stem)) = (path.parent(), path.file_stem()) else {
@@ -332,10 +353,17 @@ impl Shelf {
         upload_to(&self.remote, placed, progress)
     }
 
-    pub fn import(&self, target: &Target, placed: &[Placed], mode: Mode, log: &dyn Fn(String)) -> Result<(), String> {
+    pub fn import(
+        &self,
+        target: &Target,
+        placed: &[Placed],
+        mode: Mode,
+        by: Option<&str>,
+        log: &dyn Fn(String),
+    ) -> Result<(), String> {
         for attempt in 1..=ATTEMPTS {
             let before = self.manifest_hash()?;
-            let (manifest, retired) = self.prepare(target, placed, mode, log)?;
+            let (manifest, retired) = self.prepare(target, placed, mode, by, log)?;
             let after = self.manifest_hash()?;
             if after != before {
                 log(format!(
@@ -383,6 +411,7 @@ impl Shelf {
         target: &Target,
         placed: &[Placed],
         mode: Mode,
+        by: Option<&str>,
         log: &dyn Fn(String),
     ) -> Result<(PathBuf, Vec<String>), String> {
         let _ = fs::remove_dir_all(&self.work);
@@ -454,7 +483,8 @@ impl Shelf {
                 import::identify(Some(&self.tmdb), query)
             }
         };
-        let (manifest, report) = import::merge(Some(existing), &parsed, &files, today(), identify);
+        let (mut manifest, report) = import::merge(Some(existing), &parsed, &files, today(), identify);
+        credit(&mut manifest, placed, by);
         for line in &report.added {
             log(format!("added: {line}"));
         }
@@ -740,6 +770,60 @@ resolution = "720p"
         assert_eq!(
             (episode.id, episode.path.as_str(), &episode.resolution),
             (Some(7), new_episodes[0].destination.as_str(), &None)
+        );
+    }
+
+    #[test]
+    fn the_person_who_asked_is_written_on_the_new_files_only() {
+        let mut manifest = Manifest::parse(
+            r#"
+[[movie]]
+title = "Up"
+path = "Movies/Up (2009)/Up (2009).mkv"
+added = 2026-11-19
+
+[[movie]]
+title = "Coco"
+path = "Movies/Coco (2017)/Coco (2017).mkv"
+added = 2024-05-01
+
+[[show]]
+title = "Dark"
+episodes = [
+  { season = 1, episode = 1, path = "Series/Dark/Season 01/Dark (2017) - S01E01.mkv", added = 2024-05-01 },
+  { season = 1, episode = 2, path = "Series/Dark/Season 01/Dark (2017) - S01E02.mkv", added = 2026-11-19 },
+]
+"#,
+        )
+        .unwrap();
+        let place = |destination: &str| Placed {
+            local: PathBuf::new(),
+            destination: destination.to_string(),
+            size: 1,
+        };
+        let placed = [
+            place("Movies/Up (2009)/Up (2009).mkv"),
+            place("Series/Dark/Season 01/Dark (2017) - S01E02.mkv"),
+        ];
+        credit(&mut manifest, &placed, None);
+        assert!(manifest.movie.iter().all(|movie| movie.downloaded_by.is_none()));
+        credit(&mut manifest, &placed, Some("Mami"));
+        let by = |entry: &Option<String>| entry.as_deref().map(str::to_string);
+        assert_eq!(
+            manifest
+                .movie
+                .iter()
+                .map(|movie| by(&movie.downloaded_by))
+                .collect::<Vec<_>>(),
+            [Some("Mami".to_string()), None]
+        );
+        assert_eq!(
+            manifest.show[0]
+                .episodes
+                .iter()
+                .map(|episode| by(&episode.downloaded_by))
+                .collect::<Vec<_>>(),
+            [None, Some("Mami".to_string())]
         );
     }
 

@@ -9,7 +9,7 @@ use std::fs;
 use std::time::Duration;
 
 pub const USAGE: &str = "semmeltv get search TITLE [--year YEAR] [--imdb ID] [--season N [--episode N]]
-semmeltv get fetch movie|show TMDB_ID [--season N] [--episode N] [--replace] OFFER_JSON
+semmeltv get fetch movie|show TMDB_ID [--season N] [--episode N] [--replace] [--by NAME] OFFER_JSON
 semmeltv get jobs";
 
 const SERVICE: &str = "http://127.0.0.1:8092";
@@ -94,12 +94,13 @@ pub fn fetch_of(args: &[String]) -> Result<FetchBody, String> {
         _ => return Err(format!("fetch needs movie or show\n{USAGE}")),
     };
     let tmdb = number("TMDB_ID", args.next())?;
-    let (mut season, mut episode, mut mode, mut offer) = (None, None, Mode::Add, None);
+    let (mut season, mut episode, mut mode, mut offer, mut by) = (None, None, Mode::Add, None, None);
     while let Some(argument) = args.next() {
         match argument.as_str() {
             "--season" => season = Some(number("--season", args.next())?),
             "--episode" => episode = Some(number("--episode", args.next())?),
             "--replace" => mode = Mode::Replace,
+            "--by" => by = Some(args.next().ok_or("--by needs a name")?),
             flag if flag.starts_with("--") => return Err(format!("unknown argument {flag}\n{USAGE}")),
             json => {
                 let parsed: Offer =
@@ -118,6 +119,7 @@ pub fn fetch_of(args: &[String]) -> Result<FetchBody, String> {
         },
         offer,
         mode,
+        by,
     })
 }
 
@@ -297,9 +299,12 @@ mod tests {
         let body = fetch_of(&args).unwrap();
         assert_eq!(body.offer, offer);
         assert_eq!(
-            (body.pick.kind, body.pick.tmdb, body.mode),
-            (Kind::Movie, 368239, Mode::Replace)
+            (body.pick.kind, body.pick.tmdb, body.mode, body.by),
+            (Kind::Movie, 368239, Mode::Replace, None)
         );
+        let mut asked = words("movie 368239 --by Mami");
+        asked.push(serde_json::to_string(&found).unwrap());
+        assert_eq!(fetch_of(&asked).unwrap().by.as_deref(), Some("Mami"));
         assert!(fetch_of(&words("movie 368239")).is_err());
         assert!(fetch_of(&words("film 368239 {}")).is_err());
     }

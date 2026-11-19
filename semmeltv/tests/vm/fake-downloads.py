@@ -102,25 +102,25 @@ class Downloads(BaseHTTPRequestHandler):
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers.get("Content-Length", 0))) or b"{}")
         with lock:
-            if self.path == "/api/downloads/search" and body == {"text": "Testserie season 2", "from": "web"}:
+            if self.path == "/api/downloads/search" and body == {"text": "Testserie season 2", "from": "web", "by": "Frederik"}:
                 state["typed"] = True
                 self.reply(TYPED)
-            elif self.path == "/api/downloads/search" and body == {"text": "Testserie", "from": "web"}:
+            elif self.path == "/api/downloads/search" and body == {"text": "Testserie", "from": "web", "by": "Frederik"}:
                 state["which"] = True
                 self.reply(WHICH)
-            elif self.path == "/api/downloads/search" and body == {"text": "Testserie", "from": "web", "pick": {"kind": "show", "tmdb": SHOW, "season": None, "episode": None}}:
+            elif self.path == "/api/downloads/search" and body == {"text": "Testserie", "from": "web", "by": "Frederik", "pick": {"kind": "show", "tmdb": SHOW, "season": None, "episode": None}}:
                 state["seasons"] = True
                 self.reply(SEASONS)
-            elif self.path == "/api/downloads/search" and body.get("pick") == {"kind": "show", "tmdb": SHOW, "season": 4, "episode": None}:
+            elif self.path == "/api/downloads/search" and body.get("pick") == {"kind": "show", "tmdb": SHOW, "season": 4, "episode": None} and body.get("by") == "Frederik":
                 state["picked"] = True
                 self.reply(PICKED)
             elif self.path == "/api/downloads/search":
-                if body.get("pick") != {"kind": "show", "tmdb": SHOW, "season": 2, "episode": None}:
+                if body.get("pick") != {"kind": "show", "tmdb": SHOW, "season": 2, "episode": None} or body.get("by") != "Frederik":
                     self.reply({"id": "", "asked": "", "from": "web", "outcome": "refused", "message": f"unexpected {body}"})
                     return
                 state["searched"] = True
                 self.reply(PROPOSAL)
-            elif self.path == "/api/downloads/confirm" and body == {"proposal": "season-2", "choice": 0}:
+            elif self.path == "/api/downloads/confirm" and body == {"proposal": "season-2", "choice": 0, "by": "Frederik"}:
                 state["confirmed"] = True
                 self.reply({"message": "Downloading Testserie season 2", "ok": True, "job": "1"})
             else:

@@ -675,6 +675,7 @@ struct MovieView {
     about: AboutView,
     #[serde(flatten)]
     played: Played,
+    downloaded_by: Vec<String>,
 }
 
 async fn movie(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>) -> Response {
@@ -704,6 +705,7 @@ async fn movie(State(api): State<Api>, Who(profile): Who, Path(key): Path<String
             &movie.ratings,
         ),
         played: played(last_played),
+        downloaded_by: movie.downloaded_by.iter().cloned().collect(),
     })
     .into_response()
 }
@@ -750,6 +752,7 @@ struct ShowView {
     about: AboutView,
     #[serde(flatten)]
     played: Played,
+    downloaded_by: Vec<String>,
 }
 
 fn episode_view(core: &Core, show: &Show, episode: &Episode, progress: &Progress) -> EpisodeView {
@@ -828,6 +831,7 @@ async fn show(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>
             &show.ratings,
         ),
         played: played(last_played),
+        downloaded_by: show.downloaded_by().into_iter().map(str::to_string).collect(),
     })
     .into_response()
 }

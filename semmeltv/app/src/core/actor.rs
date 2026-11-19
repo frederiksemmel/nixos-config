@@ -349,6 +349,13 @@ impl Actor {
         }
     }
 
+    fn asked_by(&self) -> Option<String> {
+        self.people
+            .iter()
+            .find(|(id, _)| *id == self.profile)
+            .map(|(_, name)| name.clone())
+    }
+
     fn publish_home(&self) {
         self.core.bus.home(Home {
             library: self.library.clone(),
@@ -1488,8 +1495,9 @@ impl Actor {
             Some(season) => format!("{title} season {season}"),
             None => title.clone(),
         };
+        let by = self.asked_by();
         spawn_blocking(move || {
-            let found = match downloads.search(title, season, episode, said) {
+            let found = match downloads.search(title, season, episode, said, by) {
                 Ok(proposal) => Found::Proposal(proposal),
                 Err(error) => Found::Failed(error),
             };
@@ -1669,9 +1677,8 @@ mod tests {
     use super::*;
     use crate::bus::Event;
 
-    async fn core() -> Core {
-        let (core, inbox) = Core::detached(db::test_library()).await;
-        let hardware = Hardware {
+    fn hardware() -> Hardware {
+        Hardware {
             store: Store::new(PathBuf::from("/lib"), None, None),
             storage: None,
             speech: None,
@@ -1679,10 +1686,25 @@ mod tests {
             microphone: None,
             led: None,
             handoff: None,
-        };
-        let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware).await;
+        }
+    }
+
+    async fn core() -> Core {
+        let (core, inbox) = Core::detached(db::test_library()).await;
+        let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware()).await;
         tokio::spawn(actor.run(inbox));
         core
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_download_asked_for_by_voice_names_the_tvs_profile() {
+        let (core, _inbox) = Core::detached(db::test_library()).await;
+        let mut actor = Actor::new(core, ProfileId::FIRST, hardware()).await;
+        assert_eq!(actor.asked_by().as_deref(), Some("Frederik"));
+        actor.profile = ProfileId(2);
+        assert_eq!(actor.asked_by().as_deref(), Some("Mami"));
+        actor.profile = ProfileId(99);
+        assert_eq!(actor.asked_by(), None);
     }
 
     fn report(core: &Core, moment: stream::Moment, position: f64, profile: ProfileId) -> stream::Report {
