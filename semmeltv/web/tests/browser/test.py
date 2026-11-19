@@ -1,3 +1,4 @@
+import json
 import sys
 import urllib.request
 from urllib.parse import urlparse
@@ -186,6 +187,40 @@ def zoom_and_description(page, engine):
         check(engine, "a pinch still doesn't zoom the page", head["touch"] == "pan-x pan-y", head["touch"])
 
 
+COUNTS = """JSON.stringify(Object.fromEntries([...document.querySelectorAll(".report-filters button")]
+    .map((button) => [button.querySelector("b").textContent, Number(button.querySelector("span").textContent)])))"""
+SHOWN = '[...document.querySelectorAll(".report")].filter((report) => !report.hidden).length'
+
+
+def counted(**counts):
+    return json.dumps(json.dumps({"All": 3, "New": counts["new"], "Needs review": counts["review"], "Done": counts["done"]}, separators=(",", ":")))
+
+
+def feedback_follows_changes(page, engine):
+    page.goto(BASE + "/feedback", wait_until="commit")
+    until(page, engine, "the Feedback page counts the reports by status", f"{COUNTS} === {counted(new=1, review=1, done=1)}")
+    page.wait_for_timeout(500)
+    filters = page.locator(".report-filters button")
+    filters.nth(1).tap()
+    until(page, engine, "the New filter shows the one new report", f"{SHOWN} === 1", 3000)
+    row = page.locator(".report", has_text="The list jumped")
+    row.get_by_role("button", name="Set status").tap()
+    row.locator(".report-edit textarea").nth(0).fill("It is a design question")
+    row.locator(".report-edit textarea").nth(1).fill("Keep or drop the jump")
+    row.locator(".report-edit button[type=submit]").tap()
+    until(page, engine, "a status set on the page moves the counts at once", f"{COUNTS} === {counted(new=0, review=2, done=1)}", 3000)
+    until(page, engine, "and the report leaves the New filter", f"{SHOWN} === 0", 3000)
+    filters.nth(2).tap()
+    until(page, engine, "and shows under Needs review", f"{SHOWN} === 2", 3000)
+    filters.nth(3).tap()
+    done = page.locator(".report", has_text="The sheet opened by itself")
+    done.get_by_role("textbox", name="Comment").fill("Still opens")
+    done.get_by_role("button", name="Comment").tap()
+    until(page, engine, "a comment that reopens a done report moves it to New",
+          f'{COUNTS} === {counted(new=1, review=2, done=0)} && {SHOWN} === 0', 3000)
+    filters.nth(0).tap()
+
+
 def back_never_loops(page, engine):
     page.goto(BASE + "/feedback", wait_until="commit")
     until(page, engine, "a page opened directly shows", 'location.pathname === "/feedback" && !!document.querySelector("main .feedback-page a.back")')
@@ -220,6 +255,7 @@ def run(p, engine, device):
     until(page, engine, "Back returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
     page.wait_for_timeout(500)
     headphones(page, engine)
+    feedback_follows_changes(page, engine)
     back_never_loops(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()

@@ -580,7 +580,9 @@ it. Only a person's comment reopens a report.
 `POST /api/feedback/<id>/comments` adds a comment. Both work for an admin or
 with the service token. `GET /api/feedback?state=new|reopened|needs_review|done`
 filters by status. The Feedback page shows the statuses and threads, filters
-by status, and has a comment box and a status editor under each report.
+by status, and has a comment box and a status editor under each report. A
+status set or a comment sent from the page moves the report between the
+filters and their counts at once, without a reload.
 
 Beast triages New and Reopened reports on its own. The
 `semmeltv-feedback-watch` user timer asks both TVs every two minutes. For each

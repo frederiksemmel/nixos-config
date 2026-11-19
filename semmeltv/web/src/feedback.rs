@@ -9,13 +9,6 @@ use topcoat::router::page;
 use topcoat::runtime::{Event, Signal, procedure, signal};
 use topcoat::view::{View, component, view};
 
-const FILTERS: [(&str, &str); 4] = [
-    ("all", "All"),
-    ("new", "New"),
-    ("needs_review", "Needs review"),
-    ("done", "Done"),
-];
-
 const CHOICES: [(&str, &str); 4] = [
     ("new", "New"),
     ("needs_review", "Needs review"),
@@ -254,6 +247,9 @@ async fn report_row(
     api: &str,
     now: u64,
     shown: Signal<String>,
+    fresh: Signal<usize>,
+    review: Signal<usize>,
+    done: Signal<usize>,
 ) -> Result<impl View> {
     let who = report
         .person
@@ -360,7 +356,9 @@ async fn report_row(
                     e.prevent_default();
                     let reply = choose(answerer.to_owned(), picks.get(), extra.get(), mine.get()).await;
                     if reply.0 {
+                        if status.get() == "new" { fresh.decrement(); } else if status.get() == "needs_review" { review.decrement(); } else { done.decrement(); }
                         status.set(reply.1);
+                        if status.get() == "new" { fresh.increment(); } else if status.get() == "needs_review" { review.increment(); } else { done.increment(); }
                         label.set(reply.2);
                         note.set(reply.3);
                         mine.set(reply.4);
@@ -400,7 +398,9 @@ async fn report_row(
                 e.prevent_default();
                 let reply = say(speaker.to_owned(), words.get(), mine.get()).await;
                 if reply.0 {
+                    if status.get() == "new" { fresh.decrement(); } else if status.get() == "needs_review" { review.decrement(); } else { done.decrement(); }
                     status.set(reply.1);
+                    if status.get() == "new" { fresh.increment(); } else if status.get() == "needs_review" { review.increment(); } else { done.increment(); }
                     label.set(reply.2);
                     note.set(reply.3);
                     mine.set(reply.4);
@@ -427,7 +427,9 @@ async fn report_row(
                 e.prevent_default();
                 let answer = mark(id.to_owned(), choice.get(), first.get(), second.get()).await;
                 if answer.0 {
+                    if status.get() == "new" { fresh.decrement(); } else if status.get() == "needs_review" { review.decrement(); } else { done.decrement(); }
                     status.set(answer.1);
+                    if status.get() == "new" { fresh.increment(); } else if status.get() == "needs_review" { review.increment(); } else { done.increment(); }
                     label.set(answer.2);
                     note.set(answer.3);
                     by.set("Set just now".to_owned());
@@ -474,18 +476,24 @@ async fn feedback_page(cx: &Cx) -> Result<impl View> {
     let list = Api::of(cx).feedback().await;
     let empty = list.as_ref().is_ok_and(|list| list.reports.is_empty());
     let shown = signal(cx, || "all".to_string());
-    let counts: Vec<(&'static str, &'static str, String)> = FILTERS
-        .iter()
-        .map(|&(value, text)| {
-            let count = list.as_ref().map_or(0, |list| {
-                list.reports
-                    .iter()
-                    .filter(|report| value == "all" || stage(&report.status) == value)
-                    .count()
-            });
-            (value, text, count.to_string())
+    let tally = |value: &str| {
+        list.as_ref().map_or(0, |list| {
+            list.reports
+                .iter()
+                .filter(|report| value == "all" || stage(&report.status) == value)
+                .count()
         })
-        .collect();
+    };
+    let all = signal(cx, || tally("all"));
+    let fresh = signal(cx, || tally("new"));
+    let review = signal(cx, || tally("needs_review"));
+    let done = signal(cx, || tally("done"));
+    let filters = [
+        ("all", "All", all),
+        ("new", "New", fresh.clone()),
+        ("needs_review", "Needs review", review.clone()),
+        ("done", "Done", done.clone()),
+    ];
     let api = app_context::<Public>(cx).api.clone();
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -502,18 +510,18 @@ async fn feedback_page(cx: &Cx) -> Result<impl View> {
                     <p class="setting-note">"Newest first. Each report keeps what the phone and the TV did just before it was sent. Beast triages new reports: easy fixes land and are marked done, the rest wait here as needing review."</p>
                     <div class="report-filters" role="group" aria-label="Show">
                         #[key(value.to_string())]
-                        for (value, text, count) in counts.clone() {
+                        for (value, text, count) in filters.clone() {
                             <button type="button" :class=$(if shown.get() == value { "track on" } else { "track" })
                                 @click=$(|_e| shown.set(value.to_owned()))>
                                 <b>(text)</b>
-                                <span>(count.as_str())</span>
+                                <span>$(count.get())</span>
                             </button>
                         }
                     </div>
                     <ul class="reports">
                         #[key(report.id.clone())]
                         for report in &list.reports {
-                            report_row(report: report, dir: list.dir.as_str(), api: api.as_str(), now: now, shown: shown.clone())
+                            report_row(report: report, dir: list.dir.as_str(), api: api.as_str(), now: now, shown: shown.clone(), fresh: fresh.clone(), review: review.clone(), done: done.clone())
                         }
                     </ul>
                 },

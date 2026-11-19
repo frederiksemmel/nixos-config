@@ -27,6 +27,17 @@ PROFILES = {
 }
 sessions = {}
 OPEN = ("/api/auth/choices", "/api/auth/password", "/api/auth/passkey/start")
+DONE = {"state": "done", "resolution": {"kind": "fixed", "commit": "abc1234", "what": "The sheet stays shut"}}
+REPORTS = [
+    {"id": f"20261119-1200{index}0-ab1{index}", "at": 1763550000 + index, "when": "2026-11-19 12:00 UTC", "host": "semmeltv5",
+     "person": {"name": "Mami"}, "device": "iPhone 1a2b", "page": "/", "message": message, "screenshot": None,
+     "tv_screenshot": None, "status": status, "marked_at": None, "marked_by": None, "comments": []}
+    for index, (message, status) in enumerate([
+        ("The list jumped", {"state": "new"}),
+        ("Should Back skip the player?", {"state": "needs_review", "why": "Two ways", "decide": "Skip or stop"}),
+        ("The sheet opened by itself", DONE),
+    ])
+]
 SCANNING = "Open the case near the TV and hold the button on its back until the light flashes white."
 
 
@@ -281,6 +292,19 @@ async def screen_view(request):
 
 
 
+async def feedback(request):
+    return web.json_response({"dir": "/var/lib/semmeltv/feedback", "reports": REPORTS})
+
+
+async def mark_feedback(request):
+    return web.json_response({"status": await request.json()})
+
+
+async def comment_feedback(request):
+    was = next(report["status"] for report in REPORTS if report["id"] == request.match_info["id"])
+    return web.json_response({"status": {"state": "reopened", "was": was} if was["state"] in ("needs_review", "done") else was})
+
+
 async def accepted(request):
     return web.json_response({"ok": True})
 
@@ -309,5 +333,8 @@ app.router.add_delete("/api/audio/pair", stop_pairing)
 app.router.add_delete("/api/audio/headphones", forget)
 app.router.add_post("/fake/fail-next-connect", fail_next_connect)
 app.router.add_post("/fake/forget-subtitles", forget_subtitles)
+app.router.add_get("/api/feedback", feedback)
+app.router.add_post("/api/feedback/{id}/status", mark_feedback)
+app.router.add_post("/api/feedback/{id}/comments", comment_feedback)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)
