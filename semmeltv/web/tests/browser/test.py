@@ -156,6 +156,21 @@ def text_selects_with_a_mouse_only(p, engine, page):
     desktop = browser.new_context(**p.devices["Desktop Chrome" if engine == "chromium" else "Desktop Safari"]).new_page()
     desktop.goto(BASE + "/profiles", wait_until="load")
     check(engine, "a mouse can select page text", selectable(desktop) == "text", selectable(desktop))
+    box = desktop.evaluate("""(() => {
+      const bar = document.createElement("section");
+      bar.className = "bar";
+      bar.innerHTML = '<button type="button" class="bar-open"><span class="bar-text">Dune · 1:02:03 left</span></button>';
+      document.body.append(bar);
+      getSelection().removeAllRanges();
+      const box = bar.querySelector(".bar-text").getBoundingClientRect();
+      return { x: box.x + 4, y: box.y + box.height / 2 };
+    })()""")
+    desktop.mouse.move(box["x"], box["y"])
+    desktop.mouse.down()
+    desktop.mouse.move(box["x"] + 200, 20, steps=10)
+    desktop.mouse.up()
+    picked = desktop.evaluate("getSelection().toString()")
+    check(engine, "a mouse drag that starts on the bottom bar selects nothing", picked == "", repr(picked[:80]))
     browser.close()
 
 
