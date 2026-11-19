@@ -1045,7 +1045,12 @@ async fn show(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>
     .into_response()
 }
 
-async fn movie_backdrop(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
+async fn movie_backdrop(
+    State(api): State<Api>,
+    Path(key): Path<String>,
+    Query(sized): Query<Sized>,
+    headers: HeaderMap,
+) -> Response {
     let library = api.core.library();
     let id = library
         .movies
@@ -1053,12 +1058,17 @@ async fn movie_backdrop(State(api): State<Api>, Path(key): Path<String>, headers
         .find(|movie| movie.key == key)
         .and_then(|movie| movie.tmdb);
     match id {
-        Some(id) => image(artwork::backdrop(&api.art(), Kind::Movie, id), &headers).await,
+        Some(id) => image(artwork::backdrop(&api.art(), Kind::Movie, id), sized, &headers).await,
         None => not_found(format!("no backdrop for movie {key}")),
     }
 }
 
-async fn show_backdrop(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
+async fn show_backdrop(
+    State(api): State<Api>,
+    Path(key): Path<String>,
+    Query(sized): Query<Sized>,
+    headers: HeaderMap,
+) -> Response {
     let library = api.core.library();
     let id = library
         .shows
@@ -1066,12 +1076,17 @@ async fn show_backdrop(State(api): State<Api>, Path(key): Path<String>, headers:
         .find(|show| show.key == key)
         .and_then(|show| show.tmdb);
     match id {
-        Some(id) => image(artwork::backdrop(&api.art(), Kind::Tv, id), &headers).await,
+        Some(id) => image(artwork::backdrop(&api.art(), Kind::Tv, id), sized, &headers).await,
         None => not_found(format!("no backdrop for show {key}")),
     }
 }
 
-async fn movie_poster(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
+async fn movie_poster(
+    State(api): State<Api>,
+    Path(key): Path<String>,
+    Query(sized): Query<Sized>,
+    headers: HeaderMap,
+) -> Response {
     let library = api.core.library();
     let poster = library
         .movies
@@ -1079,12 +1094,17 @@ async fn movie_poster(State(api): State<Api>, Path(key): Path<String>, headers: 
         .find(|movie| movie.key == key)
         .and_then(|movie| movie.poster(&api.root));
     match poster {
-        Some(poster) => image(api.root.join(poster), &headers).await,
+        Some(poster) => image(api.root.join(poster), sized, &headers).await,
         None => not_found(format!("no poster for movie {key}")),
     }
 }
 
-async fn show_poster(State(api): State<Api>, Path(key): Path<String>, headers: HeaderMap) -> Response {
+async fn show_poster(
+    State(api): State<Api>,
+    Path(key): Path<String>,
+    Query(sized): Query<Sized>,
+    headers: HeaderMap,
+) -> Response {
     let library = api.core.library();
     let poster = library
         .shows
@@ -1092,18 +1112,24 @@ async fn show_poster(State(api): State<Api>, Path(key): Path<String>, headers: H
         .find(|show| show.key == key)
         .and_then(|show| show.poster(&api.root));
     match poster {
-        Some(poster) => image(api.root.join(poster), &headers).await,
+        Some(poster) => image(api.root.join(poster), sized, &headers).await,
         None => not_found(format!("no poster for show {key}")),
     }
 }
 
-async fn photo(State(api): State<Api>, Path(person): Path<u64>, headers: HeaderMap) -> Response {
-    image(artwork::face(&api.art(), person), &headers).await
+async fn photo(
+    State(api): State<Api>,
+    Path(person): Path<u64>,
+    Query(sized): Query<Sized>,
+    headers: HeaderMap,
+) -> Response {
+    image(artwork::face(&api.art(), person), sized, &headers).await
 }
 
 async fn still(
     State(api): State<Api>,
     Path((key, season, episode)): Path<(String, u32, u32)>,
+    Query(sized): Query<Sized>,
     headers: HeaderMap,
 ) -> Response {
     let library = api.core.library();
@@ -1112,14 +1138,36 @@ async fn still(
         .filter(|show| show.episode(season, episode).is_some())
         .and_then(|show| show.tmdb);
     match id {
-        Some(id) => image(artwork::still(&api.art(), id, season, episode), &headers).await,
+        Some(id) => image(artwork::still(&api.art(), id, season, episode), sized, &headers).await,
         None => not_found(format!("no still for {key} season {season} episode {episode}")),
     }
 }
 
-async fn image(path: PathBuf, headers: &HeaderMap) -> Response {
+#[derive(Deserialize)]
+struct Sized {
+    w: Option<u32>,
+}
+
+async fn image(path: PathBuf, sized: Sized, headers: &HeaderMap) -> Response {
     let Ok(metadata) = tokio::fs::metadata(&path).await else {
         return not_found("no such image".to_string());
+    };
+    let (path, metadata, kind) = match sized.w {
+        Some(width) => {
+            let original = path.clone();
+            match tokio::task::spawn_blocking(move || artwork::sized(&original, width)).await {
+                Ok(Ok(made)) => match tokio::fs::metadata(&made).await {
+                    Ok(made_metadata) => (made, made_metadata, "image/webp"),
+                    Err(_) => (path, metadata, "image/jpeg"),
+                },
+                Ok(Err(error)) => {
+                    eprintln!("api: {}: no {width} px picture: {error}", path.display());
+                    (path, metadata, "image/jpeg")
+                }
+                Err(_) => (path, metadata, "image/jpeg"),
+            }
+        }
+        None => (path, metadata, "image/jpeg"),
     };
     let modified = metadata
         .modified()
@@ -1135,7 +1183,7 @@ async fn image(path: PathBuf, headers: &HeaderMap) -> Response {
         return (StatusCode::NOT_MODIFIED, cache_headers).into_response();
     }
     match tokio::fs::read(&path).await {
-        Ok(bytes) => ([(header::CONTENT_TYPE, "image/jpeg".to_string())], cache_headers, bytes).into_response(),
+        Ok(bytes) => ([(header::CONTENT_TYPE, kind.to_string())], cache_headers, bytes).into_response(),
         Err(error) => problem(
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("{}: {error}", path.display()),
@@ -2319,6 +2367,23 @@ mod tests {
             .unwrap();
         assert_eq!(poster.body_mut().read_to_vec().unwrap(), b"poster");
         assert_eq!(get(&server, "/api/movies/up-2009/poster").0, 404);
+
+        let broken = agent().get(format!("{url}?w=320")).call().unwrap();
+        assert_eq!(broken.headers()["content-type"], "image/jpeg");
+        let face = artwork::face(&art, 7);
+        std::fs::create_dir_all(face.parent().unwrap()).unwrap();
+        image::RgbImage::from_pixel(artwork::FACE_WIDTH, artwork::FACE_HEIGHT, image::Rgb([90, 90, 90]))
+            .save_with_format(&face, image::ImageFormat::Jpeg)
+            .unwrap();
+        let mut small = agent()
+            .get(format!("{}/api/people/7/photo?w=100", server.base))
+            .call()
+            .unwrap();
+        assert_eq!(small.status(), 200);
+        assert_eq!(small.headers()["content-type"], "image/webp");
+        assert_eq!(small.headers()["cache-control"], IMAGE_CACHE);
+        assert!(small.body_mut().read_to_vec().unwrap().starts_with(b"RIFF"));
+        assert!(face.with_file_name("7.w160.webp").is_file());
         std::fs::remove_dir_all(root).unwrap();
     }
 

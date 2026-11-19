@@ -5,7 +5,7 @@ use crate::api::{
 use crate::downloads::{search_download, season_downloads};
 use crate::layout::back;
 use crate::playing::{play_episode, play_movie, play_show, tell, tv_icon};
-use crate::public::Public;
+use crate::public::{CARD_TILE, DETAIL_POSTER, HERO, POSTER_TILE, Priority, Public, STILL};
 use std::hash::{DefaultHasher, Hash, Hasher};
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
@@ -15,6 +15,10 @@ use topcoat::runtime::{Event, Signal, link, procedure, shard, signal};
 use topcoat::view::{View, attributes, component, view};
 
 const LONGEST_QUERY: usize = 100;
+const CARDS_SEEN: usize = 2;
+const POSTERS_SEEN: usize = 4;
+const GRID_SEEN: usize = 6;
+const FACE_WIDTH: u32 = 160;
 const OLDEST_DECADE: u16 = 1990;
 const RATINGS: [(&str, &str); 5] = [
     ("", "Any"),
@@ -89,19 +93,22 @@ async fn scores(of: &Ratings) -> Result<impl View> {
 }
 
 #[component]
-async fn tile(cx: &Cx, public: &Public, card: &Card) -> Result<impl View> {
-    let image = card
-        .poster
-        .as_ref()
-        .or(card.backdrop.as_ref())
-        .map(|path| public.url(path));
+async fn tile(cx: &Cx, public: &Public, card: &Card, priority: Priority) -> Result<impl View> {
+    let fit = if card.poster.is_some() {
+        &POSTER_TILE
+    } else {
+        &CARD_TILE
+    };
+    let image = card.poster.as_ref().or(card.backdrop.as_ref());
     let attrs = attributes! { cx => class="tile" };
     Ok(view! {
         link(href: card.href(), attrs: attrs,
             <span class="art poster" style=(tint(&card.title))>
                 <span class="art-title">(card.title.as_str())</span>
                 if let Some(image) = image {
-                    <img src=(image) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                    <img src=(public.sized(image, fit.fallback())) srcset=(public.srcset(image, fit)) sizes=(fit.sizes)
+                        width=(fit.width) height=(fit.height) alt="" loading=(priority.loading())
+                        fetchpriority=(priority.fetchpriority()) decoding="async" onerror="this.remove()">
                 }
             </span>
             <span class="tile-name">(card.title.as_str())</span>
@@ -154,9 +161,16 @@ async fn check_icon() -> Result<impl View> {
 }
 
 #[component]
-async fn watching_tile(cx: &Cx, public: &Public, watching: &WatchingCard, forgettable: bool) -> Result<impl View> {
+async fn watching_tile(
+    cx: &Cx,
+    public: &Public,
+    watching: &WatchingCard,
+    forgettable: bool,
+    priority: Priority,
+) -> Result<impl View> {
     let card = &watching.card;
-    let image = card.backdrop.as_deref().map(|path| public.url(path));
+    let fit = &CARD_TILE;
+    let image = card.backdrop.as_deref();
     let attrs = attributes! { cx => class="tile-link" };
     let key = card.key.clone();
     let is_movie = card.kind == Kind::Movie;
@@ -169,7 +183,9 @@ async fn watching_tile(cx: &Cx, public: &Public, watching: &WatchingCard, forget
                 <span class="art" style=(tint(&card.title))>
                     <span class="art-title">(card.title.as_str())</span>
                     if let Some(image) = image {
-                        <img src=(image) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                        <img src=(public.sized(image, fit.fallback())) srcset=(public.srcset(image, fit)) sizes=(fit.sizes)
+                            width=(fit.width) height=(fit.height) alt="" loading=(priority.loading())
+                            fetchpriority=(priority.fetchpriority()) decoding="async" onerror="this.remove()">
                     }
                     <span class="progress"><i style=(format!("width:{:.1}%", watching.progress * 100.0))></i></span>
                 </span>
@@ -205,8 +221,8 @@ async fn grid(public: &Public, cards: &[Card]) -> Result<impl View> {
     Ok(view! {
         <div class="grid">
             #[key(card.href())]
-            for card in cards {
-                tile(public: public, card: card)
+            for (index, card) in cards.iter().enumerate() {
+                tile(public: public, card: card, priority: Priority::in_row(index, true, GRID_SEEN))
             }
         </div>
     })
@@ -410,8 +426,9 @@ async fn browse(cx: &Cx, query: String, section: String, rating: String, year: S
                         <h2>"Currently Watching"</h2>
                         <div class="row">
                             #[key(watching.card.href())]
-                            for watching in &library.watching {
-                                watching_tile(public: &public, watching: watching, forgettable: false)
+                            for (index, watching) in library.watching.iter().enumerate() {
+                                watching_tile(public: &public, watching: watching, forgettable: false,
+                                    priority: Priority::in_row(index, true, CARDS_SEEN))
                             }
                         </div>
                     </section>
@@ -421,8 +438,9 @@ async fn browse(cx: &Cx, query: String, section: String, rating: String, year: S
                         <h2>"Newly Added"</h2>
                         <div class="row posters">
                             #[key(card.href())]
-                            for card in &library.newest {
-                                tile(public: &public, card: card)
+                            for (index, card) in library.newest.iter().enumerate() {
+                                tile(public: &public, card: card,
+                                    priority: Priority::in_row(index, library.watching.is_empty(), POSTERS_SEEN))
                             }
                         </div>
                     </section>
@@ -433,7 +451,7 @@ async fn browse(cx: &Cx, query: String, section: String, rating: String, year: S
                         <div class="row">
                             #[key(forgotten.card.href())]
                             for forgotten in &library.forgotten {
-                                watching_tile(public: &public, watching: forgotten, forgettable: true)
+                                watching_tile(public: &public, watching: forgotten, forgettable: true, priority: Priority::Later)
                             }
                         </div>
                     </section>
@@ -460,11 +478,13 @@ async fn section_grid(public: &Public, title: &str, cards: &[Card]) -> Result<im
 
 #[component]
 async fn hero(public: &Public, card: &Card) -> Result<impl View> {
-    let image = card.backdrop.as_deref().map(|path| public.url(path));
+    let image = card.backdrop.as_deref();
+    let fit = &HERO;
     Ok(view! {
         <div class="hero" style=(tint(&card.title))>
             if let Some(image) = image {
-                <img src=(image) alt="" onerror="this.remove()">
+                <img src=(public.sized(image, fit.fallback())) srcset=(public.srcset(image, fit)) sizes=(fit.sizes)
+                    width=(fit.width) height=(fit.height) alt="" fetchpriority="high" onerror="this.remove()">
             }
         </div>
     })
@@ -601,14 +621,16 @@ async fn more_scores(of: &MoreScores) -> Result<impl View> {
 
 #[component]
 async fn heading(public: &Public, card: &Card, about: &About, line: &str) -> Result<impl View> {
-    let poster = card.poster.as_deref().map(|path| public.url(path));
+    let poster = card.poster.as_deref();
+    let fit = &DETAIL_POSTER;
     let original = about.original_title.clone();
     Ok(view! {
         <div class="detail-head">
             <span class="art poster detail-poster" style=(tint(&card.title))>
                 <span class="art-title">(card.title.as_str())</span>
                 if let Some(poster) = poster {
-                    <img src=(poster) alt="" onerror="this.remove()">
+                    <img src=(public.sized(poster, fit.fallback())) srcset=(public.srcset(poster, fit)) sizes=(fit.sizes)
+                        width=(fit.width) height=(fit.height) alt="" onerror="this.remove()">
                 }
             </span>
             <div class="detail-heading">
@@ -667,13 +689,13 @@ async fn cast(public: &Public, members: &[CastMember]) -> Result<impl View> {
                 <h2>"Cast"</h2>
                 <ul class="detail-cast">
                     for member in members {
-                        let photo = member.photo.as_deref().map(|path| public.url(path));
+                        let photo = member.photo.as_deref().map(|path| public.sized(path, FACE_WIDTH));
                         <li>
                             <a class="detail-person" href=(member.imdb.as_deref().unwrap_or("#")) target="_blank" rel="noopener">
                                 <span class="detail-face" style=(tint(&member.name))>
                                     <span>(initials(&member.name))</span>
                                     if let Some(photo) = photo {
-                                        <img src=(photo) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                                        <img src=(photo) width="120" height="180" alt="" loading="lazy" decoding="async" onerror="this.remove()">
                                     }
                                 </span>
                                 <b>(member.name.as_str())</b>
@@ -741,7 +763,8 @@ async fn episode_row(
 ) -> Result<impl View> {
     let show_key = series.to_string();
     let (season_number, episode_number) = (episode.season, episode.episode);
-    let still = episode.still.as_deref().map(|path| public.url(path));
+    let still = episode.still.as_deref();
+    let fit = &STILL;
     let watched = episode.watched;
     let seen = signal(cx, move || watched);
     let act = signal(cx, String::new);
@@ -755,7 +778,8 @@ async fn episode_row(
             })>
                 <span class="still" style=(tint(&episode.label))>
                     if let Some(still) = still {
-                        <img src=(still) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                        <img src=(public.sized(still, fit.fallback())) srcset=(public.srcset(still, fit)) sizes=(fit.sizes)
+                            width=(fit.width) height=(fit.height) alt="" loading="lazy" decoding="async" onerror="this.remove()">
                     }
                     <span class="detail-seen" title="Watched" :hidden=$(!seen.get())>check_icon()</span>
                     progress(watch: &episode.watch)

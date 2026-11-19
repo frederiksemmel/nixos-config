@@ -86,11 +86,18 @@ function shell(main, offset) {
   setTimeout(() => element.remove(), SHELL_MS);
 }
 
-function picture(src) {
+// The same widths and sizes as HERO and DETAIL_POSTER in public.rs, so the
+// title page that replaces this skeleton finds its pictures already loaded.
+const HERO = { widths: [320, 480, 640], sizes: "100vw" };
+const DETAIL_POSTER = { widths: [160, 240, 320], sizes: "(min-width: 1000px) 210px, (min-width: 640px) 160px, 104px" };
+
+function picture(src, fit) {
   const image = document.createElement("img");
   image.alt = "";
   image.addEventListener("error", () => image.remove());
-  image.src = src;
+  image.sizes = fit.sizes;
+  image.srcset = fit.widths.map((width) => `${src}?w=${width} ${width}w`).join(", ");
+  image.src = `${src}?w=${fit.widths[Math.floor(fit.widths.length / 2)]}`;
   return image;
 }
 
@@ -113,9 +120,9 @@ function skeleton(link) {
   const [, kind, key] = match;
   const title = (link.querySelector(".tile-name, .art-title")?.textContent || "").trim();
   const tint = link.querySelector(".art")?.getAttribute("style") || "";
-  const hero = element("div", "hero", picture(`${api}/api/${kind}/${key}/backdrop`));
+  const hero = element("div", "hero", picture(`${api}/api/${kind}/${key}/backdrop`, HERO));
   hero.setAttribute("style", tint);
-  const poster = element("span", "art poster detail-poster", element("span", "art-title", title), picture(`${api}/api/${kind}/${key}/poster`));
+  const poster = element("span", "art poster detail-poster", element("span", "art-title", title), picture(`${api}/api/${kind}/${key}/poster`, DETAIL_POSTER));
   poster.setAttribute("style", tint);
   const back = element("span", "back");
   back.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m14.5 5.5-6.5 6.5 6.5 6.5"></path></svg>Back';

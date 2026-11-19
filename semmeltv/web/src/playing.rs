@@ -10,6 +10,7 @@ use topcoat::runtime::{connected, link, procedure, shard};
 use topcoat::view::{View, attributes, component, emit, live, view};
 
 const SETTLE: Duration = Duration::from_secs(4);
+const BAR_ART_WIDTH: u32 = 160;
 const FRESH: Duration = Duration::from_secs(10);
 const SCRUB: Asset = asset!("./scrub.js");
 pub const PLAYER: Asset = asset!("./player.js");
@@ -602,11 +603,11 @@ async fn bar_info(cx: &Cx) -> Result<impl View> {
             let shown = (look(tv.playing()), elsewhere.clone(), tv.known());
             let token = match tv {
                 Tv::Playing(now) => {
-                    let art = poster(&now).map(|path| public.url(&path));
+                    let art = poster(&now).map(|path| public.sized(&path, BAR_ART_WIDTH));
                     emit! {
                         <span class="bar-art">
                             if let Some(art) = art {
-                                <img src=(art) alt="" onerror="this.remove()">
+                                <img src=(art) width="342" height="513" alt="" onerror="this.remove()">
                             }
                         </span>
                         <span class="bar-text">
@@ -680,7 +681,7 @@ async fn sheet_now(cx: &Cx) -> Result<impl View> {
                         <div class="now">
                             <div class="now-art">
                                 if let Some(art) = art {
-                                    <img src=(art) alt="" data-fallback=(fallback.unwrap_or_default())
+                                    <img src=(art) width="640" height="360" alt="" data-fallback=(fallback.unwrap_or_default())
                                         onerror="if (this.dataset.fallback && this.getAttribute('src') !== this.dataset.fallback) { this.src = this.dataset.fallback } else { this.remove() }">
                                 }
                             </div>

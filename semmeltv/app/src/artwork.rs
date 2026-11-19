@@ -9,6 +9,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io::{self, BufWriter, Cursor};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub const DIR: &str = "Artwork";
@@ -495,6 +496,48 @@ fn write_image(bytes: &[u8], target: &Path, (width, height): (u32, u32)) -> io::
     fs::rename(temporary, target)
 }
 
+/// The widths a picture is offered at, for a page's `srcset`.
+pub const WIDTHS: [u32; 5] = [160, 240, 320, 480, 640];
+const WEBP_QUALITY: f32 = 78.0;
+
+/// The narrowest offered width that is at least `wanted`, or the widest.
+pub fn offered(wanted: u32) -> u32 {
+    WIDTHS
+        .into_iter()
+        .find(|width| *width >= wanted)
+        .unwrap_or(WIDTHS[WIDTHS.len() - 1])
+}
+
+/// `original` as WebP, `width` px wide at most, kept beside it as
+/// `NAME.wWIDTH.webp` and made again when the original is newer.
+pub fn sized(original: &Path, width: u32) -> io::Result<PathBuf> {
+    static MAKING: AtomicU64 = AtomicU64::new(0);
+    let width = offered(width);
+    let target = original.with_extension(format!("w{width}.webp"));
+    let changed = fs::metadata(original)?.modified()?;
+    if fs::metadata(&target)
+        .and_then(|metadata| metadata.modified())
+        .is_ok_and(|made| made >= changed)
+    {
+        return Ok(target);
+    }
+    let image = ImageReader::open(original)?
+        .with_guessed_format()?
+        .decode()
+        .map_err(io::Error::other)?;
+    let image = if image.width() > width {
+        image.resize(width, u32::MAX, FilterType::CatmullRom)
+    } else {
+        image
+    };
+    let rgb = image.into_rgb8();
+    let encoded = webp::Encoder::from_rgb(&rgb, rgb.width(), rgb.height()).encode(WEBP_QUALITY);
+    let temporary = target.with_extension(format!("webp.{}.tmp", MAKING.fetch_add(1, Ordering::Relaxed)));
+    fs::write(&temporary, &*encoded)?;
+    fs::rename(temporary, &target)?;
+    Ok(target)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -673,6 +716,33 @@ added = 2024-05-01
         let dir = workdir(name);
         store(&dir.join("library.db"), FILMS);
         dir
+    }
+
+    #[test]
+    fn a_picture_is_offered_as_a_narrower_webp_made_once() {
+        let dir = workdir("sized");
+        let original = backdrop(&dir, Kind::Movie, 14160);
+        fs::create_dir_all(original.parent().unwrap()).unwrap();
+        RgbImage::from_pixel(CARD_WIDTH, CARD_HEIGHT, image::Rgb([200, 40, 40]))
+            .save_with_format(&original, ImageFormat::Jpeg)
+            .unwrap();
+
+        let small = sized(&original, 300).unwrap();
+        assert_eq!(small, original.with_file_name("backdrop.w320.webp"));
+        let made = fs::read(&small).unwrap();
+        let made = webp::Decoder::new(&made).decode().unwrap();
+        assert_eq!((made.width(), made.height()), (320, 180));
+        let first = fs::metadata(&small).unwrap().modified().unwrap();
+        sized(&original, 320).unwrap();
+        assert_eq!(fs::metadata(&small).unwrap().modified().unwrap(), first);
+
+        let widest = sized(&original, 5000).unwrap();
+        assert_eq!(widest, original.with_file_name("backdrop.w640.webp"));
+        let widest = webp::Decoder::new(&fs::read(&widest).unwrap()).decode().unwrap();
+        assert_eq!((widest.width(), widest.height()), (CARD_WIDTH, CARD_HEIGHT));
+        assert_eq!(offered(1), 160);
+        assert_eq!(offered(241), 320);
+        fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
