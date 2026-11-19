@@ -7,6 +7,7 @@ use topcoat::router::response::{IntoResponse, Response};
 use topcoat::router::route;
 
 pub const THEME: &str = "#0c0c10";
+pub const DESCRIPTION: &str = "SemmelTV: films and series for family and friends, played on the TV or on your phone.";
 pub const WORDMARK: Asset = asset!("../../assets/logo/semmeltv-dark.svg");
 pub const FAVICON: Asset = asset!("../../assets/logo/favicon.svg");
 pub const FAVICON_PNG: Asset = asset!("../../assets/logo/favicon-32.png");
@@ -25,6 +26,7 @@ impl IntoResponse for Manifest {
             "id": "/",
             "name": "SemmelTV",
             "short_name": "SemmelTV",
+            "description": DESCRIPTION,
             "start_url": "/",
             "scope": "/",
             "display": "standalone",

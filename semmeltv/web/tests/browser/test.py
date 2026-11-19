@@ -159,6 +159,18 @@ def text_selects_with_a_mouse_only(p, engine, page):
     browser.close()
 
 
+def zoom_and_description(page, engine):
+    head = page.evaluate("""(() => ({
+      description: document.querySelector('meta[name="description"]')?.content || "",
+      viewport: document.querySelector('meta[name="viewport"]').content,
+      touch: getComputedStyle(document.documentElement).touchAction,
+    }))()""")
+    check(engine, "the page has a description", len(head["description"]) > 40, head["description"])
+    check(engine, "the viewport doesn't lock zoom, so Lighthouse passes", "user-scalable" not in head["viewport"] and "maximum-scale" not in head["viewport"], head["viewport"])
+    if engine == "chromium":
+        check(engine, "a pinch still doesn't zoom the page", head["touch"] == "pan-x pan-y", head["touch"])
+
+
 def back_never_loops(page, engine):
     page.goto(BASE + "/feedback", wait_until="commit")
     until(page, engine, "a page opened directly shows", 'location.pathname === "/feedback" && !!document.querySelector("main .feedback-page a.back")')
@@ -185,6 +197,7 @@ def run(p, engine, device):
     fake("/fake/forget-subtitles")
     sign_in(page, engine)
     bar_blur_grows_downwards(page, engine)
+    zoom_and_description(page, engine)
     text_selects_with_a_mouse_only(p, engine, page)
     opens_title(page, engine)
     finds_subtitles(page, engine)
