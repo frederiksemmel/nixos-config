@@ -1479,10 +1479,20 @@ in
 
     programs.sioyek = {
       enable = true;
-      config.background_color = "0.0 0.0 0.0";
+      config = {
+        background_color = "0.0 0.0 0.0";
+        new_command = "_file_info ${pkgs.writeShellScript "sioyek-file-info" ''
+          f="$1"
+          ${pkgs.libnotify}/bin/notify-send -t 15000 "$(basename "$f")" \
+            "$f
+          $(${pkgs.coreutils}/bin/du -h "$f" | cut -f1)  ·  modified $(${pkgs.coreutils}/bin/date -r "$f" '+%Y-%m-%d %H:%M')
+          $(${pkgs.poppler-utils}/bin/pdfinfo "$f" 2>/dev/null | grep -E '^(Title|Author|Creator|Producer|CreationDate|Pages|Page size|PDF version):' | sed 's/  */ /g')"
+        ''} %{file_path}";
+      };
       bindings = {
         screen_down = "<C-d>";
         screen_up = "<C-u>";
+        _file_info = "<C-g>";
       };
     };
 
