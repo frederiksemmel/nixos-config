@@ -225,7 +225,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     if admin {
                         link(href: "/storage", attrs: attributes! { cx => class="setting row-link" },
                             storage_icon()
-                            <span class="setting-name">"Storage" <small>"What the TV keeps offline, and the room left"</small></span>
+                            <span class="setting-name">"Storage" <small>"What the TV keeps offline, and what pCloud holds"</small></span>
                             chevron()
                         )
                     }

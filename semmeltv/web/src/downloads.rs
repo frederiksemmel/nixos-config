@@ -19,6 +19,7 @@ use topcoat::view::{View, attributes, component, emit, live, view};
 
 const REFRESH: Duration = Duration::from_secs(2);
 const MISSING_WAIT: Duration = Duration::from_secs(3);
+const PCLOUD_WAIT: Duration = Duration::from_secs(30);
 const LONGEST_REQUEST: usize = 200;
 const SHORTEST_MATCHED: usize = 2;
 const MATCH_PAUSE: Duration = Duration::from_millis(300);
@@ -236,6 +237,34 @@ struct Outcome {
     message: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct Done {
+    message: String,
+    ok: bool,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize)]
+pub struct Space {
+    pub total: u64,
+    pub used: u64,
+    pub free: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Held {
+    #[serde(flatten)]
+    pub title: crate::api::Stored,
+    pub name: String,
+    pub videos: usize,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Cloud {
+    pub space: Space,
+    pub titles: Vec<Held>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct MissingSeason {
     pub number: u32,
@@ -283,6 +312,31 @@ impl Downloads {
             return Err(format!("The download service answered {}", response.status()));
         }
         response.json().await.map_err(|error| error.to_string())
+    }
+
+    pub async fn pcloud(&self) -> std::result::Result<Cloud, String> {
+        let response = self
+            .client
+            .get(format!("{}/api/downloads/pcloud", self.base))
+            .timeout(PCLOUD_WAIT)
+            .send()
+            .await
+            .map_err(|_| "The download service is not reachable".to_string())?;
+        if !response.status().is_success() {
+            let text = response.text().await.unwrap_or_default();
+            return Err(serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|problem| problem["error"].as_str().map(str::to_string))
+                .unwrap_or(text));
+        }
+        response.json().await.map_err(|error| error.to_string())
+    }
+
+    pub async fn delete_title(&self, title: &crate::api::Stored) -> (bool, String) {
+        match self.post::<Done>("/api/downloads/pcloud/delete", &json!(title)).await {
+            Ok(done) => (done.ok, done.message),
+            Err(error) => (false, error),
+        }
     }
 
     async fn suggest(&self, text: &str) -> std::result::Result<Vec<Suggestion>, String> {

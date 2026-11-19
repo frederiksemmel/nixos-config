@@ -1365,6 +1365,31 @@ with sync_playwright() as playwright:
         phone.page.fill("main .download-search input", "Testserie")
         phone.until('document.querySelectorAll("main .download-match").length === 2')
 
+    with scenario("Storage shows pCloud's space, and an admin deletes a whole film from pCloud after a second tap"):
+        phone.goto("/storage")
+        numbers = 'document.querySelector("main .pcloud .storage-numbers")?.textContent.trim()'
+        phone.until(f'{numbers} === "1.4 TB free of 2.2 TB"')
+        assert phone.js('document.querySelector("main .storage").textContent.includes("This TV keeps no downloads")'), "a TV without downloads still shows pCloud"
+        rows = "[...document.querySelectorAll('main .pcloud-titles .storage-title')]"
+        phone.until(f"{rows}.length === 23")
+        assert phone.js(f"{rows}.filter((row) => row.offsetParent !== null).length === 20"), "the 20 biggest titles show first"
+        assert phone.js(f"{rows}[0].textContent.includes('Testserie') && {rows}[0].textContent.includes('Series · 3 episodes')"), "the biggest title leads"
+        archive = phone.page.locator("main .pcloud-titles .storage-title", has_text="Archiv 01")
+        archive.get_by_role("button", name="Delete", exact=True).tap()
+        archive.get_by_role("button", name="Keep", exact=True).tap()
+        film = phone.page.locator("main .pcloud-titles .storage-title", has_text="Kinofilm (2024)")
+        film.get_by_role("button", name="Delete", exact=True).tap()
+        phone.shot("storage-pcloud-confirm")
+        film.get_by_role("button", name="Delete from pCloud", exact=True).tap()
+        gone = f"{rows}.find((row) => row.textContent.includes('Kinofilm (2024)'))"
+        phone.until(f"{gone}?.classList.contains('gone') && {gone}.querySelector('.controls-said').textContent.startsWith('Deleted Kinofilm (2024) from the library')")
+        deleted = json.loads(tv.succeed("curl -sf http://127.0.0.1:8092/api/downloads/pcloud/deleted"))
+        assert deleted == [{"kind": "movie", "key": "kinofilm-2024"}], f"only the confirmed film is deleted: {deleted}"
+        phone.page.locator("main .pcloud-more").tap()
+        phone.until(f"{rows}.every((row) => row.offsetParent !== null)")
+        phone.page.reload(wait_until="commit")
+        phone.until(f"{rows}.length === 22 && !{gone}")
+
     with scenario("the remote moves the TV's subtitles half a second at a time"):
         tv_plays_film(phone)
         tv.send_key("s")

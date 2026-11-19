@@ -179,7 +179,11 @@ again. rclone itself has no size limit, because it counts the ranges it holds in
 memory, which stay stale after such a deletion until the item is opened again;
 its `--vfs-cache-min-free-space 5G`, which reads the real free space, is the
 last resort below the app's 10 GiB. The web app's Storage page shows all this
-and removes a title by hand.
+and removes a title by hand. Below it are pCloud's space and every title in the
+library by what it takes on pCloud, biggest first: an admin deletes a whole film
+or series there, after a second tap. The downloads service takes it out of
+library.db and moves its files to pCloud's trash, and the TV drops its download
+(see Downloads in API.md).
 
 Cards show what is on the device: Downloaded, Downloading or Not downloaded, and
 for a show a count such as 3 of 10 downloaded. A file counts as downloaded when

@@ -1,5 +1,6 @@
 pub mod cli;
 mod deliver;
+mod forget;
 pub mod release;
 pub mod remote;
 mod resolve;
@@ -359,6 +360,8 @@ struct Service {
     sidecars: sidecars::Sidecars,
     deliveries: Mutex<Sender<String>>,
     seasons: Mutex<HashMap<u64, (u64, Vec<tmdb::SeasonSummary>)>>,
+    pcloud: forget::Rclone,
+    forgetting: Mutex<()>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -800,6 +803,33 @@ impl Service {
             .collect())
     }
 
+    fn pcloud(&self) -> Result<Pcloud, String> {
+        let space = self.pcloud.space()?;
+        let files = forget::Pcloud::files(&self.pcloud)?;
+        let titles = forget::holdings(&self.manifest(), &files);
+        Ok(Pcloud { space, titles })
+    }
+
+    fn forget(&self, title: &crate::storage::Title) -> Outcome {
+        let _one_at_a_time = self.forgetting.lock().unwrap();
+        let log = |line: String| eprintln!("delete: {line}");
+        match forget::forget(&self.pcloud, &self.pcloud.work, title, &log) {
+            Ok(message) => {
+                log(message.clone());
+                self.pcloud.announce(&log);
+                Outcome {
+                    message,
+                    ok: true,
+                    job: None,
+                }
+            }
+            Err(error) => {
+                log(error.clone());
+                Outcome::no(&error)
+            }
+        }
+    }
+
     fn dismiss(&self, proposal: &str) {
         self.book.lock().unwrap().proposals.retain(|known| known.id != proposal);
     }
@@ -1229,6 +1259,12 @@ struct DismissBody {
 }
 
 #[derive(Serialize)]
+struct Pcloud {
+    space: forget::Space,
+    titles: Vec<forget::Held>,
+}
+
+#[derive(Serialize)]
 struct Overview {
     proposals: Vec<Proposal>,
     jobs: Vec<Job>,
@@ -1325,6 +1361,21 @@ async fn missing_seasons(State(service): State<Shared>, UrlPath(show): UrlPath<u
     }
 }
 
+async fn pcloud(State(service): State<Shared>) -> Response {
+    match blocking(move || service.pcloud()).await {
+        Ok(Ok(found)) => Json(found).into_response(),
+        Ok(Err(error)) => crate::api::problem(StatusCode::BAD_GATEWAY, error),
+        Err(response) => response,
+    }
+}
+
+async fn delete_title(State(service): State<Shared>, Json(title): Json<crate::storage::Title>) -> Response {
+    match blocking(move || service.forget(&title)).await {
+        Ok(outcome) => Json(outcome).into_response(),
+        Err(response) => response,
+    }
+}
+
 async fn subtitles(State(service): State<Shared>, Json(wanted): Json<crate::subfetch::Wanted>) -> Response {
     match blocking(move || service.sidecars.fetch(&wanted)).await {
         Ok(Ok(fetched)) => Json(fetched).into_response(),
@@ -1344,6 +1395,8 @@ fn router(service: Shared) -> Router {
         .route("/api/downloads/jobs/{id}/stop", post(stop))
         .route("/api/downloads/subtitles", post(subtitles))
         .route("/api/downloads/shows/{tmdb}/missing", get(missing_seasons))
+        .route("/api/downloads/pcloud", get(pcloud))
+        .route("/api/downloads/pcloud/delete", post(delete_title))
         .with_state(service)
 }
 
@@ -1381,6 +1434,13 @@ pub fn run(config: Config) -> Result<(), String> {
             mount_rc: config.mount_rc.clone(),
             work: config.state.join("subtitles"),
         },
+        pcloud: forget::Rclone {
+            remote: config.remote.clone(),
+            work: config.state.join("forget"),
+            mount_rc: config.mount_rc.clone(),
+            sync_unit: config.sync_unit.clone(),
+        },
+        forgetting: Mutex::new(()),
         shelf: Mutex::new(Shelf {
             remote: config.remote,
             meta: config.meta,

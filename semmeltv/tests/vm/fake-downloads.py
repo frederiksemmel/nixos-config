@@ -68,6 +68,15 @@ SEASONS = {
     ],
 }
 PICKED = {**PROPOSAL, "id": "season-4", "asked": "Testserie", "label": "Testserie season 4"}
+HELD = [
+    {"kind": "series", "key": "testserie", "name": "Testserie", "videos": 3, "bytes": 30_000_000_000},
+    {"kind": "movie", "key": "kinofilm-2024", "name": "Kinofilm (2024)", "videos": 1, "bytes": 9_000_000_000},
+] + [
+    {"kind": "movie", "key": f"archiv-{number:02}", "name": f"Archiv {number:02}", "videos": 1, "bytes": 1_000_000_000 - number}
+    for number in range(1, 22)
+]
+SPACE = {"total": 2_199_023_255_552, "used": 825_724_082_158, "free": 1_373_299_173_394}
+deleted = []
 state = {"searched": False, "confirmed": False, "typed": False, "which": False, "picked": False, "seasons": False}
 
 
@@ -88,6 +97,11 @@ class Downloads(BaseHTTPRequestHandler):
                 self.reply(MATCHES if text == "Testserie" else [])
             elif self.path == f"/api/downloads/shows/{SHOW}/missing":
                 self.reply([{"number": 2, "downloading": state["confirmed"]}, {"number": 3, "downloading": True}])
+            elif self.path == "/api/downloads/pcloud":
+                titles = [held for held in HELD if {"kind": held["kind"], "key": held["key"]} not in deleted]
+                self.reply({"space": SPACE, "titles": titles})
+            elif self.path == "/api/downloads/pcloud/deleted":
+                self.reply(deleted)
             elif self.path == "/api/downloads":
                 proposals = [PROPOSAL] if state["searched"] and not state["confirmed"] else []
                 proposals += [TYPED] if state["typed"] else []
@@ -120,6 +134,13 @@ class Downloads(BaseHTTPRequestHandler):
                     return
                 state["searched"] = True
                 self.reply(PROPOSAL)
+            elif self.path == "/api/downloads/pcloud/delete":
+                held = next((held for held in HELD if held["kind"] == body.get("kind") and held["key"] == body.get("key")), None)
+                if held is None:
+                    self.reply({"message": "That title is no longer in the library", "ok": False, "job": None})
+                else:
+                    deleted.append(body)
+                    self.reply({"message": f"Deleted {held['name']} from the library; its 9.0 GB went to pCloud's trash", "ok": True, "job": None})
             elif self.path == "/api/downloads/confirm" and body == {"proposal": "season-2", "choice": 0, "by": "Frederik"}:
                 state["confirmed"] = True
                 self.reply({"message": "Downloading Testserie season 2", "ok": True, "job": "1"})

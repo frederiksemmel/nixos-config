@@ -1528,6 +1528,10 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .storage-actions { display: flex; gap: 8px; margin-left: auto; }
 .storage-actions[hidden] { display: none; }
 
+.pcloud-titles:not(.all) > [data-more="true"] { display: none; }
+.pcloud-more { margin-top: 10px; }
+.pcloud-more[hidden] { display: none; }
+
 .storage-button {
   min-height: 36px;
   padding: 6px 14px;

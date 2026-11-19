@@ -1,13 +1,15 @@
 use crate::api::{Api, Download, Storage, Stored};
+use crate::downloads::{Cloud, Downloads, Held};
 use crate::layout::back;
 use std::time::{SystemTime, UNIX_EPOCH};
 use topcoat::Result;
-use topcoat::context::Cx;
+use topcoat::context::{Cx, app_context};
 use topcoat::router::page;
 use topcoat::runtime::{procedure, signal};
 use topcoat::view::{View, component, view};
 
 const DAY: u64 = 86_400;
+const SHOWN_FIRST: usize = 20;
 
 #[procedure]
 pub async fn remove(cx: &Cx, kind: String, key: String) -> Result<(bool, String)> {
@@ -32,9 +34,40 @@ fn gb(bytes: u64) -> String {
     let gb = bytes as f64 / 1e9;
     if gb < 10.0 {
         format!("{gb:.1} GB")
-    } else {
+    } else if gb < 1000.0 {
         format!("{gb:.0} GB")
+    } else {
+        format!("{:.1} TB", gb / 1000.0)
     }
+}
+
+fn held_facts(held: &Held) -> String {
+    match (&held.title, held.videos) {
+        (Stored::Series(_), 1) => "Series · 1 episode".to_string(),
+        (Stored::Series(_), videos) => format!("Series · {videos} episodes"),
+        _ => "Film".to_string(),
+    }
+}
+
+fn library_bytes(cloud: &Cloud) -> u64 {
+    cloud.titles.iter().map(|held| held.bytes).sum()
+}
+
+fn deletable(kind: &str, key: String) -> Option<Stored> {
+    Stored::parse(kind, key).filter(|title| !matches!(title, Stored::Other(_)))
+}
+
+#[procedure]
+pub async fn delete(cx: &Cx, kind: String, key: String) -> Result<(bool, String)> {
+    crate::auth::admin(cx)?;
+    let Some(title) = deletable(&kind, key) else {
+        return Ok((false, "Only a whole film or series can be deleted".to_string()));
+    };
+    let (deleted, message) = app_context::<Downloads>(cx).delete_title(&title).await;
+    if deleted {
+        let _ = Api::of(cx).remove_download(&title).await;
+    }
+    Ok((deleted, message))
 }
 
 fn ago(now: u64, then: u64) -> String {
@@ -183,32 +216,144 @@ async fn download_list(cx: &Cx, storage: &Storage, now: u64) -> Result<impl View
     })
 }
 
+#[component]
+async fn held_row(cx: &Cx, held: &Held, more: bool) -> Result<impl View> {
+    let asking = signal(cx, || false);
+    let gone = signal(cx, || false);
+    let said = signal(cx, String::new);
+    let kind = held.title.kind().to_string();
+    let key = held.title.key().to_string();
+    Ok(view! {
+        <li :class=$(if gone.get() { "storage-title gone" } else { "storage-title" }) data-more=(more.to_string())>
+            <div class="storage-title-line">
+                <div class="storage-title-text">
+                    <b>(held.name.clone())</b>
+                    <span>(held_facts(held))</span>
+                </div>
+                <span class="storage-size">(gb(held.bytes))</span>
+            </div>
+            <div class="storage-title-line">
+                <span class="storage-actions" :hidden=$(if gone.get() { true } else { asking.get() })>
+                    <button type="button" class="storage-button" @click=$(|_e| asking.set(true))>"Delete"</button>
+                </span>
+                <span class="storage-actions" :hidden=$(if asking.get() { false } else { true })>
+                    <button type="button" class="storage-button" @click=$(|_e| asking.set(false))>"Keep"</button>
+                    <button type="button" class="storage-button danger"
+                        @click=$(async |_e| {
+                            asking.set(false);
+                            said.set("Deleting…".to_owned());
+                            let answer = delete(kind.to_owned(), key.to_owned()).await;
+                            gone.set(answer.0);
+                            said.set(answer.1);
+                        })>
+                        "Delete from pCloud"
+                    </button>
+                </span>
+            </div>
+            <p class="controls-said" aria-live="polite" :hidden=$(said.get().is_empty())>$(said.get())</p>
+        </li>
+    })
+}
+
+#[component]
+async fn pcloud_space(cloud: &Cloud) -> Result<impl View> {
+    let space = cloud.space;
+    let library = library_bytes(cloud).min(space.used);
+    Ok(view! {
+        <section class="settings pcloud">
+            <h2>"pCloud"</h2>
+            <div class="storage-meter" role="img" aria-label=(format!("{} of {} used", gb(space.used), gb(space.total)))>
+                <i style=(format!("width:{}", percent(space.used - library, space.total)))></i>
+                <i class="downloads" style=(format!("width:{}", percent(library, space.total)))></i>
+            </div>
+            <p class="storage-numbers"><b>(gb(space.free)) " free"</b> " of " (gb(space.total))</p>
+            <p class="setting-note">"The library takes " (gb(library)) ". Other files take the rest of the " (gb(space.used)) " used."</p>
+        </section>
+    })
+}
+
+#[component]
+async fn pcloud_titles(cx: &Cx, cloud: &Cloud) -> Result<impl View> {
+    let all = signal(cx, || false);
+    let count = cloud.titles.len();
+    Ok(view! {
+        <section class="settings">
+            <h2>"Library on pCloud"</h2>
+            <p class="setting-note">"Deleting a film or a whole series takes it out of the library on both TVs and moves its files to pCloud's trash."</p>
+            if cloud.titles.is_empty() {
+                <p class="setting-note">"The library is empty."</p>
+            } else {
+                <ul :class=$(if all.get() { "storage-titles pcloud-titles all" } else { "storage-titles pcloud-titles" })>
+                    #[key(format!("{}-{}", cloud.titles[index].title.kind(), cloud.titles[index].title.key()))]
+                    for index in 0..count {
+                        held_row(held: &cloud.titles[index], more: index >= SHOWN_FIRST)
+                    }
+                </ul>
+                if count > SHOWN_FIRST {
+                    <button type="button" class="storage-button pcloud-more" :hidden=$(all.get()) @click=$(|_e| all.set(true))>
+                        "Show all " (count) " titles"
+                    </button>
+                }
+            }
+        </section>
+    })
+}
+
+#[component]
+async fn disk_section(storage: &Storage) -> Result<impl View> {
+    let disk = storage.disk;
+    let used = disk.total.saturating_sub(disk.free);
+    Ok(view! {
+        <section class="settings">
+            <h2>"Disk"</h2>
+            <div class="storage-meter" role="img" aria-label=(format!("{} of {} used", gb(used), gb(disk.total)))>
+                <i style=(format!("width:{}", percent(used - storage.used.min(used), disk.total)))></i>
+                <i class="downloads" style=(format!("width:{}", percent(storage.used.min(used), disk.total)))></i>
+            </div>
+            <p class="storage-numbers"><b>(gb(disk.free)) " free"</b> " of " (gb(disk.total))</p>
+            <p class="setting-note">"Downloads take " (gb(storage.used)) ". The system and its apps take the rest of the " (gb(used)) " used."</p>
+        </section>
+    })
+}
+
 #[page("/storage")]
 async fn storage_page(cx: &Cx) -> Result<impl View> {
-    let storage = Api::of(cx).storage().await.map_err(topcoat::Error::msg)?;
+    let api = Api::of(cx);
+    let (storage, cloud) = tokio::join!(api.storage(), app_context::<Downloads>(cx).pcloud());
     let now = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_or(0, |since| since.as_secs());
-    let disk = storage.disk;
-    let used = disk.total.saturating_sub(disk.free);
+    Ok(view! {
+        <article class="storage">
+            back(href: "/settings")
+            <h1>"Storage"</h1>
+            match &storage {
+                Ok(storage) => disk_section(storage: storage),
+                Err(error) => <section class="settings"><h2>"Disk"</h2><p class="setting-note">(error.clone())</p></section>,
+            }
+            match &cloud {
+                Ok(cloud) => pcloud_space(cloud: cloud),
+                Err(error) => <section class="settings pcloud"><h2>"pCloud"</h2><p class="setting-note">"pCloud can't be read: " (error.clone())</p></section>,
+            }
+            if let Ok(storage) = &storage {
+                downloads_section(storage: storage)
+                download_list(storage: storage, now: now)
+            }
+            if let Ok(cloud) = &cloud {
+                pcloud_titles(cloud: cloud)
+            }
+        </article>
+    })
+}
+
+#[component]
+async fn downloads_section(storage: &Storage) -> Result<impl View> {
     let next = storage
         .next
         .first()
         .and_then(|key| storage.titles.iter().find(|title| title.title == *key))
         .map(|title| (title.name.clone(), title.bytes));
     Ok(view! {
-        <article class="storage">
-            back(href: "/settings")
-            <h1>"Storage"</h1>
-            <section class="settings">
-                <h2>"Disk"</h2>
-                <div class="storage-meter" role="img" aria-label=(format!("{} of {} used", gb(used), gb(disk.total)))>
-                    <i style=(format!("width:{}", percent(used - storage.used.min(used), disk.total)))></i>
-                    <i class="downloads" style=(format!("width:{}", percent(storage.used.min(used), disk.total)))></i>
-                </div>
-                <p class="storage-numbers"><b>(gb(disk.free)) " free"</b> " of " (gb(disk.total))</p>
-                <p class="setting-note">"Downloads take " (gb(storage.used)) ". The system and its apps take the rest of the " (gb(used)) " used."</p>
-            </section>
             if let Some(marks) = storage.marks {
                 <section class="settings">
                     <h2>"Downloads"</h2>
@@ -227,8 +372,6 @@ async fn storage_page(cx: &Cx) -> Result<impl View> {
                     }
                 </section>
             }
-            download_list(storage: &storage, now: now)
-        </article>
     })
 }
 
@@ -259,6 +402,34 @@ mod tests {
         assert_eq!(ago(10 * DAY, 5 * DAY), "5 days ago");
         assert_eq!(ago(100 * DAY, 70 * DAY), "4 weeks ago");
         assert_eq!(ago(200 * DAY, 10 * DAY), "6 months ago");
+    }
+
+    #[test]
+    fn pcloud_sizes_read_in_terabytes() {
+        assert_eq!(gb(2_199_023_255_552), "2.2 TB");
+        assert_eq!(gb(999_000_000_000), "999 GB");
+    }
+
+    #[test]
+    fn pcloud_titles_say_what_they_are_and_the_library_adds_up() {
+        let sent = serde_json::json!({
+            "space": { "total": 2_000_000_000_000_u64, "used": 800_000_000_000_u64, "free": 1_200_000_000_000_u64 },
+            "titles": [
+                { "kind": "series", "key": "dark", "name": "Dark", "videos": 26, "bytes": 30_000_000_000_u64 },
+                { "kind": "series", "key": "pilot", "name": "Pilot", "videos": 1, "bytes": 1_000_000_000 },
+                { "kind": "movie", "key": "up-2009", "name": "Up (2009)", "videos": 1, "bytes": 9_000_000_000_u64 },
+            ],
+        });
+        let cloud: Cloud = serde_json::from_value(sent).unwrap();
+        let facts: Vec<String> = cloud.titles.iter().map(held_facts).collect();
+        assert_eq!(facts, ["Series · 26 episodes", "Series · 1 episode", "Film"]);
+        assert_eq!(cloud.titles[2].title, Stored::Movie("up-2009".to_string()));
+        assert_eq!(library_bytes(&cloud), 40_000_000_000);
+        assert_eq!(
+            deletable("movie", "up-2009".to_string()),
+            Some(Stored::Movie("up-2009".to_string()))
+        );
+        assert_eq!(deletable("other", "Movies/Up".to_string()), None);
     }
 
     #[test]

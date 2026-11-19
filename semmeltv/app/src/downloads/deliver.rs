@@ -203,7 +203,7 @@ pub fn companions(video: &str, files: &[FileEntry]) -> Vec<String> {
         .collect()
 }
 
-fn run(program: &str, args: &[&str]) -> Result<String, String> {
+pub(super) fn run(program: &str, args: &[&str]) -> Result<String, String> {
     let output = Command::new(program)
         .args(args)
         .output()

@@ -32,7 +32,8 @@ With it set, every request passes one gate in the app before anything else:
 - A request that changes something (any method but GET, HEAD and OPTIONS) with
   an `Origin` outside the list gets 403, whatever its cookie.
 - Storage, `/api/tv/pair`, `/api/auth/members/...`, stopping a download
-  (`/api/downloads/jobs/{id}/stop`) and reading feedback need an admin, else
+  (`/api/downloads/jobs/{id}/stop`), pCloud's space and deleting a title
+  (`/api/downloads/pcloud/...`) and reading feedback need an admin, else
   403 "Only an admin can do that".
 - Controlling the TV needs the `control-tv` capability, else 403 "Only someone
   allowed to control this TV can do that": `/api/play`, `/api/command`,
@@ -766,6 +767,8 @@ paths start with `/api/downloads` too.
 | POST | `/api/downloads/jobs/{id}/stop` | | `{ message, ok, job }` |
 | POST | `/api/downloads/subtitles` | `{ video, imdb, season, episode, language, hash, size }` | `{ file, language, release, matched }` |
 | GET | `/api/downloads/shows/{tmdb}/missing` | | `[ { number, downloading } ]` |
+| GET | `/api/downloads/pcloud` | | `{ space: { total, used, free }, titles: [ { kind, key, name, videos, bytes } ] }` |
+| POST | `/api/downloads/pcloud/delete` | `{ kind, key }` | `{ message, ok }` |
 
 `text` is what was said or typed, such as "outlander season 8". A proposal is
 `{ id, asked, from, created, outcome, … }`, and `outcome` says what the rest is:
@@ -807,6 +810,19 @@ still need and a reserve.
 that have aired and of which the library holds no episode, with `downloading`
 set while a job fetches that season. It asks TMDB at most every six hours per
 show, and answers 502 and `{ error }` when TMDB fails.
+
+`/api/downloads/pcloud` is pCloud's space, from `rclone about`, and every
+title in the library with the bytes deleting it would free, biggest first; it
+answers 502 and `{ error }` when pCloud does not. `kind` is `movie` or
+`series` and `key` the title's key, as in `/api/storage`.
+`/api/downloads/pcloud/delete` deletes a whole title: it takes the film or
+the show with all its episodes out of library.db on pCloud, read and written
+again when pCloud's copy changed meanwhile, as an import does, then deletes the
+files on pCloud, which keeps them in its trash. A title's folder under
+`Movies/` or `Series/` goes whole when no other title has a video in it,
+else only its videos and the subtitles named after them; its artwork goes
+unless another entry shares it. Then the TV refreshes its mount and copies
+library.db again, and the other TV notices within 15 minutes.
 
 `/api/downloads/subtitles` is what `/api/subtitles/fetch` calls: `video` is
 the path under the library, `hash` and `size` the video's OpenSubtitles hash

@@ -63,7 +63,8 @@ pub fn access(method: &Method, path: &str) -> Access {
         ["api", "storage", ..]
         | ["api", "tv", "pair"]
         | ["api", "auth", "members", ..]
-        | ["api", "downloads", "jobs", _, "stop"] => Access::Admin,
+        | ["api", "downloads", "jobs", _, "stop"]
+        | ["api", "downloads", "pcloud", ..] => Access::Admin,
         ["api", "downloads", ..] => Access::Needs(Capability::Download),
         ["api", "audio", "pair" | "headphones" | "delay"] => Access::Needs(Capability::Headphones),
         ["api", "audio"] if writes(method) => Access::Needs(Capability::Headphones),
@@ -271,6 +272,8 @@ mod tests {
             (&post, "/api/downloads/confirm", Access::Needs(Capability::Download)),
             (&get, "/api/downloads", Access::Needs(Capability::Download)),
             (&post, "/api/downloads/jobs/abc/stop", Access::Admin),
+            (&get, "/api/downloads/pcloud", Access::Admin),
+            (&post, "/api/downloads/pcloud/delete", Access::Admin),
             (&put, "/api/auth/members/2/capabilities/download", Access::Admin),
             (&post, "/api/feedback", Access::Signed),
             (&get, "/api/feedback", Access::AdminOrService),
