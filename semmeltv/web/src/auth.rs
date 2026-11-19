@@ -17,7 +17,7 @@ const OPEN: [&str; 5] = [
     "/_topcoat/assets/",
     "/_topcoat/fonts/",
 ];
-const FOR_ADMINS: [&str; 3] = ["/storage", "/people", "/feedback"];
+const FOR_ADMINS: [&str; 4] = ["/storage", "/people", "/feedback", "/usage"];
 const FOR_DOWNLOADERS: [&str; 1] = ["/downloads"];
 const BEFORE_SETUP: [&str; 3] = ["/welcome", "/account", "/_topcoat"];
 
@@ -556,6 +556,8 @@ mod tests {
             ("/downloadsx", "signed"),
             ("/people", "admin"),
             ("/feedback", "admin"),
+            ("/usage", "admin"),
+            ("/usagex", "signed"),
             ("/welcome", "signed"),
         ];
         for (path, want) in rows {

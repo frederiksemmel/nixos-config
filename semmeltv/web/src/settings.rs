@@ -4,6 +4,7 @@ use crate::live::Live;
 use crate::playing::headphones_icon;
 use crate::storage::storage_icon;
 use crate::subtitles::{language_order, style, switch};
+use crate::usage::usage_icon;
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::page;
@@ -232,6 +233,18 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     link(href: "/downloads", attrs: attributes! { cx => class="setting row-link" },
                         download_icon()
                         <span class="setting-name">"Downloads" <small>"Find a film or a season and add it to the library"</small></span>
+                        chevron()
+                    )
+                </div>
+            </section>
+            }
+            if admin {
+            <section class="settings">
+                <h2>"Usage"</h2>
+                <div class="setting-group">
+                    link(href: "/usage", attrs: attributes! { cx => class="setting row-link" },
+                        usage_icon()
+                        <span class="setting-name">"Who watched what" <small>"Hours on the TV and phones, favourites, and when people watch"</small></span>
                         chevron()
                     )
                 </div>

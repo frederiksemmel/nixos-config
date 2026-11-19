@@ -529,7 +529,9 @@ Rows hold the profile id, not a relation, so they outlive a deleted profile.
 sign-ins, days and hours active, plays and time watched on the TV and the phone,
 then the most watched shows and films, then the plays. On a TV it is
 `semmeltv-stats [DAYS]`, and in the devenv shell `semmeltv-stats [DAYS] [HOST]`
-runs that over ssh, on semmeltv5 unless a host is given.
+runs that over ssh, on semmeltv5 unless a host is given. Admins see the same
+as charts on the web app's Usage page (Settings → Usage), which reads
+`/api/usage` (see [API.md](API.md#usage)).
 
 ## HTTP API
 

@@ -60,7 +60,7 @@ pub fn access(method: &Method, path: &str) -> Access {
         ["api", "events"] if method == Method::GET => Access::Service,
         ["api", "feedback", ..] if method == Method::GET => Access::AdminOrService,
         ["api", "feedback", _, "status" | "comments"] => Access::AdminOrService,
-        ["api", "storage", ..]
+        ["api", "storage" | "usage", ..]
         | ["api", "tv", "pair"]
         | ["api", "auth", "members", ..]
         | ["api", "downloads", "jobs", _, "stop"]
@@ -265,6 +265,7 @@ mod tests {
             (&get, "//api/auth/choices/../../library", Access::Signed),
             (&get, "/api/storage", Access::Admin),
             (&post, "/api/storage/remove", Access::Admin),
+            (&get, "/api/usage", Access::Admin),
             (&post, "/api/tv/pair", Access::Admin),
             (&post, "/api/tv/on", Access::Needs(Capability::ControlTv)),
             (&get, "/api/auth/members", Access::Admin),

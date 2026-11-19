@@ -90,7 +90,7 @@ const WEEKDAYS: [&str; 7] = [
     "Friday",
     "Saturday",
 ];
-const MONTHS: [&str; 12] = [
+pub const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
@@ -105,7 +105,7 @@ pub fn when(now: u64, then: u64) -> String {
     when_local(now as i64 + local_offset(now), then as i64 + local_offset(then))
 }
 
-fn when_local(now: i64, then: i64) -> String {
+pub fn when_local(now: i64, then: i64) -> String {
     let day = then.div_euclid(SECONDS_PER_DAY);
     let seconds = then.rem_euclid(SECONDS_PER_DAY);
     let time = format!("{:02}:{:02}", seconds / 3600, seconds % 3600 / 60);

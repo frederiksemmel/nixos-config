@@ -223,6 +223,7 @@ fn router(api: Api) -> Router {
         .route("/api/audio/dialogue", get(dialogue).post(set_dialogue))
         .route("/api/volume/{change}", post(volume))
         .route("/api/subtitles/fetch", post(fetch_subtitles))
+        .route("/api/usage", get(usage))
         .merge(subtitles::routes(api.core.clone()))
         .merge(tv::routes(api.core.television().clone()))
         .merge(crate::client_log::routes())
@@ -463,6 +464,29 @@ async fn mark_watched(State(api): State<Api>, Who(profile): Who, Json(body): Jso
         watched: watched.unwrap_or(false),
     };
     (status(marked.ok), Json(marked)).into_response()
+}
+
+#[derive(Deserialize)]
+struct UsageQuery {
+    days: Option<u64>,
+}
+
+async fn usage(State(api): State<Api>, Query(query): Query<UsageQuery>) -> Response {
+    let days = query.days.unwrap_or(30).clamp(1, 3_660);
+    let now = watching::now();
+    let db = api.core.db();
+    let events = db
+        .usage_since(now.saturating_sub(days * 86_400))
+        .await
+        .map_err(|error| error.to_string());
+    let profiles = db.profiles().await.map_err(|error| error.to_string());
+    match events.and_then(|events| Ok((events, profiles?))) {
+        Ok((events, profiles)) => {
+            let names = profiles.into_iter().map(|profile| (profile.id, profile.name)).collect();
+            Json(crate::usage::summary(&events, &names, now, days, details::local_offset)).into_response()
+        }
+        Err(error) => problem(StatusCode::INTERNAL_SERVER_ERROR, error),
+    }
 }
 
 #[derive(Deserialize)]
@@ -1719,6 +1743,7 @@ mod tests {
     struct Server {
         base: String,
         bus: Bus,
+        core: Core,
         asked: mpsc::Receiver<String>,
         _runtime: tokio::runtime::Runtime,
     }
@@ -1798,7 +1823,7 @@ mod tests {
         core.publish_progress(ProfileId::FIRST, progress);
         let bus = core.bus().clone();
         let api = Api {
-            core,
+            core: core.clone(),
             root,
             microphone: microphone.map(|device| {
                 Arc::new(Microphone {
@@ -1825,6 +1850,7 @@ mod tests {
         Server {
             base,
             bus,
+            core,
             asked,
             _runtime: runtime,
         }
@@ -1847,6 +1873,36 @@ mod tests {
     }
 
     static SERVED: AtomicU64 = AtomicU64::new(0);
+
+    #[test]
+    fn usage_answers_who_watched_what_in_the_window_asked_for() {
+        let server = serve(no_root(), None);
+        let now = watching::now();
+        let db = server.core.db();
+        server
+            ._runtime
+            .block_on(db.note_play("tv-a", now - 3_600, ProfileId::FIRST, "TV", "Dune", 1_800.0))
+            .unwrap();
+        server
+            ._runtime
+            .block_on(db.note_play("phone-b", now - 20 * 86_400, ProfileId::FIRST, "iPhone", "Up", 600.0))
+            .unwrap();
+        let (status, week) = get(&server, "/api/usage?days=7");
+        assert_eq!(status, 200, "{week}");
+        assert_eq!(week["days"], 7);
+        assert_eq!(week["span"], "day");
+        assert_eq!(week["buckets"].as_array().unwrap().len(), 7);
+        assert_eq!(week["totals"]["tv"], 1_800);
+        assert_eq!(week["totals"]["phone"], 0);
+        assert_eq!(week["plays"][0]["title"], "Dune");
+        assert_eq!(week["plays"][0]["tv"], true);
+        assert_eq!(week["hours"].as_array().unwrap().len(), 7);
+        let (_, month) = get(&server, "/api/usage?days=30");
+        assert_eq!(month["totals"]["plays"], 2);
+        assert_eq!(month["people"][0]["phone"], 600);
+        assert_eq!(get(&server, "/api/usage").1["days"], 30);
+        assert_eq!(get(&server, "/api/usage?days=0").1["days"], 1);
+    }
 
     #[test]
     fn feedback_is_kept_as_files_and_read_back_newest_first() {

@@ -662,6 +662,81 @@ pub struct Storage {
     pub next: Vec<Stored>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Span {
+    #[default]
+    Day,
+    Week,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct UsageTotals {
+    pub tv: u64,
+    pub phone: u64,
+    pub plays: usize,
+    pub people: usize,
+    pub titles: usize,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct UsageBucket {
+    pub label: String,
+    pub mark: String,
+    pub tv: u64,
+    pub phone: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct UsagePerson {
+    pub name: String,
+    pub tv: u64,
+    pub phone: u64,
+    pub plays: usize,
+    pub days: usize,
+    pub sign_ins: usize,
+    pub favourite: Option<String>,
+    pub last_seen: Option<String>,
+    pub devices: Vec<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct UsageShare {
+    pub name: String,
+    pub seconds: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct UsageTitle {
+    pub title: String,
+    pub seconds: u64,
+    pub plays: usize,
+    pub people: Vec<UsageShare>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct UsagePlay {
+    pub at: u64,
+    pub when: String,
+    pub name: String,
+    pub device: String,
+    pub tv: bool,
+    pub title: String,
+    pub seconds: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct Usage {
+    pub days: u64,
+    pub totals: UsageTotals,
+    pub span: Span,
+    pub buckets: Vec<UsageBucket>,
+    pub hours: [[u64; 24]; 7],
+    pub people: Vec<UsagePerson>,
+    pub titles: Vec<UsageTitle>,
+    pub plays: Vec<UsagePlay>,
+}
+
 #[derive(Debug, Deserialize)]
 struct Answer {
     message: String,
@@ -904,6 +979,13 @@ impl Api {
         match self.get("/api/storage").await? {
             Found::Here(storage) => Ok(storage),
             Found::Missing => Err("This TV keeps no downloads".to_string()),
+        }
+    }
+
+    pub async fn usage(&self, days: u64) -> Result<Usage, String> {
+        match self.get(&format!("/api/usage?days={days}")).await? {
+            Found::Here(usage) => Ok(usage),
+            Found::Missing => Err("This TV keeps no usage yet".to_string()),
         }
     }
 

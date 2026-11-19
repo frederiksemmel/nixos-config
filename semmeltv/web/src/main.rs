@@ -13,6 +13,7 @@ mod public;
 mod settings;
 mod storage;
 mod subtitles;
+mod usage;
 mod version;
 
 use std::env;

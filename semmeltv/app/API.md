@@ -31,7 +31,7 @@ With it set, every request passes one gate in the app before anything else:
   which its random session id already guards. Opening a stream does need one.
 - A request that changes something (any method but GET, HEAD and OPTIONS) with
   an `Origin` outside the list gets 403, whatever its cookie.
-- Storage, `/api/tv/pair`, `/api/auth/members/...`, stopping a download
+- Storage, usage, `/api/tv/pair`, `/api/auth/members/...`, stopping a download
   (`/api/downloads/jobs/{id}/stop`), pCloud's space and deleting a title
   (`/api/downloads/pcloud/...`) and reading feedback need an admin, else
   403 "Only an admin can do that".
@@ -467,6 +467,33 @@ status is 404 when the TV keeps no downloads.
 `POST /api/storage/remove` deletes a title's files from the cache, and answers
 like the other requests. It refuses a title that is playing or up next, since
 it would download again straight away.
+
+## Usage
+
+`GET /api/usage?days=30` sums up who watched what over the last `days` days
+(1 to 3660, 30 when left out), from the same `usage` table `semmeltv stats`
+reads. It needs an admin:
+
+    { "days": 30,
+      "totals": { "tv", "phone", "plays", "people", "titles" },
+      "span": "day" | "week",
+      "buckets": [ { "label": "Tue 17 Nov", "mark": "17", "tv", "phone" } ],
+      "hours": [ [ 24 numbers ] × 7 ],
+      "people": [ { "name", "tv", "phone", "plays", "days", "sign_ins",
+                    "favourite", "last_seen", "devices" } ],
+      "titles": [ { "title", "seconds", "plays", "people": [ { "name", "seconds" } ] } ],
+      "plays": [ { "at", "when", "name", "device", "tv", "title", "seconds" } ] }
+
+Watched time is in seconds; `tv` counts plays on the TV, `phone` plays on a
+phone or laptop. A play's time is spread over the hours it covered from its
+start, in the TV's local time, so a film from 23:30 counts on both days.
+`buckets` are one per day up to 62 days, else one per week from Monday;
+`label` names the bucket and `mark` is a short axis label. `hours` is
+Monday first, hour 0 first. `people` is everyone who signed in, came back or
+played, most watched first; `days` counts the days they did any of that,
+`favourite` is the title they watched longest and `last_seen` a local time
+like "yesterday 20:15". `titles` are the 10 most watched, an episode counted
+under its series. `plays` are the newest 30, `when` like `last_seen`.
 
 ## Event stream
 
