@@ -69,12 +69,12 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
             <body>
                 if !signed_in {
                     <header class="top">
-                        <span class="brand"><img src=(brand::WORDMARK) alt="SemmelTV"></span>
+                        <span class="brand"><img src=(brand::WORDMARK) width="296" height="132" alt="SemmelTV"></span>
                     </header>
                     <main>(slot)</main>
                 } else {
                 <header class="top">
-                    link(href: "/", attrs: attributes! { cx => class="brand" }, <img src=(brand::WORDMARK) alt="SemmelTV">)
+                    link(href: "/", attrs: attributes! { cx => class="brand" }, <img src=(brand::WORDMARK) width="296" height="132" alt="SemmelTV">)
                     if controls_tv {
                         playing::mode_switch()
                         <span class="mode-note" id="mode-note" role="status"></span>

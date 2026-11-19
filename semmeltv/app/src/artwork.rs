@@ -497,7 +497,7 @@ fn write_image(bytes: &[u8], target: &Path, (width, height): (u32, u32)) -> io::
 }
 
 /// The widths a picture is offered at, for a page's `srcset`.
-pub const WIDTHS: [u32; 5] = [160, 240, 320, 480, 640];
+pub const WIDTHS: [u32; 6] = [160, 200, 240, 320, 480, 640];
 const WEBP_QUALITY: f32 = 78.0;
 
 /// The narrowest offered width that is at least `wanted`, or the widest.

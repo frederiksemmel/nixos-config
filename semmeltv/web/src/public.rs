@@ -42,8 +42,8 @@ impl Fit {
 
 /// A poster in a row or a grid of tiles.
 pub const POSTER_TILE: Fit = Fit {
-    widths: &[160, 240, 320],
-    sizes: "(min-width: 640px) 200px, 33vw",
+    widths: &[160, 200, 240, 320],
+    sizes: "(min-width: 640px) 170px, calc(30vw - 10px)",
     width: "342",
     height: "513",
 };
@@ -51,7 +51,7 @@ pub const POSTER_TILE: Fit = Fit {
 /// A backdrop in a row of wide tiles, at most 300 px wide.
 pub const CARD_TILE: Fit = Fit {
     widths: &[160, 320, 480, 640],
-    sizes: "(min-width: 417px) 300px, 72vw",
+    sizes: "min(300px, calc(72vw - 23px))",
     width: "640",
     height: "360",
 };
@@ -126,6 +126,7 @@ mod tests {
         assert_eq!(
             public.srcset("/api/movies/up-2009/poster", &POSTER_TILE),
             "https://tv.example/api/movies/up-2009/poster?w=160 160w, \
+             https://tv.example/api/movies/up-2009/poster?w=200 200w, \
              https://tv.example/api/movies/up-2009/poster?w=240 240w, \
              https://tv.example/api/movies/up-2009/poster?w=320 320w"
         );
