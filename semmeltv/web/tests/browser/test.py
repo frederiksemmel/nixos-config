@@ -132,6 +132,49 @@ def headphones(page, engine):
     home(page, engine, "after forgetting")
 
 
+def blur(layer):
+    return f"""(() => {{
+        const style = getComputedStyle(document.querySelector(".bar"), "{layer}");
+        const filter = style.backdropFilter || style.webkitBackdropFilter || "";
+        return {{ blur: parseFloat((/blur\\(([\\d.]+)px\\)/.exec(filter) || [0, 0])[1]), mask: style.maskImage || style.webkitMaskImage || "" }};
+    }})()"""
+
+
+def bar_blur_grows_downwards(page, engine):
+    top, bottom = page.evaluate(blur("::before")), page.evaluate(blur("::after"))
+    check(engine, "the bar blurs lightly over its whole height", 0 < top["blur"] and top["mask"] in ("", "none"), str(top))
+    check(engine, "and much more towards the bottom, fading in from the top", bottom["blur"] >= 3 * top["blur"] and "gradient" in bottom["mask"], str(bottom))
+
+
+def selectable(page):
+    return page.evaluate("(() => { const style = getComputedStyle(document.body); return style.userSelect || style.webkitUserSelect; })()")
+
+
+def text_selects_with_a_mouse_only(p, engine, page):
+    check(engine, "a phone can't select page text", selectable(page) == "none", selectable(page))
+    browser = getattr(p, engine).launch()
+    desktop = browser.new_context(**p.devices["Desktop Chrome" if engine == "chromium" else "Desktop Safari"]).new_page()
+    desktop.goto(BASE + "/profiles", wait_until="load")
+    check(engine, "a mouse can select page text", selectable(desktop) == "text", selectable(desktop))
+    browser.close()
+
+
+def back_never_loops(page, engine):
+    page.goto(BASE + "/feedback", wait_until="commit")
+    until(page, engine, "a page opened directly shows", 'location.pathname === "/feedback" && !!document.querySelector("main .feedback-page a.back")')
+    page.wait_for_timeout(500)
+    page.locator("main a.back").first.tap()
+    until(page, engine, "its Back opens the page above it", 'location.pathname === "/settings" && !document.querySelector("semmel-shell")')
+    page.wait_for_timeout(500)
+    page.locator("main a.back").first.tap()
+    until(page, engine, "and that page's Back goes on up, not back down", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
+    page.wait_for_timeout(500)
+    page.go_back(wait_until="commit")
+    page.wait_for_timeout(1000)
+    where = page.evaluate("location.pathname")
+    check(engine, "the browser's back skips the pages Back left", where not in ("/settings", "/feedback"), f"at {where}")
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
@@ -141,12 +184,15 @@ def run(p, engine, device):
     page.route("**/api/**", forward)
     fake("/fake/forget-subtitles")
     sign_in(page, engine)
+    bar_blur_grows_downwards(page, engine)
+    text_selects_with_a_mouse_only(p, engine, page)
     opens_title(page, engine)
     finds_subtitles(page, engine)
     page.locator("main a.back").first.tap()
     until(page, engine, "Back returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
     page.wait_for_timeout(500)
     headphones(page, engine)
+    back_never_loops(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
 

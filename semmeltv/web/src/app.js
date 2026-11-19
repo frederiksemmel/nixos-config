@@ -1,4 +1,3 @@
-const start = location.href;
 const SHELL_MS = 8000;
 const KEEP = 8;
 const api = document.documentElement.dataset.api || "";
@@ -45,14 +44,25 @@ window.fetch = async (input, init = {}) => {
   }
 };
 
-for (const name of ["pushState", "replaceState"]) {
-  const real = history[name].bind(history);
-  history[name] = (...args) => {
-    const result = real(...args);
-    shownUrl = docUrl(location.href);
-    return result;
-  };
-}
+const realPush = history.pushState.bind(history);
+const realReplace = history.replaceState.bind(history);
+let upTo = null;
+
+const topcoatPush = (state) => state !== null && typeof state === "object" && Object.keys(state).join() === "topcoat";
+
+history.pushState = (state, title, url) => {
+  const target = url === undefined || url === null ? shownUrl : docUrl(new URL(url, location.href).href);
+  const up = upTo === target;
+  upTo = null;
+  if (up) realReplace(state, title, url);
+  else realPush(topcoatPush(state) ? { ...state, cameFrom: shownUrl } : state, title, url);
+  shownUrl = docUrl(location.href);
+};
+
+history.replaceState = (...args) => {
+  realReplace(...args);
+  shownUrl = docUrl(location.href);
+};
 
 function remember() {
   const main = document.querySelector("body > main");
@@ -121,8 +131,10 @@ function skeleton(link) {
 window.addEventListener("click", (event) => {
   const back = event.target.closest?.("a.back");
   if (!back || back.closest("semmel-shell") || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-  const cameFromApp = location.href !== start || document.referrer.startsWith(`${location.origin}/`);
-  if (!cameFromApp) return;
+  if (!history.state?.cameFrom) {
+    upTo = docUrl(back.href);
+    return;
+  }
   event.preventDefault();
   event.stopPropagation();
   history.back();

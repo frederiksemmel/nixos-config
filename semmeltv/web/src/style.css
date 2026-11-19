@@ -50,6 +50,13 @@ body {
   overflow-wrap: anywhere;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  body {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+}
+
 input:not([type="checkbox"], [type="radio"], [type="range"]), textarea {
   -webkit-user-select: text;
   user-select: text;
@@ -797,11 +804,30 @@ html[data-flip]:has(.now-state.paused) .when-playing { display: block; }
   height: calc(var(--bar) + var(--overhang));
   padding: 0 max(0px, calc((100% - 1280px) / 2)) calc(env(safe-area-inset-bottom) + var(--overhang));
   background: var(--glass-bar);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   transform: translateZ(0);
   will-change: transform;
+}
+
+.bar::before,
+.bar::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+}
+
+.bar::before {
+  -webkit-backdrop-filter: blur(8px) saturate(1.8);
+  backdrop-filter: blur(8px) saturate(1.8);
+}
+
+.bar::after {
+  -webkit-backdrop-filter: blur(32px) saturate(1.8);
+  backdrop-filter: blur(32px) saturate(1.8);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000 calc(var(--bar) * 0.8));
+  mask-image: linear-gradient(to bottom, transparent, #000 calc(var(--bar) * 0.8));
 }
 
 @supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {

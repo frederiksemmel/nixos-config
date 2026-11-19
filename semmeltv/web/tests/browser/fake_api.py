@@ -18,9 +18,12 @@ screen = {"kind": "tv", "boot": 1, "device": None, "play": None, "notice": None}
 CONNECT_SECONDS = 1.5
 SERVICE = "fake-service-token"
 PROFILES = {
-    1: {"id": 1, "name": "Frederik", "role": "admin", "color": "#E5484D", "password": "frederik-pass"},
-    2: {"id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "password": "mami-pass"},
-    3: {"id": 3, "name": "Ramu", "role": "viewer", "color": "#8E4EC6", "password": None},
+    1: {"id": 1, "name": "Frederik", "role": "admin", "color": "#E5484D", "password": "frederik-pass",
+        "capabilities": ["control-tv", "headphones", "download"]},
+    2: {"id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "password": "mami-pass",
+        "capabilities": ["control-tv"]},
+    3: {"id": 3, "name": "Ramu", "role": "viewer", "color": "#8E4EC6", "password": None,
+        "capabilities": ["control-tv"]},
 }
 sessions = {}
 OPEN = ("/api/auth/choices", "/api/auth/password", "/api/auth/passkey/start")
@@ -37,7 +40,7 @@ def now_playing():
 
 
 def person(profile):
-    return {key: profile[key] for key in ("id", "name", "role", "color")}
+    return {key: profile[key] for key in ("id", "name", "role", "color", "capabilities")}
 
 
 def tokens(request):
