@@ -274,6 +274,9 @@ def app_restarted():
     tv.wait_for_text("Testfilm", timeout=120)
 
 
+NO_REMOTE = '[...document.querySelectorAll(".bar, #sheet, .sheet-dim")].every((element) => getComputedStyle(element).display === "none")'
+
+
 def plays_the_next_episodes(phone, through_the_end=True):
     opens = []
     phone.page.on("request", lambda request: opens.append(request.post_data_json) if request.url.endswith("/api/stream/open") else None)
@@ -321,8 +324,9 @@ def plays_the_next_episodes(phone, through_the_end=True):
     eventually("the TV hears that the phone stopped", lambda: screen(phone)["play"] is None)
     phone.page.wait_for_timeout(800)
     assert phone.js('!document.querySelector(".pp")')
-    assert phone.js('getComputedStyle(document.querySelector(".bar")).visibility !== "hidden" && !document.elementFromPoint(innerWidth / 2, innerHeight - 30).closest(".pp")')
+    assert phone.js(f'{NO_REMOTE} && !document.elementFromPoint(innerWidth / 2, innerHeight - 30)?.closest(".pp")'), "watching here with nothing left playing shows no bar and no TV remote"
     switch_to(phone, "tv")
+    phone.until('getComputedStyle(document.querySelector(".bar")).display !== "none"', 3000)
 
 
 TILE = 'main a[data-topcoat-link][href^="/movies/"]'
@@ -1005,6 +1009,7 @@ with sync_playwright() as playwright:
         with scenario(f"the remote opens, closes by a swipe without a reload, and a reload brings it back closed ({engine})"):
             remote = phone if engine == "chromium" else Phone(playwright, engine, device)
             remote.goto("/")
+            switch_to(remote, "tv")
             remote.until(f'!!document.querySelector(".bar-open") && {LOADED}')
             remote.page.locator(".bar-open").tap()
             remote.until('document.documentElement.hasAttribute("data-sheet")', 3000)
@@ -1034,6 +1039,7 @@ with sync_playwright() as playwright:
 
     for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
         with scenario(f"a tap on the bar while the page still loads opens the remote, and it stays open once loading ends ({engine})"):
+            switch_to(phone, "tv")
             early = Phone(playwright, engine, device)
             held: list[Any] = []
             holding = [True]
@@ -1848,6 +1854,16 @@ with sync_playwright() as playwright:
         laptop.page.click(".pp-mini-stop")
         laptop.until('!document.querySelector(".pp")', 3000)
         eventually("the TV hears that the laptop stopped", lambda: screen(laptop)["play"] is None)
+        laptop.until(NO_REMOTE, 3000)
+        laptop.page.mouse.move(640, 770)
+        laptop.page.mouse.down()
+        for step in range(1, 13):
+            laptop.page.mouse.move(640, 770 - 40 * step)
+        laptop.page.mouse.up()
+        laptop.page.wait_for_timeout(600)
+        assert laptop.js('!document.documentElement.hasAttribute("data-sheet") && !document.querySelector(".pp")'), "watching here with nothing playing, dragging up from the bottom pulls nothing up"
+        switch_to(laptop, "tv")
+        laptop.until('getComputedStyle(document.querySelector(".bar")).display !== "none"', 3000)
         laptop.page.click(".bar-open")
         laptop.until('document.documentElement.hasAttribute("data-sheet")', 3000)
         laptop.page.wait_for_timeout(800)

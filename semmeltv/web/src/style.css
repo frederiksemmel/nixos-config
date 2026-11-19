@@ -920,6 +920,8 @@ html:not(:has(.now-state)) .bar-toggle { display: none; }
   user-select: none;
 }
 
+html:has(#mode:not([data-mode="tv"])) :is(.bar, .sheet, .sheet-dim) { display: none; }
+
 /* Player sheet */
 
 .sheet-dim {

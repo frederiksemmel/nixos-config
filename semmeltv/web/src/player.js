@@ -11,10 +11,11 @@ let dragged = false;
 
 const sheet = () => document.getElementById("sheet");
 const isOpen = () => root.hasAttribute("data-sheet");
+const remoteShown = () => !document.querySelector('#mode:not([data-mode="tv"])');
 
 function setOpen(open) {
   const element = sheet();
-  if (!element || open === isOpen()) return;
+  if (!element || open === isOpen() || (open && !remoteShown())) return;
   root.toggleAttribute("data-sheet", open);
   element.inert = !open;
   if (open) {
@@ -248,6 +249,7 @@ document.addEventListener("click", (event) => {
 }, true);
 
 new MutationObserver((records) => {
+  if (isOpen() && !remoteShown()) setOpen(false);
   if (!records.some((record) => record.type === "childList" || record.target.classList?.contains("now-state"))) return;
   const element = sheet();
   if (element && element.inert === isOpen()) element.inert = !isOpen();
@@ -259,7 +261,7 @@ new MutationObserver((records) => {
   }
   markChoices();
   markDelay();
-}).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class"] });
+}).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "data-mode"] });
 
 const SETTLE_MS = 650;
 const FLICK = 0.5;
