@@ -44,6 +44,7 @@ mod subfetch;
 mod subtitles;
 mod tags;
 mod tmdb;
+mod together;
 mod tv;
 mod ui;
 mod up_next;

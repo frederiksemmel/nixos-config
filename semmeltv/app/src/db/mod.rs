@@ -2,6 +2,7 @@ mod auth;
 mod index;
 mod models;
 mod progress;
+mod together;
 mod usage;
 
 use crate::library::Library;

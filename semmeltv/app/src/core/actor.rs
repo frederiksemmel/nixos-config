@@ -24,6 +24,7 @@ use crate::segments::{Kind, Title};
 use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, Subtitles};
+use crate::together;
 use crate::tv::{self, Television};
 use crate::up_next::{self, Press, UpNext};
 use crate::voice::{self, Heard, Voice};
@@ -874,6 +875,7 @@ impl Actor {
             Request::Storage(change) => return self.change_storage(change).await,
             Request::Dismiss(kind, key, by) => return self.dismiss(kind, &key, by).await,
             Request::Mark(kind, key, episode, mark, by) => return self.mark(kind, &key, episode, mark, by).await,
+            Request::CatchUp { show, to, by } => return self.catch_up(&show, to, by).await,
             Request::Phone(report) => return self.phone(report).await,
             Request::Screen(command, by) => {
                 if matches!(command, ScreenCommand::Flip { to: ScreenKind::Tv, .. }) {
@@ -956,6 +958,25 @@ impl Actor {
             watching::Mark::Unwatched => "unwatched",
         };
         Outcome::done(format!("{name} is marked as {state}"))
+    }
+
+    async fn catch_up(&mut self, key: &str, to: ProfileId, by: ProfileId) -> Outcome {
+        let library = self.library.clone();
+        let Some(show) = library.shows.iter().find(|show| show.key == key) else {
+            return Outcome::refused(format!("There is no {key} in the library"));
+        };
+        let name = self.core.profile_name(to).await.unwrap_or_else(|| "them".to_string());
+        let theirs = self.progress_of(to).await;
+        let mut mine = (*self.progress_of(by).await).clone();
+        if !together::catch_up(&mut mine, &theirs, show, watching::now()) {
+            return Outcome::refused(format!("{name} hasn't started {} yet", show.title));
+        }
+        let place = match mine.resume_episode(show) {
+            Some(episode) => format!("{} · {}", show.title, episode.short_label()),
+            None => format!("the end of {}", show.title),
+        };
+        self.keep(by, mine).await;
+        Outcome::done(format!("You're at {name}'s place now: {place}"))
     }
 
     fn place_of(&self, file: &Path, position: f64) -> Option<screen::Place> {
@@ -1777,6 +1798,54 @@ mod tests {
             &library.movies[0]
         ));
         assert!(!core.ask(mark("jaws")).await.unwrap().ok);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn catching_up_moves_my_place_to_my_partners_and_keeps_theirs() {
+        let core = core().await;
+        let mami = ProfileId(2);
+        let catch_up = || Request::CatchUp {
+            show: "dark".to_string(),
+            to: mami,
+            by: ProfileId::FIRST,
+        };
+        assert_eq!(
+            core.ask(catch_up()).await.unwrap(),
+            Outcome::refused("Mami hasn't started Dark yet")
+        );
+        let mut theirs = Progress::default();
+        theirs.shows.insert(
+            "dark".to_string(),
+            Position {
+                season: 1,
+                episode: 2,
+                finished: false,
+            },
+        );
+        let place = progress::Place {
+            position: 900.0,
+            duration: 3000.0,
+            credits: None,
+        };
+        theirs.record(&core.library().shows[0].seasons[0].episodes[0].path, place);
+        core.publish_progress(mami, theirs.clone());
+        assert_eq!(
+            core.ask(catch_up()).await.unwrap(),
+            Outcome::done("You're at Mami's place now: Dark · S1 E2")
+        );
+        let library = core.library();
+        let mine = core.progress(ProfileId::FIRST).await;
+        assert_eq!(
+            together::Spot::of(&mine, &library.shows[0]),
+            together::Spot::of(&theirs, &library.shows[0])
+        );
+        assert_eq!(*core.progress(mami).await, theirs);
+        assert_eq!(
+            watching::current(&library, &mine)
+                .first()
+                .and_then(|current| current.episode),
+            Some((1, 2))
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

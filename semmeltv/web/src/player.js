@@ -71,6 +71,7 @@ async function send(button) {
   if (!ok) throw new Error(answer.message || answer.error || `The TV answered ${response.status}`);
   if (answer.message) notify({ text: answer.message, detail: answer.matched === "title" ? OFF_BY_TITLE : "", tone: "ok", id });
   if (button.dataset.done === "hide") button.hidden = true;
+  if (button.dataset.done === "reload") location.reload();
   if (button.dataset.refresh === "tracks") {
     refreshTracks();
     setTimeout(refreshTracks, TRACKS_SETTLE);

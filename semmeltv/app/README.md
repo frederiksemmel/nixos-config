@@ -426,6 +426,7 @@ async: the core and the API await them.
 | `video_facts` | an episode's or film's real duration, where its credits start, its subtitle delay and how many subtitle tracks it carries | video |
 | `settings` | one value per key, such as the Samsung pairing `tv_token` | TV |
 | `usage` | who used the TV and what they watched, see [Usage](#usage) | event |
+| `watch_together` | who watches which show together with whom, one row each way | profile |
 
 Episodes, films and shows are referred to by their id in `library.db`, so a
 renamed title or a moved file keeps everyone's progress. The rest of the app

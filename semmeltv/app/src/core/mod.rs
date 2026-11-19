@@ -53,6 +53,7 @@ pub enum Request {
     Storage(storage::Change),
     Dismiss(watching::Kind, String, ProfileId),
     Mark(watching::Kind, String, Option<(u32, u32)>, watching::Mark, ProfileId),
+    CatchUp { show: String, to: ProfileId, by: ProfileId },
     Phone(stream::Report),
     Screen(ScreenCommand, ProfileId),
     TvProfile(ProfileId),

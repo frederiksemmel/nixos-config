@@ -1,5 +1,6 @@
 use crate::api::{
-    About, Api, Card, CastMember, Episode, Found, Kind, MoreScores, Next, Played, Ratings, Watch, WatchingCard,
+    About, Api, Card, CastMember, Episode, Found, Kind, MoreScores, Next, Played, Ratings, Spot, Together, Watch,
+    WatchingCard,
 };
 use crate::downloads::{search_download, season_downloads};
 use crate::layout::back;
@@ -783,6 +784,82 @@ async fn episode_row(
     })
 }
 
+fn spot_line(spot: &Spot) -> String {
+    match spot {
+        Spot::NotStarted => "Hasn't started yet".to_string(),
+        Spot::Finished => "Finished the series".to_string(),
+        Spot::At {
+            label,
+            stopped_at: Some(at),
+            duration: Some(of),
+            ..
+        } if *of > 0.0 => format!("At {label} · {} of {}", clock(*at), clock(*of)),
+        Spot::At {
+            label,
+            stopped_at: Some(at),
+            ..
+        } => format!("At {label} · {} in", clock(*at)),
+        Spot::At { label, .. } => format!("Up next {label}"),
+    }
+}
+
+fn first_letter(name: &str) -> String {
+    name.chars()
+        .next()
+        .map(|first| first.to_uppercase().collect())
+        .unwrap_or_default()
+}
+
+#[component]
+async fn watching_together(series: &str, title: &str, together: &Together) -> Result<impl View> {
+    let base = format!("/api/shows/{series}/together");
+    let alone = together.partners.is_empty();
+    Ok(view! {
+        <section class="together">
+            if !alone {
+                <h2>"Watching together"</h2>
+                <ul class="together-list">
+                    for partner in &together.partners {
+                        let path = format!("{base}/{}", partner.person.id);
+                        let name = partner.person.name.as_str();
+                        let catchable = !partner.with_me && partner.spot != Spot::NotStarted;
+                        <li class="together-row" data-partner=(name)>
+                            <span class="avatar small" style=(format!("--avatar:{}", partner.person.color)) aria-hidden="true">(first_letter(name))</span>
+                            <span class="together-text">
+                                <b>(name)</b>
+                                <span class="together-spot">(spot_line(&partner.spot))</span>
+                            </span>
+                            <button type="button" class="together-leave" aria-label=(format!("Stop watching {title} with {name}"))
+                                data-post=(path.as_str()) data-method="DELETE" data-done="reload">"×"</button>
+                            if partner.with_me {
+                                <p class="together-same">"You're at the same place"</p>
+                            }
+                            if catchable {
+                                <button type="button" class="pill quiet together-catch-up"
+                                    data-post=(format!("{path}/catch-up")) data-done="reload">
+                                    (format!("Go to {name}'s place"))
+                                </button>
+                            }
+                        </li>
+                    }
+                </ul>
+            }
+            if !together.others.is_empty() {
+                <details class="together-add">
+                    <summary>(if alone { "Watch this together with someone" } else { "Add someone" })</summary>
+                    <p class="together-hint">"You'll both see here where the other is, and either of you can jump to the other's place."</p>
+                    <div class="together-people">
+                        for other in &together.others {
+                            <button type="button" class="chip" data-post=(format!("{base}/{}", other.id)) data-method="PUT"
+                                data-done="reload">(other.name.as_str())</button>
+                        }
+                    </div>
+                </details>
+            }
+        </section>
+    })
+}
+
 #[component]
 async fn find_subtitles(label: &str, body: &str) -> Result<impl View> {
     Ok(view! {
@@ -1045,6 +1122,7 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                 find_subtitles(label: label.as_str(), body: fetch.as_str())
                             }
                         </div>
+                        watching_together(series: key.as_str(), title: show.card.title.as_str(), together: &show.together)
                         facts_list(rows: &rows)
                         links(about: &show.about)
                     </div>
@@ -1166,6 +1244,32 @@ mod tests {
             "S8\u{a0}E3\u{a0}· H.264\u{a0}· 22m\u{a0}· Stopped\u{a0}at\u{a0}20m"
         );
         assert_eq!(dotted("S1 E1", ""), "S1\u{a0}E1");
+    }
+
+    #[test]
+    fn a_partners_place_reads_as_the_episode_and_how_far_in() {
+        let at = |stopped_at, duration| Spot::At {
+            season: 2,
+            episode: 4,
+            label: "S2 E4".to_string(),
+            title: None,
+            stopped_at,
+            duration,
+        };
+        assert_eq!(spot_line(&at(Some(750.0), Some(3120.0))), "At S2 E4 · 12:30 of 52:00");
+        assert_eq!(spot_line(&at(Some(750.0), None)), "At S2 E4 · 12:30 in");
+        assert_eq!(spot_line(&at(None, Some(3120.0))), "Up next S2 E4");
+        assert_eq!(spot_line(&Spot::NotStarted), "Hasn't started yet");
+        assert_eq!(spot_line(&Spot::Finished), "Finished the series");
+        let together: Together = serde_json::from_value(json!({
+            "partners": [{ "id": 2, "name": "Mami", "color": "#3E63DD", "with_me": false,
+                           "spot": { "state": "at", "season": 2, "episode": 4, "label": "S2 E4", "title": null,
+                                     "stopped_at": 750.0, "duration": null } }],
+            "others": [{ "id": 3, "name": "Miriam", "color": "#30A46C" }]
+        }))
+        .unwrap();
+        assert_eq!(together.partners[0].spot, at(Some(750.0), None));
+        assert_eq!(together.others[0].name, "Miriam");
     }
 
     fn card(key: &str, kind: &str, years: Option<&str>, imdb: Option<f64>) -> Card {

@@ -129,7 +129,19 @@ the first admin or one who is locked out.
 | POST | `/api/watched` | `{ kind, key, watched, season?, episode? }` → `{ message, ok, watched }` |
 | GET | `/api/search?q=TEXT` | `{ results }`: cards ranked by how well the title matches, prefixes first, typos forgiven; then titles whose director, creator, cast, character, original title, network or genre match, each with `because` (like `Director: Denis Villeneuve`) |
 | GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration`, `tags`, `subtitles`, `about`, `last_played` and `last_played_label` |
-| GET | `/api/shows/{key}` | a card plus `next` (where playing carries on), `seasons` (each with `episodes`), `about`, `last_played` and `last_played_label` |
+| GET | `/api/shows/{key}` | a card plus `next` (where playing carries on), `seasons` (each with `episodes`), `about`, `last_played`, `last_played_label` and `together` |
+| PUT | `/api/shows/{key}/together/{profile}` | watch the show together with that person, both ways: `{ message, ok }` |
+| DELETE | `/api/shows/{key}/together/{profile}` | stop watching it together, for both: `{ message, ok }` |
+| POST | `/api/shows/{key}/together/{profile}/catch-up` | moves your place in the show to theirs: `{ message, ok }`, 422 when you don't watch it together or they haven't started |
+
+`together` is `{ partners, others }`. Each partner is `{ id, name, color,
+spot, with_me }`: `spot` is `{ state: "not_started" | "finished" }` or
+`{ state: "at", season, episode, label, title, stopped_at, duration }`, where
+they carry on, and `with_me` is true when that is your place too (the same
+episode, less than a minute apart). `others` lists everyone else as `{ id,
+name, color }`. Catching up copies their episode and time into your progress,
+keeps your own audio and subtitle choice, and puts the show first in your
+Continue Watching.
 
 A card is
 `{ kind: "movie" | "show", key, title, years, subtitle, poster, backdrop, ratings, finished }`.

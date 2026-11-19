@@ -202,6 +202,11 @@ impl Db {
                 return Ok(false);
             };
             found.delete().exec(&mut transaction).await?;
+            let together = models::Together::fields();
+            models::Together::filter(together.profile_id().eq(id.0).or(together.partner_id().eq(id.0)))
+                .delete()
+                .exec(&mut transaction)
+                .await?;
             transaction.commit().await?;
             Ok::<_, toasty::Error>(true)
         };

@@ -372,6 +372,47 @@ pub struct Show {
     pub played: Played,
     #[serde(default)]
     pub downloaded_by: Vec<String>,
+    #[serde(default)]
+    pub together: Together,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct Together {
+    #[serde(default)]
+    pub partners: Vec<Partner>,
+    #[serde(default)]
+    pub others: Vec<Companion>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Companion {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct Partner {
+    #[serde(flatten)]
+    pub person: Companion,
+    pub spot: Spot,
+    #[serde(default)]
+    pub with_me: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum Spot {
+    NotStarted,
+    At {
+        season: u32,
+        episode: u32,
+        label: String,
+        title: Option<String>,
+        stopped_at: Option<f64>,
+        duration: Option<f64>,
+    },
+    Finished,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]

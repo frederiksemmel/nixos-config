@@ -3,6 +3,7 @@ import json
 import traceback
 import shlex
 import time
+import urllib.error
 import urllib.request
 from typing import Any
 
@@ -1279,6 +1280,43 @@ with sync_playwright() as playwright:
         phone.until(f'document.querySelectorAll("main .episode-row .mark-seen")[2]?.getAttribute("aria-pressed") === "{flipped}"')
         phone.page.locator("main .episode-row .mark-seen").nth(2).tap()
         phone.until(f'document.querySelectorAll("main .episode-row .mark-seen")[2].getAttribute("aria-pressed") === "{before}" && !document.querySelector("main .episode-row .mark-seen[data-act=pending]")')
+
+    with scenario("two people watch a series together: each sees where the other is, and one jumps to the other's place"):
+        miriam = session_cookie("Miriam")
+
+        def as_miriam(method, path):
+            request = urllib.request.Request(
+                f"{PHONE}{path}", data=b"" if method != "GET" else None, method=method,
+                headers={"Origin": PHONE, "Cookie": f"semmeltv_session={miriam}"},
+            )
+            try:
+                with urllib.request.urlopen(request) as response:
+                    return response.status, json.loads(response.read() or b"null")
+            except urllib.error.HTTPError as error:
+                return error.code, json.loads(error.read() or b"null")
+
+        partner_row = '[...document.querySelectorAll("main .together-row")].find((row) => row.dataset.partner === "Miriam")'
+        phone.goto(f"/shows/{SHOW}")
+        phone.until('!!document.querySelector("main .together-add summary")')
+        phone.page.locator("main .together-add summary").tap()
+        phone.page.locator("main .together-add .chip", has_text="Miriam").tap()
+        phone.until(f'!!{partner_row} && {partner_row}.textContent.includes("Hasn\'t started yet") && !{partner_row}.querySelector(".together-catch-up")')
+        frederik_id = 1
+        status, answer = as_miriam("POST", f"/api/shows/{SHOW}/together/{frederik_id}/catch-up")
+        assert status == 200 and answer["ok"], (status, answer)
+        mine = phone.api("GET", f"/api/shows/{SHOW}")["body"]
+        _, hers = as_miriam("GET", f"/api/shows/{SHOW}")
+        def place(body):
+            return body["next"] and (body["next"]["season"], body["next"]["episode"])
+
+        assert place(hers) == place(mine), (hers["next"], mine["next"])
+        assert [partner["name"] for partner in hers["together"]["partners"]] == ["Frederik"], hers["together"]
+        assert hers["together"]["partners"][0]["with_me"], hers["together"]
+        phone.page.reload(wait_until="commit")
+        phone.until(f'!!{partner_row}?.querySelector(".together-same")')
+        phone.page.locator("main .together-row .together-leave").tap()
+        phone.until('!document.querySelector("main .together-row") && !!document.querySelector("main .together-add")')
+        assert as_miriam("GET", f"/api/shows/{SHOW}")[1]["together"]["partners"] == []
 
     with scenario("skipping on the TV keeps its sound output running, so the TV never has to pick the sound up again"):
         tv_plays_film(phone)

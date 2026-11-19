@@ -1705,6 +1705,40 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .detail-more { display: flex; flex-wrap: wrap; align-items: flex-start; gap: 8px; margin-top: 4px; }
 .detail-more .mark-film, .detail-more .find-subtitles-row { margin-top: 0; }
 
+.together { display: grid; gap: 10px; margin: 18px 0 0; }
+.together:empty { display: none; }
+.together h2 { font-size: 17px; margin: 0; }
+.together-list { display: grid; gap: 10px; list-style: none; margin: 0; padding: 0; }
+.together-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 12px;
+  border-radius: var(--radius);
+  background: var(--raised);
+  border: 1px solid var(--line);
+}
+.together-text { display: grid; gap: 2px; min-width: 0; }
+.together-text b { font-weight: 600; }
+.together-spot { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+.together-leave {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: transparent;
+  border: 0;
+  color: var(--muted);
+  font-size: 22px;
+  line-height: 1;
+}
+.together-same, .together-catch-up { grid-column: 2 / -1; justify-self: start; }
+.together-same { margin: 0; color: #5ad17e; font-size: 14px; }
+.together-add summary { color: var(--muted); font-size: 14px; cursor: pointer; padding: 6px 0; }
+.together-hint { margin: 4px 0 10px; color: var(--muted); font-size: 13px; }
+.together-people { display: flex; flex-wrap: wrap; gap: 8px; }
+.together-row[data-act="pending"], .together-people [data-act="pending"] { opacity: 0.6; }
+
 .detail-plot { margin: 18px 0 0; font-size: 16px; line-height: 1.55; }
 
 .detail-facts {

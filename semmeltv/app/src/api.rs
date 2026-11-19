@@ -10,6 +10,7 @@ use crate::heatmap;
 use crate::intent::{self, Control, Pick};
 use crate::library::{Episode, Item, Library, Movie, Show};
 use crate::manifest::{About, Date};
+use crate::profile::ProfileId;
 use crate::progress::Progress;
 use crate::screen;
 use crate::seek::Direction;
@@ -20,13 +21,14 @@ use crate::subfetch::{self, Match, Wanted};
 use crate::subtitles;
 use crate::tags::Tags;
 use crate::tmdb::Kind;
+use crate::together::Spot;
 use crate::tv;
 use crate::watching::{self, Current};
 use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{delete, get, post};
+use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router, middleware};
 use serde::{Deserialize, Serialize};
 use std::path::{Path as FsPath, PathBuf};
@@ -198,6 +200,8 @@ fn router(api: Api) -> Router {
         .route("/api/shows/{key}/backdrop", get(show_backdrop))
         .route("/api/shows/{key}/poster", get(show_poster))
         .route("/api/shows/{key}/episodes/{season}/{episode}/still", get(still))
+        .route("/api/shows/{key}/together/{partner}", put(join).delete(leave))
+        .route("/api/shows/{key}/together/{partner}/catch-up", post(catch_up))
         .route("/api/people/{person}/photo", get(photo))
         .route("/api/play", post(play))
         .route("/api/command", post(command))
@@ -760,6 +764,174 @@ struct ShowView {
     #[serde(flatten)]
     played: Played,
     downloaded_by: Vec<String>,
+    together: TogetherView,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum SpotView {
+    NotStarted,
+    At {
+        season: u32,
+        episode: u32,
+        label: String,
+        title: Option<String>,
+        stopped_at: Option<f64>,
+        duration: Option<f64>,
+    },
+    Finished,
+}
+
+#[derive(Serialize)]
+struct PersonView {
+    id: i64,
+    name: String,
+    color: String,
+}
+
+#[derive(Serialize)]
+struct PartnerView {
+    #[serde(flatten)]
+    person: PersonView,
+    spot: SpotView,
+    with_me: bool,
+}
+
+#[derive(Serialize)]
+struct TogetherView {
+    partners: Vec<PartnerView>,
+    others: Vec<PersonView>,
+}
+
+fn spot_view(progress: &Progress, show: &Show, spot: Spot) -> SpotView {
+    match spot {
+        Spot::NotStarted => SpotView::NotStarted,
+        Spot::Finished => SpotView::Finished,
+        Spot::At {
+            season,
+            episode,
+            stopped_at,
+        } => {
+            let found = show.episode(season, episode);
+            let duration =
+                found.and_then(|episode| watch(progress, &episode.path, &episode.tags, episode.runtime, 0).duration);
+            SpotView::At {
+                season,
+                episode,
+                label: found.map_or_else(|| format!("S{season} E{episode}"), Episode::short_label),
+                title: found.and_then(|episode| episode.title.clone()),
+                stopped_at,
+                duration,
+            }
+        }
+    }
+}
+
+async fn together_view(core: &Core, profile: ProfileId, show: &Show, mine: &Progress) -> TogetherView {
+    let partners = core.db().partners(profile, &show.key).await.unwrap_or_else(|error| {
+        eprintln!("together: partners of {} in {}: {error}", profile.0, show.key);
+        Vec::new()
+    });
+    let people = core.db().profiles().await.unwrap_or_else(|error| {
+        eprintln!("together: profiles: {error}");
+        Vec::new()
+    });
+    let person = |found: &auth::store::Profile| {
+        let person = auth::Person::from(found);
+        PersonView {
+            id: person.id.0,
+            name: person.name,
+            color: person.color,
+        }
+    };
+    let here = Spot::of(mine, show);
+    let mut views = Vec::new();
+    for partner in &partners {
+        let Some(found) = people.iter().find(|found| found.id == *partner) else {
+            continue;
+        };
+        let theirs = core.progress(*partner).await;
+        let spot = Spot::of(&theirs, show);
+        views.push(PartnerView {
+            person: person(found),
+            spot: spot_view(&theirs, show, spot),
+            with_me: spot.same_as(here),
+        });
+    }
+    let others = people
+        .iter()
+        .filter(|found| found.id != profile && !partners.contains(&found.id))
+        .map(person)
+        .collect();
+    TogetherView {
+        partners: views,
+        others,
+    }
+}
+
+async fn set_together(api: &Api, profile: ProfileId, key: &str, partner: i64, on: bool) -> Response {
+    let library = api.core.library();
+    let Some(show) = library.shows.iter().find(|show| show.key == key) else {
+        return not_found(format!("no show {key}"));
+    };
+    let partner = ProfileId(partner);
+    if partner == profile {
+        return problem(
+            StatusCode::BAD_REQUEST,
+            "You can't watch together with yourself".to_string(),
+        );
+    }
+    let Some(name) = api.core.profile_name(partner).await else {
+        return not_found(format!("no profile {}", partner.0));
+    };
+    match api.core.db().set_together(profile, partner, &show.key, on).await {
+        Ok(true) if on => Json(Outcome::done(format!("You watch {} together with {name}", show.title))).into_response(),
+        Ok(true) => Json(Outcome::done(format!(
+            "You no longer watch {} together with {name}",
+            show.title
+        )))
+        .into_response(),
+        Ok(false) => problem(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "The TV hasn't loaded its library yet".to_string(),
+        ),
+        Err(error) => problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    }
+}
+
+async fn join(State(api): State<Api>, Who(profile): Who, Path((key, partner)): Path<(String, i64)>) -> Response {
+    set_together(&api, profile, &key, partner, true).await
+}
+
+async fn leave(State(api): State<Api>, Who(profile): Who, Path((key, partner)): Path<(String, i64)>) -> Response {
+    set_together(&api, profile, &key, partner, false).await
+}
+
+async fn catch_up(State(api): State<Api>, Who(profile): Who, Path((key, partner)): Path<(String, i64)>) -> Response {
+    let library = api.core.library();
+    let Some(show) = library.shows.iter().find(|show| show.key == key) else {
+        return not_found(format!("no show {key}"));
+    };
+    let partner = ProfileId(partner);
+    let partners = match api.core.db().partners(profile, &show.key).await {
+        Ok(partners) => partners,
+        Err(error) => return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    };
+    if !partners.contains(&partner) {
+        let name = api
+            .core
+            .profile_name(partner)
+            .await
+            .unwrap_or_else(|| "them".to_string());
+        let refused = Outcome::refused(format!("You don't watch {} together with {name}", show.title));
+        return (status(false), Json(refused)).into_response();
+    }
+    let request = Request::CatchUp {
+        show: show.key.clone(),
+        to: partner,
+        by: profile,
+    };
+    ask(&api.core, request).await
 }
 
 fn episode_view(core: &Core, show: &Show, episode: &Episode, progress: &Progress) -> EpisodeView {
@@ -825,6 +997,7 @@ async fn show(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>
                 .collect(),
         })
         .collect();
+    let together = together_view(&api.core, profile, show, &progress).await;
     Json(ShowView {
         card: show_card(&api.root, &progress, show),
         next,
@@ -839,6 +1012,7 @@ async fn show(State(api): State<Api>, Who(profile): Who, Path(key): Path<String>
         ),
         played: played(last_played),
         downloaded_by: show.downloaded_by().into_iter().map(str::to_string).collect(),
+        together,
     })
     .into_response()
 }
@@ -1575,6 +1749,9 @@ mod tests {
             }],
             ..About::default()
         };
+        for (id, show) in (100..).zip(library.shows.iter_mut()) {
+            show.id = id;
+        }
         let outlander = library.shows.iter_mut().find(|show| show.key == "outlander").unwrap();
         outlander.seasons[0].episodes[0].ratings.imdb = Some(crate::manifest::Tenths(84));
         library
@@ -1940,6 +2117,66 @@ mod tests {
             json!([{ "name": "Timothée Chalamet", "character": "Paul Atreides", "photo": null,
                      "imdb": "https://www.imdb.com/find/?q=Timoth%C3%A9e+Chalamet&s=nm" }])
         );
+    }
+
+    fn send(server: &Server, method: &str, path: &str) -> (u16, Value) {
+        let url = format!("{}{path}", server.base);
+        let mut response = match method {
+            "PUT" => agent().put(url).send_empty(),
+            "DELETE" => agent().delete(url).call(),
+            _ => agent().post(url).send_empty(),
+        }
+        .unwrap();
+        let status = response.status().as_u16();
+        (status, response.body_mut().read_json().unwrap_or(Value::Null))
+    }
+
+    #[test]
+    fn a_show_says_who_watches_it_together_with_me_and_where_they_are() {
+        let server = serve(no_root(), None);
+        let together = |server: &Server| get(server, "/api/shows/outlander").1["together"].clone();
+        let names = |people: &Value| -> Vec<String> {
+            people
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|person| person["name"].as_str().unwrap().to_string())
+                .collect()
+        };
+        let before = together(&server);
+        assert_eq!(before["partners"], json!([]));
+        assert_eq!(names(&before["others"]), ["Mami", "Miriam", "Ramu"]);
+        assert_eq!(
+            send(&server, "PUT", "/api/shows/outlander/together/2"),
+            (
+                200,
+                json!({ "message": "You watch Outlander together with Mami", "ok": true })
+            )
+        );
+        let after = together(&server);
+        assert_eq!(names(&after["partners"]), ["Mami"]);
+        assert_eq!(after["partners"][0]["spot"], json!({ "state": "not_started" }));
+        assert_eq!(after["partners"][0]["with_me"], false);
+        assert_eq!(names(&after["others"]), ["Miriam", "Ramu"]);
+        assert_eq!(send(&server, "PUT", "/api/shows/outlander/together/1").0, 400);
+        assert_eq!(send(&server, "PUT", "/api/shows/outlander/together/99").0, 404);
+        assert_eq!(send(&server, "PUT", "/api/shows/nothing/together/2").0, 404);
+        let stranger = send(&server, "POST", "/api/shows/outlander/together/3/catch-up");
+        assert_eq!(
+            stranger,
+            (
+                422,
+                json!({ "message": "You don't watch Outlander together with Miriam", "ok": false })
+            )
+        );
+        assert_eq!(server.asked.try_iter().count(), 0);
+        assert_eq!(send(&server, "POST", "/api/shows/outlander/together/2/catch-up").0, 200);
+        assert_eq!(
+            server.asked.try_iter().collect::<Vec<_>>(),
+            [r#"CatchUp { show: "outlander", to: ProfileId(2), by: ProfileId(1) }"#]
+        );
+        assert_eq!(send(&server, "DELETE", "/api/shows/outlander/together/2").0, 200);
+        assert_eq!(together(&server)["partners"], json!([]));
     }
 
     #[test]

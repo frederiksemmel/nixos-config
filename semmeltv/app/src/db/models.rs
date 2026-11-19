@@ -252,6 +252,15 @@ pub struct Usage {
     pub seconds: i64,
 }
 
+#[derive(Debug, toasty::Model)]
+#[table = "watch_together"]
+#[key(profile_id, show_id, partner_id)]
+pub struct Together {
+    pub profile_id: i64,
+    pub show_id: i64,
+    pub partner_id: i64,
+}
+
 pub fn all() -> toasty::ModelSet {
     toasty::models!(
         Profile,
@@ -267,6 +276,7 @@ pub fn all() -> toasty::ModelSet {
         SubtitleSettings,
         AudioPrefs,
         Setting,
-        Usage
+        Usage,
+        Together
     )
 }
