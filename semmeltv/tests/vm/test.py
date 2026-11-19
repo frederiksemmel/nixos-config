@@ -1232,6 +1232,12 @@ with sync_playwright() as playwright:
             deploy_web(iphone, None)
             iphone.close()
 
+    with scenario("a page asks to open as an app with the standard meta tag, so Chrome logs no deprecation"):
+        phone.goto("/")
+        at_home(phone)
+        tags = phone.js('[...document.querySelectorAll("meta[name$=\'mobile-web-app-capable\']")].map((meta) => meta.name + "=" + meta.content)')
+        assert sorted(tags) == ["apple-mobile-web-app-capable=yes", "mobile-web-app-capable=yes"], tags
+
     with scenario("a title that isn't there says so inside the app"):
         phone.goto("/movies/not-in-the-library")
         phone.until('document.querySelector("main h1")?.textContent === "Not in the library" && !!document.querySelector("header.top") && !!document.querySelector("main .trouble a[href=\'/\']")')
