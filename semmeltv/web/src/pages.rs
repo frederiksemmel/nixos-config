@@ -49,7 +49,7 @@ fn hue(title: &str) -> u64 {
     hasher.finish() % 360
 }
 
-fn tint(title: &str) -> String {
+pub(crate) fn tint(title: &str) -> String {
     format!("--hue:{}", hue(title))
 }
 

@@ -14,7 +14,7 @@ use crate::manifest::{self, Date, Manifest};
 use crate::parse;
 use crate::ready::{self, Ready};
 use crate::tmdb::{self, Kind};
-use axum::extract::{Path as UrlPath, State};
+use axum::extract::{Path as UrlPath, Query, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -527,6 +527,21 @@ impl Service {
             Action::Refuse(reason) => Err(reason),
             _ => Err(format!("Could not understand \"{text}\" as something to download")),
         }
+    }
+
+    fn suggest(&self, text: &str) -> Result<Vec<Suggestion>, String> {
+        let (title, season) = match self.wish_from_text(text) {
+            Ok(wish) => (wish.title, wish.season),
+            Err(_) => (text.trim().to_string(), None),
+        };
+        if title.is_empty() {
+            return Ok(Vec::new());
+        }
+        let found = self
+            .tmdb
+            .search_titles(&title)
+            .map_err(|error| format!("TMDB: {error}"))?;
+        Ok(suggestions(found, season, &self.manifest()))
     }
 
     fn propose(&self, asked: String, from: String, resolved: Result<Resolved, String>) -> Proposal {
@@ -1116,6 +1131,39 @@ pub struct Pick {
     pub episode: Option<u32>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Suggestion {
+    #[serde(with = "resolve::kind_name")]
+    pub kind: Kind,
+    pub tmdb: u64,
+    pub title: String,
+    pub year: Option<u16>,
+    pub poster: Option<String>,
+    pub season: Option<u32>,
+    pub owned: bool,
+}
+
+fn suggestions(found: Vec<tmdb::Match>, season: Option<u32>, manifest: &Manifest) -> Vec<Suggestion> {
+    found
+        .into_iter()
+        .filter(|found| season.is_none() || found.kind == Kind::Tv)
+        .map(|found| Suggestion {
+            owned: resolve::in_library(manifest, found.kind, found.id),
+            kind: found.kind,
+            tmdb: found.id,
+            title: found.name,
+            year: found.year,
+            poster: found.poster,
+            season: season.filter(|_| found.kind == Kind::Tv),
+        })
+        .collect()
+}
+
+#[derive(Deserialize)]
+struct SuggestQuery {
+    text: String,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct SearchBody {
     pub text: Option<String>,
@@ -1193,6 +1241,14 @@ async fn search(State(service): State<Shared>, Json(body): Json<SearchBody>) -> 
     }
 }
 
+async fn suggest(State(service): State<Shared>, Query(query): Query<SuggestQuery>) -> Response {
+    match blocking(move || service.suggest(&query.text)).await {
+        Ok(Ok(found)) => Json(found).into_response(),
+        Ok(Err(error)) => crate::api::problem(StatusCode::BAD_GATEWAY, error),
+        Err(response) => response,
+    }
+}
+
 async fn confirm(State(service): State<Shared>, Json(body): Json<ConfirmBody>) -> Response {
     match blocking(move || service.confirm(&body.proposal, body.choice)).await {
         Ok(outcome) => Json(outcome).into_response(),
@@ -1244,6 +1300,7 @@ fn router(service: Shared) -> Router {
     Router::new()
         .route("/api/downloads", get(overview))
         .route("/api/downloads/search", post(search))
+        .route("/api/downloads/suggest", get(suggest))
         .route("/api/downloads/confirm", post(confirm))
         .route("/api/downloads/fetch", post(fetch))
         .route("/api/downloads/dismiss", post(dismiss))
@@ -1348,6 +1405,53 @@ pub fn run(config: Config) -> Result<(), String> {
 mod tests {
     use super::*;
     use resolve::EpisodeInfo;
+
+    #[test]
+    fn suggestions_mark_owned_titles_and_a_typed_season_keeps_only_series() {
+        let manifest = Manifest::parse(
+            r#"
+[[movie]]
+title = "Dune"
+year = 2021
+tmdb = 438631
+path = "Movies/Dune (2021)/Dune.mkv"
+added = 2025-01-01
+"#,
+        )
+        .unwrap();
+        let found = |kind, id| tmdb::Match {
+            kind,
+            id,
+            name: "Dune".to_string(),
+            year: Some(2021),
+            poster: None,
+        };
+        let all = suggestions(
+            vec![found(Kind::Movie, 438631), found(Kind::Tv, 90228)],
+            None,
+            &manifest,
+        );
+        assert_eq!(
+            all.iter()
+                .map(|found| (found.tmdb, found.owned, found.season))
+                .collect::<Vec<_>>(),
+            vec![(438631, true, None), (90228, false, None)]
+        );
+        let second = suggestions(
+            vec![found(Kind::Movie, 438631), found(Kind::Tv, 90228)],
+            Some(2),
+            &manifest,
+        );
+        assert_eq!(
+            second
+                .iter()
+                .map(|found| (found.tmdb, found.season))
+                .collect::<Vec<_>>(),
+            vec![(90228, Some(2))]
+        );
+        let sent = serde_json::to_value(&second[0]).unwrap();
+        assert_eq!(sent["kind"], "show");
+    }
 
     #[test]
     fn the_progress_line_says_how_long_is_left() {

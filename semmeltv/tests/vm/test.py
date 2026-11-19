@@ -1330,6 +1330,23 @@ with sync_playwright() as playwright:
         phone.until('!!document.querySelector("main .search-download .download-choice.best")')
         phone.page.fill("main .search input", "")
 
+    with scenario("typing a title lists TMDB's films and series, and tapping a series asks its season"):
+        phone.goto("/")
+        at_home(phone)
+        phone.page.fill("main .search input", "Testserie")
+        phone.until('[...document.querySelectorAll("main .search-download .download-match")].map((button) => [...button.querySelectorAll(".download-match-text > *")].map((part) => part.textContent.trim()).join(" / ")).join("|") === "Testserie / Series · 2020 · in the library|Testserie / Film · 2001"')
+        phone.shot("download-matches")
+        phone.page.locator("main .search-download .download-match", has_text="Series").tap()
+        phone.until('[...document.querySelectorAll("main .search-download .tracks button")].map((button) => button.textContent.trim()).join("|") === "Season 2|Season 4"')
+        phone.page.locator("main .search-download .tracks button", has_text="Season 4").tap()
+        phone.until('!!document.querySelector("main .search-download .download-choice.best")')
+        phone.page.fill("main .search input", "")
+        phone.goto("/downloads")
+        phone.until(f'location.pathname === "/downloads" && !!document.querySelector("main .download-job") && {LOADED}')
+        phone.page.wait_for_timeout(500)
+        phone.page.fill("main .download-search input", "Testserie")
+        phone.until('document.querySelectorAll("main .download-match").length === 2')
+
     with scenario("the remote moves the TV's subtitles half a second at a time"):
         tv_plays_film(phone)
         tv.send_key("s")

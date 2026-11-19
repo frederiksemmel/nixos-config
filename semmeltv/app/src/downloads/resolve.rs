@@ -200,7 +200,7 @@ fn lookup(client: &Client, kind: Kind, title: &str, year: Option<u16>) -> Result
     Ok(first)
 }
 
-fn in_library(manifest: &Manifest, kind: Kind, id: u64) -> bool {
+pub fn in_library(manifest: &Manifest, kind: Kind, id: u64) -> bool {
     match kind {
         Kind::Movie => manifest.movie.iter().any(|movie| movie.tmdb == Some(id)),
         Kind::Tv => manifest.show.iter().any(|show| show.tmdb == Some(id)),

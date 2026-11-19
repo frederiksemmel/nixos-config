@@ -11,6 +11,7 @@ const THROTTLE_RETRIES: usize = 3;
 const THROTTLE_WAIT: Duration = Duration::from_secs(2);
 const MAX_IMAGE_BYTES: u64 = 32 * 1024 * 1024;
 const CANDIDATES: usize = 4;
+const MATCHES: usize = 8;
 const CLEAR_WINNER_MIN_VOTES: f64 = 500.0;
 const CLEAR_WINNER_RATIO: f64 = 20.0;
 const CAST: usize = 10;
@@ -56,6 +57,15 @@ pub struct Face {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Match {
+    pub kind: Kind,
+    pub id: u64,
+    pub name: String,
+    pub year: Option<u16>,
+    pub poster: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Lookup {
     Match(Found),
     Likely(Found),
@@ -66,6 +76,7 @@ pub enum Lookup {
 #[derive(Debug, Default, Deserialize)]
 struct Record {
     id: u64,
+    media_type: Option<String>,
     #[serde(default, alias = "name")]
     title: Option<String>,
     #[serde(default, alias = "original_name")]
@@ -412,6 +423,30 @@ fn without_article(title: &str) -> String {
     title.strip_prefix("the ").map(str::to_string).unwrap_or(title)
 }
 
+fn matches(wanted: &str, records: &[Record]) -> Vec<Match> {
+    let wanted = without_article(wanted);
+    let mut found: Vec<Match> = records
+        .iter()
+        .filter_map(|record| {
+            let kind = match record.media_type.as_deref()? {
+                "movie" => Kind::Movie,
+                "tv" => Kind::Tv,
+                _ => return None,
+            };
+            Some(Match {
+                kind,
+                id: record.id,
+                name: record.title.clone().filter(|name| !name.is_empty())?,
+                year: record_year(record),
+                poster: record.poster_path.clone(),
+            })
+        })
+        .collect();
+    found.sort_by_key(|found| without_article(&found.name) != wanted);
+    found.truncate(MATCHES);
+    found
+}
+
 fn classify(wanted: &str, year: Option<u16>, records: &[Record]) -> Lookup {
     if records.is_empty() {
         return Lookup::Nothing;
@@ -499,6 +534,10 @@ impl Client {
     pub fn search_movie(&self, title: &str, year: Option<u16>) -> Result<Lookup, ureq::Error> {
         let records = self.search("movie", title, year.map(|year| ("primary_release_year", year)))?;
         self.settle("movie", title, year, records)
+    }
+
+    pub fn search_titles(&self, text: &str) -> Result<Vec<Match>, ureq::Error> {
+        Ok(matches(text, &self.search("multi", text, None)?))
     }
 
     pub fn search_tv(&self, title: &str, year: Option<u16>) -> Result<Lookup, ureq::Error> {
@@ -845,5 +884,37 @@ mod tests {
         assert_eq!(about.cast[0].character.as_deref(), Some("Jake Peralta"));
         assert_eq!(about.cast[1].name, "Adam Sandler");
         assert_eq!(about.trailer, None);
+    }
+
+    #[test]
+    fn a_title_search_lists_films_and_series_with_exact_names_first_and_drops_people() {
+        let body = r#"{"page":1,"results":[
+            {"id":1,"media_type":"tv","name":"Would I Lie to You? Australia","first_air_date":"2022-05-30","poster_path":"/au.jpg"},
+            {"id":2,"media_type":"person","name":"Would I Lie to You"},
+            {"id":3,"media_type":"tv","name":"Would I Lie to You?","first_air_date":"2007-06-16","poster_path":"/uk.jpg"},
+            {"id":4,"media_type":"movie","title":"Would I Lie to You?","release_date":"1997-03-26","poster_path":null},
+            {"id":5,"media_type":"movie","title":"","release_date":""}]}"#;
+        let records = serde_json::from_str::<Results>(body).unwrap().results;
+        let found = matches("would i lie to you", &records);
+        assert_eq!(
+            found
+                .iter()
+                .map(|found| (found.kind, found.id, found.year))
+                .collect::<Vec<_>>(),
+            vec![
+                (Kind::Tv, 3, Some(2007)),
+                (Kind::Movie, 4, Some(1997)),
+                (Kind::Tv, 1, Some(2022))
+            ]
+        );
+        assert_eq!(found[0].poster.as_deref(), Some("/uk.jpg"));
+        assert_eq!(found[1].poster, None);
+        let many: Vec<Record> = (0..20)
+            .map(|id| Record {
+                media_type: Some("movie".to_string()),
+                ..record(id, "Dune", "2021-01-01")
+            })
+            .collect();
+        assert_eq!(matches("dune", &many).len(), MATCHES);
     }
 }

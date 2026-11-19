@@ -1,6 +1,7 @@
 import json
 import sys
 import threading
+from urllib.parse import parse_qs, urlsplit
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 SHOW = int(sys.argv[1])
@@ -53,8 +54,21 @@ WHICH = {
     "season": None,
     "episode": None,
 }
+MATCHES = [
+    {"kind": "show", "tmdb": SHOW, "title": "Testserie", "year": 2020, "poster": None, "season": None, "owned": True},
+    {"kind": "movie", "tmdb": SHOW + 1, "title": "Testserie", "year": 2001, "poster": None, "season": None, "owned": False},
+]
+SEASONS = {
+    **WHICH,
+    "id": "seasons",
+    "text": "Which season of Testserie?",
+    "options": [
+        {"kind": "show", "tmdb": SHOW, "label": "Season 2", "season": 2},
+        {"kind": "show", "tmdb": SHOW, "label": "Season 4", "season": 4},
+    ],
+}
 PICKED = {**PROPOSAL, "id": "season-4", "asked": "Testserie", "label": "Testserie season 4"}
-state = {"searched": False, "confirmed": False, "typed": False, "which": False, "picked": False}
+state = {"searched": False, "confirmed": False, "typed": False, "which": False, "picked": False, "seasons": False}
 
 
 class Downloads(BaseHTTPRequestHandler):
@@ -67,14 +81,19 @@ class Downloads(BaseHTTPRequestHandler):
         self.wfile.write(data)
 
     def do_GET(self):
+        url = urlsplit(self.path)
         with lock:
-            if self.path == f"/api/downloads/shows/{SHOW}/missing":
+            if url.path == "/api/downloads/suggest":
+                text = parse_qs(url.query).get("text", [""])[0]
+                self.reply(MATCHES if text == "Testserie" else [])
+            elif self.path == f"/api/downloads/shows/{SHOW}/missing":
                 self.reply([{"number": 2, "downloading": state["confirmed"]}, {"number": 3, "downloading": True}])
             elif self.path == "/api/downloads":
                 proposals = [PROPOSAL] if state["searched"] and not state["confirmed"] else []
                 proposals += [TYPED] if state["typed"] else []
                 proposals += [WHICH] if state["which"] else []
                 proposals += [PICKED] if state["picked"] else []
+                proposals += [SEASONS] if state["seasons"] else []
                 jobs = [JOB] if state["confirmed"] else []
                 self.reply({"proposals": proposals, "jobs": jobs, "room": 0, "quota": 0, "free": None})
             else:
@@ -89,6 +108,9 @@ class Downloads(BaseHTTPRequestHandler):
             elif self.path == "/api/downloads/search" and body == {"text": "Testserie", "from": "web"}:
                 state["which"] = True
                 self.reply(WHICH)
+            elif self.path == "/api/downloads/search" and body == {"text": "Testserie", "from": "web", "pick": {"kind": "show", "tmdb": SHOW, "season": None, "episode": None}}:
+                state["seasons"] = True
+                self.reply(SEASONS)
             elif self.path == "/api/downloads/search" and body.get("pick") == {"kind": "show", "tmdb": SHOW, "season": 4, "episode": None}:
                 state["picked"] = True
                 self.reply(PICKED)

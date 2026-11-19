@@ -16,6 +16,10 @@ use topcoat::view::{View, attributes, component, emit, live, view};
 const REFRESH: Duration = Duration::from_secs(2);
 const MISSING_WAIT: Duration = Duration::from_secs(3);
 const LONGEST_REQUEST: usize = 200;
+const SHORTEST_MATCHED: usize = 2;
+const MATCH_PAUSE: Duration = Duration::from_millis(300);
+const MATCH_WAIT: Duration = Duration::from_secs(5);
+const POSTERS: &str = "https://image.tmdb.org/t/p/w154";
 
 #[derive(Clone)]
 pub struct Downloads {
@@ -35,6 +39,41 @@ pub struct Candidate {
 impl Candidate {
     fn key(&self) -> String {
         format!("{}-{}-{}", self.kind, self.tmdb, self.season.unwrap_or(0))
+    }
+}
+
+#[derive(Clone, Debug, Deserialize)]
+pub struct Suggestion {
+    pub kind: String,
+    pub tmdb: u64,
+    pub title: String,
+    pub year: Option<u16>,
+    pub poster: Option<String>,
+    pub season: Option<u32>,
+    pub owned: bool,
+}
+
+impl Suggestion {
+    fn key(&self) -> String {
+        format!("{}-{}", self.kind, self.tmdb)
+    }
+
+    fn facts(&self) -> String {
+        let what = if self.kind == "show" { "Series" } else { "Film" };
+        let mut facts = vec![what.to_string()];
+        facts.extend(self.year.map(|year| year.to_string()));
+        facts.extend(self.season.map(|season| format!("season {season}")));
+        if self.owned {
+            facts.push("in the library".to_string());
+        }
+        facts.join(" · ")
+    }
+
+    fn poster(&self) -> Option<String> {
+        self.poster
+            .as_deref()
+            .filter(|path| path.starts_with('/') && !path.contains(".."))
+            .map(|path| format!("{POSTERS}{path}"))
     }
 }
 
@@ -238,6 +277,23 @@ impl Downloads {
             .map_err(|_| "The download service is not reachable".to_string())?;
         if !response.status().is_success() {
             return Err(format!("The download service answered {}", response.status()));
+        }
+        response.json().await.map_err(|error| error.to_string())
+    }
+
+    async fn suggest(&self, text: &str) -> std::result::Result<Vec<Suggestion>, String> {
+        let mut url =
+            reqwest::Url::parse(&format!("{}/api/downloads/suggest", self.base)).map_err(|error| error.to_string())?;
+        url.query_pairs_mut().append_pair("text", text);
+        let response = self
+            .client
+            .get(url)
+            .timeout(MATCH_WAIT)
+            .send()
+            .await
+            .map_err(|_| "The download service is not reachable".to_string())?;
+        if !response.status().is_success() {
+            return Err(format!("TMDB did not answer ({})", response.status()));
         }
         response.json().await.map_err(|error| error.to_string())
     }
@@ -510,6 +566,54 @@ pub async fn proposal_view(cx: &Cx, id: String, shown: Signal<String>) -> Result
     })
 }
 
+#[shard]
+pub async fn title_matches(cx: &Cx, text: String, shown: Signal<String>, busy: Signal<bool>) -> Result<impl View> {
+    let text: String = text.trim().chars().take(LONGEST_REQUEST).collect();
+    let found = if text.chars().count() < SHORTEST_MATCHED {
+        Ok(Vec::new())
+    } else {
+        tokio::time::sleep(MATCH_PAUSE).await;
+        downloads(cx)?.suggest(&text).await
+    };
+    Ok(view! {
+        match found {
+            Err(error) => <p class="setting-note">(error)</p>,
+            Ok(found) => {
+                if !found.is_empty() {
+                    <ul class="download-matches">
+                        #[key(found.key())]
+                        for found in &found {
+                            let kind = found.kind.clone();
+                            let tmdb = found.tmdb;
+                            let season = found.season.map_or(0, i64::from);
+                            let whole_season: i64 = 0;
+                            let asked = found.title.clone();
+                            <li>
+                                <button type="button" class="download-match" :disabled=$(busy.get()) @click=$(async |_e| {
+                                    busy.set(true);
+                                    let id = pick(kind.to_owned(), tmdb, season, whole_season, asked.to_owned()).await;
+                                    shown.set(id);
+                                    busy.set(false);
+                                })>
+                                    <span class="art poster" style=(crate::pages::tint(&found.title))>
+                                        if let Some(poster) = found.poster() {
+                                            <img src=(poster) alt="" loading="lazy" decoding="async" onerror="this.remove()">
+                                        }
+                                    </span>
+                                    <span class="download-match-text">
+                                        <b>(found.title.as_str())</b>
+                                        <span>(found.facts())</span>
+                                    </span>
+                                </button>
+                            </li>
+                        }
+                    </ul>
+                }
+            },
+        }
+    })
+}
+
 #[component]
 pub async fn season_downloads(cx: &Cx, show: u64, title: &str) -> Result<impl View> {
     let missing = if crate::auth::downloads(cx) {
@@ -556,7 +660,10 @@ pub async fn search_download(cx: &Cx, query: Signal<String>) -> Result<impl View
         if crate::auth::downloads(cx) {
             <section class="settings search-download" :hidden=$(query.get().trim().is_empty())>
                 <h2>"Not in the library?"</h2>
-                <p class="setting-note">"Download it: type the full title, spelled as it is called, like “Taskmaster”, “Dark season 2” or “Dune 2021”. When several titles or seasons fit, pick one."</p>
+                title_matches(text: $(query.get()), shown: shown.clone(), busy: busy.clone())
+                <p class="setting-note" :hidden=$(!busy.get())>"Searching the indexers…"</p>
+                proposal_view(id: $(shown.get()), shown: shown.clone())
+                <p class="setting-note">"Tap a match to download it, or type the full title, like “Dark season 2”, and tap Download."</p>
                 <div class="search-download-actions">
                     <button type="button" class="pill" :disabled=$(busy.get()) @click=$(async |_e| {
                         busy.set(true);
@@ -566,8 +673,6 @@ pub async fn search_download(cx: &Cx, query: Signal<String>) -> Result<impl View
                     })>"Download “" $(query.get().trim().to_owned()) "”"</button>
                     link(href: "/downloads", attrs: attributes! { cx => class="pill quiet" }, "All downloads")
                 </div>
-                <p class="setting-note" :hidden=$(!busy.get())>"Searching TMDB and the indexers…"</p>
-                proposal_view(id: $(shown.get()), shown: shown.clone())
             </section>
         }
     })
@@ -630,6 +735,7 @@ async fn downloads_page(cx: &Cx) -> Result<impl View> {
                 >
                 <button type="submit" class="storage-button" :disabled=$(busy.get())>"Find"</button>
             </form>
+            title_matches(text: $(text.get()), shown: shown.clone(), busy: busy.clone())
             <p class="setting-note" :hidden=$(!busy.get())>"Searching TMDB and the indexers…"</p>
             proposal_view(id: $(shown.get()), shown: shown.clone())
             waiting(shown: shown)
@@ -647,6 +753,22 @@ mod tests {
             "id": "1", "label": "Up", "stage": stage, "message": "", "log": [],
             "parts": [{ "phase": "downloading", "progress": 50, "total": 100, "uploaded": 0, "speed": 0.0, "peers": null }]
         }))
+    }
+
+    #[test]
+    fn a_title_match_reads_as_kind_year_season_and_whether_the_library_has_it() {
+        let read = |value: Value| serde_json::from_value::<Suggestion>(value).unwrap();
+        let show = read(
+            json!({ "kind": "show", "tmdb": 3, "title": "Would I Lie to You?", "year": 2007,
+            "poster": "/uk.jpg", "season": 2, "owned": false }),
+        );
+        assert_eq!(show.facts(), "Series · 2007 · season 2");
+        assert_eq!(show.poster().as_deref(), Some("https://image.tmdb.org/t/p/w154/uk.jpg"));
+        let film = read(json!({ "kind": "movie", "tmdb": 4, "title": "Dune", "year": null,
+            "poster": "/../x.jpg", "season": null, "owned": true }));
+        assert_eq!(film.facts(), "Film · in the library");
+        assert_eq!(film.poster(), None);
+        assert_ne!(show.key(), film.key());
     }
 
     #[test]
