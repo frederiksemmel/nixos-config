@@ -582,16 +582,19 @@ filters by status. The Feedback page shows the statuses and threads, filters
 by status, and has a comment box and a status editor under each report.
 
 Beast triages New and Reopened reports on its own. The
-`semmeltv-feedback-watch` user timer asks both TVs every two minutes. When a
-report is New or Reopened, it starts
-`semmeltv-feedback-triage`, a headless Claude run whose prompt is
-`home/hosts/beast-semmeltv/prompt.md`. The run builds and deploys what a report
-clearly asks for, new features included, and marks Needs review only what is
-unclear or off limits. For a reopened report, the person's newest
-comments are its instruction, such as the option to build. Every run answers
-in the thread. Runs start fresh but share one memory note,
-`project_semmeltv_triage_lessons.md`: each adds what it learned and tidies the
-note so it stays short. By hand, from beast:
+`semmeltv-feedback-watch` user timer asks both TVs every two minutes. For each
+New or Reopened report it starts one background Claude session,
+`feedback-<id>`, in its own worktree, at most four at a time; they show in the
+Claude app and in `beast`. The prompt is `home/hosts/beast-semmeltv/prompt.md`
+with the report and its thread appended. Each session builds what its report
+asks for, new features included, takes the option it would recommend instead
+of asking, lands on main and deploys by itself, and ends with `session-end`.
+Needs review is left for what stays unclear or is off limits. For a reopened
+report, the person's newest comments are its instruction, such as the option
+to build. Every session answers in the thread and appends what it learned to
+one shared memory note, `project_semmeltv_triage_lessons.md`.
+`semmeltv-deploy` always deploys the newest origin/main, so sessions deploying
+one after another never roll back each other's work. By hand, from beast:
 
     semmeltv-feedback semmeltv5 list new
     semmeltv-feedback semmeltv5 show <id> | jq '.message, .client.trail[-40:], .tv.problems'
@@ -602,7 +605,8 @@ note so it stays short. By hand, from beast:
     semmeltv-feedback semmeltv5 mark <id> needs-review "why" "what to decide"
     semmeltv-feedback semmeltv5 mark <id> needs-review "why" "what to decide" \
       --ask "Which way?" --recommend "the first" --option "the second"
-    journalctl --user -u semmeltv-feedback-watch -u semmeltv-feedback-triage
+    journalctl --user -u semmeltv-feedback-watch
+    claude agents --json | jq '.[] | select(.name | startswith("feedback-"))'
 
 The same works for `semmeltv3`. A report's `tv.problems` lists what the TV
 couldn't collect, such as a journal it couldn't read.

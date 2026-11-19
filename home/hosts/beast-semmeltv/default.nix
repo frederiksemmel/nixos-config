@@ -1,5 +1,4 @@
 {
-  config,
   lib,
   pkgs,
   ...
@@ -38,24 +37,17 @@ let
       pkgs.gnugrep
       pkgs.jq
     ];
+    excludeShellChecks = [ "SC2016" ];
     text = builtins.readFile ./watch.sh;
   };
 
   triageSettings = pkgs.writers.writeJSON "semmeltv-triage-settings.json" {
     autoMode.allow = [
       "$defaults"
-      "SemmelTV downloads: a SemmelTV feedback triage run running `semmeltv get search`, `semmeltv get fetch` or `semmeltv get jobs` on semmeltv5 or semmeltv3 over ssh, as the semmeltv-get skill shows (sudo -u semmeltv with the semmeltv-downloads service's environment), to download a film or series a report asks for. Frederik asked these runs to start such downloads themselves."
+      "SemmelTV downloads: a SemmelTV feedback session running `semmeltv get search`, `semmeltv get fetch` or `semmeltv get jobs` on semmeltv5 or semmeltv3 over ssh, as the semmeltv-get skill shows (sudo -u semmeltv with the semmeltv-downloads service's environment), to download a film or series a report asks for. Frederik asked these sessions to start such downloads themselves."
     ];
   };
 
-  triage = pkgs.writeShellApplication {
-    name = "semmeltv-feedback-triage";
-    runtimeInputs = [
-      pkgs.coreutils
-      pkgs.gawk
-    ];
-    text = builtins.readFile ./triage.sh;
-  };
 in
 {
   home.packages = [
@@ -64,11 +56,15 @@ in
   ];
 
   systemd.user.services.semmeltv-feedback-watch = {
-    Unit.Description = "Starts a SemmelTV feedback triage run when a TV holds New reports";
+    Unit.Description = "Starts a Claude session for each New or Reopened SemmelTV report";
     Service = {
       Type = "oneshot";
       ExecStart = lib.getExe watch;
-      Environment = [ path ];
+      Environment = [
+        path
+        "PROMPT=${./prompt.md}"
+        "SETTINGS=${triageSettings}"
+      ];
     };
   };
 
@@ -79,23 +75,5 @@ in
       OnUnitInactiveSec = "2min";
     };
     Install.WantedBy = [ "timers.target" ];
-  };
-
-  systemd.user.services.semmeltv-feedback-triage = {
-    Unit = {
-      Description = "Triages New SemmelTV feedback with a headless Claude run";
-      X-SwitchMethod = "keep-old";
-    };
-    Service = {
-      Type = "exec";
-      ExecStart = lib.getExe triage;
-      Environment = [
-        path
-        "CLAUDE=${lib.getExe config.programs.claude-code.finalPackage}"
-        "PROMPT=${./prompt.md}"
-        "SETTINGS=${triageSettings}"
-      ];
-      RuntimeMaxSec = "3h";
-    };
   };
 }
