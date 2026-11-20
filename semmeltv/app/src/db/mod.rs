@@ -2,6 +2,7 @@ mod auth;
 mod index;
 mod models;
 mod progress;
+mod push;
 mod together;
 mod usage;
 
@@ -10,6 +11,7 @@ use crate::profile::ProfileId;
 use crate::subtitles::{self, Remembered};
 use index::{Index, Video};
 use models::{AudioPrefs as StoredAudioPrefs, Setting as StoredSetting, SubtitleSettings, VideoFact};
+pub use push::Subscription;
 use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};

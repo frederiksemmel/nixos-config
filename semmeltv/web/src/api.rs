@@ -421,6 +421,8 @@ pub struct Show {
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct Together {
     #[serde(default)]
+    pub me: i64,
+    #[serde(default)]
     pub partners: Vec<Partner>,
     #[serde(default)]
     pub others: Vec<Companion>,

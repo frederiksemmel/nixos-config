@@ -7,6 +7,7 @@ mod downloads;
 mod feedback;
 mod layout;
 mod live;
+mod notify;
 mod pages;
 mod playing;
 mod public;

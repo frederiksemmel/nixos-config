@@ -54,6 +54,7 @@ pub fn admin(cx: &Cx) -> Result<()> {
 
 fn open(path: &str) -> bool {
     path == "/manifest.webmanifest"
+        || path == "/sw.js"
         || OPEN.iter().any(|open| {
             if open.ends_with('/') {
                 path.starts_with(open)
@@ -544,6 +545,8 @@ mod tests {
             ("/invite/abc", "open"),
             ("/_topcoat/assets/style.css", "open"),
             ("/manifest.webmanifest", "open"),
+            ("/sw.js", "open"),
+            ("/sw.jsx", "signed"),
             ("/", "signed"),
             ("/movies/dune", "signed"),
             ("/_topcoat/runtime/procedures/play", "signed"),

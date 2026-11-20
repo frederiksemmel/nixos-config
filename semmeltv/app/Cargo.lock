@@ -5295,6 +5295,7 @@ dependencies = [
  "libc",
  "rand 0.10.3",
  "regex",
+ "ring",
  "roxmltree",
  "rusqlite",
  "rustls",

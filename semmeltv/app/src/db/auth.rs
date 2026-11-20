@@ -207,6 +207,10 @@ impl Db {
                 .delete()
                 .exec(&mut transaction)
                 .await?;
+            models::PushSubscription::filter_by_profile_id(id.0)
+                .delete()
+                .exec(&mut transaction)
+                .await?;
             transaction.commit().await?;
             Ok::<_, toasty::Error>(true)
         };

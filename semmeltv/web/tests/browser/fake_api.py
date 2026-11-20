@@ -132,6 +132,10 @@ async def tv_profile(request):
 
 
 
+async def push_key(request):
+    return web.json_response({"key": "B" + "A" * 86})
+
+
 async def events(request):
     socket = web.WebSocketResponse()
     await socket.prepare(request)
@@ -392,6 +396,7 @@ app.router.add_get("/api/feedback", feedback)
 app.router.add_post("/api/feedback/{id}/status", mark_feedback)
 app.router.add_post("/api/feedback/{id}/comments", comment_feedback)
 app.router.add_get("/api/deploy", deploy_state)
+app.router.add_get("/api/push", push_key)
 app.router.add_post("/api/deploy", ask_deploy)
 app.router.add_post("/api/{tail:.*}", accepted)
 web.run_app(app, host="127.0.0.1", port=int(sys.argv[1]), print=None)

@@ -34,6 +34,7 @@ mod parse;
 mod player;
 mod profile;
 mod progress;
+mod push;
 mod ready;
 mod screen;
 mod seek;
@@ -310,6 +311,15 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
         led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
         headphones: env_text("SEMMELTV_HEADPHONES").is_some_and(|value| value == "bluetooth"),
         downloads: env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new),
+        push_subject: env_text("SEMMELTV_ORIGINS")
+            .and_then(|origins| {
+                origins
+                    .split(',')
+                    .map(str::trim)
+                    .find(|origin| !origin.is_empty())
+                    .map(str::to_string)
+            })
+            .unwrap_or_else(|| "https://semmeltv.ch".to_string()),
         ready: env_path("SEMMELTV_READY"),
     };
     let core = core::Core::start(setup).await;

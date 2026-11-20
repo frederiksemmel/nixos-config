@@ -24,6 +24,7 @@ const LIVE: Asset = asset!("./live.js");
 const FEEDBACK: Asset = asset!("./feedback.js");
 const SHARE: Asset = asset!("./share.js");
 const DRAFTS: Asset = asset!("./drafts.js");
+const NOTIFY: Asset = asset!("./notify.js");
 
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
@@ -66,6 +67,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     <script type="module" src=(PHONE)></script>
                     <script type="module" src=(FEEDBACK)></script>
                     <script type="module" src=(SHARE)></script>
+                    <script type="module" src=(NOTIFY)></script>
                 }
             </head>
             <body>

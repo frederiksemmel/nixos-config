@@ -130,11 +130,13 @@ the first admin or one who is locked out.
 | GET | `/api/search?q=TEXT` | `{ results }`: cards ranked by how well the title matches, prefixes first, typos forgiven; then titles whose director, creator, cast, character, original title, network or genre match, each with `because` (like `Director: Denis Villeneuve`) |
 | GET | `/api/movies/{key}` | a card plus `details`, `runtime_minutes`, `stopped_at`, `duration`, `tags`, `subtitles`, `about`, `last_played` and `last_played_label` |
 | GET | `/api/shows/{key}` | a card plus `next` (where playing carries on), `seasons` (each with `episodes`), `about`, `last_played`, `last_played_label` and `together` |
-| PUT | `/api/shows/{key}/together/{profile}` | watch the show together with that person, both ways: `{ message, ok }` |
-| DELETE | `/api/shows/{key}/together/{profile}` | stop watching it together, for both: `{ message, ok }` |
+| PUT | `/api/shows/{key}/together/{profile}` | joins your group and theirs into one, where everyone watches with everyone: `{ message, ok }` |
+| DELETE | `/api/shows/{key}/together/{profile}` | takes that person out of the group, for everyone; your own id leaves it: `{ message, ok }` |
 | POST | `/api/shows/{key}/together/{profile}/catch-up` | moves your place in the show to theirs: `{ message, ok }`, 422 when you don't watch it together or they haven't started |
 
-`together` is `{ partners, others }`. Each partner is `{ id, name, color,
+Watching together is a group per show, of any size: adding someone who
+already watches it with others brings them all in. `together` is `{ me,
+partners, others }`, `me` being your own id. Each partner is `{ id, name, color,
 spot, with_me }`: `spot` is `{ state: "not_started" | "finished" }` or
 `{ state: "at", season, episode, label, title, stopped_at, duration }`, where
 they carry on, and `with_me` is true when that is your place too (the same
@@ -494,6 +496,31 @@ played, most watched first; `days` counts the days they did any of that,
 `favourite` is the title they watched longest and `last_seen` a local time
 like "yesterday 20:15". `titles` are the 10 most watched, an episode counted
 under its series. `plays` are the newest 30, `when` like `last_seen`.
+
+## Notifications
+
+The TV sends Web Push notifications to the browsers people turn them on in
+(Settings → Notifications; on an iPhone, SemmelTV opened from the Home
+Screen). Each push is `{ title, body, url, tag }`; the web app's service worker
+`/sw.js` shows it and opens `url` when tapped.
+
+| Method | Path | Does |
+| --- | --- | --- |
+| GET | `/api/push` | `{ key }`: the TV's public VAPID key, base64url, to subscribe with |
+| POST | `/api/push/subscriptions` | keeps a browser's `PushSubscription.toJSON()` (`{ endpoint, keys: { p256dh, auth } }`) for you and sends "Notifications are on" to it; 400 unless `endpoint` is an https push service |
+| DELETE | `/api/push/subscriptions` | `{ endpoint }`: no more pushes to that browser |
+
+What is sent:
+- **Carries on**: when someone starts an episode of a show, on the TV or a
+  phone, everyone in their watch-together group for it hears "Mami carries on
+  with Dark", at most once in three hours per person and show.
+- **Added**: when the library gains a film or episodes that someone downloaded
+  in the last two days, every admin but that person hears "Mami added Arrival
+  (2016)" or "Mami added 3 episodes of Dark".
+
+The VAPID key is made on first use and kept as the `push_key` setting; a reset
+`semmeltv.db` makes a new one, and browsers subscribed to the old one are
+dropped the next time they open Settings.
 
 ## Event stream
 

@@ -897,6 +897,9 @@ fn first_letter(name: &str) -> String {
         .unwrap_or_default()
 }
 
+const TOGETHER_HINT: &str = "Everyone in the group sees here where the others are and can jump to their place. \
+    Adding someone adds them for the whole group. With notifications on (Settings), you hear when one of you carries on.";
+
 #[component]
 async fn watching_together(series: &str, title: &str, together: &Together) -> Result<impl View> {
     let base = format!("/api/shows/{series}/together");
@@ -930,6 +933,10 @@ async fn watching_together(series: &str, title: &str, together: &Together) -> Re
                         </li>
                     }
                 </ul>
+                if together.partners.len() > 1 && together.me != 0 {
+                    <button type="button" class="pill quiet together-quit" data-post=(format!("{base}/{}", together.me))
+                        data-method="DELETE" data-done="reload">"Leave the group"</button>
+                }
             }
             if !together.others.is_empty() {
                 <details class="together-add">
@@ -937,7 +944,7 @@ async fn watching_together(series: &str, title: &str, together: &Together) -> Re
                         people_icon()
                         (if alone { "Watch together" } else { "Add someone" })
                     </summary>
-                    <p class="together-hint">"You'll both see here where the other is, and either of you can jump to the other's place."</p>
+                    <p class="together-hint">(TOGETHER_HINT)</p>
                     <div class="together-people">
                         for other in &together.others {
                             <button type="button" class="chip" data-post=(format!("{base}/{}", other.id)) data-method="PUT"

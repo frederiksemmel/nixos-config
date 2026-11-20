@@ -205,6 +205,8 @@ fn router(api: Api) -> Router {
         .route("/api/shows/{key}/episodes/{season}/{episode}/still", get(still))
         .route("/api/shows/{key}/together/{partner}", put(join).delete(leave))
         .route("/api/shows/{key}/together/{partner}/catch-up", post(catch_up))
+        .route("/api/push", get(push_key))
+        .route("/api/push/subscriptions", post(subscribe).delete(unsubscribe))
         .route("/api/people/{person}/photo", get(photo))
         .route("/api/play", post(play))
         .route("/api/command", post(command))
@@ -827,6 +829,7 @@ struct PartnerView {
 
 #[derive(Serialize)]
 struct TogetherView {
+    me: i64,
     partners: Vec<PartnerView>,
     others: Vec<PersonView>,
 }
@@ -892,6 +895,7 @@ async fn together_view(core: &Core, profile: ProfileId, show: &Show, mine: &Prog
         .map(person)
         .collect();
     TogetherView {
+        me: profile.0,
         partners: views,
         others,
     }
@@ -903,7 +907,7 @@ async fn set_together(api: &Api, profile: ProfileId, key: &str, partner: i64, on
         return not_found(format!("no show {key}"));
     };
     let partner = ProfileId(partner);
-    if partner == profile {
+    if on && partner == profile {
         return problem(
             StatusCode::BAD_REQUEST,
             "You can't watch together with yourself".to_string(),
@@ -912,10 +916,24 @@ async fn set_together(api: &Api, profile: ProfileId, key: &str, partner: i64, on
     let Some(name) = api.core.profile_name(partner).await else {
         return not_found(format!("no profile {}", partner.0));
     };
+    let others = match api.core.db().partners(partner, &show.key).await {
+        Ok(others) => others.len(),
+        Err(error) => return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    };
     match api.core.db().set_together(profile, partner, &show.key, on).await {
+        Ok(true) if on && others > 0 => Json(Outcome::done(format!(
+            "{name} and the {others} watching {} with them are now in your group",
+            show.title
+        )))
+        .into_response(),
         Ok(true) if on => Json(Outcome::done(format!("You watch {} together with {name}", show.title))).into_response(),
+        Ok(true) if partner == profile => Json(Outcome::done(format!(
+            "You no longer watch {} together with the others",
+            show.title
+        )))
+        .into_response(),
         Ok(true) => Json(Outcome::done(format!(
-            "You no longer watch {} together with {name}",
+            "{name} no longer watches {} with your group",
             show.title
         )))
         .into_response(),
@@ -960,6 +978,80 @@ async fn catch_up(State(api): State<Api>, Who(profile): Who, Path((key, partner)
         by: profile,
     };
     ask(&api.core, request).await
+}
+
+#[derive(Deserialize)]
+struct PushKeys {
+    p256dh: String,
+    auth: String,
+}
+
+#[derive(Deserialize)]
+struct PushSubscribe {
+    endpoint: String,
+    keys: PushKeys,
+}
+
+#[derive(Deserialize)]
+struct PushUnsubscribe {
+    endpoint: String,
+}
+
+async fn push_key(State(api): State<Api>) -> Response {
+    match api.core.push().key().await {
+        Ok(key) => Json(serde_json::json!({ "key": key })).into_response(),
+        Err(error) => problem(StatusCode::SERVICE_UNAVAILABLE, error),
+    }
+}
+
+/// Apple's, Google's and Mozilla's push services, and none of the TV's
+/// neighbours: the TV posts to whatever address a browser subscribed with.
+fn push_service(endpoint: &str) -> bool {
+    url::Url::parse(endpoint).is_ok_and(|url| {
+        url.scheme() == "https"
+            && url.port().is_none()
+            && matches!(url.host(), Some(url::Host::Domain(host))
+                if host.contains('.') && !host.ends_with(".local") && !host.ends_with(".ts.net") && !host.ends_with(".semmeltv.ch"))
+    })
+}
+
+async fn subscribe(State(api): State<Api>, Who(profile): Who, Json(body): Json<PushSubscribe>) -> Response {
+    if !push_service(&body.endpoint) {
+        return problem(
+            StatusCode::BAD_REQUEST,
+            "That is not a push service's address".to_string(),
+        );
+    }
+    let subscription = crate::db::Subscription {
+        endpoint: body.endpoint,
+        p256dh: body.keys.p256dh,
+        auth: body.keys.auth,
+    };
+    if let Err(error) = api.core.db().subscribe(profile, &subscription, watching::now()).await {
+        return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+    }
+    let admin = matches!(api.core.db().profile(profile).await, Ok(Some(found)) if found.role == auth::Role::Admin);
+    let body = if admin {
+        "You'll hear here when someone you watch a series with carries on with it, and when someone adds to the library."
+    } else {
+        "You'll hear here when someone you watch a series with carries on with it."
+    };
+    let notice = crate::push::Notice {
+        title: "Notifications are on".to_string(),
+        body: body.to_string(),
+        url: "/settings".to_string(),
+        tag: "notifications-on".to_string(),
+    };
+    let push = api.core.push().clone();
+    tokio::spawn(async move { push.notify(profile, &notice).await });
+    Json(Outcome::done("Notifications are on for this device")).into_response()
+}
+
+async fn unsubscribe(State(api): State<Api>, Json(body): Json<PushUnsubscribe>) -> Response {
+    match api.core.db().unsubscribe(&body.endpoint).await {
+        Ok(()) => Json(Outcome::done("Notifications are off for this device")).into_response(),
+        Err(error) => problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    }
 }
 
 fn episode_view(core: &Core, show: &Show, episode: &Episode, progress: &Progress) -> EpisodeView {
@@ -2339,6 +2431,58 @@ mod tests {
         );
         assert_eq!(send(&server, "DELETE", "/api/shows/outlander/together/2").0, 200);
         assert_eq!(together(&server)["partners"], json!([]));
+    }
+
+    #[test]
+    fn a_phone_turns_notifications_on_and_off_and_hears_that_they_are_on() {
+        let server = serve(no_root(), None);
+        let (status, key) = get(&server, "/api/push");
+        assert_eq!(status, 200);
+        assert_eq!(key["key"].as_str().unwrap().len(), 87);
+        let phone = json!({
+            "endpoint": "https://web.push.apple.com/QGz8d3",
+            "keys": { "p256dh": "BKey", "auth": "secret" },
+        });
+        assert_eq!(
+            post(&server, "/api/push/subscriptions", phone),
+            (
+                200,
+                json!({ "message": "Notifications are on for this device", "ok": true })
+            )
+        );
+        let push = server.core.push().clone();
+        let mut sent = Vec::new();
+        for _ in 0..100 {
+            sent = push.sent();
+            if !sent.is_empty() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(sent[0].0, "https://web.push.apple.com/QGz8d3");
+        assert_eq!(sent[0].1.title, "Notifications are on");
+        assert!(sent[0].1.body.contains("adds to the library"));
+        for endpoint in [
+            "http://web.push.apple.com/x",
+            "https://127.0.0.1/x",
+            "https://localhost:8090/api",
+            "https://semmeltv5.semmeltv.ch/api/play",
+        ] {
+            let body = json!({ "endpoint": endpoint, "keys": { "p256dh": "B", "auth": "a" } });
+            assert_eq!(post(&server, "/api/push/subscriptions", body).0, 400, "{endpoint}");
+        }
+        let mut response = agent()
+            .delete(format!("{}/api/push/subscriptions", server.base))
+            .force_send_body()
+            .send_json(json!({ "endpoint": "https://web.push.apple.com/QGz8d3" }))
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 200);
+        assert_eq!(response.body_mut().read_json::<Value>().unwrap()["ok"], true);
+        let left = server
+            ._runtime
+            .block_on(server.core.db().subscriptions(ProfileId::FIRST))
+            .unwrap();
+        assert_eq!(left, []);
     }
 
     #[test]

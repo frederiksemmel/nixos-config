@@ -109,6 +109,8 @@ def home(page, engine, step):
 
 def headphones(page, engine):
     to_settings(page, engine, "pairing")
+    until(page, engine, "Notifications say how to turn them on here, with a button only where it works",
+          '(() => { const s = document.querySelector("main [data-notify=section]"); if (!s || !s.dataset.state) return false; const shown = !s.querySelector("[data-notify=toggle]").hidden; return shown === ["on", "off"].includes(s.dataset.state) && s.querySelector("[data-notify=detail]").textContent.length > 20; })()', 5000)
     pair = page.locator("main .headphones .pill:not(.quiet)")
     pair.tap()
     until(page, engine, "pairing says what to do with the headphones",

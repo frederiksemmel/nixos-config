@@ -216,6 +216,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                     Err(error) => <p class="setting-note">(error)</p>,
                 }
             </section>
+            crate::notify::notifications(admin: admin)
             if uses_headphones {
                 headphones_settings()
             }

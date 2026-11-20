@@ -454,6 +454,9 @@ impl Actor {
             self.publish_home();
             return;
         }
+        let added = crate::push::additions(&self.library, &library, watching::now());
+        let push = self.core.push().clone();
+        tokio::spawn(async move { push.added(added).await });
         let library = Arc::new(library);
         if self.db.set_library(&library) {
             self.core.forget_progress();
@@ -652,7 +655,16 @@ impl Actor {
         }
         progress.played(path, watching::now());
         self.keep(owner, progress).await;
+        self.tell_partners(owner, path);
         self.note_tv_play().await;
+    }
+
+    fn tell_partners(&self, player: ProfileId, path: &Path) {
+        let Some((show, episode)) = self.library.find_episode(path) else {
+            return;
+        };
+        let (push, show, episode) = (self.core.push().clone(), show.clone(), episode.clone());
+        tokio::spawn(async move { push.carried_on(player, &show, &episode, watching::now()).await });
     }
 
     async fn note_tv_play(&self) {
@@ -1203,6 +1215,9 @@ impl Actor {
         let file = report.file.as_path();
         let now = watching::now();
         let mut progress = (*self.progress_of(by).await).clone();
+        if report.moment == stream::Moment::Start {
+            self.tell_partners(by, file);
+        }
         if report.moment == stream::Moment::Start
             && let Some((show, episode)) = self.library.find_episode(file)
         {

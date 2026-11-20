@@ -16,6 +16,7 @@ use crate::offline::Store;
 use crate::player::Finish;
 use crate::profile::ProfileId;
 use crate::progress::Progress;
+use crate::push::Push;
 use crate::screen;
 use crate::seek::Direction;
 use crate::sidecar;
@@ -162,6 +163,7 @@ pub struct Setup {
     pub downloads: Option<Downloads>,
     pub ready: Option<PathBuf>,
     pub headphones: bool,
+    pub push_subject: String,
 }
 
 #[derive(Default)]
@@ -182,6 +184,7 @@ struct Parts {
     audio: Option<Audio>,
     downloads: Option<Downloads>,
     ready: Option<(PathBuf, PathBuf)>,
+    push: Push,
 }
 
 #[derive(Clone)]
@@ -212,6 +215,7 @@ impl Core {
             downloads,
             ready,
             headphones,
+            push_subject,
         } = setup;
         let saved = cache.saved_manifest();
         let library = match library::listed(&root, &saved)
@@ -266,6 +270,7 @@ impl Core {
             bus,
             published: Arc::default(),
             parts: Arc::new(Parts {
+                push: Push::new(db.clone(), push_subject),
                 db,
                 subtitles,
                 television,
@@ -315,6 +320,7 @@ impl Core {
             bus: Bus::default(),
             published: Arc::default(),
             parts: Arc::new(Parts {
+                push: Push::recorded(db.clone()),
                 subtitles: Subtitles::load(&db, ProfileId::FIRST).await,
                 db,
                 television: Television::new(tv::Settings {
@@ -435,6 +441,10 @@ impl Core {
 
     pub fn downloads(&self) -> Option<&Downloads> {
         self.parts.downloads.as_ref()
+    }
+
+    pub fn push(&self) -> &Push {
+        &self.parts.push
     }
 
     pub fn subtitle_count(&self, video: &Path) -> usize {

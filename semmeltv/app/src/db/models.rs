@@ -261,6 +261,21 @@ pub struct Together {
     pub partner_id: i64,
 }
 
+#[derive(Debug, toasty::Model)]
+#[table = "push_subscriptions"]
+pub struct PushSubscription {
+    #[key]
+    #[auto]
+    pub id: i64,
+    #[index]
+    pub profile_id: i64,
+    #[unique]
+    pub endpoint: String,
+    pub p256dh: String,
+    pub auth: String,
+    pub created_at: i64,
+}
+
 pub fn all() -> toasty::ModelSet {
     toasty::models!(
         Profile,
@@ -277,6 +292,7 @@ pub fn all() -> toasty::ModelSet {
         AudioPrefs,
         Setting,
         Usage,
-        Together
+        Together,
+        PushSubscription
     )
 }

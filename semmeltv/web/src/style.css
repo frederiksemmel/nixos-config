@@ -1763,6 +1763,7 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
   line-height: 1;
 }
 .together-same, .together-catch-up { grid-column: 2 / -1; justify-self: start; }
+.together-quit { justify-self: start; }
 .together-same { margin: 0; color: #5ad17e; font-size: 14px; }
 .together-add summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
 .together-add summary::-webkit-details-marker { display: none; }
