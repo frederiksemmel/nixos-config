@@ -36,6 +36,11 @@ them and back, and finding subtitles for a film:
 
     nix build .#checks.x86_64-linux.semmeltv-web-browser -L
 
+Playback of a real library file, HEVC included, with the TV's ffmpeg
+arguments and the player's own timeline code in Firefox, is the player
+harness in [../tests/player](../tests/player/README.md). It needs the file, so
+it runs by hand rather than as a check.
+
 `SEMMELTV_API_URL` is where the server reaches the API. Browsers load artwork
 and stream the microphone from `/api` on the page's own origin, which is how
 `tailscale serve` maps it on a TV. Without that mapping, as with `cargo run`,

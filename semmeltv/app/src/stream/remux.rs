@@ -13,6 +13,10 @@ use tokio::process::Command;
 use tokio::sync::Notify;
 
 const WAIT: Duration = Duration::from_secs(45);
+/// The media segments a stream has before it is handed to a player. hls.js
+/// reads an EVENT playlist again only a target duration (10 s on most files)
+/// after the first read, so it plays only what that first read listed.
+pub const READY_SEGMENTS: usize = 3;
 const POLL: Duration = Duration::from_millis(100);
 const NICENESS: i32 = 10;
 pub const PLAYLIST: &str = "video.m3u8";
@@ -143,8 +147,8 @@ pub fn servable(name: &str) -> bool {
 }
 
 impl Remux {
-    /// Starts ffmpeg and waits until the init segment and the first media
-    /// segment are on disk.
+    /// Starts ffmpeg and waits until the init segment and READY_SEGMENTS
+    /// media segments are on disk, or fewer when the file ends first.
     pub async fn start(dir: PathBuf, spec: Spec, at: f64) -> Result<Self, String> {
         tokio::fs::create_dir_all(&dir)
             .await
@@ -189,7 +193,8 @@ impl Remux {
         let deadline = Instant::now() + WAIT;
         loop {
             let listed = tokio::fs::read_to_string(dir.join(PLAYLIST)).await.unwrap_or_default();
-            if segments(&listed) > 0 {
+            let finished = *exit.lock().unwrap() == Some(true);
+            if segments(&listed) >= READY_SEGMENTS || (finished && segments(&listed) > 0) {
                 break;
             }
             let failed = *exit.lock().unwrap() == Some(false);

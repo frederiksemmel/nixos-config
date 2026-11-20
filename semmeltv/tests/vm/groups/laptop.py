@@ -139,12 +139,17 @@ with scenario("the laptop player shows its controls for the mouse and keyboard, 
 
 with scenario("Back after a reload folds the laptop's player into the bar, and stopping it stays on the film"):
     laptop = Phone(playwright, device=None, viewport={"width": 1280, "height": 800})
+    opens: list[str] = []
+    laptop.page.on("request", lambda request: opens.append(request.url) if request.method == "POST" and request.url.endswith("/api/stream/open") else None)
     film_page(laptop)
     switch_to(laptop, "phone")
     laptop.page.click("main button.play[data-play-movie]")
     laptop.until(PLAYS, 30000)
+    opens.clear()
     laptop.page.reload(wait_until="commit")
     laptop.until(PLAYS, 30000)
+    laptop.page.wait_for_timeout(3000)
+    assert len(opens) == 1, f"the reloaded page opened {len(opens)} streams"
     laptop.page.go_back()
     laptop.until('!!document.querySelector(".pp.pp-mini")', 3000)
     assert laptop.js("location.pathname") == f"/movies/{FILM}"
@@ -159,6 +164,38 @@ with scenario("Back after a reload folds the laptop's player into the bar, and s
     laptop.page.wait_for_timeout(1500)
     assert laptop.js("location.pathname") == f"/movies/{FILM}", laptop.js("location.pathname")
     laptop.close()
+
+with scenario("a laptop whose seek waits for its new stream keeps the screen, which follows the new stream"):
+    laptop = Phone(playwright, device=None, viewport={"width": 1280, "height": 800})
+    opens: list[str] = []
+    laptop.page.on("request", lambda request: opens.append(request.url) if request.method == "POST" and request.url.endswith("/api/stream/open") else None)
+    film_page(laptop)
+    switch_to(laptop, "phone")
+    laptop.page.click("main button.play[data-play-movie]")
+    laptop.until(PLAYS, 30000)
+    eventually("the TV knows the laptop plays", lambda: (screen(phone)["play"] or {}).get("state") == "playing")
+    first = screen(phone)["play"]["session"]
+    held: list[Any] = []
+    laptop.page.route("**/*.m4s", lambda route: held.append(route))
+    laptop.js('(() => { const scrub = document.querySelector(".pp-scrub"); scrub.value = "200"; scrub.dispatchEvent(new Event("change")); })()')
+    eventually("the seek opens the film again at 200 s", lambda: len(opens) == 2)
+    waited_until = time.monotonic() + QUIET_SECONDS + 10
+    while time.monotonic() < waited_until:
+        view = screen(phone)
+        assert view["kind"] == "phone" and view["device"]["name"] == "laptop" and view["play"], f"while the new stream loads the screen is {view}"
+        assert laptop.js('!document.querySelector(".pp-failed")'), "the laptop's player stays open"
+        time.sleep(2)
+    assert view["play"]["session"] != first, f"the screen still names the replaced stream: {view}"
+    laptop.page.unroute("**/*.m4s")
+    for route in held:
+        with contextlib.suppress(Exception):
+            route.continue_()
+    laptop.until(PLAYS, 30000)
+    assert phone_time(laptop) >= 195, phone_time(laptop)
+    assert len(opens) == 2, f"{len(opens)} opens for one play and one seek"
+    close_player(laptop)
+    laptop.close()
+    stop_everything(phone)
 
 with scenario("a laptop that goes quiet for a while loses the screen, keeps its place, and its next report takes it back"):
     laptop = Phone(playwright, device=None, viewport={"width": 1280, "height": 800})

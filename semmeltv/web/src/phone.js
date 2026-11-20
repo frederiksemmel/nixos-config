@@ -403,6 +403,10 @@ class Player {
     this.played = 0;
     this.lastTime = null;
     this.started = false;
+    // A stream that replaced a playing one while it loads: the play goes on,
+    // so the player keeps reporting it.
+    this.carrying = false;
+    this.opening = null;
     this.reportTimer = 0;
     this.hideTimer = 0;
     this.countdown = null;
@@ -566,14 +570,16 @@ class Player {
     video.addEventListener("error", () => { if (video.getAttribute("src")) this.trouble(video.error && video.error.message); });
 
     this.reportTimer = setInterval(() => {
-      if (this.started && !this.idling) this.report(video.paused ? "paused" : "playing");
+      if (this.opening || this.idling) return;
+      if (this.started) this.report(video.paused ? "paused" : "playing");
+      else if (this.carrying) this.report("playing");
     }, REPORT_EVERY);
     this.onHide = () => {
       if (document.visibilityState === "hidden" && this.started) this.report(video.paused ? "paused" : "playing", true);
     };
     document.addEventListener("visibilitychange", this.onHide);
     this.onLeave = () => {
-      if (!this.started) return;
+      if (!this.started && !this.carrying) return;
       this.report("stopped", true);
       try { sessionStorage.setItem(RESUME_KEY, JSON.stringify({ pick: this.pick, mini: this.mini, at: Date.now() })); } catch {}
     };
@@ -816,6 +822,7 @@ class Player {
     return this.session ? this.session.duration : 0;
   }
 
+  // timeline: begin
   // The place in the file. The stream starts at session.offset in the file,
   // where the video's own clock reads `base`.
   now() {
@@ -844,6 +851,7 @@ class Player {
     note(`seeks to ${clock(target)}, outside what the stream has, so it opens there`, `stream from ${clock(session.offset)} to ${clock(session.offset + end - this.base)}`);
     this.open(this.pickOf(session), { start: target, audio: session.audio_index ?? undefined });
   }
+  // timeline: end
 
   toggle() {
     if (this.video.paused) this.video.play().catch(() => {});
@@ -883,6 +891,7 @@ class Player {
     if (this.idling) return;
     this.idling = true;
     this.started = false;
+    this.carrying = false;
     this.pause();
     this.root.classList.remove("pp-loading");
     this.root.classList.add("pp-failed");
@@ -913,7 +922,15 @@ class Player {
     this.show(true);
   }
 
+  // Opens the stream of `pick`. A call for the same place while one is on
+  // the way is the same open and does nothing; any other call takes over, and
+  // the stream the earlier call gets is closed again.
   async open(pick, options = {}) {
+    const pending = this.opening;
+    if (pending && samePick(pending.pick, pick) && pending.audio === options.audio
+      && Math.abs((pending.start ?? 0) - (options.start ?? 0)) < 2) return;
+    const opening = { pick, start: options.start, audio: options.audio };
+    this.opening = opening;
     this.pick = pick;
     this.waiting = false;
     this.idling = false;
@@ -921,6 +938,7 @@ class Player {
     this.message.textContent = "";
     this.root.classList.remove("pp-failed");
     const replaces = this.session ? this.session.id : this.replacing;
+    const carrying = Boolean(replaces) && (this.started || this.carrying);
     this.replacing = null;
     const body = { ...pick, client: this.capabilities.client, device };
     if (options.start !== undefined) body.start = options.start;
@@ -930,6 +948,8 @@ class Player {
     try {
       session = await request("POST", "/api/stream/open", body);
     } catch (error) {
+      if (this.opening !== opening) return;
+      this.opening = null;
       if (transient(error) && !this.closed) {
         this.awaitTv(`opening the stream failed: ${error.message}`);
         return;
@@ -938,14 +958,16 @@ class Player {
       this.failed(error.message);
       return;
     }
-    if (this.closed) {
+    if (this.closed || this.opening !== opening) {
       request("DELETE", `/api/stream/${session.id}`).catch(() => {});
       return;
     }
+    this.opening = null;
     this.session = session;
     this.ready = false;
     this.played = 0;
     this.started = false;
+    this.carrying = carrying;
     this.lastTime = null;
     this.marks = { segments: [], credits: session.credits };
     this.cancelCountdown();
@@ -960,6 +982,7 @@ class Player {
     if (session.converted_audio) this.toast("The sound is converted to stereo for this browser");
   }
 
+  // timeline: begin
   load(session) {
     const video = this.video;
     const source = `${api}${session.playlist}`;
@@ -984,7 +1007,12 @@ class Player {
     }
     loadHls().then((Hls) => {
       if (this.closed || this.session !== session) return;
-      const hls = new Hls({ startPosition: Math.max(0, session.start - session.offset), maxBufferLength: 30, backBufferLength: 30 });
+      const hls = new Hls({
+        startPosition: Math.max(0, session.start - session.offset),
+        maxBufferLength: 30,
+        backBufferLength: 30,
+        fLoader: initTrimmingLoader(Hls),
+      });
       this.hls = hls;
       hls.on(Hls.Events.ERROR, (_, data) => { if (data.fatal && this.hls === hls) this.trouble(data.details); });
       video.addEventListener("loadedmetadata", begin, { once: true });
@@ -992,6 +1020,7 @@ class Player {
       hls.attachMedia(video);
     }).catch(() => this.failed("The player library didn't load"));
   }
+  // timeline: end
 
   // Stops loading the stream the video plays.
   detach() {
@@ -1177,6 +1206,7 @@ class Player {
     const finished = this.video.ended ? "ended" : "stopped";
     const next = { show: session.key, season: session.next.season, episode: session.next.episode };
     this.started = false;
+    this.carrying = false;
     this.pause();
     this.detach();
     this.session = null;
@@ -1192,6 +1222,7 @@ class Player {
     const session = this.session;
     if (!session) return;
     this.started = false;
+    this.carrying = false;
     if (session.next && this.countdownDismissed !== session.id) {
       this.playNext();
     } else {
@@ -1203,6 +1234,7 @@ class Player {
   begin() {
     if (this.started || !this.session) return Promise.resolve();
     this.started = true;
+    this.carrying = false;
     return this.report("start");
   }
 
@@ -1238,7 +1270,7 @@ class Player {
       }
     } catch (error) {
       const gone = error.status === 404 || transient(error);
-      if (gone && !keepalive && session === this.session && !this.closed) this.awaitTv(`progress: ${error.message}`);
+      if (gone && !keepalive && session === this.session && !this.closed && !this.opening) this.awaitTv(`progress: ${error.message}`);
     }
   }
 
@@ -1272,7 +1304,7 @@ class Player {
       this.awaiting = false;
       const before = boot;
       adopt(view);
-      if (this.closed || this.resuming || boot !== before) return;
+      if (this.closed || this.resuming || this.opening || boot !== before) return;
       if (this.session && ours(view) && view.play && !this.recover()) this.failed(why);
       return;
     }
@@ -1292,6 +1324,7 @@ class Player {
     this.resuming = true;
     this.session = null;
     this.started = false;
+    this.carrying = false;
     this.waiting = true;
     this.waitingSince = Date.now();
     note(`the TV app restarted; ${clock(position)} plays on here`, JSON.stringify(pick));
@@ -1420,7 +1453,7 @@ class Player {
     if (this.closed) return;
     this.closed = true;
     const session = this.session;
-    const reported = session && reportStop && this.started ? this.report(this.video.ended ? "ended" : "stopped", true) : Promise.resolve();
+    const reported = session && reportStop && (this.started || this.carrying) ? this.report(this.video.ended ? "ended" : "stopped", true) : Promise.resolve();
     const ending = session ? session.id : this.replacing;
     reported.finally(() => {
       if (reportStop) request("POST", "/api/screen", { action: "stop", device }, { keepalive: true }).catch(() => {});
@@ -1465,6 +1498,71 @@ function loadHls() {
   }
   return hlsLoading;
 }
+
+// timeline functions: begin
+// An hls.js fragment loader that passes each init segment through
+// trimEmptyEdits.
+function initTrimmingLoader(Hls) {
+  return class extends Hls.DefaultConfig.loader {
+    load(context, config, callbacks) {
+      if (context.frag?.sn === "initSegment") {
+        const { onSuccess } = callbacks;
+        callbacks = {
+          ...callbacks,
+          onSuccess: (response, ...rest) => {
+            if (response.data instanceof ArrayBuffer) trimEmptyEdits(new Uint8Array(response.data));
+            onSuccess(response, ...rest);
+          },
+        };
+      }
+      super.load(context, config, callbacks);
+    }
+  };
+}
+
+// A stream that opens in the middle of a file keeps the file's times: ffmpeg
+// writes them into the init segment as edit lists that start every track with
+// an empty edit, as long as the part of the file before the stream. Firefox
+// plays those edits and hls.js does not, so the two would place the video
+// minutes apart. This shortens each track's empty edit, in place, by the
+// part all tracks share, which starts the stream at 0 for both and keeps the
+// tracks' times relative to each other.
+function trimEmptyEdits(bytes) {
+  const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  const children = (start, end) => {
+    const found = [];
+    for (let at = start; at + 8 <= end;) {
+      const size = view.getUint32(at);
+      if (size < 8 || at + size > end) break;
+      found.push({ type: String.fromCharCode(...bytes.subarray(at + 4, at + 8)), body: at + 8, end: at + size });
+      at += size;
+    }
+    return found;
+  };
+  const moov = children(0, bytes.length).find((box) => box.type === "moov");
+  if (!moov) return;
+  const leads = [];
+  for (const trak of children(moov.body, moov.end).filter((box) => box.type === "trak")) {
+    const edts = children(trak.body, trak.end).find((box) => box.type === "edts");
+    const elst = edts && children(edts.body, edts.end).find((box) => box.type === "elst");
+    const wide = elst && bytes[elst.body] === 1;
+    const first = elst && view.getUint32(elst.body + 4) > 0 ? elst.body + 8 : null;
+    const empty = first !== null && (wide ? view.getBigInt64(first + 8) === -1n : view.getInt32(first + 4) === -1);
+    if (!empty) {
+      leads.push({ length: 0 });
+      continue;
+    }
+    const length = wide ? Number(view.getBigUint64(first)) : view.getUint32(first);
+    leads.push({ length, at: first, wide });
+  }
+  const shared = Math.min(...leads.map((lead) => lead.length));
+  if (!(shared > 0)) return;
+  for (const lead of leads) {
+    if (lead.wide) view.setBigUint64(lead.at, BigInt(lead.length - shared));
+    else view.setUint32(lead.at, lead.length - shared);
+  }
+}
+// timeline functions: end
 
 function openPlayer(pick, options = {}) {
   if (!player || player.closed) player = new Player();
