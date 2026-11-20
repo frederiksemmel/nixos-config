@@ -149,6 +149,32 @@ def bar_blur_grows_downwards(page, engine):
     check(engine, "and much more towards the bottom, fading in from the top", bottom["blur"] >= 3 * top["blur"] and "gradient" in bottom["mask"], str(bottom))
 
 
+WATCH_SCRUB = """(ms) => new Promise((done) => {
+    const scrub = document.querySelector(".scrub");
+    let batches = 0;
+    let fills = 0;
+    const watcher = new MutationObserver((records) => {
+        batches += 1;
+        if (records.some((record) => record.target.classList && record.target.classList.contains("scrub-fill"))) fills += 1;
+    });
+    watcher.observe(scrub, { subtree: true, attributes: true, childList: true, characterData: true });
+    setTimeout(() => { watcher.disconnect(); done({ batches, fills }); }, ms);
+})"""
+
+
+def scrub_rests_while_the_remote_is_shut(page, engine):
+    shut = page.evaluate(WATCH_SCRUB, 2000)
+    check(engine, "with the remote shut, its progress bar changes only when the TV reports, not every frame",
+          shut["batches"] < 30, f"{shut} in 2 s")
+    page.locator(".bar-open").tap()
+    until(page, engine, "the remote opens over Home", 'document.documentElement.hasAttribute("data-sheet")', 3000)
+    opened = page.evaluate(WATCH_SCRUB, 4500)
+    check(engine, "and with it open the bar glides between the TV's reports", opened["fills"] > 15, f"{opened} in 4.5 s")
+    page.locator(".sheet-close").tap()
+    until(page, engine, "the remote shuts again", '!document.documentElement.hasAttribute("data-sheet")', 3000)
+    page.wait_for_timeout(800)
+
+
 def selectable(page):
     return page.evaluate("(() => { const style = getComputedStyle(document.body); return style.userSelect || style.webkitUserSelect; })()")
 
@@ -357,6 +383,7 @@ def run(p, engine, device):
     page.route("**/api/**", forward)
     fake("/fake/forget-subtitles")
     sign_in(page, engine)
+    scrub_rests_while_the_remote_is_shut(page, engine)
     bar_blur_grows_downwards(page, engine)
     zoom_and_description(page, engine)
     text_selects_with_a_mouse_only(p, engine, page)

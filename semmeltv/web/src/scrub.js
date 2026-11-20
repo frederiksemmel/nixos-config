@@ -10,6 +10,7 @@ let base = null;
 let drag = null;
 let hover = null;
 let hold = null;
+let looping = false;
 
 function clock(seconds) {
   const total = Math.floor(Math.max(seconds, 0));
@@ -59,6 +60,10 @@ function fraction(scrub, x) {
 
 function set(element, property, value) {
   if (element && element[property] !== value) element[property] = value;
+}
+
+function attribute(element, name, value) {
+  if (element.getAttribute(name) !== value) element.setAttribute(name, value);
 }
 
 function style(element, property, percent) {
@@ -121,9 +126,30 @@ function render(now = performance.now()) {
     button.classList.toggle("skipped", amount !== "");
   }
 
-  scrub.setAttribute("aria-valuemax", String(Math.round(duration)));
-  scrub.setAttribute("aria-valuenow", String(Math.round(position)));
-  scrub.setAttribute("aria-valuetext", `${clock(position)} of ${clock(duration)}`);
+  attribute(scrub, "aria-valuemax", String(Math.round(duration)));
+  attribute(scrub, "aria-valuenow", String(Math.round(position)));
+  attribute(scrub, "aria-valuetext", `${clock(position)} of ${clock(duration)}`);
+}
+
+function gliding() {
+  const root = document.documentElement;
+  const open = root.hasAttribute("data-sheet") || root.hasAttribute("data-sheet-drag");
+  const moving = drag !== null || hold !== null || hover !== null || (base !== null && !base.paused && base.duration > 0);
+  return open && moving && rail !== null && rail.isConnected;
+}
+
+function frame(now) {
+  render(now);
+  looping = gliding();
+  if (looping) requestAnimationFrame(frame);
+}
+
+function update() {
+  render();
+  if (!looping && gliding()) {
+    looping = true;
+    requestAnimationFrame(frame);
+  }
 }
 
 function post(path, body) {
@@ -154,7 +180,7 @@ document.addEventListener("pointerdown", (event) => {
   event.preventDefault();
   scrub.setPointerCapture(event.pointerId);
   drag = { pointer: event.pointerId, fraction: fraction(scrub, event.clientX) };
-  render();
+  update();
 });
 
 document.addEventListener("pointermove", (event) => {
@@ -162,11 +188,11 @@ document.addEventListener("pointermove", (event) => {
   if (!scrub) return;
   if (drag && event.pointerId === drag.pointer) {
     drag.fraction = fraction(scrub, event.clientX);
-    render();
+    update();
   } else if (!drag && event.pointerType === "mouse") {
     const over = event.target.closest && event.target.closest(".scrub");
     hover = over && base && base.duration > 0 ? fraction(scrub, event.clientX) : null;
-    render();
+    update();
   }
 });
 
@@ -174,7 +200,7 @@ document.addEventListener("pointerout", (event) => {
   const into = event.relatedTarget;
   if (hover !== null && !(into && into.closest && into.closest(".scrub"))) {
     hover = null;
-    render();
+    update();
   }
 });
 
@@ -186,14 +212,14 @@ document.addEventListener("pointerup", (event) => {
   const to = drag.fraction * base.duration;
   drag = null;
   if (!away) seek(to);
-  render();
+  update();
 });
 
 for (const name of ["pointercancel", "lostpointercapture"]) {
   document.addEventListener(name, (event) => {
     if (drag && event.pointerId === drag.pointer) {
       drag = null;
-      render();
+      update();
     }
   });
 }
@@ -206,15 +232,11 @@ document.addEventListener("keydown", (event) => {
   post("/api/playback/skip", { direction }).catch(() => {});
 });
 
-new MutationObserver(() => render()).observe(document.documentElement, {
+new MutationObserver(update).observe(document.documentElement, {
   childList: true,
   subtree: true,
   attributes: true,
-  attributeFilter: ["data-position", "data-duration", "data-paused", "data-speed", "data-jump"],
+  attributeFilter: ["data-position", "data-duration", "data-paused", "data-speed", "data-jump", "data-sheet", "data-sheet-drag"],
 });
 
-function frame(now) {
-  render(now);
-  requestAnimationFrame(frame);
-}
-requestAnimationFrame(frame);
+update();
