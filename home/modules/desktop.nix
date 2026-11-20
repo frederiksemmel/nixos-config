@@ -79,6 +79,39 @@ let
     # Default is `false`.
     # inhibit_compositor_keyboard_shortcuts: true
   '';
+  # `which-key-search MENU.yaml` lists every command in a wlr-which-key menu,
+  # submenus included, in fuzzel by name and runs the one picked.
+  whichKeySearch = pkgs.writeShellApplication {
+    name = "which-key-search";
+    runtimeInputs = with pkgs; [
+      yq-go
+      jq
+      fuzzel
+      coreutils
+      gnused
+    ];
+    text = ''
+      entries=$(yq -o=json '.menu' "$1" | jq -r '
+        def entries($keys; $label):
+          to_entries[]
+          | select(.key != "/")
+          | ($keys + [.key]) as $k
+          | (if $label == "" then .value.desc else "\($label): \(.value.desc)" end) as $l
+          | if .value.submenu then .value.submenu | entries($k; $l)
+            elif .value.cmd then [$l, ($k | join(" ")), .value.cmd]
+            else empty end;
+        entries([]; "") | @tsv' | sort -f -t "$(printf '\t')" -k1,1)
+      width=$(cut -f1 <<<"$entries" | wc -L)
+      index=$(while IFS=$'\t' read -r label keys _; do
+        printf '%-*s   %s\n' "$width" "$label" "$keys"
+      done <<<"$entries" | fuzzel --dmenu --index --prompt "/ " --width $((width + 12))) || exit 0
+      cmd=$(sed -n "$((index + 1))p" <<<"$entries" | cut -f3-)
+      exec sh -c "$cmd"
+    '';
+  };
+  whichKeySearchEntry =
+    menu:
+    ''"/": { desc: Search, cmd: "${lib.getExe whichKeySearch} ${config.theme.dir}/current/${menu}" }'';
   wlsunsetToggle = pkgs.writeShellApplication {
     name = "wlsunset-toggle";
     runtimeInputs = with pkgs; [
@@ -919,6 +952,7 @@ in
     theme.files."which-key-power.yaml" = p: ''
       ${wlr-common-config p}
       menu:
+        ${whichKeySearchEntry "which-key-power.yaml"}
         "w":
           desc: Wifi Menu
           cmd: iwmenu -l fuzzel
@@ -1031,6 +1065,7 @@ in
     theme.files."which-key-opener.yaml" = p: ''
       ${wlr-common-config p}
       menu:
+        ${whichKeySearchEntry "which-key-opener.yaml"}
         "w":
           desc: Browser
           cmd: handlr launch text/html
