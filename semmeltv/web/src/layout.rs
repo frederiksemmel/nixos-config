@@ -22,6 +22,7 @@ const PHONE_STYLE: Asset = asset!("./phone.css");
 const AUTH: Asset = asset!("./auth.js");
 const LIVE: Asset = asset!("./live.js");
 const FEEDBACK: Asset = asset!("./feedback.js");
+const SHARE: Asset = asset!("./share.js");
 const DRAFTS: Asset = asset!("./drafts.js");
 
 #[layout("/")]
@@ -64,6 +65,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     <script type="module" src=(APP)></script>
                     <script type="module" src=(PHONE)></script>
                     <script type="module" src=(FEEDBACK)></script>
+                    <script type="module" src=(SHARE)></script>
                 }
             </head>
             <body>

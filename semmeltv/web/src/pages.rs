@@ -10,6 +10,7 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::error::not_found;
+use topcoat::router::request::uri;
 use topcoat::router::{page, path_param};
 use topcoat::runtime::{Event, Signal, link, procedure, shard, signal};
 use topcoat::view::{View, attributes, component, view};
@@ -753,12 +754,68 @@ async fn movie_mark(cx: &Cx, key: &str, finished: bool, said: Signal<String>) ->
     })
 }
 
+/// What a shared link says before the link itself: the title, its years
+/// and, for an episode, its short label and name.
+fn share_text(title: &str, years: Option<&str>, episode: Option<(&str, &str)>) -> String {
+    let title = match years {
+        Some(years) if episode.is_none() => format!("{title} ({years})"),
+        _ => title.to_string(),
+    };
+    match episode {
+        Some((short, name)) if name.is_empty() || name == short => {
+            format!("I'm watching {title}, {short}, on SemmelTV, check it out:")
+        }
+        Some((short, name)) => format!("I'm watching {title}, {short} “{name}”, on SemmelTV, check it out:"),
+        None => format!("I'm watching {title} on SemmelTV, check it out:"),
+    }
+}
+
+/// The series page opened on one episode's season, with that episode marked.
+fn episode_link(series: &str, season: u32, episode: u32) -> String {
+    format!("/shows/{series}?season={season}&episode={episode}")
+}
+
+/// The season and episode a shared link points at.
+fn shared_episode(query: Option<&str>) -> Option<(u32, u32)> {
+    let value = |name: &str| {
+        query?
+            .split('&')
+            .find_map(|pair| pair.strip_prefix(name)?.strip_prefix('='))?
+            .parse::<u32>()
+            .ok()
+    };
+    Some((value("season")?, value("episode")?))
+}
+
+#[component]
+async fn share_icon() -> Result<impl View> {
+    Ok(view! {
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 14.5V3.5"></path>
+            <path d="m8 7.5 4-4 4 4"></path>
+            <path d="M8.5 10.5h-2a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1v-8a1 1 0 0 0-1-1h-2"></path>
+        </svg>
+    })
+}
+
+#[component]
+async fn share_button(path: &str, text: &str) -> Result<impl View> {
+    Ok(view! {
+        <button type="button" class="pill quiet share" data-share=(path) data-share-text=(text)>
+            share_icon()
+            "Share"
+        </button>
+    })
+}
+
 #[component]
 async fn episode_row(
     cx: &Cx,
     public: &Public,
     series: &str,
+    title: &str,
     episode: &Episode,
+    shared: bool,
     said: Signal<String>,
 ) -> Result<impl View> {
     let show_key = series.to_string();
@@ -769,8 +826,10 @@ async fn episode_row(
     let seen = signal(cx, move || watched);
     let act = signal(cx, String::new);
     let label = episode.short_label.clone();
+    let share = episode_link(series, season_number, episode_number);
+    let share_text = share_text(title, None, Some((&episode.short_label, &episode.label)));
     Ok(view! {
-        <li class="episode-row">
+        <li class=(if shared { "episode-row shared" } else { "episode-row" })>
             <button type="button" class="episode" data-play-show=(series) data-season=(season_number.to_string())
                 data-episode=(episode_number.to_string()) @click=$(async |_e| {
                 let answer = play_episode(show_key.to_owned(), season_number, episode_number).await;
@@ -803,6 +862,10 @@ async fn episode_row(
                     said.set(answer.1);
                 })>
                 check_icon()
+            </button>
+            <button type="button" class="share-episode" aria-label=(format!("Share {label}"))
+                data-share=(share.as_str()) data-share-text=(share_text.as_str())>
+                share_icon()
             </button>
         </li>
     })
@@ -962,6 +1025,8 @@ async fn movie(cx: &Cx) -> Result<impl View> {
         rows.push(("File", file));
     }
     rows.extend(downloaded_by(&movie.downloaded_by));
+    let share = movie.card.href();
+    let share_line = share_text(&movie.card.title, movie.card.years.as_deref(), None);
     Ok(view! {
         <article class="title detail">
             back(href: "/")
@@ -995,6 +1060,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
                             <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
                             <div class="detail-more">
                                 movie_mark(key: key.as_str(), finished: movie.card.finished, said: said.clone())
+                                share_button(path: share.as_str(), text: share_line.as_str())
                                 if let Some(fetch) = &fetch {
                                     find_subtitles(label: "Find subtitles", body: fetch.as_str())
                                 }
@@ -1031,6 +1097,12 @@ async fn show(cx: &Cx) -> Result<impl View> {
         .map(|next| next.season)
         .or_else(|| show.seasons.first().map(|season| season.number))
         .unwrap_or(1);
+    let shared = shared_episode(uri(cx).query()).filter(|(season, episode)| {
+        show.seasons
+            .iter()
+            .any(|group| group.number == *season && group.episodes.iter().any(|row| row.episode == *episode))
+    });
+    let first = shared.map_or(first, |(season, _)| season);
     let season = signal(cx, move || first);
     let said = signal(cx, String::new);
     let resuming = show.next.as_ref().and_then(Next::fraction);
@@ -1115,6 +1187,8 @@ async fn show(cx: &Cx) -> Result<impl View> {
     if let Some(language) = about.language.clone().filter(|language| language != "English") {
         rows.push(("Language", language));
     }
+    let share = show.card.href();
+    let share_line = share_text(&show.card.title, None, None);
     Ok(view! {
         <article class="title detail">
             back(href: "/")
@@ -1152,9 +1226,12 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                 "Play on TV"
                             </button>
                             <p class="said" :hidden=$(said.get().is_empty())>$(said.get())</p>
-                            if let Some((label, fetch)) = &next_fetch {
-                                find_subtitles(label: label.as_str(), body: fetch.as_str())
-                            }
+                            <div class="detail-more">
+                                share_button(path: share.as_str(), text: share_line.as_str())
+                                if let Some((label, fetch)) = &next_fetch {
+                                    find_subtitles(label: label.as_str(), body: fetch.as_str())
+                                }
+                            </div>
                         </div>
                         watching_together(series: key.as_str(), title: show.card.title.as_str(), together: &show.together)
                         facts_list(rows: &rows)
@@ -1187,7 +1264,8 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                 <ol class="episodes" :hidden=$(season.get() != number)>
                                     #[key(episode.episode)]
                                     for episode in &group.episodes {
-                                        episode_row(public: &public, series: key.as_str(), episode: episode, said: said.clone())
+                                        episode_row(public: &public, series: key.as_str(), title: show.card.title.as_str(), episode: episode,
+                                            shared: shared == Some((number, episode.episode)), said: said.clone())
                                     }
                                 </ol>
                             }
@@ -1253,6 +1331,7 @@ async fn show(cx: &Cx) -> Result<impl View> {
 mod tests {
     use super::*;
     use serde_json::json;
+    use topcoat::view::ViewExt;
 
     #[test]
     fn the_details_say_who_downloaded_a_title_and_nothing_when_nobody_is_known() {
@@ -1269,6 +1348,78 @@ mod tests {
             downloaded_by(&["Frederik".to_string(), "Mami".to_string(), "Ramu".to_string()]),
             Some(("Downloaded by", "Frederik, Mami and Ramu".to_string()))
         );
+    }
+
+    #[test]
+    fn a_shared_link_names_the_title_and_the_episode() {
+        assert_eq!(
+            share_text("Alien", Some("1979"), None),
+            "I'm watching Alien (1979) on SemmelTV, check it out:"
+        );
+        assert_eq!(
+            share_text("Community", None, None),
+            "I'm watching Community on SemmelTV, check it out:"
+        );
+        assert_eq!(
+            share_text("Community", Some("2009–2015"), Some(("S2 E4", "Basic Rocket Science"))),
+            "I'm watching Community, S2 E4 “Basic Rocket Science”, on SemmelTV, check it out:"
+        );
+        assert_eq!(
+            share_text("Community", None, Some(("S2 E4", "S2 E4"))),
+            "I'm watching Community, S2 E4, on SemmelTV, check it out:"
+        );
+        assert_eq!(episode_link("community", 2, 4), "/shows/community?season=2&episode=4");
+    }
+
+    #[test]
+    fn a_shared_episode_link_opens_its_season() {
+        assert_eq!(shared_episode(Some("season=2&episode=4")), Some((2, 4)));
+        assert_eq!(shared_episode(Some("x=1&episode=4&season=2")), Some((2, 4)));
+        assert_eq!(shared_episode(Some("season=2")), None);
+        assert_eq!(shared_episode(Some("season=two&episode=4")), None);
+        assert_eq!(shared_episode(None), None);
+    }
+
+    #[component]
+    async fn community_row(cx: &Cx, shared: bool) -> Result<impl View> {
+        let episode: Episode = serde_json::from_value(json!({
+            "season": 2, "episode": 4, "label": "Basic Rocket Science", "short_label": "S2 E4",
+            "still": null, "band": null, "details": "",
+            "ratings": { "imdb": null, "rotten_tomatoes": null, "fresh": null, "popcorn": null, "full": null },
+        }))
+        .unwrap();
+        let public = Public {
+            api: "/api".to_string(),
+        };
+        let said = signal(cx, String::new);
+        Ok(view! {
+            episode_row(public: &public, series: "community", title: "Community", episode: &episode, shared: shared, said: said)
+        })
+    }
+
+    #[tokio::test]
+    async fn an_episode_row_has_a_share_button_and_stands_out_when_shared() {
+        let render = |shared: bool| async move {
+            let cx = &Cx::default();
+            view! { cx => community_row(shared: shared) }
+                .single()
+                .await
+                .unwrap()
+                .render(cx)
+        };
+        let plain = render(false).await;
+        assert!(
+            plain.contains(r#"data-share="/shows/community?season=2&amp;episode=4""#),
+            "{plain}"
+        );
+        assert!(
+            plain.contains("watching Community, S2 E4 “Basic Rocket Science”, on SemmelTV"),
+            "{plain}"
+        );
+        assert!(plain.contains(r#"aria-label="Share S2 E4""#), "{plain}");
+        assert!(!plain.contains("shared"), "{plain}");
+        let shared = render(true).await;
+        assert!(shared.contains(r#"class="episode-row shared""#), "{shared}");
     }
 
     #[test]

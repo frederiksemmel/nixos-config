@@ -325,6 +325,27 @@ def back_never_loops(page, engine):
     check(engine, "the browser's back skips the pages Back left", where not in ("/settings", "/feedback"), f"at {where}")
 
 
+def shares_a_title(page, engine):
+    page.evaluate("""() => {
+        window.shared = null;
+        Object.defineProperty(navigator, "share", { configurable: true, value: (data) => { window.shared = data; return Promise.resolve(); } });
+    }""")
+    page.locator("main .pill.share").tap()
+    until(page, engine, "Share hands the title and its link to the share sheet",
+          'window.shared && window.shared.text.startsWith("I\'m watching ") && window.shared.text.endsWith("\\n" + location.origin + location.pathname)', 3000)
+    page.evaluate('() => Object.defineProperty(navigator, "share", { configurable: true, value: undefined })')
+    page.locator("main .pill.share").tap()
+    until(page, engine, "without a share sheet Share copies the link",
+          '[...document.querySelectorAll(".toast")].some((toast) => /Link copied|Copy this link/.test(toast.textContent))', 3000)
+
+
+def opens_a_shared_episode(page, engine):
+    page.goto(BASE + "/shows/outlander?season=1&episode=2", wait_until="commit")
+    until(page, engine, "a shared episode link outlines that episode and only it",
+          'document.querySelectorAll("main .episode-row.shared").length === 1'
+          ' && document.querySelector("main .episode-row.shared .share-episode").dataset.share === "/shows/outlander?season=1&episode=2"')
+
+
 def run(p, engine, device):
     browser = getattr(p, engine).launch()
     page = browser.new_context(**p.devices[device]).new_page()
@@ -339,6 +360,7 @@ def run(p, engine, device):
     text_selects_with_a_mouse_only(p, engine, page)
     opens_title(page, engine)
     finds_subtitles(page, engine)
+    shares_a_title(page, engine)
     page.locator("main a.back").first.tap()
     until(page, engine, "Back returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
     page.wait_for_timeout(500)
@@ -349,6 +371,7 @@ def run(p, engine, device):
     deploys_from_the_feedback_page(page, engine)
     back_never_loops(page, engine)
     watches_together(page, engine)
+    opens_a_shared_episode(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
 

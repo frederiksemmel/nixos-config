@@ -737,7 +737,8 @@ main {
   z-index: 1;
 }
 
-.episode-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 4px; }
+.episode-row { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: 4px; }
+.episode-row.shared .episode { background: var(--raised); box-shadow: inset 0 0 0 1.5px rgba(245, 197, 24, 0.55); }
 .episode-row .episode { margin-right: 0; }
 
 .mark-seen {
@@ -753,6 +754,19 @@ main {
 .mark-seen svg { width: 20px; height: 20px; stroke-width: 2.6; }
 .mark-seen[aria-pressed="true"] { border-color: rgba(90, 209, 126, 0.55); color: #5ad17e; }
 .mark-seen:active { transform: scale(0.94); }
+
+.share-episode {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 44px;
+  color: var(--muted);
+}
+
+.share-episode svg { width: 19px; height: 19px; stroke-width: 2; }
+.share-episode:active { transform: scale(0.94); }
+.pill.share { display: inline-flex; align-items: center; gap: 6px; padding-left: 12px; }
+.pill.share svg { width: 17px; height: 17px; stroke-width: 2.2; }
 
 .mark-film { justify-self: start; display: inline-flex; align-items: center; gap: 6px; margin-top: 4px; padding-left: 12px; }
 .mark-film svg { width: 18px; height: 18px; stroke-width: 2.6; }
