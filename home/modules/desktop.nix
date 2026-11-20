@@ -474,8 +474,13 @@ let
       background: ${p.bgAlt};
     }
 
+    .workspaces .item.visible {
+      box-shadow: inset 0 -2px ${p.muted};
+    }
+
     .workspaces .item.focused {
       background: ${p.focus};
+      box-shadow: inset 0 -2px ${p.fg};
     }
 
     .workspaces .item.urgent {
