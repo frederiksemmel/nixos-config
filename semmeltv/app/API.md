@@ -519,6 +519,12 @@ What is sent:
 - **Added**: when the library gains a film or episodes that someone downloaded
   in the last two days, every admin but that person hears "Mami added Arrival
   (2016)" or "Mami added 3 episodes of Dark".
+- **Playing on the TV**: when the TV starts a film or episode, whoever it
+  plays for hears "Playing on the TV · Arrival (2016)", so it sits on the
+  phone's lock screen; its `url` ends in `#remote`, which opens the remote.
+  At most once in three hours per person and film or show, since iOS stacks
+  notices of the same tag rather than replacing them. A tap with SemmelTV
+  already open posts `"semmeltv:remote"` to that window instead of navigating.
 
 The VAPID key is made on first use and kept as the `push_key` setting; a reset
 `semmeltv.db` makes a new one, and browsers subscribed to the old one are

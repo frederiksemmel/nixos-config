@@ -175,6 +175,17 @@ def scrub_rests_while_the_remote_is_shut(page, engine):
     page.wait_for_timeout(800)
 
 
+def a_notification_tap_opens_the_remote(page, engine):
+    page.goto(BASE + "/settings#remote", wait_until="commit")
+    until(page, engine, "a notification's #remote link opens the page with the remote up",
+          'location.pathname === "/settings" && location.hash === "" && document.documentElement.hasAttribute("data-sheet")')
+    page.locator(".sheet-close").tap()
+    until(page, engine, "and it shuts like any other", '!document.documentElement.hasAttribute("data-sheet")', 3000)
+    page.goto(BASE + "/", wait_until="commit")
+    until(page, engine, "Home again after the notification", 'location.pathname === "/" && !!document.querySelector(".bar-open")')
+    page.wait_for_timeout(500)
+
+
 def selectable(page):
     return page.evaluate("(() => { const style = getComputedStyle(document.body); return style.userSelect || style.webkitUserSelect; })()")
 
@@ -432,6 +443,7 @@ def run(p, engine, device):
     back_never_loops(page, engine)
     watches_together(page, engine)
     opens_a_shared_episode(page, engine)
+    a_notification_tap_opens_the_remote(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
 

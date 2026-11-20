@@ -656,7 +656,13 @@ impl Actor {
         progress.played(path, watching::now());
         self.keep(owner, progress).await;
         self.tell_partners(owner, path);
+        self.tell_owner(owner, path);
         self.note_tv_play().await;
+    }
+
+    fn tell_owner(&self, owner: ProfileId, path: &Path) {
+        let (push, library, path) = (self.core.push().clone(), self.library.clone(), path.to_path_buf());
+        tokio::spawn(async move { push.playing_on_tv(owner, &library, &path, watching::now()).await });
     }
 
     fn tell_partners(&self, player: ProfileId, path: &Path) {

@@ -19,13 +19,15 @@ self.addEventListener("push", (event) => {
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).href;
+  const target = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin);
+  const url = target.href;
   event.waitUntil(
     (async () => {
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const client of windows) {
         if (new URL(client.url).origin !== self.location.origin) continue;
-        await client.focus();
+        const focused = await client.focus();
+        if (target.hash === "#remote") return (focused || client).postMessage("semmeltv:remote");
         if ("navigate" in client) return client.navigate(url);
         return;
       }

@@ -450,7 +450,22 @@ document.addEventListener("wheel", (event) => {
   }, WHEEL_IDLE);
 }, { passive: false });
 
+function openFromNotification() {
+  if (location.hash !== "#remote") return;
+  history.replaceState(history.state, "", location.pathname + location.search);
+  openSheet();
+}
+
+window.addEventListener("hashchange", openFromNotification);
+if (navigator.serviceWorker) {
+  navigator.serviceWorker.addEventListener("message", (event) => {
+    if (event.data === "semmeltv:remote") openSheet();
+  });
+  navigator.serviceWorker.startMessages();
+}
+
 markChoices();
+openFromNotification();
 window.semmeltvSheetReady = true;
 if (window.semmeltvSheetWanted) {
   window.semmeltvSheetWanted = false;

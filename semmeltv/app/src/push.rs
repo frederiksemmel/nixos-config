@@ -18,6 +18,7 @@ use ring::signature::{self, EcdsaKeyPair, KeyPair};
 use ring::{aead, agreement, hkdf};
 use serde::Serialize;
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::OnceCell;
@@ -28,6 +29,10 @@ const KEPT_BY_THE_PUSH_SERVICE: u64 = 12 * 60 * 60;
 /// Someone who carries on with a show again within this time, an episode
 /// later or after a pause, doesn't notify the others again.
 const QUIET_AFTER_CARRYING_ON: u64 = 3 * 60 * 60;
+/// The TV starting the same film or show again within this time, an episode
+/// later or after a stop, doesn't notify again: iOS stacks notices that share
+/// a tag instead of replacing them.
+const QUIET_ON_THE_TV: u64 = 3 * 60 * 60;
 /// Titles that come back after a glitch on the mount carry their old date.
 const NEW_FOR_DAYS: u64 = 2;
 
@@ -236,6 +241,7 @@ pub struct Push {
     vapid: Arc<OnceCell<Arc<Vapid>>>,
     courier: Courier,
     carried_on: Arc<Mutex<HashMap<(ProfileId, String), u64>>>,
+    on_tv: Arc<Mutex<HashMap<(ProfileId, String), u64>>>,
 }
 
 impl Push {
@@ -257,6 +263,7 @@ impl Push {
             vapid: Arc::default(),
             courier,
             carried_on: Arc::default(),
+            on_tv: Arc::default(),
         }
     }
 
@@ -357,13 +364,13 @@ impl Push {
             Ok(_) => return,
             Err(error) => return eprintln!("push: partners in {}: {error}", show.key),
         };
-        {
-            let mut carried_on = self.carried_on.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-            let last = carried_on.entry((player, show.key.clone())).or_insert(0);
-            if now < *last + QUIET_AFTER_CARRYING_ON {
-                return;
-            }
-            *last = now;
+        if quieted(
+            &self.carried_on,
+            (player, show.key.clone()),
+            now,
+            QUIET_AFTER_CARRYING_ON,
+        ) {
+            return;
         }
         let Ok(Some(name)) = self.db.profile(player).await.map(|found| found.map(|found| found.name)) else {
             return;
@@ -381,6 +388,19 @@ impl Push {
         for partner in partners {
             self.notify(partner, &notice).await;
         }
+    }
+
+    /// Tells `owner` that the TV plays `path` for them, so the phone's lock
+    /// screen shows it and a tap opens the remote; at most once in a few hours
+    /// per person and film or show.
+    pub async fn playing_on_tv(&self, owner: ProfileId, library: &Library, path: &Path, now: u64) {
+        let Some((key, notice)) = on_tv(library, path) else {
+            return;
+        };
+        if quieted(&self.on_tv, (owner, key), now, QUIET_ON_THE_TV) {
+            return;
+        }
+        self.notify(owner, &notice).await;
     }
 
     /// Tells each admin what someone else added to the library.
@@ -401,6 +421,44 @@ impl Push {
             }
         }
     }
+}
+
+/// Whether `key` was let through within `quiet` before `now`; if not, it is
+/// let through now.
+fn quieted(last: &Mutex<HashMap<(ProfileId, String), u64>>, key: (ProfileId, String), now: u64, quiet: u64) -> bool {
+    let mut last = last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let at = last.entry(key).or_insert(0);
+    if now < *at + quiet {
+        return true;
+    }
+    *at = now;
+    false
+}
+
+/// The film or show `path` belongs to, and what the TV playing it says on
+/// the lock screen.
+fn on_tv(library: &Library, path: &Path) -> Option<(String, Notice)> {
+    let (key, body, page) = if let Some((show, episode)) = library.find_episode(path) {
+        let body = match &episode.title {
+            Some(title) => format!("{} · {} · {title}", show.title, episode.short_label()),
+            None => format!("{} · {}", show.title, episode.short_label()),
+        };
+        (show.key.clone(), body, format!("/shows/{}", show.key))
+    } else {
+        let movie = library.movies.iter().find(|movie| movie.path == path)?;
+        let body = match movie.year {
+            Some(year) => format!("{} ({year})", movie.title),
+            None => movie.title.clone(),
+        };
+        (movie.key.clone(), body, format!("/movies/{}", movie.key))
+    };
+    let notice = Notice {
+        title: "Playing on the TV".to_string(),
+        body,
+        url: format!("{page}#remote"),
+        tag: format!("tv-{key}"),
+    };
+    Some((key, notice))
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -714,6 +772,57 @@ mod tests {
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].0, "https://push.example/frederik");
         assert_eq!(sent[0].1.body, "Mami added Arrival (2016)");
+    }
+
+    #[tokio::test]
+    async fn whoever_the_tv_plays_for_hears_it_once_per_title_with_a_tap_to_the_remote() {
+        let db = Db::memory().await;
+        let frederik = person(&db, "Frederik", Role::Admin).await;
+        let mami = person(&db, "Mami", Role::Viewer).await;
+        db.subscribe(frederik, &phone("frederik"), 1).await.unwrap();
+        db.subscribe(mami, &phone("mami"), 1).await.unwrap();
+        let library = library(&[
+            "Series/Dark/Dark.S01E01.mkv",
+            "Series/Dark/Dark.S01E02.mkv",
+            "Movies/Arrival (2016)/Arrival.2016.mkv",
+        ]);
+        let dark = &library.shows[0];
+        let first = dark.episodes().next().unwrap();
+        let second = dark.episodes().nth(1).unwrap();
+        let arrival = &library.movies[0];
+        let push = Push::recorded(db);
+
+        push.playing_on_tv(frederik, &library, &arrival.path, NOW).await;
+        assert_eq!(
+            push.sent(),
+            [(
+                "https://push.example/frederik".to_string(),
+                Notice {
+                    title: "Playing on the TV".to_string(),
+                    body: "Arrival (2016)".to_string(),
+                    url: "/movies/arrival-2016#remote".to_string(),
+                    tag: "tv-arrival-2016".to_string(),
+                }
+            )]
+        );
+
+        push.playing_on_tv(frederik, &library, &first.path, NOW + 60).await;
+        push.playing_on_tv(frederik, &library, &second.path, NOW + 3_000).await;
+        push.playing_on_tv(frederik, &library, &arrival.path, NOW + 4_000).await;
+        let sent = push.sent();
+        assert_eq!(sent.len(), 2);
+        assert_eq!(sent[1].1.body, format!("Dark · {}", first.short_label()));
+        assert_eq!(sent[1].1.url, "/shows/dark#remote");
+
+        push.playing_on_tv(mami, &library, &second.path, NOW + 4_000).await;
+        assert_eq!(push.sent()[2].0, "https://push.example/mami");
+
+        push.playing_on_tv(frederik, &library, &second.path, NOW + 60 + QUIET_ON_THE_TV)
+            .await;
+        assert_eq!(push.sent().len(), 4);
+        push.playing_on_tv(frederik, &library, Path::new("/elsewhere.mkv"), NOW)
+            .await;
+        assert_eq!(push.sent().len(), 4);
     }
 
     #[test]
