@@ -1,3 +1,4 @@
+use crate::details;
 use crate::library::Show;
 use crate::progress::{Progress, Viewing, Watched};
 use crate::watching::Kind;
@@ -31,6 +32,28 @@ impl Spot {
                     .filter(|at| *at > 0.0),
             },
             None => Self::Finished,
+        }
+    }
+
+    pub fn line(self, with_me: bool) -> String {
+        match self {
+            Self::NotStarted => "Hasn't started yet".to_string(),
+            Self::Finished => "Finished the series".to_string(),
+            Self::At { .. } if with_me => "At your place".to_string(),
+            Self::At {
+                season,
+                episode,
+                stopped_at,
+            } => {
+                let label = match season {
+                    0 => format!("Special {episode}"),
+                    season => format!("S{season} E{episode}"),
+                };
+                match stopped_at {
+                    Some(at) => format!("At {label} · {}", details::time_in(at)),
+                    None => format!("Up next {label}"),
+                }
+            }
         }
     }
 
@@ -138,6 +161,21 @@ mod tests {
         let last = (last.season, last.number);
         progress.shows.insert(show.key.clone(), at(last.0, last.1, true));
         assert_eq!(Spot::of(&progress, &show), Spot::Finished);
+    }
+
+    #[test]
+    fn a_spot_reads_as_the_episode_and_how_far_in() {
+        let at = |season, stopped_at| Spot::At {
+            season,
+            episode: 4,
+            stopped_at,
+        };
+        assert_eq!(at(2, Some(750.0)).line(false), "At S2 E4 · 12m in");
+        assert_eq!(at(0, Some(4000.0)).line(false), "At Special 4 · 1h 06m in");
+        assert_eq!(at(2, None).line(false), "Up next S2 E4");
+        assert_eq!(at(2, Some(750.0)).line(true), "At your place");
+        assert_eq!(Spot::NotStarted.line(false), "Hasn't started yet");
+        assert_eq!(Spot::Finished.line(false), "Finished the series");
     }
 
     #[test]

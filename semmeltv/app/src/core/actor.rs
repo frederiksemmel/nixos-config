@@ -1,7 +1,7 @@
 use super::tending::{self, Tended};
 use super::{Core, Input, Outcome, Request, ScreenCommand, ScreenKind, Seek, Signal, TV_PROFILE, sound};
 use crate::audio::{self, Audio};
-use crate::bus::{Home, NowPlaying, Panel, Playing, Skip, Voice as VoiceEvent};
+use crate::bus::{Home, Mate, NowPlaying, Panel, Playing, Skip, Together, Voice as VoiceEvent};
 use crate::card;
 use crate::command::Command;
 use crate::db::{self, Db};
@@ -889,6 +889,11 @@ impl Actor {
             Request::Dismiss(kind, key, by) => return self.dismiss(kind, &key, by).await,
             Request::Mark(kind, key, episode, mark, by) => return self.mark(kind, &key, episode, mark, by).await,
             Request::CatchUp { show, to, by } => return self.catch_up(&show, to, by).await,
+            Request::TogetherOnTv(show) => {
+                self.publish_together(&show).await;
+                return Outcome::done("");
+            }
+            Request::WatchWithOnTv { show, with } => return self.watch_with_on_tv(&show, with).await,
             Request::Phone(report) => return self.phone(report).await,
             Request::Screen(command, by) => {
                 if matches!(command, ScreenCommand::Flip { to: ScreenKind::Tv, .. }) {
@@ -990,6 +995,84 @@ impl Actor {
         };
         self.keep(by, mine).await;
         Outcome::done(format!("You're at {name}'s place now: {place}"))
+    }
+
+    async fn together_on_tv(&self, key: &str) -> Option<Together> {
+        let library = self.library.clone();
+        let show = library.shows.iter().find(|show| show.key == key)?;
+        let partners = self.db.partners(self.profile, key).await.unwrap_or_else(|error| {
+            eprintln!("together: partners of {} in {key}: {error}", self.profile.0);
+            Vec::new()
+        });
+        let profiles = self.db.profiles().await.unwrap_or_else(|error| {
+            eprintln!("together: profiles: {error}");
+            Vec::new()
+        });
+        let here = together::Spot::of(&self.progress, show);
+        let mut people = Vec::new();
+        for partner in &partners {
+            let Some(found) = profiles.iter().find(|found| found.id == *partner) else {
+                continue;
+            };
+            let spot = together::Spot::of(&*self.progress_of(*partner).await, show);
+            people.push(Mate {
+                id: *partner,
+                name: found.name.clone(),
+                line: spot.line(spot.same_as(here)),
+                paired: true,
+            });
+        }
+        let others = profiles
+            .iter()
+            .filter(|found| found.id != self.profile && !partners.contains(&found.id));
+        people.extend(others.map(|found| Mate {
+            id: found.id,
+            name: found.name.clone(),
+            line: "Watch together".to_string(),
+            paired: false,
+        }));
+        Some(Together {
+            show: key.to_string(),
+            people,
+        })
+    }
+
+    async fn publish_together(&self, key: &str) {
+        if let Some(together) = self.together_on_tv(key).await {
+            self.core.bus.together(together);
+        }
+    }
+
+    async fn watch_with_on_tv(&mut self, key: &str, with: ProfileId) -> Outcome {
+        let by = self.profile;
+        let paired = self
+            .db
+            .partners(by, key)
+            .await
+            .is_ok_and(|partners| partners.contains(&with));
+        let outcome = if paired {
+            self.catch_up(key, with, by).await
+        } else {
+            self.pair(key, with, by).await
+        };
+        self.show_message(outcome.message.clone());
+        self.publish_together(key).await;
+        outcome
+    }
+
+    async fn pair(&self, key: &str, with: ProfileId, by: ProfileId) -> Outcome {
+        let Some(show) = self.library.shows.iter().find(|show| show.key == key) else {
+            return Outcome::refused(format!("There is no {key} in the library"));
+        };
+        let name = self.core.profile_name(with).await.unwrap_or_else(|| "them".to_string());
+        match self.db.set_together(by, with, key, true).await {
+            Ok(true) => Outcome::done(format!("You watch {} together with {name}", show.title)),
+            Ok(false) => Outcome::refused(format!("You can't watch {} with {name}", show.title)),
+            Err(error) => {
+                eprintln!("together: {} with {}: {error}", by.0, with.0);
+                Outcome::refused("Watching together could not be saved")
+            }
+        }
     }
 
     fn place_of(&self, file: &Path, position: f64) -> Option<screen::Place> {
@@ -1870,6 +1953,79 @@ mod tests {
                 .and_then(|current| current.episode),
             Some((1, 2))
         );
+    }
+
+    async fn next_together(events: &mut tokio::sync::broadcast::Receiver<Event>) -> crate::bus::Together {
+        loop {
+            if let Event::Together(together) = events.recv().await.unwrap() {
+                return together;
+            }
+        }
+    }
+
+    fn people(together: &crate::bus::Together) -> Vec<(&str, &str, bool)> {
+        together
+            .people
+            .iter()
+            .map(|mate| (mate.name.as_str(), mate.line.as_str(), mate.paired))
+            .collect()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_tv_lists_who_to_watch_a_series_with_and_ok_pairs_then_moves_to_their_place() {
+        let core = core().await;
+        let mami = ProfileId(2);
+        let mut events = core.subscribe();
+        core.send(Request::TogetherOnTv("dark".to_string()));
+        let together = next_together(&mut events).await;
+        assert_eq!(together.show, "dark");
+        assert_eq!(
+            people(&together),
+            [
+                ("Mami", "Watch together", false),
+                ("Miriam", "Watch together", false),
+                ("Ramu", "Watch together", false)
+            ]
+        );
+        assert_eq!(together.people[0].id, mami);
+        let with_mami = || Request::WatchWithOnTv {
+            show: "dark".to_string(),
+            with: mami,
+        };
+        assert_eq!(
+            core.ask(with_mami()).await.unwrap(),
+            Outcome::done("You watch Dark together with Mami")
+        );
+        assert_eq!(core.db().partners(mami, "dark").await.unwrap(), [ProfileId::FIRST]);
+        let together = next_together(&mut events).await;
+        assert_eq!(people(&together)[0], ("Mami", "Hasn't started yet", true));
+        assert_eq!(people(&together).len(), 3);
+        assert_eq!(
+            core.ask(with_mami()).await.unwrap(),
+            Outcome::refused("Mami hasn't started Dark yet")
+        );
+        let mut theirs = Progress::default();
+        theirs.shows.insert(
+            "dark".to_string(),
+            Position {
+                season: 1,
+                episode: 2,
+                finished: false,
+            },
+        );
+        core.publish_progress(mami, theirs);
+        core.send(Request::TogetherOnTv("dark".to_string()));
+        let mut together = next_together(&mut events).await;
+        while together.people[0].line == "Hasn't started yet" {
+            together = next_together(&mut events).await;
+        }
+        assert_eq!(people(&together)[0], ("Mami", "Up next S1 E2", true));
+        assert_eq!(
+            core.ask(with_mami()).await.unwrap(),
+            Outcome::done("You're at Mami's place now: Dark · S1 E2")
+        );
+        let together = next_together(&mut events).await;
+        assert_eq!(people(&together)[0], ("Mami", "At your place", true));
     }
 
     #[tokio::test(flavor = "multi_thread")]

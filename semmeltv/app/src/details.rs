@@ -76,6 +76,10 @@ pub fn time_left(seconds: f64) -> String {
     format!("{} left", clock(minutes(seconds + 30.0).max(1)))
 }
 
+pub fn time_in(seconds: f64) -> String {
+    format!("{} in", clock(minutes(seconds).max(1)))
+}
+
 fn minutes(seconds: f64) -> u64 {
     seconds.max(0.0) as u64 / SECONDS_PER_MINUTE
 }

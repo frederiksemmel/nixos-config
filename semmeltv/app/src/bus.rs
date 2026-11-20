@@ -36,6 +36,8 @@ pub enum Event {
     Panel(Option<Panel>),
     #[serde(skip)]
     UpNext(Option<up_next::Card>),
+    #[serde(skip)]
+    Together(Together),
 }
 
 impl Event {
@@ -57,6 +59,22 @@ pub struct Home {
     pub downloaded: Arc<HashSet<PathBuf>>,
     pub downloading: Option<PathBuf>,
     pub problem: Option<String>,
+}
+
+/// Who the TV's profile can watch `show` with: partners first, with where
+/// they are, then everyone else.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Together {
+    pub show: String,
+    pub people: Vec<Mate>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Mate {
+    pub id: ProfileId,
+    pub name: String,
+    pub line: String,
+    pub paired: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -193,6 +211,10 @@ impl Bus {
 
     pub fn message(&self, text: String) {
         let _ = self.events.send(Event::Message(text));
+    }
+
+    pub fn together(&self, together: Together) {
+        let _ = self.events.send(Event::Together(together));
     }
 
     pub fn panel(&self, panel: Option<Panel>) {

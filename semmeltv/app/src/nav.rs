@@ -62,6 +62,7 @@ pub enum Effect {
     OpenShow,
     CloseShow,
     Play(PathBuf),
+    Together(usize),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,6 +79,13 @@ pub struct Watch {
     pub file: PathBuf,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct Together {
+    count: usize,
+    col: usize,
+    focused: bool,
+}
+
 pub struct Nav {
     library: Library,
     rows: Vec<HomeRow>,
@@ -86,6 +94,7 @@ pub struct Nav {
     home: Cursor,
     show: Option<(usize, Cursor)>,
     heat: Option<usize>,
+    together: Together,
     focus: Focus,
     profiles: usize,
     current: usize,
@@ -104,6 +113,7 @@ impl Nav {
             home,
             show: None,
             heat: None,
+            together: Together::default(),
             focus: Focus::Home,
             profiles: 0,
             current: 0,
@@ -187,8 +197,28 @@ impl Nav {
         self.heat
     }
 
+    pub fn together_focus(&self) -> Option<usize> {
+        self.together.focused.then_some(self.together.col)
+    }
+
+    pub fn set_together(&mut self, count: usize) {
+        let together = &mut self.together;
+        together.count = count;
+        together.col = together.col.min(count.saturating_sub(1));
+        together.focused &= count > 0;
+    }
+
+    fn close_show(&mut self) -> Effect {
+        self.show = None;
+        self.together = Together::default();
+        Effect::CloseShow
+    }
+
     pub fn focused_episode(&self) -> Option<&Episode> {
         let (show, cursor) = self.open_show()?;
+        if self.together.focused {
+            return None;
+        }
         match self.heat {
             Some(position) => {
                 let (season, number) = *heatmap::order(show).get(position)?;
@@ -235,6 +265,7 @@ impl Nav {
         };
         let same_show = |show: &Show| show.key == old.key || (show.tmdb.is_some() && show.tmdb == old.tmdb);
         let Some(index) = self.library.shows.iter().position(same_show) else {
+            self.together = Together::default();
             return Reload::ShowGone;
         };
         let show = &self.library.shows[index];
@@ -287,15 +318,32 @@ impl Nav {
     }
 
     pub fn apply(&mut self, command: Command) -> Effect {
+        if self.show.is_some() && self.together.focused {
+            let together = &mut self.together;
+            return match command {
+                Command::Back => self.close_show(),
+                Command::Select => Effect::Together(together.col),
+                Command::Down => {
+                    together.focused = false;
+                    Effect::Moved
+                }
+                Command::Left if together.col > 0 => {
+                    together.col -= 1;
+                    Effect::Moved
+                }
+                Command::Right if together.col + 1 < together.count => {
+                    together.col += 1;
+                    Effect::Moved
+                }
+                _ => Effect::None,
+            };
+        }
         if let Some((index, cursor)) = &mut self.show {
             let show = &self.library.shows[*index];
             if let Some(position) = self.heat {
                 let order = heatmap::order(show);
                 let (next, effect) = match command {
-                    Command::Back => {
-                        self.show = None;
-                        (None, Effect::CloseShow)
-                    }
+                    Command::Back => (None, self.close_show()),
                     Command::Select | Command::PlayPause => {
                         let episode = order
                             .get(position)
@@ -330,11 +378,12 @@ impl Nav {
                     return Effect::Moved;
                 }
             }
+            if command == Command::Up && cursor.row == 0 && self.together.count > 0 {
+                self.together.focused = true;
+                return Effect::Moved;
+            }
             return match command {
-                Command::Back => {
-                    self.show = None;
-                    Effect::CloseShow
-                }
+                Command::Back => self.close_show(),
                 Command::Select | Command::PlayPause => show
                     .seasons
                     .get(cursor.row)
@@ -398,6 +447,7 @@ impl Nav {
                 } else if command == Command::Select {
                     self.show = Some((index, Cursor::new(show.seasons.len())));
                     self.heat = None;
+                    self.together = Together::default();
                     Effect::OpenShow
                 } else {
                     Effect::None
@@ -855,5 +905,45 @@ episodes = [
         nav.set_profiles(1, 0);
         assert_eq!(nav.apply(Up), Effect::None);
         assert_eq!(nav.profile_focus(), None);
+    }
+
+    #[test]
+    fn up_from_the_first_season_reaches_the_people_to_watch_with() {
+        let text = show_text("Dark", &[(1, 1), (1, 2), (2, 1)], "2026-01-01");
+        let mut nav = Nav::new(library(&text));
+        nav.apply(Select);
+        assert_eq!(nav.apply(Up), Effect::None, "nobody to watch with yet");
+        nav.set_together(3);
+        nav.apply(Right);
+        assert_eq!(nav.apply(Up), Effect::Moved);
+        assert_eq!(nav.together_focus(), Some(0));
+        assert_eq!(nav.focused_episode(), None);
+        assert_eq!(nav.apply(Up), Effect::None);
+        assert_eq!(nav.apply(Left), Effect::None);
+        assert_eq!(nav.apply(Right), Effect::Moved);
+        assert_eq!(nav.apply(Right), Effect::Moved);
+        assert_eq!(nav.apply(Right), Effect::None);
+        assert_eq!(nav.apply(Select), Effect::Together(2));
+        assert_eq!(nav.apply(PlayPause), Effect::None);
+        assert_eq!(nav.apply(Down), Effect::Moved);
+        assert_eq!(nav.together_focus(), None);
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((1, 2)));
+        nav.apply(Up);
+        assert_eq!(nav.together_focus(), Some(2), "the row keeps its column");
+        nav.set_together(2);
+        assert_eq!(nav.together_focus(), Some(1), "a shorter row keeps the focus on it");
+        nav.set_together(0);
+        assert_eq!(nav.together_focus(), None);
+        assert_eq!(nav.focused_episode().map(|e| (e.season, e.number)), Some((1, 2)));
+        nav.set_together(2);
+        nav.apply(Up);
+        assert_eq!(nav.apply(Back), Effect::CloseShow);
+        assert_eq!(nav.together_focus(), None);
+        nav.apply(Select);
+        assert_eq!(
+            nav.apply(Up),
+            Effect::None,
+            "a show opens without the last one's people"
+        );
     }
 }

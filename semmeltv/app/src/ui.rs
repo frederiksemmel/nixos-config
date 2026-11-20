@@ -1,5 +1,5 @@
 use crate::artwork;
-use crate::bus::{Event, Home, Panel};
+use crate::bus::{Event, Home, Mate, Panel, Together};
 use crate::command::Command;
 use crate::core::{Core, Request};
 use crate::details::{self, Details, Ratings};
@@ -30,6 +30,7 @@ use tokio::sync::broadcast::error::RecvError;
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
 const UP_NEXT_TICK: Duration = Duration::from_millis(50);
 const EMPTY_LIBRARY: &str = "The library is empty";
+const TOGETHER_TITLE: &str = "Watch together";
 
 #[derive(Clone, Copy)]
 enum Page {
@@ -50,6 +51,7 @@ struct Screen {
     core: Core,
     nav: Nav,
     home: Arc<Home>,
+    together: Option<Together>,
     art: PathBuf,
     images: Sender<Job<Target>>,
     message_timer: Timer,
@@ -92,6 +94,7 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
     let screen = Rc::new(RefCell::new(Screen {
         ui: ui.clone_strong(),
         nav: Nav::new((*home.library).clone()),
+        together: None,
         core: core.clone(),
         home,
         art: meta.join(artwork::DIR),
@@ -248,6 +251,7 @@ impl Screen {
             Event::Message(text) => self.show_message(text),
             Event::Panel(panel) => self.show_panel(panel),
             Event::UpNext(card) => self.show_up_next(card),
+            Event::Together(together) => self.show_together(together),
             Event::Playback { .. } | Event::Voice(_) | Event::Audio(_) | Event::Screen { .. } => {}
         }
     }
@@ -256,10 +260,25 @@ impl Screen {
         match self.nav.apply(command) {
             Effect::None => {}
             Effect::Moved => self.present_focus(),
-            Effect::OpenShow => self.present_show(),
+            Effect::OpenShow => {
+                self.together = None;
+                self.present_show();
+                self.ask_together();
+            }
             Effect::CloseShow => {
+                self.together = None;
                 self.ui.set_show_open(false);
                 self.present_focus();
+            }
+            Effect::Together(index) => {
+                if let Some(together) = &self.together
+                    && let Some(mate) = together.people.get(index)
+                {
+                    self.core.send(Request::WatchWithOnTv {
+                        show: together.show.clone(),
+                        with: mate.id,
+                    });
+                }
             }
             Effect::Play(path) => self.core.send(Request::PlayFile(path)),
             Effect::Profile(index) => {
@@ -276,12 +295,21 @@ impl Screen {
         let home = self.home.clone();
         if before.library != home.library {
             match self.nav.replace((*home.library).clone()) {
-                Reload::ShowGone => self.ui.set_show_open(false),
+                Reload::ShowGone => {
+                    self.together = None;
+                    self.ui.set_show_open(false);
+                }
                 Reload::ShowChanged => self.present_show(),
                 Reload::NoShow | Reload::ShowKept => {}
             }
         }
         self.present_profile();
+        if before.profile != home.profile && self.nav.open_show().is_some() {
+            self.together = None;
+            self.nav.set_together(0);
+            self.present_show();
+            self.ask_together();
+        }
         let only_downloads = before.library == home.library
             && before.profile == home.profile
             && before.progress == home.progress
@@ -313,7 +341,7 @@ impl Screen {
         }
         if let Some((show, _)) = self.nav.open_show() {
             for (index, season) in show.seasons.iter().enumerate() {
-                if let Some(shelf) = self.ui.get_show_shelves().row_data(index) {
+                if let Some(shelf) = self.ui.get_show_shelves().row_data(index + self.together_rows()) {
                     update_statuses(&shelf, season.episodes.iter().map(|e| self.file_status(&e.path)));
                 }
             }
@@ -425,6 +453,45 @@ impl Screen {
         });
     }
 
+    fn ask_together(&self) {
+        if let Some((show, _)) = self.nav.open_show() {
+            self.core.send(Request::TogetherOnTv(show.key.clone()));
+        }
+    }
+
+    fn show_together(&mut self, together: Together) {
+        if self.nav.open_show().is_none_or(|(show, _)| show.key != together.show) {
+            return;
+        }
+        self.nav.set_together(together.people.len());
+        self.together = Some(together);
+        self.present_show();
+    }
+
+    fn mates(&self) -> &[Mate] {
+        self.together
+            .as_ref()
+            .map_or(&[], |together| together.people.as_slice())
+    }
+
+    fn together_rows(&self) -> usize {
+        usize::from(!self.mates().is_empty())
+    }
+
+    fn show_focus(&self, cursor: &Cursor) -> (i32, ModelRc<i32>) {
+        let rows = self.together_rows();
+        let row = match self.nav.together_focus() {
+            Some(_) => 0,
+            None => cursor.row + rows,
+        };
+        let together = self.nav.together_focus().unwrap_or(0);
+        let cols: Vec<_> = std::iter::repeat_n(together, rows)
+            .chain(cursor.cols.iter().copied())
+            .map(|col| col as i32)
+            .collect();
+        (row as i32, ModelRc::new(VecModel::from(cols)))
+    }
+
     fn show_message(&self, message: String) {
         self.ui.set_message(message.into());
         let handle = self.ui.as_weak();
@@ -442,14 +509,27 @@ impl Screen {
         self.ui
             .set_profile_focus(self.nav.profile_focus().map_or(-1, |index| index as i32));
         if let Some((show, cursor)) = self.nav.open_show() {
-            self.ui.set_show_row(cursor.row as i32);
-            self.ui.set_show_cols(cols_model(cursor));
+            let (row, cols) = self.show_focus(cursor);
+            self.ui.set_show_row(row);
+            self.ui.set_show_cols(cols);
             self.ui.set_show_heat(heatmap::focus(show, self.nav.heat()));
         }
         self.present_details();
     }
 
     fn present_details(&self) {
+        let mate = self.nav.together_focus().and_then(|index| self.mates().get(index));
+        if let (Some((show, _)), Some(mate)) = (self.nav.open_show(), mate) {
+            let line = if mate.paired {
+                format!("OK takes you to {}'s place in {}", mate.name, show.title)
+            } else {
+                format!("OK: watch {} together with {}", show.title, mate.name)
+            };
+            self.ui.set_details(line.into());
+            self.ui.set_years("".into());
+            self.ui.set_ratings(Ratings::default().into());
+            return;
+        }
         let line = match self.nav.open_show() {
             Some(_) => self.nav.focused_episode().map(|episode| {
                 let status = self.file_status(&episode.path).1;
@@ -615,7 +695,20 @@ impl Screen {
         };
         let carried = carried_art(&self.ui.get_show_shelves());
         let mut shelves = Vec::new();
-        for (shelf, season) in show.seasons.iter().enumerate() {
+        let mates = self.mates();
+        if !mates.is_empty() {
+            let cards: Vec<_> = mates
+                .iter()
+                .map(|mate| card(&format!("together-{}", mate.id.0), mate.name.clone(), mate.line.clone()))
+                .collect();
+            shelves.push(ShelfData {
+                title: TOGETHER_TITLE.into(),
+                cards: ModelRc::new(VecModel::from(cards)),
+            });
+        }
+        let rows = shelves.len();
+        for (season_index, season) in show.seasons.iter().enumerate() {
+            let shelf = season_index + rows;
             let mut cards = Vec::new();
             for (position, episode) in season.episodes.iter().enumerate() {
                 let key = show.episode_key(episode);
@@ -648,8 +741,9 @@ impl Screen {
         self.ui.set_show_shelves(ModelRc::new(VecModel::from(shelves)));
         self.ui.set_show_heatmap(heatmap::data(show));
         self.ui.set_show_heat(heatmap::focus(show, self.nav.heat()));
-        self.ui.set_show_row(cursor.row as i32);
-        self.ui.set_show_cols(cols_model(cursor));
+        let (row, cols) = self.show_focus(cursor);
+        self.ui.set_show_row(row);
+        self.ui.set_show_cols(cols);
         self.ui.set_show_open(true);
         self.present_details();
     }

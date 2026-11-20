@@ -60,6 +60,30 @@ with scenario("the TV profile picker switches whose Home the TV shows"):
     tv.send_key("up")
     tv_shows("Currently Watching")
 
+with scenario("on the TV, Up from a series' first season picks someone to watch it with, and its episodes still play"):
+    tv.send_key("esc")
+    for key in ["down", "down", "down", "up", "left", "left", "left", "ret"]:
+        tv.send_key(key)
+    tv_shows("Season 1")
+    tv.send_key("up")
+    tv_shows("Watch together")
+    tv.screenshot("tv-watch-together")
+    first = phone.api("GET", f"/api/shows/{SHOW}")["body"]["together"]["others"][0]
+    tv.send_key("ret")
+    paired = eventually(
+        f"OK pairs Frederik with {first['name']}",
+        lambda: phone.api("GET", f"/api/shows/{SHOW}")["body"]["together"]["partners"],
+    )
+    assert [partner["name"] for partner in paired] == [first["name"]], paired
+    tv_shows("started")
+    tv.send_key("down")
+    tv.send_key("ret")
+    eventually("Down and OK play the first episode", lambda: tv_episode(phone) == 1)
+    tv.send_key("esc")
+    tv_plays_nothing()
+    phone.api("DELETE", f"/api/shows/{SHOW}/together/{first['id']}")
+    tv.send_key("esc")
+
 HEVC_FILM = "archiv-10-2010"
 
 

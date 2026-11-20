@@ -707,6 +707,13 @@ right step through the episodes from best to worst (`heatmap::ORDER`, which can 
 to the seasons. Cells shrink to fit the screen, and below 50 px they drop the
 number. The web app's show page has the same grid, where a tap plays the episode.
 
+Up from the first season reaches a "Watch together" row above it, once the app
+has answered which other profiles there are (`Request::TogetherOnTv`, then
+`Event::Together`). It lists the TV profile's partners on that show first, each
+with where they are, then everyone else. OK on someone else pairs the two of
+you, as the web page's Watch together button does; OK on a partner moves your
+place to theirs (`Request::WatchWithOnTv`). Ending a pairing is on the web page.
+
 ## Development
 
     cd semmeltv/app
