@@ -47,6 +47,7 @@ pub enum Request {
     Control(Control),
     PlayPause,
     Seek(Seek),
+    HideSkip,
     Speed(f64),
     Listen,
     Subtitles(subtitles::Change),

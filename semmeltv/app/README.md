@@ -342,12 +342,16 @@ subtitles showed, but always takes the current style.
 During an episode's recap or intro a Skip button shows in mpv, and OK presses it.
 Otherwise OK pauses, as Play and Pause always do. Skipping is never automatic,
 because the times do not fit every release: a file with a recap the database's
-release lacks lands partway through the titles.
+release lacks lands partway through the titles. Back hides the button instead of
+stopping, and the remote's × next to its Skip button does the same; the button
+stays away for that kind until the file plays again, and the next Back stops.
 
 Times come from [TheIntroDB](https://theintrodb.org) when an episode starts, and
 are not stored. An episode needs its show's `tmdb` in `library.db`, and without
 one or without a network it plays with no button. When
-several ranges exist the earliest counts, since later ones have been wrong. Their
+several ranges exist the earliest counts, since later ones have been wrong. An
+intro said to start at 0:00 and last over 95 seconds is dropped: that is a cold
+open someone marked as the intro, as on several Community episodes. Their
 terms allow personal, non-commercial use and forbid passing the data on, so
 timings must not be exported or committed.
 

@@ -749,6 +749,9 @@ async fn skip_prompt(cx: &Cx) -> Result<impl View> {
             let token = emit! {
                 if let Some(label) = &shown {
                     <button type="button" class="pill" data-post="/api/playback/skip-segment" data-done="hide">(label.as_str())</button>
+                    <button type="button" class="skip-hide" data-post="/api/playback/hide-skip" data-done="hide" aria-label=(format!("Hide {label}"))>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+                    </button>
                 }
             }?;
             loop {

@@ -4,6 +4,7 @@ use std::time::Duration;
 
 const API: &str = "https://api.theintrodb.org/v4/media";
 const TIMEOUT: Duration = Duration::from_secs(8);
+const LONGEST_OPENING_INTRO: f64 = 95.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Title {
@@ -64,7 +65,8 @@ fn first(kind: Kind, ranges: &[Range], duration: f64) -> Option<Segment> {
         .filter_map(|range| {
             let start = range.start_ms.unwrap_or(0) as f64 / 1000.0;
             let end = range.end_ms? as f64 / 1000.0;
-            (start < end && end < duration).then_some(Segment { kind, start, end })
+            let cold_open = kind == Kind::Intro && start == 0.0 && end > LONGEST_OPENING_INTRO;
+            (start < end && end < duration && !cold_open).then_some(Segment { kind, start, end })
         })
         .min_by(|a, b| a.start.total_cmp(&b.start))
 }
@@ -158,6 +160,15 @@ mod tests {
                 vec![segment(Kind::Intro, 0.0, 90.869)],
             ),
             (r#"{"intro":[{"start_ms":3590000,"end_ms":3700000}]}"#, vec![]),
+            (r#"{"intro":[{"start_ms":null,"end_ms":117000}]}"#, vec![]),
+            (
+                r#"{"intro":[{"start_ms":0,"end_ms":130000},{"start_ms":150000,"end_ms":175000}]}"#,
+                vec![segment(Kind::Intro, 150.0, 175.0)],
+            ),
+            (
+                r#"{"recap":[{"start_ms":null,"end_ms":120000}]}"#,
+                vec![segment(Kind::Recap, 0.0, 120.0)],
+            ),
         ];
         for (json, expected) in cases {
             assert_eq!(parse(json), expected, "{json}");

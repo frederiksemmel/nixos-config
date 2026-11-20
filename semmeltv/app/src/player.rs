@@ -227,6 +227,7 @@ struct Playback {
     chapter_credits: Option<f64>,
     next: bool,
     prompt: Option<Kind>,
+    hidden: Vec<Kind>,
     id: u64,
     video: Option<Video>,
     scrub: Scrub,
@@ -257,7 +258,11 @@ impl Playback {
 
     fn command(&mut self, command: Command, now: Instant) {
         match command {
-            Command::Back => self.send(json!(["quit", STOPPED_EXIT_CODE])),
+            Command::Back => {
+                if !self.hide_prompt() {
+                    self.send(json!(["quit", STOPPED_EXIT_CODE]));
+                }
+            }
             Command::Select => {
                 self.scrub.cancel();
                 match self.select() {
@@ -311,11 +316,14 @@ impl Playback {
     }
 
     fn offer(&self) -> Option<Kind> {
-        if let Some(segment) = segments::at(&self.segments, self.position) {
-            return Some(segment.kind);
-        }
-        let credits = progress::credits_start(self.duration, self.chapter_credits.or(self.credits));
-        (self.next && credits.is_some_and(|start| self.position >= start)).then_some(Kind::Next)
+        let kind = match segments::at(&self.segments, self.position) {
+            Some(segment) => segment.kind,
+            None => {
+                let credits = progress::credits_start(self.duration, self.chapter_credits.or(self.credits));
+                (self.next && credits.is_some_and(|start| self.position >= start)).then_some(Kind::Next)?
+            }
+        };
+        (!self.hidden.contains(&kind)).then_some(kind)
     }
 
     fn select(&self) -> Option<Value> {
@@ -345,6 +353,15 @@ impl Playback {
             return false;
         }
         self.command(Command::Select, now);
+        true
+    }
+
+    fn hide_prompt(&mut self) -> bool {
+        let Some(kind) = self.prompt else {
+            return false;
+        };
+        self.hidden.push(kind);
+        self.update_prompt();
         true
     }
 
@@ -834,6 +851,13 @@ impl Player {
     pub fn skip_segment(&self) -> bool {
         match &self.backend {
             Backend::Mpv(playback) => playback.lock().unwrap().skip_segment(Instant::now()),
+            Backend::TvSet { .. } => false,
+        }
+    }
+
+    pub fn hide_skip(&self) -> bool {
+        match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap().hide_prompt(),
             Backend::TvSet { .. } => false,
         }
     }
@@ -1650,6 +1674,60 @@ mod tests {
         past.update_prompt();
         let sent = sent_by(|playback| assert!(!playback.skip_segment(Instant::now())), past);
         assert_eq!(sent, Vec::<Value>::new());
+    }
+
+    #[test]
+    fn back_hides_the_skip_pill_and_only_the_next_back_stops() {
+        let mut shown = during_the_intro();
+        shown.update_prompt();
+        let sent = sent_by(
+            |playback| {
+                playback.command(Command::Back, Instant::now());
+                assert_eq!(playback.prompt, None);
+                playback.position = 18.0;
+                playback.update_prompt();
+                assert_eq!(playback.prompt, None);
+                playback.command(Command::Back, Instant::now());
+            },
+            shown,
+        );
+        let hidden = sent.iter().position(|command| command["format"] == "none");
+        let quit = sent
+            .iter()
+            .position(|command| *command == json!(["quit", STOPPED_EXIT_CODE]));
+        assert!(hidden.is_some() && quit.is_some() && hidden < quit, "{sent:?}");
+        assert_eq!(
+            sent.iter().filter(|command| command[0] == "quit").count(),
+            1,
+            "{sent:?}"
+        );
+    }
+
+    #[test]
+    fn the_phone_hides_the_skip_pill_only_while_one_shows_and_the_next_section_still_shows() {
+        let mut playback = Playback {
+            position: 5.0,
+            segments: vec![
+                Segment {
+                    kind: Kind::Recap,
+                    start: 0.0,
+                    end: 10.0,
+                },
+                Segment {
+                    kind: Kind::Intro,
+                    start: 10.0,
+                    end: 20.0,
+                },
+            ],
+            ..Playback::default()
+        };
+        playback.update_prompt();
+        assert!(playback.hide_prompt());
+        assert_eq!(playback.prompt, None);
+        assert!(!playback.hide_prompt());
+        playback.position = 15.0;
+        playback.update_prompt();
+        assert_eq!(playback.prompt, Some(Kind::Intro));
     }
 
     fn in_the_last_minutes(next: bool) -> Playback {

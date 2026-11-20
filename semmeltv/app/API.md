@@ -263,7 +263,7 @@ such image.
 | POST | `/api/command` | `{ "text": "play outlander season 2" }`, understood exactly like speech |
 | POST | `/api/listen` | none: start listening, as the remote's red, green and blue keys do |
 | GET | `/api/playback` | `{ now_playing }`, see below |
-| POST | `/api/playback/{control}` | none. `control` is `pause`, `resume`, `toggle`, `stop`, `mute`, `unmute` or `skip-segment`: what OK does while the TV shows Skip intro or Skip recap, refused with 422 while it shows neither |
+| POST | `/api/playback/{control}` | none. `control` is `pause`, `resume`, `toggle`, `stop`, `mute`, `unmute`, `skip-segment` or `hide-skip`. `skip-segment` does what OK does while the TV shows Skip intro, Skip recap or Play next, `hide-skip` what Back does: it hides that button until the file plays again. Both are refused with 422 while the TV shows none |
 | POST | `/api/playback/seek` | `{ "to": seconds }` or `{ "by": seconds }`, negative to go back |
 | POST | `/api/playback/skip` | `{ "direction": "back" }` or `"forward"`: a press of the remote's left or right key, so presses in a row skip further |
 | POST | `/api/playback/speed` | `{ "speed": 1.25 }`: 0.5 to 2, in steps of 0.05. Every video starts at 1 |

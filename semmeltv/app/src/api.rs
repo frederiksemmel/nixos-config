@@ -1247,6 +1247,7 @@ async fn control(State(api): State<Api>, Path(name): Path<String>) -> Response {
         "mute" => Request::Control(Control::Mute),
         "unmute" => Request::Control(Control::Unmute),
         "skip-segment" => Request::Seek(Seek::Segment),
+        "hide-skip" => Request::HideSkip,
         _ => return not_found(format!("no playback control {name}")),
     };
     ask(&api.core, request).await
@@ -2519,6 +2520,14 @@ mod tests {
                 200,
                 vec![],
                 Some("Seek(Segment)"),
+            ),
+            (
+                "POST",
+                "/api/playback/hide-skip",
+                json!({}),
+                200,
+                vec![],
+                Some("HideSkip"),
             ),
             (
                 "POST",

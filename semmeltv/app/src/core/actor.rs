@@ -870,6 +870,7 @@ impl Actor {
                 Action::Control(if paused { Control::Resume } else { Control::Pause })
             }
             Request::Seek(seek) => return self.seek(seek),
+            Request::HideSkip => return self.hide_skip(),
             Request::Speed(speed) => return self.speed(speed),
             Request::Subtitles(change) => return self.change_subtitles(change),
             Request::Storage(change) => return self.change_storage(change).await,
@@ -1298,6 +1299,14 @@ impl Actor {
             Kind::Recap => "Skipped the recap",
             Kind::Next => "Playing the next episode",
         })
+    }
+
+    fn hide_skip(&self) -> Outcome {
+        if !self.player().is_some_and(Player::hide_skip) {
+            return Outcome::refused("The TV shows nothing to skip right now");
+        }
+        self.publish_playback();
+        Outcome::done("")
     }
 
     fn now_playing_for(&self, path: &Path) -> NowPlaying {

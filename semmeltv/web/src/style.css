@@ -1082,9 +1082,18 @@ html:not(:has(.now-state)) .sheet-playback { display: none; }
   color: var(--bg);
 }
 
-.skip-prompt { display: flex; justify-content: center; margin-bottom: -6px; }
-.skip-prompt:not(:has(button:not([hidden]))) { display: none; }
+.skip-prompt { display: flex; justify-content: center; align-items: center; gap: 8px; padding-left: 52px; margin-bottom: -6px; }
+.skip-prompt:not(:has(button)), .skip-prompt:has(button[hidden]) { display: none; }
 .skip-prompt .pill { min-width: 148px; }
+.skip-hide {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  color: var(--muted);
+}
+.skip-hide svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; }
 
 .transport-toggle svg { width: 36px; height: 36px; }
 .transport button:active { transform: scale(0.94); }
