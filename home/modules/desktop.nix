@@ -573,6 +573,7 @@ let
     };
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
+  niri-computer-use = pkgs.callPackage ../../packages/niri-computer-use.nix { };
   tvcast = pkgs.callPackage ../../packages/tvcast { };
   # `tvcast-imv cast FILE` stops a running cast, or casts FILE to a TV picked
   # in fuzzel; `tvcast-imv follow FILE` switches a running cast to FILE.
@@ -777,7 +778,9 @@ in
       wallpaperNext
       ironbar
       gnome-themes-extra # Adwaita-dark for GTK 3
-      flake.inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.claude-desktop
+      (flake.inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.claude-desktop.override {
+        commandLineArgs = "--password-store=gnome-libsecret";
+      })
 
       # Networking & Communication
       transmission_4-gtk
@@ -1038,8 +1041,8 @@ in
           desc: Linear
           cmd: chromium --app=https://linear.app
         "c":
-          desc: Circleback
-          cmd: chromium --app=https://circleback.ai
+          desc: Claude
+          cmd: claude-desktop
         "e":
           desc: Mailspring
           cmd: mailspring
@@ -1284,6 +1287,25 @@ in
 
     # Repoints the link when it is missing or targets a wallpaper set from an
     # older generation.
+    # Claude Desktop rewrites its config file, so the server is merged into it
+    # rather than linked from the store.
+    home.activation.claudeDesktopMcp =
+      let
+        configFile = "${config.xdg.configHome}/Claude/claude_desktop_config.json";
+        server = builtins.toJSON {
+          command = lib.getExe niri-computer-use;
+          args = [ "serve" ];
+        };
+      in
+      lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+        run mkdir -p ${config.xdg.configHome}/Claude
+        [ -s ${configFile} ] || run sh -c 'echo "{}" > ${configFile}'
+        tmp=$(mktemp)
+        ${lib.getExe pkgs.jq} --argjson server '${server}' \
+          '.mcpServers["niri-computer-use"] = $server' ${configFile} > "$tmp"
+        run mv "$tmp" ${configFile}
+      '';
+
     home.activation.wallpaperLink = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
       case "$(readlink ${wallpaperLink} || true)" in
         ${wallpapers}/*) ;;
@@ -1922,6 +1944,14 @@ in
           "${mod}+Escape" = {
             allow-inhibiting = false;
             action = toggle-keyboard-shortcuts-inhibit;
+          };
+
+          # Stops an AI agent driving the desktop and takes its lease back.
+          "${mod}+Shift+Escape" = {
+            allow-inhibiting = false;
+            allow-when-locked = true;
+            hotkey-overlay.title = "Stop the AI agent (niri-computer-use)";
+            action = spawn (lib.getExe niri-computer-use) "stop";
           };
 
           # Quit & power
