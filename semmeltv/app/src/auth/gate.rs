@@ -67,12 +67,10 @@ pub fn access(method: &Method, path: &str) -> Access {
         | ["api", "downloads", "jobs", _, "stop"]
         | ["api", "downloads", "pcloud", ..] => Access::Admin,
         ["api", "downloads", ..] => Access::Needs(Capability::Download),
-        ["api", "audio", "pair" | "headphones" | "delay"] => Access::Needs(Capability::Headphones),
-        ["api", "audio"] if writes(method) => Access::Needs(Capability::Headphones),
         ["api", "play" | "command" | "listen" | "microphone" | "volume", ..]
-        | ["api", "audio", "track"]
+        | ["api", "audio", "track" | "pair" | "headphones" | "delay"]
         | ["api", "subtitles", "track" | "toggle" | "delay"] => Access::Needs(Capability::ControlTv),
-        ["api", "playback", _] | ["api", "tv", _] | ["api", "tv-profile"] if writes(method) => {
+        ["api", "playback", _] | ["api", "tv", _] | ["api", "tv-profile"] | ["api", "audio"] if writes(method) => {
             Access::Needs(Capability::ControlTv)
         }
         _ => Access::Signed,
@@ -233,11 +231,11 @@ mod tests {
             (&post, "/api/screen", Access::Signed),
             (&post, "/api/volume/up", Access::Needs(Capability::ControlTv)),
             (&get, "/api/audio", Access::Signed),
-            (&post, "/api/audio", Access::Needs(Capability::Headphones)),
-            (&post, "/api/audio/pair", Access::Needs(Capability::Headphones)),
-            (&delete, "/api/audio/pair", Access::Needs(Capability::Headphones)),
-            (&delete, "/api/audio/headphones", Access::Needs(Capability::Headphones)),
-            (&post, "/api/audio/delay", Access::Needs(Capability::Headphones)),
+            (&post, "/api/audio", Access::Needs(Capability::ControlTv)),
+            (&post, "/api/audio/pair", Access::Needs(Capability::ControlTv)),
+            (&delete, "/api/audio/pair", Access::Needs(Capability::ControlTv)),
+            (&delete, "/api/audio/headphones", Access::Needs(Capability::ControlTv)),
+            (&post, "/api/audio/delay", Access::Needs(Capability::ControlTv)),
             (&post, "/api/audio/track", Access::Needs(Capability::ControlTv)),
             (&get, "/api/audio/dialogue", Access::Signed),
             (&post, "/api/audio/dialogue", Access::Signed),
@@ -250,7 +248,7 @@ mod tests {
             (&post, "/api/watched", Access::Signed),
             (&post, "/api/stream/abc/progress", Access::Stream),
             (&put, "/api/auth/members/2/capabilities/control-tv", Access::Admin),
-            (&delete, "/api/auth/members/2/capabilities/headphones", Access::Admin),
+            (&delete, "/api/auth/members/2/capabilities/download", Access::Admin),
             (&get, "/api/auth/choices", Access::Open),
             (&post, "/api/auth/password", Access::Open),
             (&post, "/api/auth/passkey/start", Access::Open),

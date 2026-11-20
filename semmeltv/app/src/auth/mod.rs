@@ -1079,7 +1079,7 @@ mod tests {
     async fn an_admin_can_do_everything_and_a_viewer_only_what_was_granted() {
         let rig = Rig::new().await;
         let frederik = rig.auth.person(FREDERIK).await.unwrap();
-        assert!(frederik.can(Capability::ControlTv) && frederik.can(Capability::Headphones));
+        assert!(frederik.can(Capability::ControlTv));
         assert!(frederik.can(Capability::Download));
         assert!(!rig.auth.person(MAMI).await.unwrap().can(Capability::ControlTv));
         let oma = rig.auth.create_profile("Oma", Role::Viewer).await.unwrap();
@@ -1094,21 +1094,15 @@ mod tests {
             serde_json::json!(["control-tv"])
         );
 
-        let mami = rig.auth.grant(MAMI, Capability::Headphones, true).await.unwrap();
-        assert_eq!(mami.capabilities, [Capability::ControlTv, Capability::Headphones]);
-        let mami = rig.auth.grant(MAMI, Capability::ControlTv, false).await.unwrap();
-        assert!(!mami.can(Capability::ControlTv));
-        assert!(mami.can(Capability::Headphones));
-        assert_eq!(
-            serde_json::to_value(&mami).unwrap()["capabilities"],
-            serde_json::json!(["headphones"])
-        );
         let mami = rig.auth.grant(MAMI, Capability::Download, true).await.unwrap();
+        assert_eq!(mami.capabilities, [Capability::ControlTv, Capability::Download]);
+        let mami = rig.auth.grant(MAMI, Capability::ControlTv, false).await.unwrap();
         assert!(mami.can(Capability::Download) && !mami.can(Capability::ControlTv));
         assert_eq!(
             serde_json::to_value(&mami).unwrap()["capabilities"],
-            serde_json::json!(["headphones", "download"])
+            serde_json::json!(["download"])
         );
+        assert_eq!(Capability::named("headphones"), None);
         let mami = rig.auth.grant(MAMI, Capability::Download, false).await.unwrap();
         assert!(!mami.can(Capability::Download));
         assert_eq!(

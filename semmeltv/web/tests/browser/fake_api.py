@@ -14,14 +14,14 @@ CARDS = {card["key"]: card for row in LIBRARY.values() for card in row}
 playing = {"paused": False, "position": 2223.0, "subtitle": 1, "delay": 0.0}
 fetched = set()
 together = {}
-audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
+audio = {"output": "tv", "headphones": None, "with_headphones": [], "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
 screen = {"kind": "tv", "boot": 1, "device": None, "play": None, "notice": None}
 CONNECT_SECONDS = 1.5
 SERVICE = "fake-service-token"
 PROFILES = {
     1: {"id": 1, "name": "Frederik", "role": "admin", "color": "#E5484D", "password": "frederik-pass",
-        "capabilities": ["control-tv", "headphones", "download"]},
+        "capabilities": ["control-tv", "download"]},
     2: {"id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "password": "mami-pass",
         "capabilities": ["control-tv"]},
     3: {"id": 3, "name": "Ramu", "role": "viewer", "color": "#8E4EC6", "password": None,
@@ -213,7 +213,8 @@ async def finish_pairing():
     await asyncio.sleep(CONNECT_SECONDS)
     if not audio["pairing"] or audio["pairing"]["state"] != "scanning":
         return
-    set_audio(headphones={"name": "AirPods von Frederik", "address": "34:0E:22:67:03:38", "state": "connected"},
+    set_audio(headphones={"name": "AirPods von Frederik", "address": "34:0E:22:67:03:38", "owners": [1], "state": "connected"},
+              with_headphones=[1],
               pairing={"state": "paired", "message": "AirPods von Frederik are paired."})
 
 
@@ -231,7 +232,7 @@ async def stop_pairing(request):
 
 
 async def forget(request):
-    set_audio(output="tv", headphones=None, pairing=None, error=None)
+    set_audio(output="tv", headphones=None, with_headphones=[], pairing=None, error=None)
     return web.json_response(audio)
 
 

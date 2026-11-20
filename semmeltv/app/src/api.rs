@@ -1623,8 +1623,8 @@ async fn audio_view(State(api): State<Api>) -> Response {
     heard(api.core.sound())
 }
 
-async fn choose_audio(State(api): State<Api>, Json(body): Json<AudioBody>) -> Response {
-    heard(api.core.choose_output(body.output).await)
+async fn choose_audio(State(api): State<Api>, Who(profile): Who, Json(body): Json<AudioBody>) -> Response {
+    heard(api.core.choose_output(profile, body.output).await)
 }
 
 async fn pair_headphones(State(api): State<Api>, Who(profile): Who) -> Response {
@@ -1665,8 +1665,8 @@ async fn set_dialogue(State(api): State<Api>, Who(profile): Who, Json(body): Jso
     (status(outcome.ok), Json(outcome)).into_response()
 }
 
-async fn delay_sound(State(api): State<Api>, Json(body): Json<DelayBody>) -> Response {
-    heard(api.core.delay_sound(body.by).await)
+async fn delay_sound(State(api): State<Api>, Who(profile): Who, Json(body): Json<DelayBody>) -> Response {
+    heard(api.core.delay_sound(profile, body.by).await)
 }
 
 async fn volume(State(api): State<Api>, Path(change): Path<String>) -> Response {

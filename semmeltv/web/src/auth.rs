@@ -1,4 +1,4 @@
-use crate::api::{Api, CONTROL_TV, Choice, DOWNLOAD, HEADPHONES, Me, Member, Person};
+use crate::api::{Api, CONTROL_TV, Choice, DOWNLOAD, Me, Member, Person};
 use crate::layout::back;
 use topcoat::Result;
 use topcoat::context::{Cx, try_request_context};
@@ -27,10 +27,6 @@ pub fn me(cx: &Cx) -> Option<&Me> {
 
 pub fn controls_tv(cx: &Cx) -> bool {
     me(cx).is_some_and(|me| me.person.controls_tv())
-}
-
-pub fn uses_headphones(cx: &Cx) -> bool {
-    me(cx).is_some_and(|me| me.person.uses_headphones())
 }
 
 pub fn downloads(cx: &Cx) -> bool {
@@ -407,7 +403,7 @@ async fn account_page(cx: &Cx) -> Result<impl View> {
 fn role_note(person: &Person) -> &'static str {
     match (person.admin(), person.controls_tv()) {
         (true, _) => "Admin: everything, including the TV, downloads, storage and people",
-        (false, true) => "Watches, plays on the TV and uses its remote",
+        (false, true) => "Watches, plays on the TV, uses its remote and pairs their own headphones",
         (false, false) => "Watches on this phone or laptop; the TV's remote isn't yours on this TV",
     }
 }
@@ -422,11 +418,6 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
         (false, false) => "Viewer, can't control the TV".to_string(),
     });
     if !person.admin() {
-        facts.push(if person.uses_headphones() {
-            "uses headphones".to_string()
-        } else {
-            "no headphones".to_string()
-        });
         facts.push(if person.downloads() {
             "downloads".to_string()
         } else {
@@ -434,7 +425,6 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
         });
     }
     let control = format!("/api/auth/members/{}/capabilities/{CONTROL_TV}", person.id);
-    let headphones = format!("/api/auth/members/{}/capabilities/{HEADPHONES}", person.id);
     let download = format!("/api/auth/members/{}/capabilities/{DOWNLOAD}", person.id);
     facts.push(match member.passkeys {
         0 => "no passkey".to_string(),
@@ -473,11 +463,6 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
                     } else {
                         <button type="button" class="pill" data-capability=(control) data-method="PUT">"Give TV control"</button>
                     }
-                    if person.uses_headphones() {
-                        <button type="button" class="pill quiet" data-capability=(headphones) data-method="DELETE">"Take headphones away"</button>
-                    } else {
-                        <button type="button" class="pill" data-capability=(headphones) data-method="PUT">"Give headphones"</button>
-                    }
                     if person.downloads() {
                         <button type="button" class="pill quiet" data-capability=(download) data-method="DELETE">"Stop downloads"</button>
                     } else {
@@ -504,7 +489,7 @@ async fn people_page(cx: &Cx) -> Result<impl View> {
         <article class="page people">
             back(href: "/profiles")
             <h1>"People"</h1>
-            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote, voice and sound, only those you give headphones pair and listen on Bluetooth headphones, and only those you let download find films and seasons and add them to the library. Admins do all that, and stop downloads, remove titles, pair the TV and manage people."</p>
+            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote, voice and sound, and pair their own Bluetooth headphones that nobody else can use, and only those you let download find films and seasons and add them to the library. Admins do all that, and stop downloads, remove titles, pair the TV and manage people."</p>
             match members {
                 Ok(members) => {
                     <section class="settings">

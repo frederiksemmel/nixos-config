@@ -263,9 +263,11 @@ mod tests {
             headphones: Some(Headphones {
                 name: "AirPods".to_string(),
                 state: Link::Connected,
+                owners: vec![1],
                 volume: None,
                 audio_delay: None,
             }),
+            with_headphones: vec![1],
             pairing: pairing.map(|state| Pairing {
                 state,
                 message: "Paired with AirPods".to_string(),

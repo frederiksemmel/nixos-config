@@ -47,7 +47,6 @@ fn role(role: Role) -> models::Role {
 fn capability(capability: Capability) -> models::Capability {
     match capability {
         Capability::ControlTv => models::Capability::ControlTv,
-        Capability::Headphones => models::Capability::Headphones,
         Capability::Download => models::Capability::Download,
     }
 }
@@ -56,10 +55,10 @@ fn granted(grants: &[Grant], id: i64) -> BTreeSet<Capability> {
     grants
         .iter()
         .filter(|grant| grant.profile_id == id)
-        .map(|grant| match grant.capability {
-            models::Capability::ControlTv => Capability::ControlTv,
-            models::Capability::Headphones => Capability::Headphones,
-            models::Capability::Download => Capability::Download,
+        .filter_map(|grant| match grant.capability {
+            models::Capability::ControlTv => Some(Capability::ControlTv),
+            models::Capability::Headphones => None,
+            models::Capability::Download => Some(Capability::Download),
         })
         .collect()
 }
@@ -500,29 +499,32 @@ mod tests {
         assert_eq!(everyone[1].granted, granted);
         assert!(everyone[2].granted.is_empty());
 
-        assert!(db.set_granted(mami, Capability::Headphones, true).await.unwrap());
+        assert!(db.set_granted(mami, Capability::Download, true).await.unwrap());
         assert_eq!(
             db.profile(mami).await.unwrap().unwrap().granted,
-            BTreeSet::from([Capability::ControlTv, Capability::Headphones])
+            BTreeSet::from([Capability::ControlTv, Capability::Download])
         );
         assert!(db.set_granted(mami, Capability::ControlTv, false).await.unwrap());
         assert_eq!(
             db.profile(mami).await.unwrap().unwrap().granted,
-            BTreeSet::from([Capability::Headphones])
-        );
-        assert!(db.set_granted(mami, Capability::Download, true).await.unwrap());
-        assert_eq!(
-            db.profile(mami).await.unwrap().unwrap().granted,
-            BTreeSet::from([Capability::Headphones, Capability::Download])
+            BTreeSet::from([Capability::Download])
         );
         assert!(db.set_granted(mami, Capability::Download, false).await.unwrap());
-        assert!(db.set_granted(mami, Capability::Headphones, false).await.unwrap());
+        assert!(db.profile(mami).await.unwrap().unwrap().granted.is_empty());
+
+        let mut handle = db.db.clone();
+        toasty::create!(Grant {
+            profile_id: mami.0,
+            capability: models::Capability::Headphones,
+        })
+        .exec(&mut handle)
+        .await
+        .unwrap();
         assert!(db.profile(mami).await.unwrap().unwrap().granted.is_empty());
 
         db.set_granted(mami, Capability::ControlTv, true).await.unwrap();
         assert!(db.delete_profile(mami).await.unwrap());
         assert!(!db.set_granted(mami, Capability::ControlTv, true).await.unwrap());
-        let mut handle = db.db.clone();
         assert!(Grant::all().exec(&mut handle).await.unwrap().is_empty());
     }
 }

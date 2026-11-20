@@ -1,6 +1,6 @@
 use crate::bus::Bus;
+use crate::profile::ProfileId;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -25,6 +25,8 @@ const MONITOR_RESTART: Duration = Duration::from_secs(2);
 const SCANNING: &str = "Open the case near the TV and hold the button on its back until the light flashes white.";
 const NOTHING_FOUND: &str = "No headphones showed up. Open the case near the TV, hold the button on its back until the light flashes white, and try again.";
 const NONE_PAIRED: &str = "No headphones are paired. Pair them in Settings.";
+const NONE_YOURS: &str = "You have no headphones on this TV. Pair yours in Settings.";
+const NOT_YOURS: &str = "These headphones aren't yours";
 const MAX_VOLUME: u8 = 127;
 const VOLUME_STEP: u8 = 8;
 const MAX_AUDIO_DELAY: i32 = 500;
@@ -73,6 +75,7 @@ pub enum Stage {
 pub struct View {
     pub output: Output,
     pub headphones: Option<HeadphonesView>,
+    pub with_headphones: Vec<ProfileId>,
     pub pairing: Option<PairingView>,
     pub error: Option<String>,
 }
@@ -81,6 +84,7 @@ pub struct View {
 pub struct HeadphonesView {
     pub name: String,
     pub address: String,
+    pub owners: Vec<ProfileId>,
     pub state: Link,
     pub volume: Option<VolumeView>,
     pub audio_delay: Option<i32>,
@@ -253,6 +257,7 @@ struct State {
     attempt: u64,
     pairing: Option<PairingView>,
     pair_attempt: u64,
+    kept: Vec<(String, ProfileId)>,
 }
 
 impl State {
@@ -268,6 +273,26 @@ impl State {
 
     fn device(&self) -> Option<&Device> {
         self.headphones.as_ref().map(|known| &known.device)
+    }
+
+    fn owners(&self, address: &str) -> Vec<ProfileId> {
+        self.kept
+            .iter()
+            .filter(|(kept, _)| kept == address)
+            .map(|(_, owner)| *owner)
+            .collect()
+    }
+
+    fn owned_by(&self, who: ProfileId) -> Option<String> {
+        self.kept
+            .iter()
+            .find(|(_, owner)| *owner == who)
+            .map(|(address, _)| address.clone())
+    }
+
+    fn mine(&self, who: ProfileId) -> bool {
+        self.device()
+            .is_some_and(|device| self.owners(&device.address).contains(&who))
     }
 
     fn pairing(&mut self, state: Stage, message: String) {
@@ -298,7 +323,6 @@ impl State {
 
 struct Inner {
     state: Mutex<State>,
-    kept: Mutex<HashSet<String>>,
     radio: Box<dyn Radio>,
     bus: Bus,
     mover: Mover,
@@ -334,7 +358,6 @@ impl Audio {
                     headphones,
                     ..State::default()
                 }),
-                kept: Mutex::new(HashSet::new()),
                 radio,
                 bus,
                 mover,
@@ -444,12 +467,60 @@ impl Audio {
         view_of(&state)
     }
 
-    pub fn set_kept(&self, addresses: impl IntoIterator<Item = String>) {
-        *self.inner.kept.lock().unwrap() = addresses.into_iter().collect();
+    pub fn set_kept(&self, kept: impl IntoIterator<Item = (String, ProfileId)>) {
+        let mut state = self.inner.state.lock().unwrap();
+        state.kept = kept.into_iter().collect();
+        self.publish(&state);
     }
 
     fn kept(&self, address: &str) -> bool {
-        self.inner.kept.lock().unwrap().contains(address)
+        !self.inner.state.lock().unwrap().owners(address).is_empty()
+    }
+
+    pub fn choose_as(&self, who: ProfileId, output: Output) -> View {
+        if output == Output::Tv {
+            return self.choose(output);
+        }
+        let (mine, own) = {
+            let state = self.inner.state.lock().unwrap();
+            (state.mine(who), state.owned_by(who))
+        };
+        if mine {
+            return self.choose(output);
+        }
+        match own.and_then(|address| self.inner.radio.bonded(&address)) {
+            Some(device) => {
+                self.select(Some(device));
+                self.choose(output)
+            }
+            None => {
+                let mut state = self.inner.state.lock().unwrap();
+                state.error = Some(NONE_YOURS.to_string());
+                self.publish(&state);
+                view_of(&state)
+            }
+        }
+    }
+
+    pub fn forget_as(&self, who: ProfileId) -> View {
+        let mut state = self.inner.state.lock().unwrap();
+        let Some(address) = state.owned_by(who) else {
+            return view_of(&state);
+        };
+        let selected = state.mine(who);
+        state.kept.retain(|(_, owner)| *owner != who);
+        let kept = !state.owners(&address).is_empty();
+        if selected && !kept {
+            drop(state);
+            return self.forget();
+        }
+        self.publish(&state);
+        let view = view_of(&state);
+        drop(state);
+        if !kept {
+            self.inner.radio.forget(&address);
+        }
+        view
     }
 
     pub fn bonded(&self, address: &str) -> Option<Device> {
@@ -526,7 +597,7 @@ impl Audio {
         }
     }
 
-    pub fn forget(&self) -> View {
+    fn forget(&self) -> View {
         let mut state = self.inner.state.lock().unwrap();
         state.error = None;
         let route = state.output() == Output::Headphones;
@@ -760,10 +831,11 @@ impl Audio {
         }))
     }
 
-    pub fn delay_sound(&self, by: i32) -> Result<View, String> {
+    pub fn delay_sound(&self, who: ProfileId, by: i32) -> Result<View, String> {
         let (headphones, delay) = {
             let state = self.inner.state.lock().unwrap();
             match &state.headphones {
+                Some(_) if !state.mine(who) => return Err(NOT_YOURS.to_string()),
                 Some(known) if state.connected() => (known.device.clone(), known.audio_delay.unwrap_or(0)),
                 _ => return Err("The headphones aren't connected".to_string()),
             }
@@ -870,6 +942,7 @@ fn view_of(state: &State) -> View {
         headphones: state.headphones.as_ref().map(|known| HeadphonesView {
             name: known.device.name.clone(),
             address: known.device.address.clone(),
+            owners: state.owners(&known.device.address),
             state: link,
             volume: known
                 .volume
@@ -880,6 +953,12 @@ fn view_of(state: &State) -> View {
                 }),
             audio_delay: known.audio_delay.filter(|_| link == Link::Connected),
         }),
+        with_headphones: {
+            let mut with = state.kept.iter().map(|(_, owner)| *owner).collect::<Vec<_>>();
+            with.sort();
+            with.dedup();
+            with
+        },
         pairing: state.pairing.clone(),
         error: state.error.clone(),
     }
@@ -1165,6 +1244,8 @@ mod tests {
     use std::sync::mpsc;
 
     const AIRPODS: &str = "34:0E:22:67:03:38";
+    const FREDERIK: ProfileId = ProfileId(1);
+    const MAMI: ProfileId = ProfileId(2);
     const OTHER: &str = "00:11:22:33:44:55";
     const SINK: &str = "/org/bluealsa/hci0/dev_34_0E_22_67_03_38/a2dpsrc/sink";
 
@@ -1361,12 +1442,14 @@ mod tests {
     #[test]
     fn the_view_is_the_json_the_web_app_reads() {
         let rig = paired_rig();
+        rig.audio.set_kept([(AIRPODS.to_string(), FREDERIK)]);
         assert_eq!(
             serde_json::to_value(Event::Audio(rig.audio.view())).unwrap(),
             serde_json::json!({
                 "type": "audio",
                 "output": "tv",
-                "headphones": { "name": "AirPods", "address": AIRPODS, "state": "disconnected", "volume": null, "audio_delay": null },
+                "headphones": { "name": "AirPods", "address": AIRPODS, "owners": [1], "state": "disconnected", "volume": null, "audio_delay": null },
+                "with_headphones": [1],
                 "pairing": null,
                 "error": null,
             })
@@ -1418,6 +1501,43 @@ mod tests {
         assert!(
             rig.routes.recv_timeout(Duration::from_millis(100)).is_err(),
             "the same headphones change nothing"
+        );
+    }
+
+    #[test]
+    fn headphones_are_only_ever_their_owners() {
+        let rig = paired_rig();
+        rig.world.lock().unwrap().bonded = vec![sony()];
+        rig.world.lock().unwrap().sinks = vec![AIRPODS.to_string(), OTHER.to_string()];
+        rig.audio.set_kept([(AIRPODS.to_string(), FREDERIK)]);
+        let view = rig.audio.view();
+        assert_eq!(view.headphones.unwrap().owners, [FREDERIK]);
+        assert_eq!(view.with_headphones, [FREDERIK]);
+        assert_eq!(rig.bus.audio_state(), Some(rig.audio.view()));
+
+        let view = rig.audio.choose_as(MAMI, Output::Headphones);
+        assert_eq!(view.error.as_deref(), Some(NONE_YOURS));
+        assert_eq!(view.output, Output::Tv);
+        assert!(rig.routes.try_recv().is_err(), "Mami can't take Frederik's AirPods");
+
+        rig.audio.choose_as(FREDERIK, Output::Headphones);
+        assert_eq!(route(&rig).said, "Sound on AirPods");
+
+        rig.audio
+            .set_kept([(AIRPODS.to_string(), FREDERIK), (OTHER.to_string(), MAMI)]);
+        assert_eq!(rig.audio.view().with_headphones, [FREDERIK, MAMI]);
+        assert_eq!(rig.audio.forget_as(MAMI).headphones.unwrap().name, "AirPods");
+        assert!(calls_until(&rig, &format!("forget {OTHER}")).contains(&format!("forget {OTHER}")));
+        assert_eq!(rig.audio.view().with_headphones, [FREDERIK]);
+        rig.audio
+            .set_kept([(AIRPODS.to_string(), FREDERIK), (OTHER.to_string(), MAMI)]);
+        rig.audio.choose_as(MAMI, Output::Headphones);
+        assert_eq!(route(&rig).device, TV_DEVICE);
+        let view = settled(&rig, |view| view.output == Output::Headphones);
+        let headphones = view.headphones.unwrap();
+        assert_eq!(
+            (headphones.name.as_str(), headphones.owners.as_slice()),
+            ("WH-1000XM5", &[MAMI][..])
         );
     }
 
@@ -1730,22 +1850,31 @@ mod tests {
     #[test]
     fn forgetting_headphones_returns_the_sound_and_unbonds_unless_kept() {
         let cases = [
-            ("on the tv, kept by another profile", true, false),
+            ("on the tv, Mami's as well", true, false),
             ("on the tv", false, false),
-            ("playing, kept by another profile", true, true),
+            ("playing, Mami's as well", true, true),
             ("playing", false, true),
         ];
         for (name, kept, playing) in cases {
             let rig = paired_rig();
+            rig.audio.set_kept([(AIRPODS.to_string(), FREDERIK)]);
             if kept {
-                rig.audio.set_kept([AIRPODS.to_string()]);
+                rig.audio
+                    .set_kept([(AIRPODS.to_string(), FREDERIK), (AIRPODS.to_string(), MAMI)]);
             }
             if playing {
                 rig.audio.sinks_listed(&[AIRPODS.to_string()]);
                 rig.audio.choose(Output::Headphones);
                 route(&rig);
             }
-            let view = rig.audio.forget();
+            let view = rig.audio.forget_as(FREDERIK);
+            if kept {
+                assert_eq!(view.headphones.unwrap().owners, [MAMI], "{name}");
+                assert!(rig.routes.try_recv().is_err(), "{name}");
+                thread::sleep(Duration::from_millis(100));
+                assert!(!rig.calls.try_iter().any(|call| call.starts_with("forget")), "{name}");
+                continue;
+            }
             assert_eq!((view.output, view.headphones), (Output::Tv, None), "{name}");
             if playing {
                 assert_eq!(route(&rig).device, TV_DEVICE, "{name}");
@@ -1753,11 +1882,10 @@ mod tests {
                 assert!(rig.routes.try_recv().is_err(), "{name}");
             }
             assert_eq!(rig.audio.device(), TV_DEVICE, "{name}");
-            if kept {
-                assert!(rig.calls.recv_timeout(Duration::from_millis(100)).is_err(), "{name}");
-            } else {
-                assert_eq!(call(&rig), format!("forget {AIRPODS}"), "{name}");
-            }
+            assert!(
+                calls_until(&rig, &format!("forget {AIRPODS}")).contains(&format!("forget {AIRPODS}")),
+                "{name}"
+            );
             assert_eq!(rig.audio.view().headphones, None, "{name}");
         }
     }
@@ -1814,17 +1942,24 @@ mod tests {
     fn the_sound_on_the_headphones_can_be_nudged_later_or_earlier() {
         let rig = paired_rig();
         rig.world.lock().unwrap().adjustment = 20;
+        rig.audio.set_kept([(AIRPODS.to_string(), FREDERIK)]);
         assert_eq!(
-            rig.audio.delay_sound(-20),
+            rig.audio.delay_sound(FREDERIK, -20),
             Err("The headphones aren't connected".to_string())
         );
         rig.audio.sinks_listed(&[AIRPODS.to_string()]);
         assert_eq!(rig.audio.view().headphones.unwrap().audio_delay, Some(-20));
-        let view = rig.audio.delay_sound(50).unwrap();
+        assert_eq!(rig.audio.delay_sound(MAMI, 50), Err(NOT_YOURS.to_string()));
+        let view = rig.audio.delay_sound(FREDERIK, 50).unwrap();
         assert_eq!(view.headphones.unwrap().audio_delay, Some(30));
         assert_eq!(call(&rig), format!("delay {AIRPODS} -30"));
         assert_eq!(
-            rig.audio.delay_sound(900).unwrap().headphones.unwrap().audio_delay,
+            rig.audio
+                .delay_sound(FREDERIK, 900)
+                .unwrap()
+                .headphones
+                .unwrap()
+                .audio_delay,
             Some(500)
         );
         assert_eq!(rig.bus.audio_state(), Some(rig.audio.view()));

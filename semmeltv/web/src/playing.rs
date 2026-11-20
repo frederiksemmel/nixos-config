@@ -220,7 +220,7 @@ async fn play_pause() -> Result<impl View> {
 pub async fn player(cx: &Cx) -> Result<impl View> {
     let abilities = Api::of(cx).tv_abilities().await.unwrap_or_default();
     let dialogue = Api::of(cx).dialogue().await.ok();
-    let uses_headphones = crate::auth::uses_headphones(cx);
+    let controls_tv = crate::auth::controls_tv(cx);
     Ok(view! {
         <div class="player">
             <section class="bar" aria-label="Now playing">
@@ -299,7 +299,7 @@ pub async fn player(cx: &Cx) -> Result<impl View> {
                                 "Stop playing"
                             </button>
                         </section>
-                        if uses_headphones {
+                        if controls_tv {
                             sound()
                         }
                         if let Some(on) = dialogue {
@@ -326,6 +326,7 @@ pub async fn headphones_icon() -> Result<impl View> {
 
 #[derive(Debug, PartialEq)]
 struct Sound {
+    on_tv: bool,
     on_headphones: bool,
     connecting: bool,
     name: String,
@@ -341,33 +342,45 @@ fn lip_sync(delay: i32) -> String {
     }
 }
 
-fn sound_of(audio: &Audio) -> Option<Sound> {
-    let headphones = audio.headphones.as_ref()?;
-    let connecting = headphones.state == Link::Connecting;
-    let name = headphones.name.clone();
+fn sound_of(audio: &Audio, me: Option<i64>) -> Option<Sound> {
+    let me = me?;
+    let mine = audio
+        .headphones
+        .as_ref()
+        .filter(|headphones| headphones.owners.contains(&me));
+    if mine.is_none() && !audio.with_headphones.contains(&me) {
+        return None;
+    }
+    let connecting = mine.is_some_and(|headphones| headphones.state == Link::Connecting);
+    let on_headphones = mine.is_some() && audio.output == Output::Headphones;
+    let name = mine.map_or_else(|| "My headphones".to_string(), |headphones| headphones.name.clone());
     let note = if connecting {
         format!("Connecting to {name}…")
     } else {
         String::new()
     };
     Some(Sound {
-        on_headphones: audio.output == Output::Headphones,
+        on_tv: audio.output == Output::Tv && !connecting,
+        on_headphones,
         connecting,
         name,
         note,
-        delay: headphones.audio_delay.filter(|_| audio.output == Output::Headphones),
+        delay: mine
+            .and_then(|headphones| headphones.audio_delay)
+            .filter(|_| on_headphones),
     })
 }
 
 #[component]
 async fn sound(cx: &Cx) -> Result<impl View> {
+    let me = crate::auth::me(cx).map(|me| me.person.id);
     Ok(live! {
         let mut audio = app_context::<Live>(cx).audio.clone();
         loop {
-            let state = audio.borrow_and_update().as_ref().and_then(sound_of);
+            let state = audio.borrow_and_update().as_ref().and_then(|audio| sound_of(audio, me));
             let token = match state {
                 Some(sound) => {
-                    let on_tv = !sound.on_headphones && !sound.connecting;
+                    let on_tv = sound.on_tv;
                     let waiting = sound.connecting && !sound.on_headphones;
                     emit! {
                         <section class="pick sound" aria-label="Sound" data-output=(if sound.on_headphones { "headphones" } else { "tv" })>
@@ -865,6 +878,29 @@ pub async fn notices(cx: &Cx) -> Result<impl View> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_sound_choice_offers_only_your_own_headphones() {
+        let audio: Audio = serde_json::from_value(serde_json::json!({
+            "output": "headphones",
+            "headphones": { "name": "AirPods von Frederik", "state": "connected", "owners": [1], "audio_delay": 40 },
+            "with_headphones": [1, 2],
+            "pairing": null,
+            "error": null,
+        }))
+        .unwrap();
+        let frederik = sound_of(&audio, Some(1)).unwrap();
+        assert!(frederik.on_headphones && !frederik.on_tv);
+        assert_eq!(
+            (frederik.name.as_str(), frederik.delay),
+            ("AirPods von Frederik", Some(40))
+        );
+        let mami = sound_of(&audio, Some(2)).unwrap();
+        assert!(!mami.on_headphones && !mami.on_tv);
+        assert_eq!((mami.name.as_str(), mami.delay), ("My headphones", None));
+        assert_eq!(sound_of(&audio, Some(3)), None, "Miriam has none of her own");
+        assert_eq!(sound_of(&audio, None), None);
+    }
 
     #[test]
     fn the_screen_json_reads_into_the_bar() {

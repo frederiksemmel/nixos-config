@@ -44,10 +44,12 @@ With it set, every request passes one gate in the app before anything else:
   someone without it can't `flip`, and their `play` is taken only while
   nothing else plays (the TV plays nothing and no other phone plays), else 422
   "Something else plays now".
-- The TV's Bluetooth headphones need the `headphones` capability, else 403
-  "Only someone allowed to use headphones on this TV can do that": `POST
-  /api/audio`, `/api/audio/pair`, `/api/audio/headphones` and
-  `/api/audio/delay`. `GET /api/audio` stays open.
+- The TV's Bluetooth headphones need `control-tv` too: `POST /api/audio`,
+  `/api/audio/pair`, `/api/audio/headphones` and `/api/audio/delay`. `GET
+  /api/audio` stays open. Headphones are the paired profile's own: `{ "output":
+  "headphones" }` takes the caller's, `DELETE /api/audio/headphones` forgets the
+  caller's, and `/api/audio/delay` on someone else's answers 409 "These
+  headphones aren't yours".
 - Downloading needs the `download` capability, else 403 "Only someone allowed
   to download on this TV can do that": the rest of `/api/downloads/*`. The
   web app checks the same capability before it calls the downloads service.
@@ -95,8 +97,8 @@ Argon2id.
 
 A person is `{ id, name, role, color, capabilities }`, `role` being `admin` or
 `viewer`. `capabilities` lists what the person may do on this TV beyond
-browsing and watching on their own device: `control-tv`, `headphones` and
-`download`. An
+browsing and watching on their own device: `control-tv` (which includes
+pairing and using their own headphones) and `download`. An
 admin has every capability; a viewer only those granted, none at first. Each
 TV keeps its own grants.
 Passkeys use WebAuthn with user verification (Face ID, Touch ID, a screen
@@ -562,7 +564,8 @@ SemmelTV. Every request answers the whole state:
 
     {
       "output": "tv",
-      "headphones": { "name": "AirPods von Frederik", "address": "34:0E:22:67:03:38", "state": "connected", "volume": { "level": 80, "muted": false } },
+      "headphones": { "name": "AirPods von Frederik", "address": "34:0E:22:67:03:38", "owners": [1], "state": "connected", "volume": { "level": 80, "muted": false } },
+      "with_headphones": [1, 2],
       "pairing": null,
       "error": null
     }
@@ -575,6 +578,11 @@ SemmelTV. Every request answers the whole state:
   and null otherwise; it follows changes made on the headphones too.
   `audio_delay` is the lip-sync nudge for the headphones in milliseconds while
   they are connected (positive: the sound comes later), and null otherwise.
+  `headphones` are the ones the TV holds now, those of the profile on the TV
+  unless someone took their own since; `owners` are the profile ids whose
+  headphones these are.
+- `with_headphones` lists the profile ids that have headphones paired with this
+  TV, so a phone can offer someone their own while the TV holds another's.
 - `pairing` is null, or `{ "state": "scanning" | "pairing" | "paired" |
   "failed", "message": "..." }` with a sentence to show as it is.
 - `error` is a sentence about the last switch that went wrong, or null.

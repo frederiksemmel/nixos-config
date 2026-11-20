@@ -25,11 +25,9 @@ impl Role {
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
     /// Play on the TV and use its remote: playback, volume, the TV's power,
-    /// the microphone, and moving what plays between the TV and a phone.
+    /// the microphone, moving what plays between the TV and a phone, and
+    /// pairing one's own Bluetooth headphones with the TV and listening on them.
     ControlTv,
-    /// Pair Bluetooth headphones with the TV, forget them, send the TV's
-    /// sound to them and set their sound delay.
-    Headphones,
     /// Find films and seasons and download them into the library, and watch
     /// how the downloads are going. Stopping a download, the TV's storage
     /// and removing titles stay with the admin.
@@ -37,12 +35,11 @@ pub enum Capability {
 }
 
 impl Capability {
-    pub const ALL: [Capability; 3] = [Capability::ControlTv, Capability::Headphones, Capability::Download];
+    pub const ALL: [Capability; 2] = [Capability::ControlTv, Capability::Download];
 
     pub fn name(self) -> &'static str {
         match self {
             Capability::ControlTv => "control-tv",
-            Capability::Headphones => "headphones",
             Capability::Download => "download",
         }
     }
@@ -50,7 +47,6 @@ impl Capability {
     pub fn refusal(self) -> &'static str {
         match self {
             Capability::ControlTv => "Only someone allowed to control this TV can do that",
-            Capability::Headphones => "Only someone allowed to use headphones on this TV can do that",
             Capability::Download => "Only someone allowed to download on this TV can do that",
         }
     }

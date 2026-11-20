@@ -50,44 +50,63 @@ enum PairButton {
 }
 
 struct PairRow {
+    own: Option<(String, String)>,
     detail: String,
     button: PairButton,
     note: String,
 }
 
-fn pair_row(audio: &Audio) -> PairRow {
+fn pair_row(audio: &Audio, me: Option<i64>) -> PairRow {
     let button = match audio.pairing.as_ref().map(|pairing| pairing.state) {
         Some(PairState::Scanning) => PairButton::Cancel,
         Some(PairState::Pairing) => PairButton::Wait,
         _ => PairButton::Pair,
     };
-    let detail = match &audio.headphones {
-        Some(headphones) => format!("Replaces {}", headphones.name),
-        None => "AirPods or other Bluetooth headphones, to hear the TV on them".to_string(),
+    let mine = audio
+        .headphones
+        .as_ref()
+        .filter(|headphones| me.is_some_and(|me| headphones.owners.contains(&me)));
+    let own = match mine {
+        Some(headphones) => Some((headphones.name.clone(), link_text(headphones.state).to_string())),
+        None if me.is_some_and(|me| audio.with_headphones.contains(&me)) => {
+            Some(("My headphones".to_string(), "Not on the TV right now".to_string()))
+        }
+        None => None,
+    };
+    let detail = match &own {
+        Some((name, _)) if mine.is_some() => format!("Replaces {name}"),
+        Some(_) => "Replaces your headphones".to_string(),
+        None => "AirPods or other Bluetooth headphones, yours alone, to hear the TV on them".to_string(),
     };
     let note = match &audio.pairing {
         Some(pairing) if matches!(pairing.state, PairState::Scanning | PairState::Pairing) => pairing.message.clone(),
         _ => String::new(),
     };
-    PairRow { detail, button, note }
+    PairRow {
+        own,
+        detail,
+        button,
+        note,
+    }
 }
 
 #[component]
 async fn headphones_settings(cx: &Cx) -> Result<impl View> {
+    let me = crate::auth::me(cx).map(|me| me.person.id);
     Ok(live! {
         let mut audio = app_context::<Live>(cx).audio.clone();
         loop {
             let state = audio.borrow_and_update().clone();
             let token = match state {
                 Some(audio) => {
-                    let row = pair_row(&audio);
+                    let row = pair_row(&audio, me);
                     emit! {
                         <section class="settings headphones">
                             <h2>"Headphones"</h2>
                             <div class="setting-group">
-                                if let Some(headphones) = &audio.headphones {
+                                if let Some((name, state)) = &row.own {
                                     <div class="setting setting-row">
-                                        <span class="setting-name">(headphones.name.as_str()) <small>(link_text(headphones.state))</small></span>
+                                        <span class="setting-name">(name.as_str()) <small>(state.as_str())</small></span>
                                         <button type="button" class="pill quiet" data-post="/api/audio/headphones" data-method="DELETE">"Forget"</button>
                                     </div>
                                 }
@@ -163,7 +182,6 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
     let (paired, pair) = pairing(abilities.paired);
     let admin = crate::auth::me(cx).is_some_and(|me| me.person.admin());
     let controls_tv = crate::auth::controls_tv(cx);
-    let uses_headphones = crate::auth::uses_headphones(cx);
     let downloads = crate::auth::downloads(cx);
     let shown = api.tv_profile().await.ok();
     Ok(view! {
@@ -217,7 +235,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                 }
             </section>
             crate::notify::notifications(admin: admin)
-            if uses_headphones {
+            if controls_tv {
                 headphones_settings()
             }
             if downloads {
@@ -273,6 +291,30 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn settings_show_only_your_own_headphones() {
+        let audio: Audio = serde_json::from_value(serde_json::json!({
+            "output": "tv",
+            "headphones": { "name": "AirPods von Frederik", "state": "connected", "owners": [1] },
+            "with_headphones": [1, 2],
+            "pairing": null,
+            "error": null,
+        }))
+        .unwrap();
+        let frederik = pair_row(&audio, Some(1));
+        assert_eq!(
+            frederik.own,
+            Some(("AirPods von Frederik".to_string(), "Connected".to_string()))
+        );
+        assert_eq!(frederik.detail, "Replaces AirPods von Frederik");
+        let mami = pair_row(&audio, Some(2));
+        assert_eq!(mami.own.unwrap().0, "My headphones");
+        assert_eq!(mami.detail, "Replaces your headphones");
+        let miriam = pair_row(&audio, Some(3));
+        assert_eq!(miriam.own, None);
+        assert!(!miriam.detail.contains("Frederik"));
+    }
 
     #[test]
     fn pairing_says_what_to_do() {

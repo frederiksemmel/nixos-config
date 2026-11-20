@@ -572,6 +572,8 @@ pub struct Headphones {
     pub name: String,
     pub state: Link,
     #[serde(default)]
+    pub owners: Vec<i64>,
+    #[serde(default)]
     pub volume: Option<Volume>,
     #[serde(default)]
     pub audio_delay: Option<i32>,
@@ -602,6 +604,8 @@ pub struct Pairing {
 pub struct Audio {
     pub output: Output,
     pub headphones: Option<Headphones>,
+    #[serde(default)]
+    pub with_headphones: Vec<i64>,
     pub pairing: Option<Pairing>,
     pub error: Option<String>,
 }
@@ -1153,7 +1157,6 @@ pub struct Person {
 }
 
 pub const CONTROL_TV: &str = "control-tv";
-pub const HEADPHONES: &str = "headphones";
 pub const DOWNLOAD: &str = "download";
 
 impl Person {
@@ -1167,10 +1170,6 @@ impl Person {
 
     pub fn controls_tv(&self) -> bool {
         self.can(CONTROL_TV)
-    }
-
-    pub fn uses_headphones(&self) -> bool {
-        self.can(HEADPHONES)
     }
 
     pub fn downloads(&self) -> bool {
@@ -1333,7 +1332,7 @@ mod tests {
     }
 
     #[test]
-    fn a_person_controls_the_tv_and_uses_headphones_only_with_those_capabilities() {
+    fn a_person_controls_the_tv_and_downloads_only_with_those_capabilities() {
         let read = |capabilities: Value| {
             serde_json::from_value::<Person>(json!({
                 "id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "capabilities": capabilities
@@ -1341,8 +1340,6 @@ mod tests {
             .unwrap()
         };
         assert!(read(json!(["control-tv"])).controls_tv());
-        assert!(!read(json!(["control-tv"])).uses_headphones());
-        assert!(read(json!(["headphones"])).uses_headphones());
         assert!(!read(json!(["headphones"])).controls_tv());
         assert!(!read(json!([])).controls_tv());
         assert!(read(json!(["download"])).downloads());

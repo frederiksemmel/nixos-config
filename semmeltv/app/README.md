@@ -419,7 +419,7 @@ async: the core and the API await them.
 | Table | Holds | Per |
 | --- | --- | --- |
 | `profiles` | Frederik (admin), Mami, Miriam, Ramu (viewers): name, role, password hash, colour | |
-| `capabilities` | what an admin granted a viewer on this TV: `control_tv`, `headphones` | profile |
+| `capabilities` | what an admin granted a viewer on this TV: `control_tv`, `download` (old `headphones` rows mean nothing) | profile |
 | `passkeys`, `sessions`, `invites` | sign-in, kept by the auth code | profile |
 | `video_places` | an episode's or film's stopping point, when it was last played, finished, audio and subtitle track, subtitles shown | profile |
 | `series_places` | the last episode started per show, and whether it finished | profile |
@@ -471,11 +471,12 @@ capability an admin grants per person and per TV, on the People page
 (`control-tv`): with it a viewer also plays on the TV, uses its remote, the
 microphone and the TV/phone switch, and a phone of theirs takes over from
 whatever plays. New profiles start without it; on semmeltv5 only Chris has it
-(migration `0006` granted it). Using the TV's Bluetooth headphones is a second
-capability (`headphones`): pairing and forgetting them in Settings, sending the
-sound to them and setting their timing in the remote's sheet. Nobody but the
-admin has it until it is granted on the People page. Downloading is a third
-(`download`, migration `0008`): Settings > Downloads to find films and seasons
+(migration `0006` granted it). It also lets them pair their own Bluetooth
+headphones with the TV in Settings, send the sound to them and set their timing
+in the remote's sheet. Headphones belong to the profile that paired them:
+nobody else sees them, sends the sound to them, sets their timing or forgets
+them, and choosing your own takes them on the TV at once. Downloading is a
+second capability (`download`, migration `0008`): Settings > Downloads to find films and seasons
 and follow the running downloads, and a show's "More seasons" buttons; nobody
 but the admin has it until it is granted. Without a capability the web app
 shows none of its controls, and the API refuses them. Only an admin stops a

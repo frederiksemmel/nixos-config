@@ -167,7 +167,7 @@ impl Actor {
         });
         let audio = core.audio().cloned();
         if let Some(audio) = &audio {
-            if sound::claimed(&db, None).await.is_empty()
+            if sound::claimed(&db).await.is_empty()
                 && let Some(headphones) = audio.headphones()
             {
                 let prefs = db::AudioPrefs::Unpaired.pairing(headphones.address.clone());
@@ -175,7 +175,7 @@ impl Actor {
                     eprintln!("headphones: {error}");
                 }
             }
-            audio.set_kept(sound::claimed(&db, None).await);
+            audio.set_kept(sound::claimed(&db).await);
         }
         let scanning = (store.clone(), library.clone());
         let downloaded = spawn_blocking(move || scanning.0.downloaded(scanning.1.paths()))

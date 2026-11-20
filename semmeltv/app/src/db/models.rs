@@ -10,6 +10,9 @@ pub enum Role {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]
 pub enum Capability {
     ControlTv,
+    /// No longer granted, since controlling the TV covers one's own
+    /// headphones; Toasty can't drop an enum variant, so old rows stay and
+    /// read as nothing.
     Headphones,
     Download,
 }

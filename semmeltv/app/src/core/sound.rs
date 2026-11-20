@@ -18,17 +18,17 @@ pub enum Refusal {
 
 pub type Heard<T> = Result<T, Refusal>;
 
-pub(super) async fn claimed(db: &Db, except: Option<ProfileId>) -> Vec<String> {
+pub(super) async fn claimed(db: &Db) -> Vec<(String, ProfileId)> {
     let profiles = db.profiles().await.unwrap_or_else(|error| {
         eprintln!("headphones: {error}");
         Vec::new()
     });
     let mut claimed = Vec::new();
-    for profile in profiles.iter().filter(|profile| Some(profile.id) != except) {
+    for profile in &profiles {
         if let Ok(prefs) = db.audio_prefs(profile.id).await
             && let Some(headphones) = prefs.headphones()
         {
-            claimed.push(headphones.to_string());
+            claimed.push((headphones.to_string(), profile.id));
         }
     }
     claimed
@@ -52,7 +52,7 @@ async fn keep_paired(audio: Audio, db: Db, profile: ProfileId) {
                 let saved = async {
                     let prefs = db.audio_prefs(profile).await?.pairing(headphones.address);
                     db.save_audio_prefs(profile, &prefs).await?;
-                    audio.set_kept(claimed(&db, None).await);
+                    audio.set_kept(claimed(&db).await);
                     Ok::<_, db::Error>(())
                 };
                 if let Err(error) = saved.await {
@@ -74,10 +74,9 @@ impl Core {
         Ok(self.headphones()?.view())
     }
 
-    pub async fn choose_output(&self, output: audio::Output) -> Heard<audio::View> {
+    pub async fn choose_output(&self, profile: ProfileId, output: audio::Output) -> Heard<audio::View> {
         let audio = self.headphones()?;
-        let view = blocking(move || audio.choose(output)).await?;
-        let profile = self.tv_profile();
+        let view = blocking(move || audio.choose_as(profile, output)).await?;
         let prefs = self
             .db()
             .audio_prefs(profile)
@@ -111,21 +110,21 @@ impl Core {
 
     pub async fn forget_headphones(&self, profile: ProfileId) -> Heard<audio::View> {
         let audio = self.headphones()?;
-        self.ask(Request::TvProfile(profile)).await;
         let db = self.db();
-        audio.set_kept(claimed(db, Some(profile)).await);
         let forgetting = audio.clone();
-        let view = blocking(move || forgetting.forget()).await?;
+        blocking(move || forgetting.forget_as(profile)).await?;
         if let Err(error) = db.save_audio_prefs(profile, &db::AudioPrefs::Unpaired).await {
             eprintln!("headphones: {error}");
         }
-        audio.set_kept(claimed(db, None).await);
-        Ok(view)
+        audio.set_kept(claimed(db).await);
+        Ok(audio.view())
     }
 
-    pub async fn delay_sound(&self, by: i32) -> Heard<audio::View> {
+    pub async fn delay_sound(&self, profile: ProfileId, by: i32) -> Heard<audio::View> {
         let audio = self.headphones()?;
-        blocking(move || audio.delay_sound(by)).await?.map_err(Refusal::Failed)
+        blocking(move || audio.delay_sound(profile, by))
+            .await?
+            .map_err(Refusal::Failed)
     }
 
     pub async fn dialogue(&self, profile: ProfileId) -> Arc<AtomicBool> {
