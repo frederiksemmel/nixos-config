@@ -13,6 +13,7 @@ SUBTITLES = json.loads((HERE / "subtitles.json").read_text())
 CARDS = {card["key"]: card for row in LIBRARY.values() for card in row}
 playing = {"paused": False, "position": 2223.0, "subtitle": 1, "delay": 0.0}
 fetched = set()
+together = {}
 audio = {"output": "tv", "headphones": None, "pairing": None, "error": None}
 sound = {"changed": 0, "fail_next": False}
 screen = {"kind": "tv", "boot": 1, "device": None, "play": None, "notice": None}
@@ -293,6 +294,43 @@ async def screen_view(request):
 
 
 
+def episode(number, watched):
+    return {"season": 1, "episode": number, "label": f"S1 E{number}", "short_label": f"S1 E{number}",
+            "still": None, "ratings": {"imdb": None, "rotten_tomatoes": None, "fresh": None, "popcorn": None,
+                                       "full": None},
+            "band": None, "watched": watched, "details": "H.264 · 50m", "stopped_at": None, "duration": 3000.0,
+            "runtime_minutes": 50, "tags": {}}
+
+
+async def show(request):
+    card = CARDS.get(request.match_info["key"])
+    if not card or card["kind"] != "show":
+        return web.json_response({"error": "not found"}, status=404)
+    me = profile_of(request)
+    partners = together.get(card["key"], set())
+    people = [profile for id, profile in PROFILES.items() if id != me]
+    return web.json_response({
+        **card, "last_played": None, "last_played_label": None, "downloaded_by": [],
+        "next": {"season": 1, "episode": 2, "label": "S1 E2", "title": None, "stopped_at": 600.0, "duration": 3000.0},
+        "seasons": [{"number": 1, "label": "Season 1", "episodes": [episode(1, True), episode(2, False)]}],
+        "together": {
+            "partners": [{**person(profile), "with_me": False, "spot": {"state": "not_started"}}
+                         for profile in people if profile["id"] in partners],
+            "others": [person(profile) for profile in people if profile["id"] not in partners],
+        },
+    })
+
+
+async def watch_together(request):
+    partners = together.setdefault(request.match_info["key"], set())
+    partner = int(request.match_info["partner"])
+    if request.method == "PUT":
+        partners.add(partner)
+    else:
+        partners.discard(partner)
+    return web.json_response({"ok": True, "message": "You watch it together"})
+
+
 async def feedback(request):
     return web.json_response({"dir": "/var/lib/semmeltv/feedback", "reports": REPORTS})
 
@@ -336,6 +374,8 @@ app.router.add_get("/api/tv-profile", tv_profile)
 app.router.add_get("/api/events", events)
 app.router.add_get("/api/library", library)
 app.router.add_get("/api/movies/{key}", movie)
+app.router.add_get("/api/shows/{key}", show)
+app.router.add_route("*", "/api/shows/{key}/together/{partner}", watch_together)
 app.router.add_get("/api/subtitles", subtitles)
 app.router.add_get("/api/playback", playback)
 app.router.add_get("/api/screen", screen_view)

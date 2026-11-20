@@ -1741,8 +1741,10 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 }
 .together-same, .together-catch-up { grid-column: 2 / -1; justify-self: start; }
 .together-same { margin: 0; color: #5ad17e; font-size: 14px; }
-.together-add summary { color: var(--muted); font-size: 14px; cursor: pointer; padding: 6px 0; }
-.together-hint { margin: 4px 0 10px; color: var(--muted); font-size: 13px; }
+.together-add summary { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; list-style: none; }
+.together-add summary::-webkit-details-marker { display: none; }
+.together-add[open] summary { border-color: var(--text); }
+.together-hint { margin: 10px 0; color: var(--muted); font-size: 13px; }
 .together-people { display: flex; flex-wrap: wrap; gap: 8px; }
 .together-row[data-act="pending"], .together-people [data-act="pending"] { opacity: 0.6; }
 
@@ -1847,7 +1849,7 @@ html[data-phone-ready]:has(.mode[data-mode="tv"]) .pill.handoff { display: inlin
 .detail-side,
 .detail-main { display: contents; }
 
-.detail-playback { order: 1; }
+.detail-playback, .together { order: 1; }
 .detail-plot { order: 2; }
 .detail-facts { order: 3; }
 .detail-cast-section { order: 4; }

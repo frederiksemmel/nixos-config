@@ -283,6 +283,32 @@ def deploys_from_the_feedback_page(page, engine):
           'document.querySelector(".deploy-said").textContent.includes("asked for a deploy") && document.querySelector(".deploy-actions").hidden', 3000)
 
 
+def below(page, upper, lower):
+    return page.evaluate(
+        "([upper, lower]) => document.querySelector(lower).getBoundingClientRect().top"
+        " >= document.querySelector(upper).getBoundingClientRect().bottom",
+        [upper, lower],
+    )
+
+
+def watches_together(page, engine):
+    page.goto(BASE + "/shows/outlander", wait_until="commit")
+    until(page, engine, "a series page shows", '!!document.querySelector("main .detail h1") && !!document.querySelector("main .together-add")')
+    page.wait_for_timeout(500)
+    check(engine, "Watch together sits under the play buttons", below(page, "main .detail-playback", "main .together"))
+    toggle = page.locator("main .together-add summary")
+    box = toggle.bounding_box() or {"height": 0}
+    check(engine, "and is a button big enough to tap", box["height"] >= 40, f"{box['height']} px high")
+    toggle.tap()
+    until(page, engine, "tapping it lists the people", '!!document.querySelector("main .together-people .chip")'
+          ' && document.querySelector("main .together-people .chip").getBoundingClientRect().height > 0', 3000)
+    page.locator("main .together-people .chip", has_text="Mami").tap()
+    until(page, engine, "picking Mami pairs the two of you", '[...document.querySelectorAll("main .together-row")]'
+          '.some((row) => row.dataset.partner === "Mami")', 8000)
+    page.locator("main .together-leave").first.tap()
+    until(page, engine, "and × ends it", '!document.querySelector("main .together-row")', 8000)
+
+
 def back_never_loops(page, engine):
     page.goto(BASE + "/feedback", wait_until="commit")
     until(page, engine, "a page opened directly shows", 'location.pathname === "/feedback" && !!document.querySelector("main .feedback-page a.back")')
@@ -322,6 +348,7 @@ def run(p, engine, device):
         scrolling_pulls_the_remote(page, engine)
     deploys_from_the_feedback_page(page, engine)
     back_never_loops(page, engine)
+    watches_together(page, engine)
     check(engine, "no script errors", not errors, "; ".join(errors))
     browser.close()
 

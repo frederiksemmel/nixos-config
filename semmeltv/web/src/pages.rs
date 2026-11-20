@@ -870,7 +870,10 @@ async fn watching_together(series: &str, title: &str, together: &Together) -> Re
             }
             if !together.others.is_empty() {
                 <details class="together-add">
-                    <summary>(if alone { "Watch this together with someone" } else { "Add someone" })</summary>
+                    <summary class="pill quiet">
+                        people_icon()
+                        (if alone { "Watch together" } else { "Add someone" })
+                    </summary>
                     <p class="together-hint">"You'll both see here where the other is, and either of you can jump to the other's place."</p>
                     <div class="together-people">
                         for other in &together.others {
@@ -881,6 +884,13 @@ async fn watching_together(series: &str, title: &str, together: &Together) -> Re
                 </details>
             }
         </section>
+    })
+}
+
+#[component]
+async fn people_icon() -> Result<impl View> {
+    Ok(view! {
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"></circle><path d="M2.5 20a6.5 6.5 0 0 1 13 0"></path><path d="M15.5 4.6a3.5 3.5 0 0 1 0 6.8"></path><path d="M18 14.2a6.5 6.5 0 0 1 3.5 5.8"></path></svg>
     })
 }
 
