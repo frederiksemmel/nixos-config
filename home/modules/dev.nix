@@ -156,6 +156,7 @@ in
 
       # Containerization & Virtualization
       qemu
+      (callPackage ../../packages/machine0.nix { })
 
       # Version Control & Collaboration
       git-interactive-rebase-tool
