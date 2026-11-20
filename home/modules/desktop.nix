@@ -777,6 +777,7 @@ in
       wallpaperNext
       ironbar
       gnome-themes-extra # Adwaita-dark for GTK 3
+      flake.inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.claude-desktop
 
       # Networking & Communication
       transmission_4-gtk
