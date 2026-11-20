@@ -215,6 +215,36 @@ def zoom_and_description(page, engine):
         check(engine, "a pinch still doesn't zoom the page", head["touch"] == "pan-x pan-y", head["touch"])
 
 
+ZOOMED = """(() => {
+  Object.defineProperty(visualViewport, "scale", { configurable: true, get: () => 1.6 });
+  visualViewport.dispatchEvent(new Event("resize"));
+})()"""
+UNZOOMED = """(() => {
+  delete visualViewport.scale;
+  visualViewport.dispatchEvent(new Event("resize"));
+})()"""
+PINCH = """(() => {
+  const event = new Event("gesturestart", { cancelable: true });
+  document.dispatchEvent(event);
+  return { cancelled: event.defaultPrevented, touch: getComputedStyle(document.documentElement).touchAction };
+})()"""
+VIEWPORT = "document.querySelector('meta[name=\"viewport\"]').content"
+
+
+def zoom_comes_back(page, engine):
+    check(engine, "a pinch on an unzoomed page is cancelled", page.evaluate(PINCH)["cancelled"])
+    page.evaluate(ZOOMED)
+    pinch = page.evaluate(PINCH)
+    check(engine, "a zoomed page lets a pinch zoom back out", not pinch["cancelled"] and pinch["touch"] == "auto", str(pinch))
+    page.evaluate(UNZOOMED)
+    check(engine, "back at 1x, pinches are cancelled again", page.evaluate(PINCH)["cancelled"])
+    page.locator("#feedback-open").tap()
+    until(page, engine, "the feedback box opens with its field focused", 'document.activeElement?.name === "message"')
+    check(engine, "while typing, iOS can't zoom into the field", "maximum-scale=1" in page.evaluate(VIEWPORT), page.evaluate(VIEWPORT))
+    page.locator(".feedback-close").tap()
+    until(page, engine, "after the field, zoom is unlocked again", f'!{VIEWPORT}.includes("maximum-scale")', 3000)
+
+
 COUNTS = """JSON.stringify(Object.fromEntries([...document.querySelectorAll(".report-filters button")]
     .map((button) => [button.querySelector("b").textContent, Number(button.querySelector("span").textContent)])))"""
 SHOWN = '[...document.querySelectorAll(".report")].filter((report) => !report.hidden).length'
@@ -386,6 +416,7 @@ def run(p, engine, device):
     scrub_rests_while_the_remote_is_shut(page, engine)
     bar_blur_grows_downwards(page, engine)
     zoom_and_description(page, engine)
+    zoom_comes_back(page, engine)
     text_selects_with_a_mouse_only(p, engine, page)
     opens_title(page, engine)
     finds_subtitles(page, engine)

@@ -226,6 +226,38 @@ for (const name of ["pointerup", "pointercancel"]) {
   });
 }
 
+const FIELD = "input:not([type=checkbox], [type=radio], [type=range], [type=color], [type=file]), textarea, select, [contenteditable]";
+const LOCK = ", maximum-scale=1";
+const viewportMeta = () => document.querySelector('meta[name="viewport"]');
+const zoomed = () => (window.visualViewport?.scale ?? 1) > 1.01;
+
+function lockZoom(on) {
+  const meta = viewportMeta();
+  if (!meta) return;
+  const plain = meta.content.replace(LOCK, "");
+  meta.content = on ? plain + LOCK : plain;
+}
+
+document.addEventListener("touchstart", (event) => {
+  if (event.target.closest?.(`${FIELD}, #feedback-open`)) lockZoom(true);
+}, { capture: true, passive: true });
+
+document.addEventListener("focusin", (event) => {
+  if (event.target.matches?.(FIELD)) lockZoom(true);
+});
+
+document.addEventListener("focusout", () => {
+  setTimeout(() => {
+    if (!document.activeElement?.matches?.(FIELD)) lockZoom(false);
+  }, 300);
+});
+
+window.visualViewport?.addEventListener("resize", () => {
+  document.documentElement.toggleAttribute("data-zoomed", zoomed());
+});
+
 for (const name of ["gesturestart", "gesturechange", "gestureend"]) {
-  document.addEventListener(name, (event) => event.preventDefault(), { passive: false });
+  document.addEventListener(name, (event) => {
+    if (!zoomed()) event.preventDefault();
+  }, { passive: false });
 }

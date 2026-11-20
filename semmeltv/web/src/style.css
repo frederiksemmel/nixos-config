@@ -34,6 +34,8 @@ html {
   overscroll-behavior-y: contain;
 }
 
+html[data-zoomed] { touch-action: auto; }
+
 input, select, textarea { font-size: 16px; }
 
 body {
