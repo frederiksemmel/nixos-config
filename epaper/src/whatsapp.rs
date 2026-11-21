@@ -23,6 +23,8 @@ const DATABASE: &str = "whatsapp.db";
 const PHONE_FILE: &str = "whatsapp-phone";
 /// Lists the chats allowed to draw, one JID per line.
 const GROUPS_FILE: &str = "whatsapp-groups";
+/// Holds the current pairing QR payload while the client is not linked.
+const QR_FILE: &str = "whatsapp-qr";
 const PAIR_CHECK: Duration = Duration::from_secs(10);
 const PAIR_RETRY: Duration = Duration::from_secs(60);
 const RESTART_AFTER: Duration = Duration::from_secs(60);
@@ -137,9 +139,22 @@ async fn connect(dir: &Path, bot: &flow::Bot, groups: &SharedGroups) -> Result<(
     let on_refresh = expiry.clone();
     let on_message = bot.clone();
     let message_groups = groups.clone();
+    let qr_file = dir.join(QR_FILE);
+    let linked_qr_file = qr_file.clone();
     let client = WaBot::builder()
         .with_backend(store)
         .skip_history_sync()
+        .on_qr_code(move |code, timeout| {
+            match std::fs::write(&qr_file, &code) {
+                Ok(()) => tracing::info!(
+                    "WhatsApp QR code in {} (valid {} s)",
+                    qr_file.display(),
+                    timeout.as_secs()
+                ),
+                Err(err) => tracing::warn!("writing {}: {err}", qr_file.display()),
+            }
+            async {}
+        })
         .on_pair_code(move |code, timeout| {
             *on_code.lock().unwrap() = Some(Instant::now() + timeout);
             let code = match code.split_at_checked(4) {
@@ -157,9 +172,10 @@ async fn connect(dir: &Path, bot: &flow::Bot, groups: &SharedGroups) -> Result<(
             tracing::warn!("whatsapp: pairing failed: {}", err.error);
             async {}
         })
-        .on_event_for(&[EventKind::PairSuccess], |event, _client| {
+        .on_event_for(&[EventKind::PairSuccess], move |event, _client| {
             if let Event::PairSuccess(paired) = &*event {
                 tracing::info!("WhatsApp linked as {}", paired.id);
+                std::fs::remove_file(&linked_qr_file).ok();
             }
             async {}
         })
