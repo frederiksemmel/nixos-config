@@ -23,6 +23,19 @@
 
   networking.hostName = "semmeltv3";
 
+  systemd.services.power-led-off = {
+    description = "Turn off the red power LED";
+    wantedBy = [ "multi-user.target" ];
+    serviceConfig = {
+      Type = "oneshot";
+      RemainAfterExit = true;
+    };
+    script = ''
+      echo none > /sys/class/leds/PWR/trigger
+      echo 0 > /sys/class/leds/PWR/brightness
+    '';
+  };
+
   zramSwap = {
     enable = true;
     memoryPercent = 100;
