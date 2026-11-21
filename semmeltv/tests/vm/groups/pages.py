@@ -95,7 +95,7 @@ with scenario("a title's details say who downloaded it, and nothing when nobody 
 
 with scenario("a title that isn't there says so inside the app"):
     phone.goto("/movies/not-in-the-library")
-    phone.until('document.querySelector("main h1")?.textContent === "Not in the library" && !!document.querySelector("header.top") && !!document.querySelector("main .trouble a[href=\'/\']")')
+    phone.until('document.querySelector("main h1")?.textContent === "Not on the shelf" && !!document.querySelector("header.top") && !!document.querySelector("main .trouble a[href=\'/\']")')
 
 with scenario("a film and an episode can be marked watched and back from the phone"):
     phone.goto(f"/movies/{SPARE_FILM}")

@@ -2038,6 +2038,8 @@ semmel-shell {
 .trouble h1 { margin: 0; }
 .trouble p { margin: 0; color: var(--muted); }
 .trouble .pill { margin-top: 8px; }
+.trouble-roll { width: 96px; height: 96px; transform: rotate(-12deg); }
+.trouble-roll[data-burnt="true"] { filter: brightness(0.45) sepia(0.6) saturate(0.7); transform: rotate(160deg); }
 
 /* Profiles and sign-in */
 

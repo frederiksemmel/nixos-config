@@ -224,7 +224,11 @@ impl Sending {
     }
 
     fn line(self) -> String {
-        format!("Uploading to pCloud · {} of {}", gb(self.sent), gb(self.size))
+        format!(
+            "Cooling on the rack: uploading to pCloud · {} of {}",
+            gb(self.sent),
+            gb(self.size)
+        )
     }
 }
 
@@ -500,7 +504,7 @@ async fn job_list(cx: &Cx) -> Result<impl View> {
                         Err(error) => <p class="setting-note">(error.as_str())</p>,
                         Ok(overview) => {
                             if overview.jobs.is_empty() {
-                                <p class="setting-note">"Nothing downloaded yet."</p>
+                                <p class="setting-note">"Nothing baked yet. Find a film or a season above."</p>
                             } else {
                                 <ul class="download-jobs">
                                     #[key(job.id.clone())]
@@ -509,7 +513,7 @@ async fn job_list(cx: &Cx) -> Result<impl View> {
                                     }
                                 </ul>
                             }
-                            <p class="setting-note">(format!("{} free for new downloads", gb(overview.room)))</p>
+                            <p class="setting-note">(format!("Room on the shelves for {} of new downloads", gb(overview.room)))</p>
                         },
                     }
                 </section>
@@ -698,7 +702,7 @@ pub async fn season_downloads(cx: &Cx, show: u64, title: &str) -> Result<impl Vi
                         let whole_season: i64 = 0;
                         let asked = format!("{title} season {}", season.number);
                         if season.downloading {
-                            <p class="setting-note">(format!("Season {} is downloading", season.number))</p>
+                            <p class="setting-note">(format!("Season {} is in the oven", season.number))</p>
                         } else {
                             <button type="button" class="pill quiet" :disabled=$(busy.get()) @click=$(async |_e| {
                                 busy.set(true);
@@ -709,7 +713,7 @@ pub async fn season_downloads(cx: &Cx, show: u64, title: &str) -> Result<impl Vi
                         }
                     }
                 </div>
-                <p class="setting-note" :hidden=$(!busy.get())>"Searching the indexers…"</p>
+                <p class="setting-note" :hidden=$(!busy.get())>"Kneading the dough: searching the indexers…"</p>
                 proposal_view(id: $(shown.get()), shown: shown.clone())
             </section>
         }
@@ -725,7 +729,7 @@ pub async fn search_download(cx: &Cx, query: Signal<String>) -> Result<impl View
             <section class="settings search-download" :hidden=$(query.get().trim().is_empty())>
                 <h2>"Not in the library?"</h2>
                 title_matches(text: $(query.get()), shown: shown.clone(), busy: busy.clone())
-                <p class="setting-note" :hidden=$(!busy.get())>"Searching the indexers…"</p>
+                <p class="setting-note" :hidden=$(!busy.get())>"Kneading the dough: searching the indexers…"</p>
                 proposal_view(id: $(shown.get()), shown: shown.clone())
                 <p class="setting-note">"Tap a match to download it, or type the full title, like “Dark season 2”, and tap Download."</p>
                 <div class="search-download-actions">
@@ -800,7 +804,7 @@ async fn downloads_page(cx: &Cx) -> Result<impl View> {
                 <button type="submit" class="storage-button" :disabled=$(busy.get())>"Find"</button>
             </form>
             title_matches(text: $(text.get()), shown: shown.clone(), busy: busy.clone())
-            <p class="setting-note" :hidden=$(!busy.get())>"Searching TMDB and the indexers…"</p>
+            <p class="setting-note" :hidden=$(!busy.get())>"Kneading the dough: searching TMDB and the indexers…"</p>
             proposal_view(id: $(shown.get()), shown: shown.clone())
             waiting(shown: shown)
             job_list()
@@ -871,7 +875,10 @@ mod tests {
         sent.sending = serde_json::from_value(json!({ "sent": 1_200_000_000u64, "size": 4_000_000_000u64 })).unwrap();
         let sending = sent.sending.unwrap();
         assert_eq!(sending.percent(), 30.0);
-        assert_eq!(sending.line(), "Uploading to pCloud · 1.2 GB of 4.0 GB");
+        assert_eq!(
+            sending.line(),
+            "Cooling on the rack: uploading to pCloud · 1.2 GB of 4.0 GB"
+        );
         assert_eq!(Sending { sent: 5, size: 0 }.percent(), 0.0);
     }
 

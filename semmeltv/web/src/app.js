@@ -23,7 +23,7 @@ function pause(ms, signal) {
 function waiting(failures) {
   if (failures < 2) return;
   window.dispatchEvent(new CustomEvent("semmeltv:toast", {
-    detail: { id: "unreachable", text: "SemmelTV isn't answering", detail: "Trying again every few seconds", tone: "pending" },
+    detail: { id: "unreachable", text: "We can't get it baked right now", detail: "SemmelTV isn't answering; trying again every few seconds", tone: "pending" },
   }));
 }
 

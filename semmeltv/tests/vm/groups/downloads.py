@@ -2,7 +2,7 @@ with scenario("an admin downloads a season the library lacks from the show page,
     phone.goto(f"/shows/{SHOW}")
     phone.until('[...document.querySelectorAll("main .season-downloads button")].map((button) => button.textContent.trim()).join("|") === "Download season 2"')
     assert phone.js('document.querySelector("main .season-downloads").getBoundingClientRect().top > document.querySelector("main .detail-episodes").getBoundingClientRect().bottom'), "the season buttons come after the episodes"
-    assert phone.js('document.querySelector("main .season-downloads").textContent.includes("Season 3 is downloading")'), "a season already downloading has no button"
+    assert phone.js('document.querySelector("main .season-downloads").textContent.includes("Season 3 is in the oven")'), "a season already downloading has no button"
     button = phone.page.locator("main .season-downloads button", has_text="Download season 2")
     button.scroll_into_view_if_needed()
     button.tap()
@@ -13,7 +13,7 @@ with scenario("an admin downloads a season the library lacks from the show page,
     phone.shot("season-download")
     phone.page.reload(wait_until="commit")
     phone.until('!!document.querySelector("main .episode-row")')
-    phone.until('document.querySelector("main .season-downloads")?.textContent.includes("Season 2 is downloading")')
+    phone.until('document.querySelector("main .season-downloads")?.textContent.includes("Season 2 is in the oven")')
     assert phone.js('!document.querySelector("main .season-downloads button")'), "no button once every missing season is downloading"
     phone.goto("/downloads")
     phone.until('[...document.querySelectorAll("main .download-job button")].some((button) => button.textContent.includes("Stop"))')

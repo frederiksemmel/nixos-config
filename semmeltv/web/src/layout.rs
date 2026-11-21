@@ -110,10 +110,10 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                             Ok(view! {
                                 if missing {
                                     (StatusCode::NOT_FOUND)
-                                    trouble(title: "Not in the library", note: "Nothing here, or it was taken out of the library.")
+                                    trouble(title: "Not on the shelf", note: "Nothing here, or it was taken out of the library.", burnt: false)
                                 } else {
                                     (StatusCode::SERVICE_UNAVAILABLE)
-                                    trouble(title: "SemmelTV isn't answering", note: "The TV app didn't answer this time. It may be restarting.")
+                                    trouble(title: "We can't get it baked right now", note: "The TV app didn't answer this time. The oven may be restarting; try again in a moment.", burnt: true)
                                 }
                             })
                         },
@@ -135,9 +135,10 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
 not_found!("/");
 
 #[component]
-async fn trouble(cx: &Cx, title: &'static str, note: &'static str) -> Result<impl View> {
+async fn trouble(cx: &Cx, title: &'static str, note: &'static str, burnt: bool) -> Result<impl View> {
     Ok(view! {
         <article class="page trouble">
+            <img class="trouble-roll" src=(brand::FAVICON) width="96" height="96" alt="" data-burnt=(burnt.to_string())>
             <h1>(title)</h1>
             <p>(note)</p>
             link(href: "/", attrs: attributes! { cx => class="pill" }, "Home")

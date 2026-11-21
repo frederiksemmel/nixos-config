@@ -261,7 +261,7 @@ impl Job {
 
     fn status(&self) -> String {
         if self.parts.iter().any(|part| part.phase == PartPhase::Checking) {
-            return "Checking the pieces already downloaded".to_string();
+            return "Checking the dough already kneaded before the restart".to_string();
         }
         let progress: u64 = self.parts.iter().map(|part| part.progress).sum();
         let total: u64 = self
@@ -272,8 +272,8 @@ impl Job {
         let speed: f64 = self.parts.iter().map(|part| part.speed).sum();
         let count = self.count();
         let what = match self.current().and_then(FileState::episode) {
-            Some(episode) if count > 1 => format!("Downloading {episode}"),
-            _ => "Downloading".to_string(),
+            Some(episode) if count > 1 => format!("Baking {episode}"),
+            _ => "Baking".to_string(),
         };
         let line = if total > 0 {
             downloading(&what, progress, total, speed)
@@ -401,6 +401,24 @@ fn free_bytes(dir: &Path) -> Option<u64> {
     let blocks: u64 = fields.next()?.parse().ok()?;
     let size: u64 = fields.next()?.parse().ok()?;
     Some(blocks * size)
+}
+
+fn started(mode: Mode, label: &str) -> String {
+    match mode {
+        Mode::Add => format!("The oven is heating up for {label}"),
+        Mode::Replace => format!("The oven is heating up for a fresh {label}"),
+    }
+}
+
+fn cooling(placed: usize, count: usize) -> String {
+    format!(
+        "Cooling on the rack: uploading to pCloud, file {} of {count}",
+        placed + 1
+    )
+}
+
+fn baked(uploaded: u64) -> String {
+    format!("Fresh out of the oven and in the library ({uploaded} bytes uploaded to peers)")
 }
 
 fn downloading(what: &str, progress: u64, total: u64, speed: f64) -> String {
@@ -711,7 +729,7 @@ impl Service {
                     .any(|part| picked.parts.iter().any(|new| new.infohash == part.part.infohash))
         });
         if duplicate {
-            return Outcome::no("That is already downloading");
+            return Outcome::no("That is already in the oven");
         }
         let room = self.room();
         if picked.size > room {
@@ -731,7 +749,7 @@ impl Service {
             choice: picked.clone(),
             mode,
             stage: Stage::Checking,
-            message: "Finding the files".to_string(),
+            message: "Heating up the oven".to_string(),
             parts: picked
                 .parts
                 .iter()
@@ -755,17 +773,13 @@ impl Service {
             sending: None,
             by,
         };
-        let verb = match mode {
-            Mode::Add => "Downloading",
-            Mode::Replace => "Downloading a replacement for",
-        };
         job.note(format!("confirmed: {} ({}), {mode:?}", picked.label, picked.facts));
         let label = job.label.clone();
         let mut book = self.book.lock().unwrap();
         book.jobs.push(job);
         self.save(&book);
         Outcome {
-            message: format!("{verb} {label}"),
+            message: started(mode, &label),
             ok: true,
             job: Some(id),
         }
@@ -1079,7 +1093,7 @@ impl Service {
         let shelf = self.shelf.lock().unwrap();
         if job.stage == Stage::Uploading {
             self.update(id, |job| {
-                job.message = format!("Uploading to pCloud, file {} of {}", job.placed.len() + 1, job.count());
+                job.message = cooling(job.placed.len(), job.count());
             });
         }
         self.update(id, |job| {
@@ -1161,7 +1175,7 @@ impl Service {
         let uploaded: u64 = job.parts.iter().map(|part| part.uploaded).sum();
         self.update(id, |job| {
             job.stage = Stage::Done;
-            job.message = format!("In the library ({uploaded} bytes uploaded to peers)");
+            job.message = baked(uploaded);
         });
     }
 }
@@ -1560,14 +1574,14 @@ added = 2025-01-01
     fn the_progress_line_says_how_long_is_left() {
         let mib = 1024 * 1024;
         assert_eq!(
-            downloading("Downloading", 10 * 1024 * mib, 20 * 1024 * mib, 8.0),
-            "Downloading, 50%, about 22 min left"
+            downloading("Baking", 10 * 1024 * mib, 20 * 1024 * mib, 8.0),
+            "Baking, 50%, about 22 min left"
         );
         assert_eq!(
-            downloading("Downloading S01E02", 0, 40 * 1024 * mib, 8.0),
-            "Downloading S01E02, 0%, about 1h 26m left"
+            downloading("Baking S01E02", 0, 40 * 1024 * mib, 8.0),
+            "Baking S01E02, 0%, about 1h 26m left"
         );
-        assert_eq!(downloading("Downloading", 5, 10, 0.0), "Downloading, 50%");
+        assert_eq!(downloading("Baking", 5, 10, 0.0), "Baking, 50%");
     }
 
     fn file(index: usize, path: &str, size: u64) -> FileState {
@@ -1771,12 +1785,29 @@ added = 2025-01-01
         job.parts[0].speed = 0.0;
         job.placed
             .push("Series/Dark/Season 01/Dark (2017) - S01E01.mkv".to_string());
-        assert_eq!(job.status(), "Downloading S01E02, 33% · 1 of 3 in the library");
+        assert_eq!(job.status(), "Baking S01E02, 33% · 1 of 3 in the library");
         job.parts[0].phase = PartPhase::Checking;
-        assert_eq!(job.status(), "Checking the pieces already downloaded");
+        assert_eq!(job.status(), "Checking the dough already kneaded before the restart");
         let mut movie = dark(vec![pack(vec![file(0, "Up.2009.mkv", 100)])]);
         movie.parts[0].record(&[25]);
-        assert_eq!(movie.status(), "Downloading, 25%");
+        assert_eq!(movie.status(), "Baking, 25%");
+    }
+
+    #[test]
+    fn a_download_that_starts_heats_the_oven_and_one_that_ends_comes_out_of_it() {
+        assert_eq!(
+            started(Mode::Add, "Dune (2021)"),
+            "The oven is heating up for Dune (2021)"
+        );
+        assert_eq!(
+            started(Mode::Replace, "Dune (2021)"),
+            "The oven is heating up for a fresh Dune (2021)"
+        );
+        assert_eq!(
+            baked(1_000),
+            "Fresh out of the oven and in the library (1000 bytes uploaded to peers)"
+        );
+        assert_eq!(cooling(0, 3), "Cooling on the rack: uploading to pCloud, file 1 of 3");
     }
 
     #[test]
