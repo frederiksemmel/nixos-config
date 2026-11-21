@@ -12,7 +12,7 @@ use embedded_hal::{
 use linux_embedded_hal::{
     CdevPin, SpidevDevice,
     gpio_cdev::{Chip, LineRequestFlags, chips},
-    spidev::{SpiModeFlags, SpidevOptions},
+    spidev::{SpiModeFlags, SpidevOptions, SpidevTransfer},
 };
 
 use crate::render::{Canvas, Planes};
@@ -23,6 +23,7 @@ const GPIO_LABEL: &str = "pinctrl-bcm2835";
 const RST: u32 = 17;
 const BUSY: u32 = 24;
 const DC: u32 = 25;
+const BYTES_PER_MESSAGE: usize = 32;
 const BUSY_POLL: Duration = Duration::from_millis(2);
 const BUSY_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -89,8 +90,19 @@ impl Hat {
         self.spi.write(&[command])?;
         if !data.is_empty() {
             self.dc.set_high()?;
-            for chunk in data.chunks(4096) {
-                self.spi.write(chunk)?;
+            for chunk in data.chunks(BYTES_PER_MESSAGE) {
+                let mut transfers: Vec<_> = chunk
+                    .iter()
+                    .map(|byte| {
+                        let mut transfer = SpidevTransfer::write(std::slice::from_ref(byte));
+                        transfer.cs_change = 1;
+                        transfer
+                    })
+                    .collect();
+                if let Some(last) = transfers.last_mut() {
+                    last.cs_change = 0;
+                }
+                self.spi.0.transfer_multiple(&mut transfers)?;
             }
         }
         Ok(())
@@ -105,7 +117,7 @@ impl Hat {
             );
             sleep(BUSY_POLL);
         }
-        tracing::info!(step, ms = start.elapsed().as_millis(), "panel busy");
+        tracing::debug!(step, ms = start.elapsed().as_millis(), "panel busy");
         Ok(())
     }
 
@@ -132,6 +144,8 @@ impl Hat {
             self.command(0xf8, &option)?;
         }
         self.command(0x16, &[0x00])?;
+        self.command(0x04, &[])?;
+        self.wait("power on")?;
         self.command(0x00, &[0xbf])?;
         self.command(0x30, &[0x3a])?;
         self.command(0x61, &[0x00, 0xb0, 0x01, 0x08])?;
@@ -146,9 +160,7 @@ impl Hat {
         for (register, lut) in (0x21..).zip(&waveform.luts) {
             self.command(register, lut)?;
         }
-
-        self.command(0x04, &[])?;
-        self.wait("power on")
+        Ok(())
     }
 
     fn sleep(&mut self) -> Result<()> {
