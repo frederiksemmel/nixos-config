@@ -46,7 +46,7 @@ The lines are picked at random from `replies.txt`. That file is data, not code; 
 
 ## Panel
 
-- A drawing uses the **grey** refresh: the panel flashes once and shows four shades (white, light grey, dark grey, black), so text edges and emoji come out smooth. It leaves no ghosts.
+- A drawing uses the **grey** refresh: the panel flashes once and shows four shades (white, light grey, dark grey, black), so text edges and emoji come out smooth. It takes about 2.7 s and leaves no ghosts.
 - `/clear` uses the **clean** refresh: black and white only, flashing, about 2.7 s.
 - The **fast** refresh drives only the pixels that change, in about 0.8 s without flashing, but in black and white and with faint ghosts. The bot doesn't use it; `--refresh fast` does.
 - The controller takes one byte per SPI chip select; multi-byte writes are silently garbled.

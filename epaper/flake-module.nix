@@ -1,11 +1,20 @@
-{ inputs, flake-parts-lib, ... }:
+{
+  self,
+  inputs,
+  flake-parts-lib,
+  ...
+}:
 {
   flake.nixosModules.epaper = flake-parts-lib.importApply ./module.nix { inherit (inputs) crane; };
 
   perSystem =
-    { pkgs, ... }:
+    { pkgs, system, ... }:
     let
-      epaper = pkgs.callPackage ./package.nix { inherit (inputs) crane; };
+      epaper =
+        if system == "aarch64-linux" then
+          self.nixosConfigurations.semmeltv3.config.services.epaper.package
+        else
+          pkgs.callPackage ./package.nix { inherit (inputs) crane; };
     in
     {
       packages.epaper = epaper;
