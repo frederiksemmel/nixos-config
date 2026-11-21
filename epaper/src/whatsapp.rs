@@ -104,12 +104,8 @@ impl Chat for Conversation {
         Ok(sent.message_id)
     }
 
-    async fn edit(&self, message: &str, text: &str) -> Result<()> {
-        self.client
-            .edit_message(self.chat.clone(), message, wa::Message::text(text))
-            .await
-            .map_err(|err| anyhow!("editing on WhatsApp: {err}"))?;
-        Ok(())
+    async fn follow_up(&self, _waiting: &str, text: &str) -> Result<String> {
+        self.send(text).await
     }
 }
 

@@ -39,8 +39,8 @@ pub trait Chat: Send + Sync {
     /// Posts `text` and returns the new message's id.
     fn send(&self, text: &str) -> impl Future<Output = Result<String>> + Send;
 
-    /// Replaces the text of the bot's own `message`.
-    fn edit(&self, message: &str, text: &str) -> impl Future<Output = Result<()>> + Send;
+    /// Tells how what the bot's `waiting` message announced turned out, and returns the id of the message that tells it.
+    fn follow_up(&self, waiting: &str, text: &str) -> impl Future<Output = Result<String>> + Send;
 }
 
 pub type SharedReplies = Arc<SyncMutex<Replies>>;
@@ -228,10 +228,10 @@ impl Bot {
         Ok(message)
     }
 
-    async fn finish<C: Chat>(&self, chat: &C, message: &str, kind: Kind, fill: impl Fn(&str) -> String) -> Result<()> {
+    async fn finish<C: Chat>(&self, chat: &C, waiting: &str, kind: Kind, fill: impl Fn(&str) -> String) -> Result<()> {
         let line = self.replies.lock().unwrap().pick(kind);
-        chat.edit(message, &fill(&line)).await?;
-        self.replies.lock().unwrap().sent(&chat.key(), message, kind, &line);
+        let message = chat.follow_up(waiting, &fill(&line)).await?;
+        self.replies.lock().unwrap().sent(&chat.key(), &message, kind, &line);
         Ok(())
     }
 }
@@ -288,9 +288,9 @@ mod tests {
             Ok((messages.len() - 1).to_string())
         }
 
-        async fn edit(&self, message: &str, text: &str) -> Result<()> {
-            self.0.lock().unwrap()[message.parse::<usize>()?] = text.to_owned();
-            Ok(())
+        async fn follow_up(&self, waiting: &str, text: &str) -> Result<String> {
+            self.0.lock().unwrap()[waiting.parse::<usize>()?] = text.to_owned();
+            Ok(waiting.to_owned())
         }
     }
 

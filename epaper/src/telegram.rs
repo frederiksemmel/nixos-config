@@ -33,10 +33,10 @@ impl Chat for Conversation {
         Ok(self.bot.send_message(self.chat, text).await?.id.0.to_string())
     }
 
-    async fn edit(&self, message: &str, text: &str) -> Result<()> {
-        let id = MessageId(message.parse()?);
+    async fn follow_up(&self, waiting: &str, text: &str) -> Result<String> {
+        let id = MessageId(waiting.parse()?);
         self.bot.edit_message_text(self.chat, id, text).await?;
-        Ok(())
+        Ok(waiting.to_owned())
     }
 }
 
