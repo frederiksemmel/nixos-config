@@ -5283,7 +5283,7 @@ dependencies = [
 
 [[package]]
 name = "semmeltv"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "argon2 0.6.0",
  "axum",
