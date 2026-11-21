@@ -2,6 +2,7 @@
   lib,
   pkgs,
   crane,
+  dejavu_fonts,
 }:
 
 let
@@ -18,6 +19,7 @@ let
       ];
     };
     strictDeps = true;
+    EPAPER_FONT_DIR = "${dejavu_fonts}/share/fonts/truetype";
   };
 in
 craneLib.buildPackage (

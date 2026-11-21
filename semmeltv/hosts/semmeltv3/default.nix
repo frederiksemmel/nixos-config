@@ -15,7 +15,9 @@
   services.epaper = {
     enable = true;
     tokenFile = config.age.secrets.epaper_telegram_token.path;
+    rotation = 90;
   };
+  users.users.frederik.extraGroups = [ "epaper" ];
   age.secrets.epaper_telegram_token.file = ../../../secrets/epaper_telegram_token.age;
 
   networking.hostName = "semmeltv3";

@@ -84,6 +84,8 @@ in
         LoadCredential = "token:${cfg.tokenFile}";
         User = "epaper";
         Group = "epaper";
+        StateDirectory = "epaper";
+        StateDirectoryMode = "0775";
         Restart = "on-failure";
         RestartSec = 10;
 

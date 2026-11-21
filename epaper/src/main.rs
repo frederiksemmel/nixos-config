@@ -1,6 +1,8 @@
 mod bot;
 mod panel;
 mod render;
+mod replies;
+mod typeset;
 
 use std::path::PathBuf;
 
@@ -48,6 +50,9 @@ enum Command {
         /// Telegram user ids allowed to draw; everyone when none are given.
         #[arg(long = "allow", env = "EPAPER_ALLOW", value_delimiter = ',')]
         allow: Vec<u64>,
+        /// Where the bot keeps its reply log; systemd's StateDirectory.
+        #[arg(long, env = "STATE_DIRECTORY")]
+        state_dir: Option<PathBuf>,
     },
 }
 
@@ -91,11 +96,21 @@ fn main() -> Result<()> {
             text: words.join(" "),
             ink: if red { Ink::Red } else { Ink::Black },
         },
-        Command::Bot { token_file, allow } => {
+        Command::Bot {
+            token_file,
+            allow,
+            state_dir,
+        } => {
             let token = std::fs::read_to_string(&token_file).with_context(|| token_file.display().to_string())?;
-            return tokio::runtime::Runtime::new()?.block_on(bot::run(token.trim().to_owned(), panel, rotation, allow));
+            return tokio::runtime::Runtime::new()?.block_on(bot::run(
+                token.trim().to_owned(),
+                panel,
+                rotation,
+                allow,
+                state_dir,
+            ));
         }
     };
-    let canvas = render(&scene, canvas_size(rotation));
+    let canvas = render(&scene, canvas_size(rotation))?;
     panel.show(&canvas, &canvas.planes(rotation))
 }

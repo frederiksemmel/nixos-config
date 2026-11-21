@@ -1,23 +1,18 @@
-use embedded_graphics::{
-    mono_font::{MonoFont, MonoTextStyle, iso_8859_1},
-    prelude::*,
-    text::{Baseline, Text},
-};
+use anyhow::Result;
+use embedded_graphics::prelude::*;
 use epd_waveshare::{
     color::{Color, TriColor},
     epd2in7b::{Display2in7b, HEIGHT, WIDTH},
     graphics::DisplayRotation,
 };
 
+use crate::typeset::typeset;
+
 const RING: &[u8] = include_bytes!("../assets/ring.raw");
 const RING_WIDTH: u32 = 176;
-const MARGIN: u32 = 4;
-const FONTS: [&MonoFont; 4] = [
-    &iso_8859_1::FONT_10X20,
-    &iso_8859_1::FONT_9X15,
-    &iso_8859_1::FONT_7X13,
-    &iso_8859_1::FONT_6X10,
-];
+const TEXT_TEMPLATE: &str = include_str!("text.typ");
+const MAX_CHARS: usize = 1000;
+const INK_BELOW: u32 = 128;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scene {
@@ -58,14 +53,14 @@ pub fn canvas_size(rotation: DisplayRotation) -> Size {
     }
 }
 
-pub fn render(scene: &Scene, size: Size) -> Canvas {
+pub fn render(scene: &Scene, size: Size) -> Result<Canvas> {
     let mut canvas = Canvas::new(size);
     match scene {
         Scene::Clear => {}
         Scene::Ring => draw_ring(&mut canvas),
-        Scene::Text { text, ink } => draw_text(&mut canvas, text, (*ink).into()),
+        Scene::Text { text, ink } => draw_text(&mut canvas, text, *ink)?,
     }
-    canvas
+    Ok(canvas)
 }
 
 fn draw_ring(canvas: &mut Canvas) {
@@ -85,73 +80,41 @@ fn draw_ring(canvas: &mut Canvas) {
     }
 }
 
-fn draw_text(canvas: &mut Canvas, text: &str, color: TriColor) {
-    let (font, lines) = layout(text, canvas.size);
-    let line_height = font.character_size.height;
-    let block_height = line_height * lines.len() as u32;
-    let top = (canvas.size.height.saturating_sub(block_height) / 2) as i32;
-    let style = MonoTextStyle::new(font, color);
-    for (i, line) in lines.iter().enumerate() {
-        let origin = Point::new(MARGIN as i32, top + (i as u32 * line_height) as i32);
-        Text::with_baseline(line, origin, style, Baseline::Top)
-            .draw(canvas)
-            .ok();
-    }
-}
-
-pub fn layout(text: &str, size: Size) -> (&'static MonoFont<'static>, Vec<String>) {
-    let inner = size.saturating_sub(Size::new_equal(2 * MARGIN));
-    for font in FONTS {
-        let (cols, rows) = grid(font, inner);
-        let lines = wrap(text, cols);
-        if lines.len() <= rows {
-            return (font, lines);
+fn draw_text(canvas: &mut Canvas, text: &str, ink: Ink) -> Result<()> {
+    let text: String = text.chars().take(MAX_CHARS).collect();
+    let (width, height) = (canvas.size.width.to_string(), canvas.size.height.to_string());
+    let ink_name = match ink {
+        Ink::Black => "black",
+        Ink::Red => "red",
+    };
+    let page = typeset(
+        TEXT_TEMPLATE,
+        &[
+            ("text", text.as_str()),
+            ("width", width.as_str()),
+            ("height", height.as_str()),
+            ("ink", ink_name),
+        ],
+    )?;
+    for y in 0..page.height.min(canvas.size.height) {
+        for x in 0..page.width.min(canvas.size.width) {
+            if let Some(color) = ink_at(page.pixel(x, y)) {
+                canvas.set(Point::new(x as i32, y as i32), color);
+            }
         }
     }
-    let font = FONTS[FONTS.len() - 1];
-    let (cols, rows) = grid(font, inner);
-    let mut lines = wrap(text, cols);
-    lines.truncate(rows);
-    if let Some(last) = lines.last_mut() {
-        let keep = cols.saturating_sub(3).min(last.chars().count());
-        *last = last.chars().take(keep).collect::<String>() + "...";
-    }
-    (font, lines)
+    Ok(())
 }
 
-fn grid(font: &MonoFont, area: Size) -> (usize, usize) {
-    let advance = font.character_size.width + font.character_spacing;
-    (
-        (area.width / advance).max(1) as usize,
-        (area.height / font.character_size.height) as usize,
-    )
-}
-
-pub fn wrap(text: &str, cols: usize) -> Vec<String> {
-    let mut lines = Vec::new();
-    for paragraph in text.trim().lines() {
-        let mut line = String::new();
-        let mut len = 0;
-        for word in paragraph.split_whitespace() {
-            let mut word: Vec<char> = word.chars().collect();
-            if len > 0 && len + 1 + word.len() <= cols {
-                line.push(' ');
-                line.extend(&word);
-                len += 1 + word.len();
-                continue;
-            }
-            if len > 0 {
-                lines.push(std::mem::take(&mut line));
-            }
-            while word.len() > cols {
-                lines.push(word.drain(..cols).collect());
-            }
-            len = word.len();
-            line.extend(word);
-        }
-        lines.push(line);
+fn ink_at([r, g, b]: [u8; 3]) -> Option<TriColor> {
+    let luma = (299 * r as u32 + 587 * g as u32 + 114 * b as u32) / 1000;
+    if luma >= INK_BELOW {
+        None
+    } else if r > 120 && g < 90 {
+        Some(TriColor::Chromatic)
+    } else {
+        Some(TriColor::Black)
     }
-    lines
 }
 
 impl Canvas {
@@ -256,36 +219,60 @@ mod tests {
         byte & (0x80 >> (x % 8)) != 0
     }
 
-    #[test]
-    fn wrap_fills_lines_greedily() {
-        assert_eq!(wrap("ine gluegt du bisch dra", 10), ["ine gluegt", "du bisch", "dra"]);
+    const LANDSCAPE: Size = Size::new(HEIGHT, WIDTH);
+
+    fn inked(canvas: &Canvas) -> Option<(Point, Point)> {
+        let mut points = canvas.points().filter(|&(_, c)| c != TriColor::White).map(|(p, _)| p);
+        let first = points.next()?;
+        Some(points.fold((first, first), |(lo, hi), p| {
+            (
+                Point::new(lo.x.min(p.x), lo.y.min(p.y)),
+                Point::new(hi.x.max(p.x), hi.y.max(p.y)),
+            )
+        }))
+    }
+
+    fn text(text: &str) -> Scene {
+        Scene::Text {
+            text: text.into(),
+            ink: Ink::Black,
+        }
     }
 
     #[test]
-    fn wrap_keeps_newlines_and_splits_long_words() {
-        assert_eq!(
-            wrap("Grüezi\n\nChuchichäschtli", 6),
-            ["Grüezi", "", "Chuchi", "chäsch", "tli"]
-        );
+    fn a_short_word_fills_the_panel() {
+        let canvas = render(&text("Hoi"), LANDSCAPE).unwrap();
+        let (lo, hi) = inked(&canvas).unwrap();
+        assert!(hi.x - lo.x > 200, "ink spans {lo:?}..{hi:?}");
+        assert!(hi.y - lo.y > 80, "ink spans {lo:?}..{hi:?}");
     }
 
     #[test]
-    fn layout_uses_the_largest_font_that_fits() {
-        let (font, lines) = layout("Hoi", PORTRAIT);
-        assert_eq!(font.character_size, iso_8859_1::FONT_10X20.character_size);
-        assert_eq!(lines, ["Hoi"]);
-
-        let long = "wort ".repeat(120);
-        let (font, _) = layout(&long, PORTRAIT);
-        assert_eq!(font.character_size, iso_8859_1::FONT_6X10.character_size);
+    fn text_is_centred() {
+        let canvas = render(&text("michel ist ganz toll"), LANDSCAPE).unwrap();
+        let (lo, hi) = inked(&canvas).unwrap();
+        let (left, right) = (lo.x, LANDSCAPE.width as i32 - 1 - hi.x);
+        assert!((left - right).abs() <= 8, "left {left}, right {right}");
+        let (top, bottom) = (lo.y, LANDSCAPE.height as i32 - 1 - hi.y);
+        assert!((top - bottom).abs() <= 30, "top {top}, bottom {bottom}");
     }
 
     #[test]
-    fn layout_truncates_text_that_never_fits() {
-        let (_, lines) = layout(&"x".repeat(5000), PORTRAIT);
-        assert_eq!(lines.len(), 25);
-        assert!(lines.last().unwrap().ends_with("..."));
-        assert!(lines.iter().all(|l| l.chars().count() <= 28));
+    fn long_text_stays_on_the_panel() {
+        let canvas = render(&text(&"Chuchichäschtli ".repeat(40)), LANDSCAPE).unwrap();
+        let (lo, hi) = inked(&canvas).unwrap();
+        assert!(lo.x >= 0 && lo.y >= 0);
+        assert!(hi.x < LANDSCAPE.width as i32 && hi.y < LANDSCAPE.height as i32);
+    }
+
+    #[test]
+    fn markup_in_a_message_is_drawn_as_text() {
+        assert!(render(&text("#panic(\"boom\") *bold* $x^2$ <label> @ref"), LANDSCAPE).is_ok());
+    }
+
+    #[test]
+    fn blank_text_draws_nothing() {
+        assert!(inked(&render(&text("  \n "), LANDSCAPE).unwrap()).is_none());
     }
 
     #[test]
@@ -294,24 +281,24 @@ mod tests {
             text: "Hoi".into(),
             ink,
         };
-        let black = render(&text(Ink::Black), PORTRAIT);
+        let black = render(&text(Ink::Black), PORTRAIT).unwrap();
         assert!(count(&black, TriColor::Black) > 0);
         assert_eq!(count(&black, TriColor::Chromatic), 0);
 
-        let red = render(&text(Ink::Red), PORTRAIT);
+        let red = render(&text(Ink::Red), PORTRAIT).unwrap();
         assert!(count(&red, TriColor::Chromatic) > 0);
         assert_eq!(count(&red, TriColor::Black), 0);
     }
 
     #[test]
     fn clear_is_all_white() {
-        let canvas = render(&Scene::Clear, PORTRAIT);
+        let canvas = render(&Scene::Clear, PORTRAIT).unwrap();
         assert_eq!(count(&canvas, TriColor::White), (WIDTH * HEIGHT) as usize);
     }
 
     #[test]
     fn ring_is_a_white_hand_on_black() {
-        let canvas = render(&Scene::Ring, PORTRAIT);
+        let canvas = render(&Scene::Ring, PORTRAIT).unwrap();
         let white = count(&canvas, TriColor::White);
         assert!(white > 0);
         assert!(count(&canvas, TriColor::Black) > 3 * white);
@@ -320,7 +307,7 @@ mod tests {
 
     #[test]
     fn ring_is_centred_in_landscape() {
-        let canvas = render(&Scene::Ring, Size::new(HEIGHT, WIDTH));
+        let canvas = render(&Scene::Ring, LANDSCAPE).unwrap();
         assert!(count(&canvas, TriColor::White) > 0);
     }
 

@@ -1,6 +1,6 @@
 [package]
 name = "epaper"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 rust-version = "1.95"
 
@@ -12,7 +12,13 @@ embedded-hal = "1.0"
 epd-waveshare = "0.6"
 linux-embedded-hal = { version = "0.5", default-features = false, features = ["gpio_cdev", "spi"] }
 rand = "0.10"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 teloxide = { version = "0.17", default-features = false, features = ["macros", "rustls", "ctrlc_handler"] }
+typst = "0.15"
+typst-assets = { version = "0.15", features = ["fonts"] }
+typst-layout = "0.15"
+typst-render = "0.15"
 tokio = { version = "1.54", features = ["rt-multi-thread", "macros", "sync"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
