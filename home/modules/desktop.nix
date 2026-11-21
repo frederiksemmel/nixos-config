@@ -461,6 +461,105 @@ let
       done
     '';
   };
+  # Bar cell for rbw's lock state. Polls the agent, logs each change as
+  # "<epoch> unlocked|locked|off" and sets the vault and vault_tooltip ironvars,
+  # the tooltip summing each state over the past hour and day. Time the poller
+  # missed (shutdown, suspend) is logged as off, from the heartbeat it keeps.
+  barVault = pkgs.writeShellApplication {
+    name = "bar-vault";
+    runtimeInputs = with pkgs; [
+      config.programs.rbw.package
+      coreutils
+      gawk
+      ironbar
+    ];
+    text = ''
+      dir=''${XDG_STATE_HOME:-$HOME/.local/state}/bar-vault
+      log=$dir/log
+      heartbeat=$dir/heartbeat
+      interval=5
+      mkdir -p "$dir"
+      touch "$log"
+
+      last_poll=$(cat "$heartbeat" 2>/dev/null || echo 0)
+      beat=0
+      prev=$(tail -n 1 "$log" | cut -d ' ' -f 2)
+
+      record() {
+        echo "$1 $2" >>"$log"
+        awk -v cut=$(($1 - 86400)) '
+          $1 < cut { held = $0; next }
+          held != "" { print held; held = "" }
+          { print }
+          END { if (held != "") print held }
+        ' "$log" >"$log.new"
+        mv "$log.new" "$log"
+      }
+
+      stats() {
+        awk -v now="$1" '
+          function fmt(s, h, m) {
+            h = int(s / 3600); m = int(s % 3600 / 60)
+            return h ? sprintf("%dh %02dm", h, m) : sprintf("%dm", m)
+          }
+          function pct(a, b) { return b > 0 ? sprintf(" (%d%%)", 100 * a / b + 0.5) : "" }
+          { t[NR] = $1; s[NR] = $2 }
+          END {
+            split("3600 86400", win, " ")
+            split("Past 1h: |Past 24h:", name, "|")
+            for (w = 1; w <= 2; w++) {
+              start = now - win[w]
+              delete sum
+              for (i = 1; i <= NR; i++) {
+                a = t[i] < start ? start : t[i]
+                b = i < NR ? t[i + 1] : now
+                if (b > a) sum[s[i]] += b - a
+              }
+              on = sum["unlocked"] + sum["locked"]
+              off = win[w] - on
+              printf "%s  unlocked %s%s · locked %s", name[w], fmt(sum["unlocked"]), pct(sum["unlocked"], on), fmt(sum["locked"])
+              if (off >= 60) printf " · off %s", fmt(off)
+              printf "\n"
+            }
+          }
+        ' "$log"
+      }
+
+      while true; do
+        now=$(date +%s)
+        if rbw unlocked >/dev/null 2>&1; then cur=unlocked; else cur=locked; fi
+
+        if [ "$last_poll" -gt 0 ] && [ $((now - last_poll)) -gt $((3 * interval)) ] && [ "$prev" != off ]; then
+          record "$last_poll" off
+          prev=off
+        fi
+        if [ "$cur" != "$prev" ]; then
+          record "$now" "$cur"
+          prev=$cur
+        fi
+        last_poll=$now
+        if [ $((now - beat)) -ge 60 ]; then
+          echo "$now" >"$heartbeat"
+          beat=$now
+        fi
+
+        ${shellPalette [
+          "muted"
+          "orange"
+        ]}
+        if [ "$cur" = unlocked ]; then
+          ironbar var set vault "<span color='$muted'>VAULT</span> <span color='$orange'>open</span>" >/dev/null || true
+          head="Bitwarden (rbw) is unlocked. Click to lock."
+        else
+          ironbar var set vault "<span color='$muted'>VAULT</span> locked" >/dev/null || true
+          head="Bitwarden (rbw) is locked."
+        fi
+        ironbar var set vault_tooltip "$head"$'\n\n'"$(stats "$now")" >/dev/null || true
+
+        sleep "$interval"
+      done
+    '';
+  };
   ironbarCss = p: ''
     * {
       font-family: "${p.font}", monospace;
@@ -2141,6 +2240,19 @@ in
       Install.WantedBy = [ "ironbar.service" ];
     };
 
+    systemd.user.services.bar-vault = lib.mkIf config.profiles.bitwarden.enable {
+      Unit = {
+        Description = "Ironbar Bitwarden lock state";
+        PartOf = [ "ironbar.service" ];
+        After = [ "ironbar.service" ];
+      };
+      Service = {
+        ExecStart = lib.getExe barVault;
+        Restart = "on-failure";
+      };
+      Install.WantedBy = [ "ironbar.service" ];
+    };
+
     xdg.configFile."ironbar/config.json".text =
       let
         # Dimmed by alpha rather than a colour, so it holds in both modes.
@@ -2176,49 +2288,57 @@ in
             };
           }
         ];
-        end = [
-          {
+        end =
+          lib.optional config.profiles.bitwarden.enable {
             type = "label";
             class = "cell";
-            label = "#notif";
-            show_if = "#notif_parked";
-            on_click_left = "${config.services.mako.package}/bin/makoctl mode -r parked";
+            label = "#vault";
+            tooltip = "#vault_tooltip";
+            on_click_left = "${lib.getExe config.programs.rbw.package} lock";
           }
-          # Claudio plan usage. The usage endpoint is rate limited, so five
-          # minutes is the lowest sane interval.
-          {
-            type = "script";
-            class = "cell";
-            cmd = lib.getExe barClaude;
-            interval = 300000;
-            tooltip = "#claude_tooltip";
-            on_click_left = "xdg-open https://claude.ai/settings/usage";
-          }
-          {
-            type = "script";
-            class = "cell";
-            cmd = lib.getExe barNet;
-            interval = 10000;
-            on_click_left = "iwmenu -l fuzzel";
-          }
-          {
-            type = "volume";
-            format = "${label "VOL"} {percentage}%";
-            mute_format = "${label "VOL"} muted";
-            show_sources = false;
-          }
-          {
-            type = "script";
-            cmd = lib.getExe barBattery;
-            interval = 5000;
-          }
-          {
-            type = "clock";
-            class = "cell";
-            format = "%a %d %b  %H:%M";
-            format_popup = "%A %d %B %Y";
-          }
-        ];
+          ++ [
+            {
+              type = "label";
+              class = "cell";
+              label = "#notif";
+              show_if = "#notif_parked";
+              on_click_left = "${config.services.mako.package}/bin/makoctl mode -r parked";
+            }
+            # Claudio plan usage. The usage endpoint is rate limited, so five
+            # minutes is the lowest sane interval.
+            {
+              type = "script";
+              class = "cell";
+              cmd = lib.getExe barClaude;
+              interval = 300000;
+              tooltip = "#claude_tooltip";
+              on_click_left = "xdg-open https://claude.ai/settings/usage";
+            }
+            {
+              type = "script";
+              class = "cell";
+              cmd = lib.getExe barNet;
+              interval = 10000;
+              on_click_left = "iwmenu -l fuzzel";
+            }
+            {
+              type = "volume";
+              format = "${label "VOL"} {percentage}%";
+              mute_format = "${label "VOL"} muted";
+              show_sources = false;
+            }
+            {
+              type = "script";
+              cmd = lib.getExe barBattery;
+              interval = 5000;
+            }
+            {
+              type = "clock";
+              class = "cell";
+              format = "%a %d %b  %H:%M";
+              format_popup = "%A %d %B %Y";
+            }
+          ];
       };
 
     # The dark sheet is the base; ExecStartPost loads the current mode's copy
