@@ -189,6 +189,7 @@ in
       ncdu
       btdu
       google-cloud-sdk
+      stu
       tealdeer
       usbutils
       pciutils
