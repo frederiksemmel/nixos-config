@@ -206,6 +206,7 @@ in
     services.logind.settings.Login = {
       KillUserProcesses = true;
       KillOnlyUsers = [ "semmeltv" ];
+      HandlePowerKey = "ignore";
     };
 
     systemd.services."getty@tty1".enable = false;
