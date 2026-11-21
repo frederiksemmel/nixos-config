@@ -374,25 +374,25 @@ enum Switch {
     Off,
 }
 
-/// "hoi" lets a chat use the bot, "/stop" ends that; any case, nothing else in the message.
+/// "hoi" lets a chat use the bot, "ciao bello guys" or "/stop" ends that; any case and spacing, nothing else in the message.
 fn switch(text: &str) -> Option<Switch> {
-    let text = text.trim().to_lowercase();
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase();
     match text.as_str() {
         "hoi" => Some(Switch::On),
-        "/stop" => Some(Switch::Off),
+        "ciao bello guys" | "/stop" => Some(Switch::Off),
         _ => None,
     }
 }
 
 fn greeting(is_group: bool) -> &'static str {
     if is_group {
-        "Hoi zäme! /text <message> puts it on the display. /help lists the commands, /stop sends me away."
+        "Hoi zäme! /text <message> puts it on the display. /help lists the commands, \"ciao bello guys\" sends me away."
     } else {
-        "Hoi! Whatever you write here goes on the display. /help lists the commands, /stop sends me away."
+        "Hoi! Whatever you write here goes on the display. /help lists the commands, \"ciao bello guys\" sends me away."
     }
 }
 
-const FAREWELL: &str = "Tschüss! I'm quiet here until someone writes hoi.";
+const FAREWELL: &str = "Ciao bello! I'm quiet here until someone writes hoi.";
 
 /// The name that makes the bot listen to a group message, as in "Spades, Hoi".
 const NAME: &str = "spades";
@@ -497,6 +497,8 @@ mod tests {
         assert!(matches!(switch(" Hoi "), Some(Switch::On)));
         assert!(matches!(switch("HOI"), Some(Switch::On)));
         assert!(matches!(switch("/Stop"), Some(Switch::Off)));
+        assert!(matches!(switch("Ciao  bello guys"), Some(Switch::Off)));
+        assert!(switch("ciao zäme").is_none());
         assert!(switch("hoi zäme").is_none());
         assert!(switch("/stop now").is_none());
     }
