@@ -546,12 +546,13 @@ let
           beat=$now
         fi
 
-        # Nerd Font lock glyphs: nf-fa-unlock (U+F09C) and nf-fa-lock (U+F023).
+        # Nerd Font lock glyphs nf-fa-unlock (U+F09C) and nf-fa-lock (U+F023), in a
+        # Nerd Font: the bar font lacks them, and fallback finds a bullet at U+F023.
         if [ "$cur" = unlocked ]; then
-          ironbar var set vault "" >/dev/null || true
+          ironbar var set vault "<span font_family='FiraCode Nerd Font Propo'></span>" >/dev/null || true
           head="Bitwarden (rbw) is unlocked. Click to lock."
         else
-          ironbar var set vault "" >/dev/null || true
+          ironbar var set vault "<span font_family='FiraCode Nerd Font Propo'></span>" >/dev/null || true
           head="Bitwarden (rbw) is locked. Click to unlock."
         fi
         ironbar var set vault_tooltip "$head"$'\n\n'"$(stats "$now")" >/dev/null || true
