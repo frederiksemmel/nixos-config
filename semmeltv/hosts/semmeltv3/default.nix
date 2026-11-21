@@ -16,6 +16,7 @@
     enable = true;
     tokenFile = config.age.secrets.epaper_telegram_token.path;
     rotation = 90;
+    whatsapp.enable = true;
   };
   users.users.frederik.extraGroups = [ "epaper" ];
   age.secrets.epaper_telegram_token.file = ../../../secrets/epaper_telegram_token.age;

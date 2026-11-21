@@ -8,7 +8,7 @@ use std::{
 
 use anyhow::Result;
 use rand::seq::IndexedRandom;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 
 const LINES_FILE: &str = "replies.txt";
 const LOG_FILE: &str = "replies.jsonl";
@@ -113,11 +113,15 @@ impl Lines {
     }
 }
 
+/// Where a reply sits: the chat (`tg:<id>` or `wa:<jid>`) and the message id in it.
+type Spot = (String, String);
+
 /// The reply lines, how well each was received, and which message carries which line.
 pub struct Replies {
     lines: Lines,
     scores: HashMap<String, i32>,
-    sent: HashMap<(i64, i32), String>,
+    sent: HashMap<Spot, String>,
+    reactions: HashMap<(Spot, String), Vec<String>>,
     log: Option<PathBuf>,
 }
 
@@ -126,19 +130,46 @@ pub struct Replies {
 enum Record {
     Sent {
         at: u64,
-        chat: i64,
-        message: i32,
+        #[serde(deserialize_with = "chat_key")]
+        chat: String,
+        #[serde(deserialize_with = "message_key")]
+        message: String,
         kind: Kind,
         template: String,
     },
     Reaction {
         at: u64,
-        chat: i64,
-        message: i32,
-        user: u64,
+        #[serde(deserialize_with = "chat_key")]
+        chat: String,
+        #[serde(deserialize_with = "message_key")]
+        message: String,
+        #[serde(deserialize_with = "chat_key")]
+        user: String,
         old: Vec<String>,
         new: Vec<String>,
     },
+}
+
+/// A key as the log stores it; the first, Telegram-only log used bare numbers.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum LoggedKey {
+    Number(i64),
+    Text(String),
+}
+
+fn chat_key<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(match LoggedKey::deserialize(d)? {
+        LoggedKey::Number(n) => format!("tg:{n}"),
+        LoggedKey::Text(s) => s,
+    })
+}
+
+fn message_key<'de, D: Deserializer<'de>>(d: D) -> Result<String, D::Error> {
+    Ok(match LoggedKey::deserialize(d)? {
+        LoggedKey::Number(n) => n.to_string(),
+        LoggedKey::Text(s) => s,
+    })
 }
 
 impl Replies {
@@ -152,6 +183,7 @@ impl Replies {
             },
             scores: HashMap::new(),
             sent: HashMap::new(),
+            reactions: HashMap::new(),
             log: dir.map(|d| d.join(LOG_FILE)),
         };
         replies.lines.refresh();
@@ -184,23 +216,34 @@ impl Replies {
     }
 
     /// Notes that `message` in `chat` now shows `template`.
-    pub fn sent(&mut self, chat: i64, message: i32, kind: Kind, template: &str) {
+    pub fn sent(&mut self, chat: &str, message: &str, kind: Kind, template: &str) {
         self.record(Record::Sent {
             at: now(),
-            chat,
-            message,
+            chat: chat.to_owned(),
+            message: message.to_owned(),
             kind,
             template: template.to_owned(),
         });
     }
 
+    /// The emoji `user` currently has on `message` in `chat`.
+    pub fn reaction_of(&self, chat: &str, message: &str, user: &str) -> Vec<String> {
+        let key = ((chat.to_owned(), message.to_owned()), user.to_owned());
+        self.reactions.get(&key).cloned().unwrap_or_default()
+    }
+
+    /// Whether `message` in `chat` is one of the bot's replies.
+    pub fn is_reply(&self, chat: &str, message: &str) -> bool {
+        self.sent.contains_key(&(chat.to_owned(), message.to_owned()))
+    }
+
     /// Scores the line shown in `message` by how `user` changed their reaction.
-    pub fn reacted(&mut self, chat: i64, message: i32, user: u64, old: Vec<String>, new: Vec<String>) {
+    pub fn reacted(&mut self, chat: &str, message: &str, user: &str, old: Vec<String>, new: Vec<String>) {
         self.record(Record::Reaction {
             at: now(),
-            chat,
-            message,
-            user,
+            chat: chat.to_owned(),
+            message: message.to_owned(),
+            user: user.to_owned(),
             old,
             new,
         });
@@ -223,18 +266,21 @@ impl Replies {
                 template,
                 ..
             } => {
-                self.sent.insert((*chat, *message), template.clone());
+                self.sent.insert((chat.clone(), message.clone()), template.clone());
             }
             Record::Reaction {
                 chat,
                 message,
+                user,
                 old,
                 new,
                 ..
             } => {
-                if let Some(template) = self.sent.get(&(*chat, *message)) {
+                let spot = (chat.clone(), message.clone());
+                if let Some(template) = self.sent.get(&spot) {
                     *self.scores.entry(template.clone()).or_default() += score(new) - score(old);
                 }
+                self.reactions.insert((spot, user.clone()), new.clone());
             }
         }
     }
@@ -259,7 +305,7 @@ fn score(emoji: &[String]) -> i32 {
 fn emoji_points(emoji: &str) -> i32 {
     match emoji.trim_end_matches('\u{fe0f}') {
         "👍" | "❤" | "🔥" | "🥰" | "👏" | "😁" | "🎉" | "🤩" | "😍" | "❤\u{200d}🔥" | "💯" | "🤣" | "🏆" | "👌"
-        | "🤗" | "🫡" | "😘" | "😎" | "🆒" | "💘" | "🦄" | "😇" | "🍾" | "⚡" => 1,
+        | "🤗" | "🫡" | "😘" | "😎" | "🆒" | "💘" | "🦄" | "😇" | "🍾" | "⚡" | "😂" | "🙏" => 1,
         "👎" | "💩" | "🤮" | "🥱" | "😴" | "🤡" | "😐" | "🤨" | "🖕" | "😡" | "🤬" | "💔" | "😢" | "😭" => {
             -1
         }
@@ -324,24 +370,50 @@ mod tests {
     #[test]
     fn reactions_move_the_weight_of_the_line_shown() {
         let (_dir, mut replies) = sample("reactions");
-        replies.sent(1, 10, Kind::Wait, "Wait for it…");
-        replies.sent(1, 10, Kind::Written, "Nailed it.");
-        replies.reacted(1, 10, 7, vec![], vec!["👍".into()]);
-        replies.reacted(1, 10, 8, vec![], vec!["🔥".into()]);
+        replies.sent("tg:1", "10", Kind::Wait, "Wait for it…");
+        replies.sent("tg:1", "10", Kind::Written, "Nailed it.");
+        replies.reacted("tg:1", "10", "tg:7", vec![], vec!["👍".into()]);
+        replies.reacted("tg:1", "10", "tg:8", vec![], vec!["🔥".into()]);
         assert_eq!(replies.scores["Nailed it."], 2);
         assert!(!replies.scores.contains_key("Wait for it…"));
 
-        replies.reacted(1, 10, 8, vec!["🔥".into()], vec!["💩".into()]);
+        replies.reacted("tg:1", "10", "tg:8", vec!["🔥".into()], vec!["💩".into()]);
         assert_eq!(replies.scores["Nailed it."], 0);
-        replies.reacted(1, 10, 7, vec!["👍".into()], vec!["👎".into()]);
+        replies.reacted("tg:1", "10", "tg:7", vec!["👍".into()], vec!["👎".into()]);
         assert_eq!(replies.scores["Nailed it."], -2);
         assert!(replies.weight("Nailed it.") < replies.weight("Tadaa ✨"));
     }
 
     #[test]
+    fn a_users_current_reaction_is_tracked_for_whatsapp() {
+        let (_dir, mut replies) = sample("tracked");
+        let (chat, message, user) = ("wa:123@g.us", "3EB0AB", "wa:41000@s.whatsapp.net");
+        replies.sent(chat, message, Kind::Written, "Nailed it.");
+        assert!(replies.is_reply(chat, message));
+        assert!(!replies.is_reply(chat, "other"));
+
+        let react = |replies: &mut Replies, emoji: &str| {
+            let old = replies.reaction_of(chat, message, user);
+            let new = if emoji.is_empty() {
+                vec![]
+            } else {
+                vec![emoji.to_owned()]
+            };
+            replies.reacted(chat, message, user, old, new);
+        };
+        react(&mut replies, "👍");
+        assert_eq!(replies.scores["Nailed it."], 1);
+        react(&mut replies, "💩");
+        assert_eq!(replies.scores["Nailed it."], -1);
+        react(&mut replies, "");
+        assert_eq!(replies.scores["Nailed it."], 0);
+        assert!(replies.reaction_of(chat, message, user).is_empty());
+    }
+
+    #[test]
     fn reactions_to_unknown_messages_are_ignored() {
         let mut replies = Replies::open(None).unwrap();
-        replies.reacted(1, 99, 7, vec![], vec!["👍".into()]);
+        replies.reacted("tg:1", "99", "tg:7", vec![], vec!["👍".into()]);
         assert!(replies.scores.is_empty());
     }
 
@@ -350,11 +422,32 @@ mod tests {
         let dir = scratch("log");
         {
             let mut replies = Replies::open(Some(&dir)).unwrap();
-            replies.sent(1, 10, Kind::Written, "Nailed it.");
-            replies.reacted(1, 10, 7, vec![], vec!["❤\u{fe0f}".into()]);
+            replies.sent("wa:1@g.us", "ABC", Kind::Written, "Nailed it.");
+            replies.reacted("wa:1@g.us", "ABC", "wa:7@lid", vec![], vec!["❤\u{fe0f}".into()]);
         }
         let replies = Replies::open(Some(&dir)).unwrap();
         assert_eq!(replies.scores["Nailed it."], 1);
+        assert_eq!(replies.reaction_of("wa:1@g.us", "ABC", "wa:7@lid"), ["❤\u{fe0f}"]);
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_first_telegram_only_log_still_reads() {
+        let dir = scratch("legacy");
+        std::fs::write(
+            dir.join(LOG_FILE),
+            concat!(
+                r#"{"event":"sent","at":1,"chat":-42,"message":414,"kind":"written","template":"Ich ha's gmacht, Mami!"}"#,
+                "\n",
+                r#"{"event":"reaction","at":2,"chat":-42,"message":414,"user":7,"old":[],"new":["👍"]}"#,
+                "\n",
+            ),
+        )
+        .unwrap();
+        let replies = Replies::open(Some(&dir)).unwrap();
+        assert_eq!(replies.scores["Ich ha's gmacht, Mami!"], 1);
+        assert!(replies.is_reply("tg:-42", "414"));
+        assert_eq!(replies.reaction_of("tg:-42", "414", "tg:7"), ["👍"]);
         std::fs::remove_dir_all(dir).ok();
     }
 }

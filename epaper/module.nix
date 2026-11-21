@@ -29,6 +29,8 @@ in
       description = "Telegram user ids allowed to draw. Everyone may draw when the list is empty.";
     };
 
+    whatsapp.enable = lib.mkEnableOption "answers on WhatsApp too, as a linked device whose session lives in /var/lib/epaper/whatsapp.db. To link it, write the account's number to /var/lib/epaper/whatsapp-phone and enter the pair code the journal shows. Only the chats listed in /var/lib/epaper/whatsapp-groups draw";
+
     rotation = lib.mkOption {
       type = lib.types.enum [
         0
@@ -75,6 +77,9 @@ in
       unitConfig.ConditionPathExists = "/dev/spidev0.0";
       environment = {
         EPAPER_ROTATION = toString cfg.rotation;
+      }
+      // lib.optionalAttrs cfg.whatsapp.enable {
+        EPAPER_WHATSAPP = "true";
       }
       // lib.optionalAttrs (cfg.allowedUsers != [ ]) {
         EPAPER_ALLOW = lib.concatMapStringsSep "," toString cfg.allowedUsers;

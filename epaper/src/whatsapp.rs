@@ -1,0 +1,327 @@
+//! The bot as a linked device of a WhatsApp account.
+
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+    sync::{Arc, Mutex},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+
+use anyhow::{Result, anyhow};
+use whatsapp_rust::{
+    pair_code::PairCodeOptions,
+    prelude::{
+        Bot as WaBot, Client, Event, EventKind, Jid, MessageBuilderExt, MessageContext, MessageExt, SqliteStore, wa,
+    },
+    types::message::EditAttribute,
+};
+
+use crate::flow::{self, Chat};
+
+const DATABASE: &str = "whatsapp.db";
+/// Holds the bot account's number, with country code, while it is being linked.
+const PHONE_FILE: &str = "whatsapp-phone";
+/// Lists the chats allowed to draw, one JID per line.
+const GROUPS_FILE: &str = "whatsapp-groups";
+const PAIR_CHECK: Duration = Duration::from_secs(10);
+const PAIR_RETRY: Duration = Duration::from_secs(60);
+const RESTART_AFTER: Duration = Duration::from_secs(60);
+const STALE_AFTER_SECS: i64 = 600;
+
+/// The chats that may draw, from the groups file, reread whenever it changes.
+struct Groups {
+    path: PathBuf,
+    modified: Option<SystemTime>,
+    allowed: HashSet<String>,
+    ignored: HashSet<String>,
+}
+
+/// The JIDs in the groups file: one per line, `#` comments and blank lines skipped.
+fn parse_groups(text: &str) -> HashSet<String> {
+    text.lines()
+        .map(|line| line.split('#').next().unwrap_or_default().trim())
+        .filter(|line| !line.is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+impl Groups {
+    fn new(path: PathBuf) -> Self {
+        Groups {
+            path,
+            modified: None,
+            allowed: HashSet::new(),
+            ignored: HashSet::new(),
+        }
+    }
+
+    fn refresh(&mut self) {
+        let modified = std::fs::metadata(&self.path).and_then(|m| m.modified()).ok();
+        if modified == self.modified {
+            return;
+        }
+        self.modified = modified;
+        self.allowed = std::fs::read_to_string(&self.path)
+            .map(|text| parse_groups(&text))
+            .unwrap_or_default();
+        tracing::info!("whatsapp: {} chat(s) may draw", self.allowed.len());
+    }
+
+    /// Whether `chat` may draw; logs each other group once.
+    fn admits(&mut self, chat: &str, is_group: bool) -> bool {
+        self.refresh();
+        if self.allowed.contains(chat) {
+            return true;
+        }
+        if is_group && self.ignored.insert(chat.to_owned()) {
+            tracing::info!("WhatsApp: ignoring group {chat}");
+        }
+        false
+    }
+}
+
+type SharedGroups = Arc<Mutex<Groups>>;
+
+/// One WhatsApp chat.
+struct Conversation {
+    client: Arc<Client>,
+    chat: Jid,
+}
+
+impl Chat for Conversation {
+    fn key(&self) -> String {
+        format!("wa:{}", self.chat)
+    }
+
+    async fn send(&self, text: &str) -> Result<String> {
+        let sent = self
+            .client
+            .send_message(self.chat.clone(), wa::Message::text(text))
+            .await
+            .map_err(|err| anyhow!("sending to WhatsApp: {err}"))?;
+        Ok(sent.message_id)
+    }
+
+    async fn edit(&self, message: &str, text: &str) -> Result<()> {
+        self.client
+            .edit_message(self.chat.clone(), message, wa::Message::text(text))
+            .await
+            .map_err(|err| anyhow!("editing on WhatsApp: {err}"))?;
+        Ok(())
+    }
+}
+
+/// Keeps a WhatsApp client running from the session in `dir`, restarting it when it stops.
+pub async fn run(dir: PathBuf, bot: flow::Bot) {
+    let groups: SharedGroups = Arc::new(Mutex::new(Groups::new(dir.join(GROUPS_FILE))));
+    loop {
+        if let Err(err) = connect(&dir, &bot, &groups).await {
+            tracing::error!("whatsapp: {err:#}");
+        } else {
+            tracing::warn!("whatsapp: the client stopped");
+        }
+        tokio::time::sleep(RESTART_AFTER).await;
+    }
+}
+
+/// When the current pair code runs out; `None` asks for a new one.
+type CodeExpiry = Arc<Mutex<Option<Instant>>>;
+
+async fn connect(dir: &Path, bot: &flow::Bot, groups: &SharedGroups) -> Result<()> {
+    let database = dir.join(DATABASE);
+    let store = SqliteStore::new(&database.to_string_lossy())
+        .await
+        .map_err(|err| anyhow!("opening {}: {err}", database.display()))?;
+    let expiry: CodeExpiry = Arc::default();
+    let on_code = expiry.clone();
+    let on_refresh = expiry.clone();
+    let on_message = bot.clone();
+    let message_groups = groups.clone();
+    let client = WaBot::builder()
+        .with_backend(store)
+        .skip_history_sync()
+        .on_pair_code(move |code, timeout| {
+            *on_code.lock().unwrap() = Some(Instant::now() + timeout);
+            let code = match code.split_at_checked(4) {
+                Some((a, b)) if code.len() == 8 => format!("{a}-{b}"),
+                _ => code,
+            };
+            tracing::info!("WhatsApp pair code: {code} (valid {} s)", timeout.as_secs());
+            async {}
+        })
+        .on_pair_code_refresh(move |_force_manual, _client| {
+            *on_refresh.lock().unwrap() = None;
+            async {}
+        })
+        .on_pair_code_error(|err, _client| {
+            tracing::warn!("whatsapp: pairing failed: {}", err.error);
+            async {}
+        })
+        .on_event_for(&[EventKind::PairSuccess], |event, _client| {
+            if let Event::PairSuccess(paired) = &*event {
+                tracing::info!("WhatsApp linked as {}", paired.id);
+            }
+            async {}
+        })
+        .on_connected(|_client| {
+            tracing::info!("whatsapp: connected");
+            async {}
+        })
+        .on_logged_out(|info| {
+            tracing::warn!("whatsapp: logged out: {:?}", info.reason);
+            async {}
+        })
+        .on_message(move |ctx| {
+            let bot = on_message.clone();
+            let groups = message_groups.clone();
+            async move {
+                tokio::spawn(async move {
+                    if let Err(err) = handle(bot, &groups, ctx).await {
+                        tracing::warn!("whatsapp: {err:#}");
+                    }
+                });
+            }
+        })
+        .build()
+        .await
+        .map_err(|err| anyhow!("starting the WhatsApp client: {err}"))?;
+    let pairing = tokio::spawn(pair_when_asked(client.client(), dir.join(PHONE_FILE), expiry));
+    tracing::info!("whatsapp: client started");
+    client.run().await;
+    pairing.abort();
+    Ok(())
+}
+
+/// The number in the phone file, digits only.
+fn phone_number(text: &str) -> Option<String> {
+    let digits: String = text.chars().filter(char::is_ascii_digit).collect();
+    (digits.len() >= 8).then_some(digits)
+}
+
+/// While the client is not linked, asks for a pair code whenever the phone
+/// file names a number and no code is valid.
+async fn pair_when_asked(client: Arc<Client>, phone_file: PathBuf, expiry: CodeExpiry) {
+    let mut announced = false;
+    loop {
+        tokio::time::sleep(PAIR_CHECK).await;
+        if !client.is_connected() {
+            continue;
+        }
+        if client.is_logged_in() {
+            return;
+        }
+        if !announced {
+            tracing::info!(
+                "whatsapp: not linked; write the bot's number to {} to get a pair code",
+                phone_file.display()
+            );
+            announced = true;
+        }
+        let Some(phone) = std::fs::read_to_string(&phone_file)
+            .ok()
+            .and_then(|text| phone_number(&text))
+        else {
+            continue;
+        };
+        let valid = expiry.lock().unwrap().is_some_and(|until| Instant::now() < until);
+        if valid {
+            continue;
+        }
+        tracing::info!("whatsapp: asking for a pair code");
+        let options = PairCodeOptions {
+            phone_number: phone,
+            ..Default::default()
+        };
+        if let Err(err) = client.pair_with_code(options).await {
+            tracing::warn!("whatsapp: no pair code: {err}");
+            *expiry.lock().unwrap() = Some(Instant::now() + PAIR_RETRY);
+        }
+    }
+}
+
+fn now() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs() as i64)
+}
+
+async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> Result<()> {
+    let info = &ctx.info;
+    if info.source.is_from_me || !matches!(info.edit, EditAttribute::Empty) {
+        return Ok(());
+    }
+    let admitted = groups
+        .lock()
+        .unwrap()
+        .admits(&info.source.chat.to_string(), info.source.is_group);
+    if !admitted {
+        return Ok(());
+    }
+    if now() - info.timestamp.timestamp() > STALE_AFTER_SECS {
+        tracing::info!("whatsapp: skipping a message from while the bot was away");
+        return Ok(());
+    }
+    let chat = Conversation {
+        client: ctx.client.clone(),
+        chat: info.source.chat.clone(),
+    };
+    let base = ctx.message.get_base_message();
+    if let Some(reaction) = base.reaction_message.as_option() {
+        let Some(message) = reaction.key.as_option().and_then(|key| key.id.clone()) else {
+            return Ok(());
+        };
+        let emoji = reaction.text.clone().unwrap_or_default();
+        let (chat, user) = (chat.key(), format!("wa:{}", info.source.sender));
+        let mut replies = bot.replies.lock().unwrap();
+        if replies.is_reply(&chat, &message) {
+            tracing::info!(new = emoji, "whatsapp reaction");
+            let old = replies.reaction_of(&chat, &message, &user);
+            let new = if emoji.is_empty() { vec![] } else { vec![emoji] };
+            replies.reacted(&chat, &message, &user, old, new);
+        }
+        return Ok(());
+    }
+    let Some(text) = ctx.message.text_content().map(str::to_owned) else {
+        return Ok(());
+    };
+    tracing::info!(chat = %info.source.chat, "whatsapp message");
+    bot.message(&chat, &text).await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_groups_file_lists_one_jid_per_line() {
+        let groups = parse_groups("# the display\n120363000000000001@g.us  # Familie\n\n  120363000000000002@g.us\n");
+        assert_eq!(groups.len(), 2);
+        assert!(groups.contains("120363000000000001@g.us"));
+        assert!(groups.contains("120363000000000002@g.us"));
+    }
+
+    #[test]
+    fn only_listed_chats_draw() {
+        let dir = std::env::temp_dir().join(format!("epaper-groups-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(GROUPS_FILE);
+        std::fs::remove_file(&path).ok();
+        let mut groups = Groups::new(path.clone());
+        assert!(!groups.admits("1@g.us", true));
+        std::fs::write(&path, "1@g.us\n").unwrap();
+        assert!(groups.admits("1@g.us", true));
+        assert!(!groups.admits("2@g.us", true));
+        assert!(!groups.admits("41000@s.whatsapp.net", false));
+        assert!(groups.ignored.contains("2@g.us"));
+        assert!(!groups.ignored.contains("41000@s.whatsapp.net"));
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn the_phone_file_takes_digits_only() {
+        assert_eq!(phone_number("+41 76 123 45 67\n").as_deref(), Some("41761234567"));
+        assert_eq!(phone_number("41761234567").as_deref(), Some("41761234567"));
+        assert_eq!(phone_number("  \n"), None);
+        assert_eq!(phone_number("+41 76"), None);
+    }
+}
