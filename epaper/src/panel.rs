@@ -96,7 +96,7 @@ impl Hat {
         Ok(())
     }
 
-    fn wait(&mut self) -> Result<()> {
+    fn wait(&mut self, step: &str) -> Result<()> {
         let start = Instant::now();
         while self.busy.is_low()? {
             anyhow::ensure!(
@@ -105,6 +105,7 @@ impl Hat {
             );
             sleep(BUSY_POLL);
         }
+        tracing::info!(step, ms = start.elapsed().as_millis(), "panel busy");
         Ok(())
     }
 
@@ -115,7 +116,7 @@ impl Hat {
         sleep(Duration::from_millis(2));
         self.rst.set_high()?;
         sleep(Duration::from_millis(20));
-        self.wait()?;
+        self.wait("reset")?;
 
         self.command(0x01, &[0x03, 0x00, 0x2b, 0x2b, 0x09])?;
         self.command(0x06, &[0x07, 0x07, 0x17])?;
@@ -147,13 +148,13 @@ impl Hat {
         }
 
         self.command(0x04, &[])?;
-        self.wait()
+        self.wait("power on")
     }
 
     fn sleep(&mut self) -> Result<()> {
         self.command(0x50, &[0xf7])?;
         self.command(0x02, &[])?;
-        self.wait()?;
+        self.wait("power off")?;
         self.command(0x07, &[0xa5])
     }
 
@@ -163,7 +164,7 @@ impl Hat {
         self.command(0x13, new)?;
         self.command(0x12, &[])?;
         sleep(Duration::from_millis(1));
-        self.wait()?;
+        self.wait("refresh")?;
         self.sleep()
     }
 }
