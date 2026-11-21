@@ -202,6 +202,34 @@ in
           ];
         };
 
+    # GCS through its S3 interop API, with the HMAC key stu uses (see dev.nix).
+    programs.rclone.remotes.gcs = {
+      config = {
+        type = "s3";
+        provider = "GCS";
+        endpoint = "https://storage.googleapis.com";
+        env_auth = true;
+        shared_credentials_file = config.age.secrets.gcs_hmac_credentials.path;
+      };
+      mounts.bje_tests = {
+        enable = true;
+        mountPoint = "${config.home.homeDirectory}/gcs/bje_tests";
+        options = {
+          vfs-cache-mode = "full";
+          vfs-cache-max-size = "2G";
+        };
+      };
+    };
+
+    systemd.user.services."rclone-mount:bje_tests@gcs" =
+      lib.mkIf config.programs.rclone.remotes.gcs.mounts.bje_tests.enable
+        {
+          Service.ExecStartPre = lib.mkForce [
+            "-/run/wrappers/bin/fusermount3 -uz ${config.home.homeDirectory}/gcs/bje_tests"
+            "${lib.getExe' pkgs.coreutils "mkdir"} -p ${config.home.homeDirectory}/gcs/bje_tests"
+          ];
+        };
+
     home.file.".rclone_filter_spadesvision.txt".text = ''
       - Marketing/Material für */**
       - Development/Jetson Server Dev/*Releases*/**
