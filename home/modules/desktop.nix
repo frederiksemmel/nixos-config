@@ -543,15 +543,12 @@ let
           beat=$now
         fi
 
-        ${shellPalette [
-          "muted"
-          "orange"
-        ]}
+        # Nerd Font lock glyphs: nf-fa-unlock (U+F09C) and nf-fa-lock (U+F023).
         if [ "$cur" = unlocked ]; then
-          ironbar var set vault "<span color='$muted'>VAULT</span> <span color='$orange'>open</span>" >/dev/null || true
+          ironbar var set vault "" >/dev/null || true
           head="Bitwarden (rbw) is unlocked. Click to lock."
         else
-          ironbar var set vault "<span color='$muted'>VAULT</span> locked" >/dev/null || true
+          ironbar var set vault "" >/dev/null || true
           head="Bitwarden (rbw) is locked."
         fi
         ironbar var set vault_tooltip "$head"$'\n\n'"$(stats "$now")" >/dev/null || true
@@ -2417,6 +2414,12 @@ in
         providers.files.preferences.excludedIndexingPaths = [
           config.programs.rclone.remotes.pcloud.mounts."".mountPoint
         ];
+        # Copies marked as passwords (wl-copy --sensitive, as rbw-menu does)
+        # are never stored; everything else expires after a day.
+        providers.clipboard.preferences = {
+          ignorePasswords = true;
+          evictionThreshold = "86400";
+        };
         theme.dark.name = "terminal";
         theme.light.name = "terminal-light";
         imports = [ "${config.theme.dir}/current/vicinae.json" ];
