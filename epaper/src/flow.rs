@@ -58,7 +58,7 @@ impl Screen {
         };
         let canvas = render(scene, canvas_size(self.rotation))?;
         let planes = canvas.planes(self.rotation);
-        self.panel.show(&canvas, &planes)
+        self.panel.show(&canvas, &planes, scene.refresh())
     }
 }
 
@@ -250,13 +250,16 @@ fn outcome<T>(shown: Result<Shown<T>>) -> Result<T, Kind> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::render::{Canvas, Planes};
+    use crate::{
+        panel::Refresh,
+        render::{Canvas, Planes},
+    };
     use std::sync::mpsc;
 
     struct Slow(mpsc::Receiver<()>);
 
     impl Panel for Slow {
-        fn show(&mut self, _: &Canvas, _: &Planes) -> Result<()> {
+        fn show(&mut self, _: &Canvas, _: &Planes, _: Refresh) -> Result<()> {
             self.0.recv().ok();
             Ok(())
         }
@@ -265,7 +268,7 @@ mod tests {
     struct Instant;
 
     impl Panel for Instant {
-        fn show(&mut self, _: &Canvas, _: &Planes) -> Result<()> {
+        fn show(&mut self, _: &Canvas, _: &Planes, _: Refresh) -> Result<()> {
             Ok(())
         }
     }

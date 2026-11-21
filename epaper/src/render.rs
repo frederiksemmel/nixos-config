@@ -6,7 +6,7 @@ use epd_waveshare::{
     graphics::DisplayRotation,
 };
 
-use crate::typeset::typeset;
+use crate::{panel::Refresh, typeset::typeset};
 
 const RING: &[u8] = include_bytes!("../assets/ring.raw");
 const RING_WIDTH: u32 = 176;
@@ -21,6 +21,15 @@ pub enum Scene {
     Clear,
 }
 
+impl Scene {
+    pub fn refresh(&self) -> Refresh {
+        match self {
+            Scene::Clear => Refresh::Clean,
+            Scene::Ring | Scene::Text { .. } => Refresh::Fast,
+        }
+    }
+}
+
 pub struct Canvas {
     size: Size,
     pixels: Vec<TriColor>,
@@ -28,7 +37,6 @@ pub struct Canvas {
 
 pub struct Planes {
     pub black: Display2in7b,
-    pub red: Display2in7b,
 }
 
 pub fn canvas_size(rotation: DisplayRotation) -> Size {
@@ -129,19 +137,14 @@ impl Canvas {
 
     pub fn planes(&self, rotation: DisplayRotation) -> Planes {
         let mut black = Display2in7b::default();
-        let mut red = Display2in7b::default();
-        for plane in [&mut black, &mut red] {
-            plane.set_rotation(rotation);
-            plane.clear(Color::White).ok();
-        }
+        black.set_rotation(rotation);
+        black.clear(Color::White).ok();
         for (point, color) in self.points() {
-            match color {
-                TriColor::White => {}
-                TriColor::Black => black.set_pixel(Pixel(point, Color::Black)),
-                TriColor::Chromatic => red.set_pixel(Pixel(point, Color::Black)),
+            if color != TriColor::White {
+                black.set_pixel(Pixel(point, Color::Black));
             }
         }
-        Planes { black, red }
+        Planes { black }
     }
 
     pub fn to_ppm(&self) -> Vec<u8> {
@@ -275,18 +278,15 @@ mod tests {
     }
 
     #[test]
-    fn planes_encode_black_and_red_as_cleared_bits() {
+    fn planes_encode_ink_as_cleared_bits() {
         let mut canvas = Canvas::new(PORTRAIT);
         canvas.set(Point::new(0, 0), TriColor::Black);
         canvas.set(Point::new(9, 3), TriColor::Chromatic);
         let planes = canvas.planes(DisplayRotation::Rotate0);
 
         assert!(!panel_bit(&planes.black, 0, 0));
-        assert!(panel_bit(&planes.red, 0, 0));
-        assert!(panel_bit(&planes.black, 9, 3));
-        assert!(!panel_bit(&planes.red, 9, 3));
+        assert!(!panel_bit(&planes.black, 9, 3));
         assert!(panel_bit(&planes.black, 1, 0));
-        assert!(panel_bit(&planes.red, 1, 0));
     }
 
     #[test]

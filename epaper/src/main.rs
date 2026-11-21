@@ -16,7 +16,7 @@ use clap::{Parser, Subcommand, ValueEnum};
 use epd_waveshare::graphics::DisplayRotation;
 
 use crate::{
-    panel::{Hat, Panel, Preview},
+    panel::{Hat, Panel, Preview, Refresh},
     render::{Scene, canvas_size, render},
     replies::Replies,
 };
@@ -31,6 +31,10 @@ struct Cli {
 
     #[arg(long, env = "EPAPER_ROTATION", default_value = "180")]
     rotation: Rotation,
+
+    /// How to change the picture; clearing is always clean.
+    #[arg(long, value_enum, default_value = "fast")]
+    refresh: Refresh,
 
     #[command(subcommand)]
     command: Command,
@@ -117,7 +121,11 @@ fn main() -> Result<()> {
         }
     };
     let canvas = render(&scene, canvas_size(rotation))?;
-    panel.show(&canvas, &canvas.planes(rotation))
+    let refresh = match scene.refresh() {
+        Refresh::Fast => cli.refresh,
+        Refresh::Clean => Refresh::Clean,
+    };
+    panel.show(&canvas, &canvas.planes(rotation), refresh)
 }
 
 async fn serve(token: String, bot: flow::Bot, allow: Vec<u64>, whatsapp_dir: Option<PathBuf>) -> Result<()> {
