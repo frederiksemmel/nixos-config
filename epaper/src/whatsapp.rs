@@ -102,7 +102,9 @@ impl Groups {
     }
 
     fn save(&mut self, text: &str) -> Result<()> {
-        std::fs::write(&self.path, text).with_context(|| self.path.display().to_string())?;
+        let fresh = self.path.with_extension("new");
+        std::fs::write(&fresh, text).with_context(|| fresh.display().to_string())?;
+        std::fs::rename(&fresh, &self.path).with_context(|| self.path.display().to_string())?;
         self.modified = None;
         self.refresh();
         Ok(())
