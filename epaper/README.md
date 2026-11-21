@@ -1,6 +1,6 @@
 # epaper
 
-A bot on semmeltv3 that draws on the Waveshare 2.7" e-Paper HAT. The panel shows black and white only.
+A bot on semmeltv3 that draws on the Waveshare 2.7" e-Paper HAT. The panel shows four shades of grey.
 
 ## Commands
 
@@ -11,6 +11,7 @@ A bot on semmeltv3 that draws on the Waveshare 2.7" e-Paper HAT. The panel shows
 | `/clear` | white |
 | `/rotate [0\|90\|180\|270]` | the same picture, turned; with no angle, 90° further |
 | `/help` | nothing; the bot lists the commands |
+| `/style [name\|off]` | nothing; the chat's replies switch to a style, such as `office`, or back with `off`. With no name, the bot names the current style and the others. |
 
 Commands work in any letter case (`/Text` is `/text`). An unknown `/command` gets the help.
 
@@ -43,6 +44,8 @@ Emoji come from Noto Emoji, a black-and-white outline font. Nothing in a message
 A drawing command gets two messages: a wait line when the bot starts, and the outcome once the panel is done (written, busy, or failed). On WhatsApp the outcome is a new message; on Telegram it replaces the wait line. While the panel is drawing, other drawing commands get "busy" and are not queued.
 
 The lines are picked at random from `replies.txt`. That file is data, not code; edit it on the Pi and the bot rereads it. Emoji reactions to the bot's lines are logged in `replies.jsonl`. Liked lines come up more often.
+
+A style is a set of lines under sections like `[office wait]` next to the usual `[wait]`; every style in the file is one `/style` knows. A chat in a style gets the style's lines, and the usual lines for kinds the style has none of. `[office styled]` is said when a chat switches to `office`; `{style}` in it becomes the name. The chat's style is logged in `replies.jsonl`, so it survives restarts.
 
 ## Panel
 

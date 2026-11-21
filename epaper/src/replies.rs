@@ -24,16 +24,18 @@ pub enum Kind {
     Rotated,
     Busy,
     Failed,
+    Styled,
 }
 
 impl Kind {
-    const ALL: [Kind; 6] = [
+    const ALL: [Kind; 7] = [
         Kind::Wait,
         Kind::Written,
         Kind::Ring,
         Kind::Rotated,
         Kind::Busy,
         Kind::Failed,
+        Kind::Styled,
     ];
 
     fn name(self) -> &'static str {
@@ -44,6 +46,7 @@ impl Kind {
             Kind::Rotated => "rotated",
             Kind::Busy => "busy",
             Kind::Failed => "failed",
+            Kind::Styled => "styled",
         }
     }
 
@@ -56,36 +59,55 @@ impl Kind {
             Kind::Rotated => "Rotated to {deg}°",
             Kind::Busy => "Still drawing, send it again in a moment",
             Kind::Failed => "The display failed, see the journal",
+            Kind::Styled => "From now on I answer in {style} style",
         }
     }
 }
 
-/// Reads the lines file: `[kind]` starts a section, and every other line
-/// that is neither blank nor starts with `#` is one reply.
-pub fn parse(text: &str) -> HashMap<Kind, Vec<String>> {
-    let mut lines: HashMap<Kind, Vec<String>> = HashMap::new();
+/// The usual replies, for chats that picked no style.
+const PLAIN: &str = "";
+
+/// A style's name and a kind of reply.
+type Section = (String, Kind);
+
+/// Reads the lines file: `[kind]` starts a section of the usual replies,
+/// `[style kind]` one of a style's, and every other line that is neither
+/// blank nor starts with `#` is one reply.
+pub fn parse(text: &str) -> HashMap<Section, Vec<String>> {
+    let mut lines: HashMap<Section, Vec<String>> = HashMap::new();
     let mut section = None;
     for line in text.lines().map(str::trim) {
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-            section = Kind::ALL.into_iter().find(|k| k.name() == name.trim());
+            section = parse_section(name);
             if section.is_none() {
                 tracing::warn!("unknown section [{name}] in the replies file");
             }
-        } else if let Some(kind) = section {
-            lines.entry(kind).or_default().push(line.to_owned());
+        } else if let Some(section) = &section {
+            lines.entry(section.clone()).or_default().push(line.to_owned());
         }
     }
     lines
+}
+
+fn parse_section(name: &str) -> Option<Section> {
+    let words: Vec<&str> = name.split_whitespace().collect();
+    let (style, kind) = match words.as_slice() {
+        [kind] => (PLAIN.to_owned(), *kind),
+        [style, kind] => (style.to_lowercase(), *kind),
+        _ => return None,
+    };
+    let kind = Kind::ALL.into_iter().find(|k| k.name() == kind)?;
+    Some((style, kind))
 }
 
 /// The lines file, reread whenever it changes on disk.
 struct Lines {
     path: Option<PathBuf>,
     modified: Option<SystemTime>,
-    lines: HashMap<Kind, Vec<String>>,
+    lines: HashMap<Section, Vec<String>>,
 }
 
 impl Lines {
@@ -99,17 +121,39 @@ impl Lines {
         match std::fs::read_to_string(path) {
             Ok(text) => {
                 self.lines = parse(&text);
-                let counts: Vec<String> = Kind::ALL
-                    .iter()
-                    .map(|k| format!("{}={}", k.name(), self.lines.get(k).map_or(0, Vec::len)))
+                let counts: Vec<String> = std::iter::once(PLAIN.to_owned())
+                    .chain(self.styles())
+                    .map(|style| {
+                        let counts: Vec<String> = Kind::ALL
+                            .iter()
+                            .map(|&k| {
+                                let count = self.lines.get(&(style.clone(), k)).map_or(0, Vec::len);
+                                format!("{}={count}", k.name())
+                            })
+                            .collect();
+                        let name = if style.is_empty() { "usual" } else { &style };
+                        format!("{name}: {}", counts.join(" "))
+                    })
                     .collect();
-                tracing::info!("read {}: {}", path.display(), counts.join(" "));
+                tracing::info!("read {}: {}", path.display(), counts.join("; "));
             }
             Err(err) => {
                 tracing::warn!("reading {}: {err}", path.display());
                 self.lines.clear();
             }
         }
+    }
+
+    fn styles(&self) -> Vec<String> {
+        let mut styles: Vec<String> = self
+            .lines
+            .keys()
+            .map(|(style, _)| style.clone())
+            .filter(|style| style != PLAIN)
+            .collect();
+        styles.sort();
+        styles.dedup();
+        styles
     }
 }
 
@@ -122,6 +166,7 @@ pub struct Replies {
     scores: HashMap<String, i32>,
     sent: HashMap<Spot, String>,
     reactions: HashMap<(Spot, String), Vec<String>>,
+    styles: HashMap<String, String>,
     log: Option<PathBuf>,
 }
 
@@ -147,6 +192,11 @@ enum Record {
         user: String,
         old: Vec<String>,
         new: Vec<String>,
+    },
+    Style {
+        at: u64,
+        chat: String,
+        style: Option<String>,
     },
 }
 
@@ -184,6 +234,7 @@ impl Replies {
             scores: HashMap::new(),
             sent: HashMap::new(),
             reactions: HashMap::new(),
+            styles: HashMap::new(),
             log: dir.map(|d| d.join(LOG_FILE)),
         };
         replies.lines.refresh();
@@ -200,14 +251,41 @@ impl Replies {
         Ok(replies)
     }
 
-    /// Picks a line for `kind`, favouring lines people reacted well to.
-    pub fn pick(&mut self, kind: Kind) -> String {
+    /// Picks a line for `kind` in `chat`'s style, favouring lines people reacted well to.
+    /// A kind the style has no lines for gets one of the usual lines.
+    pub fn pick(&mut self, chat: &str, kind: Kind) -> String {
         self.lines.refresh();
-        let lines = self.lines.lines.get(&kind).map(Vec::as_slice).unwrap_or_default();
+        let style = self.styles.get(chat).map_or(PLAIN, String::as_str);
+        let lines = [style, PLAIN]
+            .into_iter()
+            .filter_map(|style| self.lines.lines.get(&(style.to_owned(), kind)))
+            .find(|lines| !lines.is_empty())
+            .map(Vec::as_slice)
+            .unwrap_or_default();
         lines
             .choose_weighted(&mut rand::rng(), |line| self.weight(line))
             .cloned()
             .unwrap_or_else(|_| kind.fallback().to_owned())
+    }
+
+    /// The styles the lines file has sections for, by name.
+    pub fn styles(&mut self) -> Vec<String> {
+        self.lines.refresh();
+        self.lines.styles()
+    }
+
+    /// The style `chat` answers in, or `None` for the usual replies.
+    pub fn style_of(&self, chat: &str) -> Option<&str> {
+        self.styles.get(chat).map(String::as_str)
+    }
+
+    /// Makes `chat` answer in `style` from now on, or in the usual replies for `None`.
+    pub fn set_style(&mut self, chat: &str, style: Option<&str>) {
+        self.record(Record::Style {
+            at: now(),
+            chat: chat.to_owned(),
+            style: style.map(str::to_owned),
+        });
     }
 
     fn weight(&self, line: &str) -> f64 {
@@ -282,6 +360,14 @@ impl Replies {
                 }
                 self.reactions.insert((spot, user.clone()), new.clone());
             }
+            Record::Style { chat, style, .. } => match style {
+                Some(style) => {
+                    self.styles.insert(chat.clone(), style.clone());
+                }
+                None => {
+                    self.styles.remove(chat);
+                }
+            },
         }
     }
 }
@@ -317,7 +403,7 @@ fn emoji_points(emoji: &str) -> i32 {
 mod tests {
     use super::*;
 
-    const SAMPLE: &str = "# replies\n[wait]\nWait for it…\n\n  Momänt  \n[written]\nNailed it.\nTadaa ✨\n[nope]\nignored\n[rotated]\n{deg}° it is\n";
+    const SAMPLE: &str = "# replies\n[wait]\nWait for it…\n\n  Momänt  \n[written]\nNailed it.\nTadaa ✨\n[nope]\nignored\n[rotated]\n{deg}° it is\n[Office written]\nThat's what she said\n[office nope]\nignored too\n";
 
     fn scratch(name: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!("epaper-{name}-{}", std::process::id()));
@@ -336,20 +422,49 @@ mod tests {
     #[test]
     fn the_lines_file_has_sections_comments_and_blank_lines() {
         let lines = parse(SAMPLE);
-        assert_eq!(lines[&Kind::Wait], ["Wait for it…", "Momänt"]);
-        assert_eq!(lines[&Kind::Written], ["Nailed it.", "Tadaa ✨"]);
-        assert_eq!(lines[&Kind::Rotated], ["{deg}° it is"]);
-        assert!(!lines.contains_key(&Kind::Busy));
-        assert!(!lines.values().flatten().any(|l| l == "ignored"));
+        let usual = |kind| (PLAIN.to_owned(), kind);
+        assert_eq!(lines[&usual(Kind::Wait)], ["Wait for it…", "Momänt"]);
+        assert_eq!(lines[&usual(Kind::Written)], ["Nailed it.", "Tadaa ✨"]);
+        assert_eq!(lines[&usual(Kind::Rotated)], ["{deg}° it is"]);
+        assert_eq!(lines[&("office".to_owned(), Kind::Written)], ["That's what she said"]);
+        assert!(!lines.contains_key(&usual(Kind::Busy)));
+        assert!(!lines.values().flatten().any(|l| l.starts_with("ignored")));
+    }
+
+    #[test]
+    fn a_chat_in_a_style_gets_its_lines_and_the_usual_ones_where_it_has_none() {
+        let (_dir, mut replies) = sample("style");
+        assert_eq!(replies.styles(), ["office"]);
+        replies.set_style("wa:1@g.us", Some("office"));
+        assert_eq!(replies.style_of("wa:1@g.us"), Some("office"));
+        assert_eq!(replies.pick("wa:1@g.us", Kind::Written), "That's what she said");
+        assert!(["Wait for it…", "Momänt"].contains(&replies.pick("wa:1@g.us", Kind::Wait).as_str()));
+        assert_ne!(replies.pick("wa:2@g.us", Kind::Written), "That's what she said");
+
+        replies.set_style("wa:1@g.us", None);
+        assert_eq!(replies.style_of("wa:1@g.us"), None);
+        assert_ne!(replies.pick("wa:1@g.us", Kind::Written), "That's what she said");
+    }
+
+    #[test]
+    fn a_chats_style_outlasts_a_restart() {
+        let (dir, mut replies) = sample("style-log");
+        replies.set_style("tg:5", Some("office"));
+        replies.set_style("tg:6", Some("office"));
+        replies.set_style("tg:6", None);
+        let replies = Replies::open(Some(&dir)).unwrap();
+        assert_eq!(replies.style_of("tg:5"), Some("office"));
+        assert_eq!(replies.style_of("tg:6"), None);
+        std::fs::remove_dir_all(dir).ok();
     }
 
     #[test]
     fn missing_lines_fall_back() {
         let mut replies = Replies::open(None).unwrap();
-        assert_eq!(replies.pick(Kind::Busy), Kind::Busy.fallback());
+        assert_eq!(replies.pick("tg:1", Kind::Busy), Kind::Busy.fallback());
         let (_dir, mut replies) = sample("fallback");
-        assert_eq!(replies.pick(Kind::Failed), Kind::Failed.fallback());
-        assert!(["Nailed it.", "Tadaa ✨"].contains(&replies.pick(Kind::Written).as_str()));
+        assert_eq!(replies.pick("tg:1", Kind::Failed), Kind::Failed.fallback());
+        assert!(["Nailed it.", "Tadaa ✨"].contains(&replies.pick("tg:1", Kind::Written).as_str()));
     }
 
     #[test]
@@ -364,7 +479,7 @@ mod tests {
             .unwrap()
             .set_modified(later)
             .unwrap();
-        assert_eq!(replies.pick(Kind::Written), "New line");
+        assert_eq!(replies.pick("tg:1", Kind::Written), "New line");
     }
 
     #[test]

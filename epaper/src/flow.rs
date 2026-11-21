@@ -30,6 +30,8 @@ pub enum Command {
     Clear,
     #[command(description = "turn the picture: 0, 90, 180 or 270, or nothing for 90° more")]
     Rotate(String),
+    #[command(description = "answer in a style, such as /style office; /style off for the usual")]
+    Style(String),
 }
 
 /// A conversation the bot answers in.
@@ -205,6 +207,7 @@ impl Bot {
                 return Ok(());
             }
             Command::Rotate(arg) => return self.rotate(chat, &arg).await,
+            Command::Style(arg) => return self.style(chat, &arg).await,
             Command::Text(text) if text.trim().is_empty() => {
                 chat.send("Use /text <message>").await?;
                 return Ok(());
@@ -245,8 +248,50 @@ impl Bot {
         }
     }
 
+    /// Shows the chat's style and the others, switches to one, or goes back to the usual replies.
+    pub async fn style<C: Chat>(&self, chat: &C, arg: &str) -> Result<()> {
+        let key = chat.key();
+        let name = arg.trim().to_lowercase();
+        let (text, switched) = {
+            let mut replies = self.replies.lock().unwrap();
+            let styles = replies.styles();
+            let list = if styles.is_empty() {
+                "There are no styles yet".to_owned()
+            } else {
+                format!("Styles: {}", styles.join(", "))
+            };
+            match name.as_str() {
+                "" => {
+                    let now = match replies.style_of(&key) {
+                        Some(style) => format!("This chat gets {style} replies."),
+                        None => "This chat gets the usual replies.".to_owned(),
+                    };
+                    (
+                        format!("{now} {list}. /style <name> switches, /style off goes back."),
+                        None,
+                    )
+                }
+                "off" | "usual" | "normal" => {
+                    replies.set_style(&key, None);
+                    ("Back to the usual replies".to_owned(), None)
+                }
+                style if styles.iter().any(|s| s == style) => {
+                    replies.set_style(&key, Some(style));
+                    let line = replies.pick(&key, Kind::Styled);
+                    (line.replace("{style}", style), Some(line))
+                }
+                style => (format!("There is no {style} style. {list}."), None),
+            }
+        };
+        let message = chat.send(&text).await?;
+        if let Some(line) = switched {
+            self.replies.lock().unwrap().sent(&key, &message, Kind::Styled, &line);
+        }
+        Ok(())
+    }
+
     async fn start<C: Chat>(&self, chat: &C) -> Result<String> {
-        let line = self.replies.lock().unwrap().pick(Kind::Wait);
+        let line = self.replies.lock().unwrap().pick(&chat.key(), Kind::Wait);
         let message = chat.send(&line).await?;
         self.replies
             .lock()
@@ -256,7 +301,7 @@ impl Bot {
     }
 
     async fn finish<C: Chat>(&self, chat: &C, waiting: &str, kind: Kind, fill: impl Fn(&str) -> String) -> Result<()> {
-        let line = self.replies.lock().unwrap().pick(kind);
+        let line = self.replies.lock().unwrap().pick(&chat.key(), kind);
         let message = chat.follow_up(waiting, &fill(&line)).await?;
         self.replies.lock().unwrap().sent(&chat.key(), &message, kind, &line);
         Ok(())
@@ -470,5 +515,36 @@ mod tests {
         let chat = Fake::default();
         bot(Box::new(Instant)).command_message(&chat, "/draw hi").await.unwrap();
         assert!(chat.messages()[0].contains("/text"));
+    }
+
+    #[tokio::test]
+    async fn style_switches_the_replies_of_the_chat() {
+        let dir = std::env::temp_dir().join(format!("epaper-flow-style-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("replies.txt"),
+            "[written]\nWritten it is\n[office written]\nThat's what she said\n[office styled]\nWelcome to {style}\n",
+        )
+        .unwrap();
+        let bot = Bot {
+            display: Display::new(Box::new(Instant), DisplayRotation::Rotate90, None),
+            replies: Arc::new(SyncMutex::new(Replies::open(Some(&dir)).unwrap())),
+        };
+        let chat = Fake::default();
+        bot.message(&chat, "/style").await.unwrap();
+        bot.message(&chat, "/style Office").await.unwrap();
+        bot.message(&chat, "/clear").await.unwrap();
+        bot.message(&chat, "/style dune").await.unwrap();
+        bot.message(&chat, "/style off").await.unwrap();
+        bot.message(&chat, "/clear").await.unwrap();
+        let messages = chat.messages();
+        assert!(
+            messages[0].contains("usual") && messages[0].contains("office"),
+            "{messages:?}"
+        );
+        assert_eq!(messages[1..3], ["Welcome to office", "That's what she said"]);
+        assert!(messages[3].starts_with("There is no dune style"), "{messages:?}");
+        assert_eq!(messages[4..], ["Back to the usual replies", "Written it is"]);
+        std::fs::remove_dir_all(dir).ok();
     }
 }
