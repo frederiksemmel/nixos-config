@@ -8,12 +8,12 @@
 #let width = float(input("width", "264")) * 1pt
 #let height = float(input("height", "176")) * 1pt
 #let margin = 6pt
-#let min-size = 12
+#let min-size = 4
 #let descent = 0.3
 
 #set page(width: width, height: height, margin: margin, fill: white)
 #set text(font: ("DejaVu Sans", "Noto Emoji"), weight: "bold", fill: black, hyphenate: false)
-#set par(leading: 0.35em, spacing: 0.35em, justify: false, linebreaks: "optimized")
+#set par(leading: 0.35em, spacing: 0.35em, justify: false, linebreaks: "simple")
 
 #let styled(kind, body) = {
   if kind == "emph" { emph(body) }
@@ -33,17 +33,31 @@
   else { styled(node.k, node.c.map(draw).join()) }
 }
 
-// Each word with the styles around it, to find the widest one.
-#let words(node, wrap: body => body) = {
+// Where a line may break: whitespace, except the no-break spaces.
+#let gap = regex("[\\s&&[^\\u{a0}\\u{2007}\\u{202f}]]+")
+
+// The message in reading order: styled runs of text, and none where a line may break.
+#let pieces(node, wrap: body => body) = {
   if type(node) == str {
-    node.split(regex("\s+")).filter(w => w != "").map(w => wrap(w))
+    node.split(gap).map(run => if run == "" { () } else { (wrap(run),) }).intersperse((none,)).flatten()
+  } else if node.k == "br" {
+    (none,)
   } else {
-    node.c.map(child => words(child, wrap: body => wrap(styled(node.k, body)))).flatten()
+    node.c.map(child => pieces(child, wrap: body => wrap(styled(node.k, body)))).flatten()
   }
 }
 
+// Each word with the styles around it, one word even where its styles change.
+#let words(doc) = {
+  let found = ((),)
+  for piece in doc.map(node => pieces(node)).flatten() {
+    if piece == none { found.push(()) } else { found.last().push(piece) }
+  }
+  found.filter(word => word.len() > 0).map(word => word.join())
+}
+
 #let body = doc.map(draw).join()
-#let all-words = doc.map(node => words(node)).flatten()
+#let all-words = words(doc)
 
 #if all-words.len() > 0 {
   context {
@@ -63,7 +77,7 @@
     let size = lo
 
     let goal = tall(size, inner-w)
-    let narrow = calc.floor(widest(size) / 1pt)
+    let narrow = calc.ceil(widest(size) / 1pt)
     let wide = calc.floor(inner-w / 1pt)
     while narrow < wide {
       let mid = calc.floor((narrow + wide) / 2)

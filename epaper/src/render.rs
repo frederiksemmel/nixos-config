@@ -236,11 +236,28 @@ mod tests {
     }
 
     #[test]
-    fn long_text_stays_on_the_panel() {
-        let canvas = render(&text(&"Chuchichäschtli ".repeat(40)), LANDSCAPE).unwrap();
-        let (lo, hi) = inked(&canvas).unwrap();
-        assert!(lo.x >= 0 && lo.y >= 0);
-        assert!(hi.x < LANDSCAPE.width as i32 && hi.y < LANDSCAPE.height as i32);
+    fn text_stays_inside_the_margin() {
+        let long = "Chuchichäschtli ".repeat(40);
+        let messages = [
+            "Das isch absolute nervig, oder?",
+            "Absolute nervtötend",
+            "Absolute\u{a0}nervig",
+            "Absolut nerv**tötend**, gäll",
+            "eis zwei drüü vier füüf sächs siebe acht nüün zäh",
+            "Hoi 👋 wie gaht's?",
+            long.as_str(),
+        ];
+        for message in messages {
+            for size in [LANDSCAPE, PORTRAIT] {
+                let canvas = render(&text(message), size).unwrap();
+                let (lo, hi) = inked(&canvas).unwrap();
+                let (right, bottom) = (size.width as i32 - 1 - hi.x, size.height as i32 - 1 - hi.y);
+                assert!(
+                    lo.x >= 3 && right >= 3 && lo.y >= 3 && bottom >= 3,
+                    "{message:?} in {size:?} inks {lo:?}..{hi:?}"
+                );
+            }
+        }
     }
 
     #[test]
