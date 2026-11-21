@@ -8,10 +8,8 @@ mapfile -d '' -t files < <(git diff --cached --name-only -z --diff-filter=ACMR)
 
 printf '%s\0' "${files[@]}" | check_hidden_dirs pre-commit
 
-gitleaks="$(gitleaks_bin)"
-if ! "$gitleaks" git --pre-commit --staged --no-banner --redact --log-level warn -v .; then
-  echo "pre-commit: gitleaks found what looks like a secret in the staged changes (above)." >&2
-  echo "Put real secrets in secrets/*.age. For a false positive, extend .gitleaks.toml." >&2
+if ! kingfisher_scan pre-commit --staged; then
+  echo "Put real secrets in secrets/*.age. For a false positive, extend kingfisher_skip in .githooks/lib.sh." >&2
   exit 1
 fi
 

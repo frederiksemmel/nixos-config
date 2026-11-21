@@ -1,8 +1,0 @@
-[extend]
-useDefault = true
-
-[[allowlists]]
-description = "semmeltv browser-test fixtures key movies by slug, e.g. \"key\": \"isle-of-dogs-2018\""
-condition = "AND"
-paths = ['''^semmeltv/web/tests/browser/''']
-regexes = ['''^[a-z0-9]+(-[a-z0-9]+)*-\d{4}$''']
