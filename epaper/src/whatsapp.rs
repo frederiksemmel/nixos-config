@@ -301,7 +301,7 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         return Ok(());
     };
     tracing::info!(chat = %info.source.chat, "whatsapp message");
-    bot.message(&chat, &text).await
+    bot.command_message(&chat, &text).await
 }
 
 #[cfg(test)]

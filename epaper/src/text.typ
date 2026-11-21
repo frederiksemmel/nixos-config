@@ -7,13 +7,12 @@
 #let message = input("text", "").trim()
 #let width = float(input("width", "264")) * 1pt
 #let height = float(input("height", "176")) * 1pt
-#let ink = if input("ink", "black") == "red" { rgb(200, 0, 0) } else { black }
 #let margin = 6pt
 #let min-size = 12
 #let descent = 0.3
 
 #set page(width: width, height: height, margin: margin, fill: white)
-#set text(font: "DejaVu Sans", weight: "bold", fill: ink, hyphenate: false)
+#set text(font: "DejaVu Sans", weight: "bold", fill: black, hyphenate: false)
 #set par(leading: 0.35em, spacing: 0.35em, justify: false, linebreaks: "optimized")
 
 #let lines = message.split("\n").map(line => line.split(regex("\s+")).filter(w => w != "").join(" "))

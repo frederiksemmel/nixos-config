@@ -17,7 +17,7 @@ use epd_waveshare::graphics::DisplayRotation;
 
 use crate::{
     panel::{Hat, Panel, Preview},
-    render::{Ink, Scene, canvas_size, render},
+    render::{Scene, canvas_size, render},
     replies::Replies,
 };
 
@@ -42,8 +42,6 @@ enum Command {
     Ring,
     /// Write text; words are wrapped and the font shrinks to fit.
     Text {
-        #[arg(long)]
-        red: bool,
         #[arg(required = true)]
         words: Vec<String>,
     },
@@ -103,10 +101,7 @@ fn main() -> Result<()> {
     let scene = match cli.command {
         Command::Ring => Scene::Ring,
         Command::Clear => Scene::Clear,
-        Command::Text { red, words } => Scene::Text {
-            text: words.join(" "),
-            ink: if red { Ink::Red } else { Ink::Black },
-        },
+        Command::Text { words } => Scene::Text { text: words.join(" ") },
         Command::Bot {
             token_file,
             allow,

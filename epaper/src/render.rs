@@ -17,23 +17,8 @@ const INK_BELOW: u32 = 128;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scene {
     Ring,
-    Text { text: String, ink: Ink },
+    Text { text: String },
     Clear,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Ink {
-    Black,
-    Red,
-}
-
-impl From<Ink> for TriColor {
-    fn from(ink: Ink) -> Self {
-        match ink {
-            Ink::Black => TriColor::Black,
-            Ink::Red => TriColor::Chromatic,
-        }
-    }
 }
 
 pub struct Canvas {
@@ -58,7 +43,7 @@ pub fn render(scene: &Scene, size: Size) -> Result<Canvas> {
     match scene {
         Scene::Clear => {}
         Scene::Ring => draw_ring(&mut canvas),
-        Scene::Text { text, ink } => draw_text(&mut canvas, text, *ink)?,
+        Scene::Text { text } => draw_text(&mut canvas, text)?,
     }
     Ok(canvas)
 }
@@ -80,20 +65,15 @@ fn draw_ring(canvas: &mut Canvas) {
     }
 }
 
-fn draw_text(canvas: &mut Canvas, text: &str, ink: Ink) -> Result<()> {
+fn draw_text(canvas: &mut Canvas, text: &str) -> Result<()> {
     let text: String = text.chars().take(MAX_CHARS).collect();
     let (width, height) = (canvas.size.width.to_string(), canvas.size.height.to_string());
-    let ink_name = match ink {
-        Ink::Black => "black",
-        Ink::Red => "red",
-    };
     let page = typeset(
         TEXT_TEMPLATE,
         &[
             ("text", text.as_str()),
             ("width", width.as_str()),
             ("height", height.as_str()),
-            ("ink", ink_name),
         ],
     )?;
     for y in 0..page.height.min(canvas.size.height) {
@@ -108,13 +88,7 @@ fn draw_text(canvas: &mut Canvas, text: &str, ink: Ink) -> Result<()> {
 
 fn ink_at([r, g, b]: [u8; 3]) -> Option<TriColor> {
     let luma = (299 * r as u32 + 587 * g as u32 + 114 * b as u32) / 1000;
-    if luma >= INK_BELOW {
-        None
-    } else if r > 120 && g < 90 {
-        Some(TriColor::Chromatic)
-    } else {
-        Some(TriColor::Black)
-    }
+    (luma < INK_BELOW).then_some(TriColor::Black)
 }
 
 impl Canvas {
@@ -233,10 +207,7 @@ mod tests {
     }
 
     fn text(text: &str) -> Scene {
-        Scene::Text {
-            text: text.into(),
-            ink: Ink::Black,
-        }
+        Scene::Text { text: text.into() }
     }
 
     #[test]
@@ -276,18 +247,10 @@ mod tests {
     }
 
     #[test]
-    fn text_is_drawn_in_its_ink() {
-        let text = |ink| Scene::Text {
-            text: "Hoi".into(),
-            ink,
-        };
-        let black = render(&text(Ink::Black), PORTRAIT).unwrap();
-        assert!(count(&black, TriColor::Black) > 0);
-        assert_eq!(count(&black, TriColor::Chromatic), 0);
-
-        let red = render(&text(Ink::Red), PORTRAIT).unwrap();
-        assert!(count(&red, TriColor::Chromatic) > 0);
-        assert_eq!(count(&red, TriColor::Black), 0);
+    fn text_is_drawn_in_black_only() {
+        let canvas = render(&text("Hoi"), PORTRAIT).unwrap();
+        assert!(count(&canvas, TriColor::Black) > 0);
+        assert_eq!(count(&canvas, TriColor::Chromatic), 0);
     }
 
     #[test]

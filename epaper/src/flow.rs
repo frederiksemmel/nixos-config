@@ -12,15 +12,12 @@ use tokio::sync::Mutex;
 
 use crate::{
     panel::Panel,
-    render::{Ink, Scene, canvas_size, render},
+    render::{Scene, canvas_size, render},
     replies::{Kind, Replies},
 };
 
 #[derive(BotCommands, Clone, Debug)]
-#[command(
-    rename_rule = "lowercase",
-    description = "Send any text to put it on the display, or:"
-)]
+#[command(rename_rule = "lowercase", description = "Commands for the e-Paper display:")]
 pub enum Command {
     #[command(description = "show these commands")]
     Help,
@@ -28,8 +25,6 @@ pub enum Command {
     Ring,
     #[command(description = "write text in black")]
     Text(String),
-    #[command(description = "write text in red")]
-    Red(String),
     #[command(description = "wipe the display")]
     Clear,
     #[command(description = "turn the picture: 0, 90, 180 or 270, or nothing for 90° more")]
@@ -151,11 +146,11 @@ pub fn parse_rotation(arg: &str) -> Option<Option<DisplayRotation>> {
     }
 }
 
-pub fn text_scene(text: String, ink: Ink) -> Scene {
+pub fn text_scene(text: String) -> Scene {
     if text.trim().is_empty() {
         Scene::Clear
     } else {
-        Scene::Text { text, ink }
+        Scene::Text { text }
     }
 }
 
@@ -164,7 +159,15 @@ impl Bot {
     pub async fn message<C: Chat>(&self, chat: &C, text: &str) -> Result<()> {
         match Command::parse(text, "") {
             Ok(command) => self.command(chat, command).await,
-            Err(_) => self.draw(chat, text_scene(text.to_owned(), Ink::Black)).await,
+            Err(_) => self.draw(chat, text_scene(text.to_owned())).await,
+        }
+    }
+
+    /// Handles a message from a shared chat: commands only, everything else is chat.
+    pub async fn command_message<C: Chat>(&self, chat: &C, text: &str) -> Result<()> {
+        match Command::parse(text, "") {
+            Ok(command) => self.command(chat, command).await,
+            Err(_) => Ok(()),
         }
     }
 
@@ -175,9 +178,12 @@ impl Bot {
                 return Ok(());
             }
             Command::Rotate(arg) => return self.rotate(chat, &arg).await,
+            Command::Text(text) if text.trim().is_empty() => {
+                chat.send("Use /text <message>").await?;
+                return Ok(());
+            }
             Command::Ring => Scene::Ring,
-            Command::Text(text) => text_scene(text, Ink::Black),
-            Command::Red(text) => text_scene(text, Ink::Red),
+            Command::Text(text) => text_scene(text),
             Command::Clear => Scene::Clear,
         };
         self.draw(chat, scene).await
@@ -302,7 +308,8 @@ mod tests {
     fn commands_parse() {
         let parse = |s| Command::parse(s, "epaperbot").unwrap();
         assert!(matches!(parse("/text Hoi zäme"), Command::Text(t) if t == "Hoi zäme"));
-        assert!(matches!(parse("/red@epaperbot rot"), Command::Red(t) if t == "rot"));
+        assert!(matches!(parse("/text@epaperbot Hoi"), Command::Text(t) if t == "Hoi"));
+        assert!(Command::parse("/red rot", "epaperbot").is_err());
         assert!(matches!(parse("/ring"), Command::Ring));
         assert!(matches!(parse("/rotate 90"), Command::Rotate(a) if a == "90"));
         assert!(matches!(parse("/rotate"), Command::Rotate(a) if a.is_empty()));
@@ -319,7 +326,7 @@ mod tests {
 
     #[test]
     fn blank_text_clears() {
-        assert_eq!(text_scene("  ".into(), Ink::Red), Scene::Clear);
+        assert_eq!(text_scene("  ".into()), Scene::Clear);
     }
 
     #[tokio::test]
@@ -352,6 +359,27 @@ mod tests {
         let messages = chat.messages();
         assert!(messages[0].contains("/rotate"));
         assert!(messages[1].starts_with("Use /rotate"));
+    }
+
+    #[tokio::test]
+    async fn shared_chats_only_answer_commands() {
+        let bot = bot(Box::new(Instant));
+        let chat = Fake::default();
+        bot.command_message(&chat, "Hoi zäme").await.unwrap();
+        bot.command_message(&chat, "/unknown thing").await.unwrap();
+        assert!(chat.messages().is_empty());
+        bot.command_message(&chat, "/text Hoi").await.unwrap();
+        assert_eq!(chat.messages(), ["Written it is"]);
+    }
+
+    #[tokio::test]
+    async fn a_bare_text_command_explains_instead_of_wiping() {
+        let bot = bot(Box::new(Instant));
+        let chat = Fake::default();
+        bot.message(&chat, "/text").await.unwrap();
+        bot.message(&chat, "/text   ").await.unwrap();
+        let messages = chat.messages();
+        assert!(messages.iter().all(|m| m.starts_with("Use /text")), "{messages:?}");
     }
 
     #[tokio::test]
