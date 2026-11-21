@@ -483,6 +483,9 @@ let
 
       last_poll=$(cat "$heartbeat" 2>/dev/null || echo 0)
       beat=0
+      sleeper=""
+      # vault-toggle sends USR1 to poll right away.
+      trap '[ -z "$sleeper" ] || kill "$sleeper" 2>/dev/null || true' USR1
       prev=$(tail -n 1 "$log" | cut -d ' ' -f 2)
 
       record() {
@@ -549,12 +552,31 @@ let
           head="Bitwarden (rbw) is unlocked. Click to lock."
         else
           ironbar var set vault "" >/dev/null || true
-          head="Bitwarden (rbw) is locked."
+          head="Bitwarden (rbw) is locked. Click to unlock."
         fi
         ironbar var set vault_tooltip "$head"$'\n\n'"$(stats "$now")" >/dev/null || true
 
-        sleep "$interval"
+        sleep "$interval" &
+        sleeper=$!
+        wait "$sleeper" || true
       done
+    '';
+  };
+  # Click on the vault cell: locks rbw, or unlocks it through its fuzzel
+  # pinentry, then has bar-vault redraw the cell.
+  vaultToggle = pkgs.writeShellApplication {
+    name = "vault-toggle";
+    runtimeInputs = [
+      config.programs.rbw.package
+      pkgs.systemd
+    ];
+    text = ''
+      if rbw unlocked 2>/dev/null; then
+        rbw lock
+      else
+        rbw unlock || true
+      fi
+      systemctl --user kill --kill-whom=main --signal=USR1 bar-vault.service || true
     '';
   };
   ironbarCss = p: ''
@@ -2291,7 +2313,7 @@ in
             class = "cell";
             label = "#vault";
             tooltip = "#vault_tooltip";
-            on_click_left = "${lib.getExe config.programs.rbw.package} lock";
+            on_click_left = lib.getExe vaultToggle;
           }
           ++ [
             {
