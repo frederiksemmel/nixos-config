@@ -39,7 +39,7 @@ in
         270
       ];
       default = 180;
-      description = "Rotation of the picture on the panel, in degrees.";
+      description = "Rotation of the picture on the panel, in degrees, until /rotate saves another one in /var/lib/epaper/rotation.";
     };
   };
 

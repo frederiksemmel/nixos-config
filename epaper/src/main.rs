@@ -21,6 +21,8 @@ use crate::{
     replies::Replies,
 };
 
+const ROTATION_FILE: &str = "rotation";
+
 /// Draw on the Waveshare 2.7" e-Paper HAT (B), by hand or through a Telegram and WhatsApp bot.
 #[derive(Parser, Debug)]
 #[command(version)]
@@ -114,7 +116,7 @@ fn main() -> Result<()> {
         } => {
             let token = std::fs::read_to_string(&token_file).with_context(|| token_file.display().to_string())?;
             let bot = flow::Bot {
-                display: flow::Display::new(panel, rotation),
+                display: flow::Display::new(panel, rotation, state_dir.as_ref().map(|dir| dir.join(ROTATION_FILE))),
                 replies: Arc::new(Mutex::new(Replies::open(state_dir.as_deref())?)),
             };
             return tokio::runtime::Runtime::new()?.block_on(serve(token, bot, allow, state_dir.filter(|_| whatsapp)));

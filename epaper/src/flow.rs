@@ -2,6 +2,7 @@
 
 use std::{
     future::Future,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex as SyncMutex},
 };
 
@@ -48,6 +49,7 @@ pub type SharedReplies = Arc<SyncMutex<Replies>>;
 pub struct Screen {
     panel: Box<dyn Panel>,
     rotation: DisplayRotation,
+    rotation_file: Option<PathBuf>,
     shown: Option<Scene>,
 }
 
@@ -72,10 +74,13 @@ pub enum Shown<T> {
 }
 
 impl Display {
-    pub fn new(panel: Box<dyn Panel>, rotation: DisplayRotation) -> Self {
+    /// Starts with the rotation saved in `rotation_file`, or `default` while none is saved.
+    pub fn new(panel: Box<dyn Panel>, default: DisplayRotation, rotation_file: Option<PathBuf>) -> Self {
+        let rotation = rotation_file.as_deref().and_then(read_rotation).unwrap_or(default);
         Display(Arc::new(Mutex::new(Screen {
             panel,
             rotation,
+            rotation_file,
             shown: None,
         })))
     }
@@ -103,10 +108,19 @@ impl Display {
     pub async fn rotate(&self, to: Option<DisplayRotation>) -> Result<Shown<DisplayRotation>> {
         self.update(move |screen| {
             screen.rotation = to.unwrap_or_else(|| quarter_turn(screen.rotation));
+            if let Some(file) = &screen.rotation_file
+                && let Err(err) = std::fs::write(file, format!("{}\n", degrees(screen.rotation)))
+            {
+                tracing::warn!("saving the rotation to {}: {err}", file.display());
+            }
             screen.rotation
         })
         .await
     }
+}
+
+fn read_rotation(file: &Path) -> Option<DisplayRotation> {
+    parse_rotation(&std::fs::read_to_string(file).ok()?).flatten()
 }
 
 /// The display and the reply lines, shared by every chat.
@@ -146,6 +160,17 @@ pub fn parse_rotation(arg: &str) -> Option<Option<DisplayRotation>> {
     }
 }
 
+/// `None` for a message that is not a command; `Some(Err(()))` for an unknown one. The command word may have any case.
+pub fn parse_command(text: &str) -> Option<Result<Command, ()>> {
+    let text = text.trim_start();
+    if !text.starts_with('/') {
+        return None;
+    }
+    let word_end = text.find(char::is_whitespace).unwrap_or(text.len());
+    let text = format!("{}{}", text[..word_end].to_lowercase(), &text[word_end..]);
+    Some(Command::parse(&text, "").map_err(|_| ()))
+}
+
 pub fn text_scene(text: String) -> Scene {
     if text.trim().is_empty() {
         Scene::Clear
@@ -157,17 +182,19 @@ pub fn text_scene(text: String) -> Scene {
 impl Bot {
     /// Handles a plain message: a command, or else text to draw.
     pub async fn message<C: Chat>(&self, chat: &C, text: &str) -> Result<()> {
-        match Command::parse(text, "") {
-            Ok(command) => self.command(chat, command).await,
-            Err(_) => self.draw(chat, text_scene(text.to_owned())).await,
+        match parse_command(text) {
+            Some(Ok(command)) => self.command(chat, command).await,
+            Some(Err(())) => self.command(chat, Command::Help).await,
+            None => self.draw(chat, text_scene(text.to_owned())).await,
         }
     }
 
     /// Handles a message from a shared chat: commands only, everything else is chat.
     pub async fn command_message<C: Chat>(&self, chat: &C, text: &str) -> Result<()> {
-        match Command::parse(text, "") {
-            Ok(command) => self.command(chat, command).await,
-            Err(_) => Ok(()),
+        match parse_command(text) {
+            Some(Ok(command)) => self.command(chat, command).await,
+            Some(Err(())) => self.command(chat, Command::Help).await,
+            None => Ok(()),
         }
     }
 
@@ -189,7 +216,7 @@ impl Bot {
         self.draw(chat, scene).await
     }
 
-    /// Says a wait line, draws, then turns the wait line into the outcome.
+    /// Says a wait line, draws, then tells the outcome.
     pub async fn draw<C: Chat>(&self, chat: &C, scene: Scene) -> Result<()> {
         let done = if scene == Scene::Ring {
             Kind::Ring
@@ -302,7 +329,7 @@ mod tests {
 
     fn bot(panel: Box<dyn Panel>) -> Bot {
         Bot {
-            display: Display::new(panel, DisplayRotation::Rotate90),
+            display: Display::new(panel, DisplayRotation::Rotate90, None),
             replies: Arc::new(SyncMutex::new(Replies::open(None).unwrap())),
         }
     }
@@ -369,7 +396,6 @@ mod tests {
         let bot = bot(Box::new(Instant));
         let chat = Fake::default();
         bot.command_message(&chat, "Hoi zäme").await.unwrap();
-        bot.command_message(&chat, "/unknown thing").await.unwrap();
         assert!(chat.messages().is_empty());
         bot.command_message(&chat, "/text Hoi").await.unwrap();
         assert_eq!(chat.messages(), ["Written it is"]);
@@ -388,7 +414,7 @@ mod tests {
     #[tokio::test]
     async fn a_second_drawing_waits_its_turn() {
         let (release, wait) = mpsc::channel();
-        let display = Display::new(Box::new(Slow(wait)), DisplayRotation::Rotate90);
+        let display = Display::new(Box::new(Slow(wait)), DisplayRotation::Rotate90, None);
         let first = tokio::spawn({
             let display = display.clone();
             async move { display.show(Scene::Clear).await.unwrap() }
@@ -406,7 +432,7 @@ mod tests {
     async fn rotate_turns_a_quarter_without_an_angle() {
         let (release, wait) = mpsc::channel();
         drop(release);
-        let display = Display::new(Box::new(Slow(wait)), DisplayRotation::Rotate90);
+        let display = Display::new(Box::new(Slow(wait)), DisplayRotation::Rotate90, None);
         let turned = |shown: Shown<DisplayRotation>| match shown {
             Shown::Done(rotation) => Some(degrees(rotation)),
             Shown::Busy => None,
@@ -416,5 +442,33 @@ mod tests {
             turned(display.rotate(Some(DisplayRotation::Rotate0)).await.unwrap()),
             Some(0)
         );
+    }
+
+    #[tokio::test]
+    async fn the_rotation_outlasts_a_restart() {
+        let file = std::env::temp_dir().join(format!("epaper-rotation-{}", std::process::id()));
+        std::fs::remove_file(&file).ok();
+        let display = Display::new(Box::new(Instant), DisplayRotation::Rotate90, Some(file.clone()));
+        display.rotate(Some(DisplayRotation::Rotate270)).await.unwrap();
+
+        let restarted = Display::new(Box::new(Instant), DisplayRotation::Rotate90, Some(file.clone()));
+        let rotation = restarted.0.lock().await.rotation;
+        std::fs::remove_file(&file).ok();
+        assert_eq!(degrees(rotation), 270);
+    }
+
+    #[test]
+    fn commands_have_any_case_and_unknown_ones_are_marked() {
+        assert!(matches!(parse_command("/Text Hoi zäme"), Some(Ok(Command::Text(t))) if t == "Hoi zäme"));
+        assert!(matches!(parse_command(" /CLEAR"), Some(Ok(Command::Clear))));
+        assert!(matches!(parse_command("/draw hi"), Some(Err(()))));
+        assert!(parse_command("hoi /text").is_none());
+    }
+
+    #[tokio::test]
+    async fn an_unknown_command_gets_the_help() {
+        let chat = Fake::default();
+        bot(Box::new(Instant)).command_message(&chat, "/draw hi").await.unwrap();
+        assert!(chat.messages()[0].contains("/text"));
     }
 }
