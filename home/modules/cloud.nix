@@ -155,7 +155,10 @@ in
       spadesvision_gdrive_token.file = ../../secrets/spadesvision_gdrive_token.age;
       spadesvision_gdrive_client_secret.file = ../../secrets/spadesvision_gdrive_client_secret.age;
       pcloud_token.file = ../../secrets/pcloud_token.age;
-      gcs_hmac_credentials.file = ../../secrets/gcs_hmac_credentials.age;
+      gcs_hmac_credentials = {
+        file = ../../secrets/gcs_hmac_credentials.age;
+        path = "${config.xdg.configHome}/rclone/gcs_hmac_credentials";
+      };
     };
 
     programs.rclone.remotes.spadesvision = {
