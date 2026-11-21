@@ -456,7 +456,7 @@ impl Actor {
         }
         let added = crate::push::additions(&self.library, &library, watching::now());
         let push = self.core.push().clone();
-        tokio::spawn(async move { push.added(added).await });
+        tokio::spawn(async move { push.added(added, watching::now()).await });
         let library = Arc::new(library);
         if self.db.set_library(&library) {
             self.core.forget_progress();

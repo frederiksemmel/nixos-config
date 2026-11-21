@@ -509,7 +509,7 @@ Screen). Each push is `{ title, body, url, tag }`; the web app's service worker
 | Method | Path | Does |
 | --- | --- | --- |
 | GET | `/api/push` | `{ key }`: the TV's public VAPID key, base64url, to subscribe with |
-| POST | `/api/push/subscriptions` | keeps a browser's `PushSubscription.toJSON()` (`{ endpoint, keys: { p256dh, auth } }`) for you and sends "Notifications are on" to it; 400 unless `endpoint` is an https push service |
+| POST | `/api/push/subscriptions` | keeps a browser's `PushSubscription.toJSON()` (`{ endpoint, keys: { p256dh, auth } }`) for you; "Notifications are on" goes to it only when it is new for you, not when Settings checks in again; 400 unless `endpoint` is an https push service |
 | DELETE | `/api/push/subscriptions` | `{ endpoint }`: no more pushes to that browser |
 
 What is sent:
@@ -518,13 +518,17 @@ What is sent:
   with Dark", at most once in three hours per person and show.
 - **Added**: when the library gains a film or episodes that someone downloaded
   in the last two days, every admin but that person hears "Mami added Arrival
-  (2016)" or "Mami added 3 episodes of Dark".
+  (2016)" or "Mami added 3 episodes of Dark": a film once in two days, more
+  episodes of a show by the same person once in three hours.
 - **Playing on the TV**: when the TV starts a film or episode, whoever it
   plays for hears "Playing on the TV · Arrival (2016)", so it sits on the
   phone's lock screen; its `url` ends in `#remote`, which opens the remote.
   At most once in three hours per person and film or show, since iOS stacks
   notices of the same tag rather than replacing them. A tap with SemmelTV
   already open posts `"semmeltv:remote"` to that window instead of navigating.
+
+What each person was told, and when, is kept in the `push_notices` table, so
+the quiet times hold across a restart of the TV app.
 
 The VAPID key is made on first use and kept as the `push_key` setting; a reset
 `semmeltv.db` makes a new one, and browsers subscribed to the old one are

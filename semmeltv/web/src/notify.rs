@@ -28,9 +28,9 @@ async fn worker() -> Result<Worker> {
 
 pub fn what(admin: bool) -> &'static str {
     if admin {
-        "When someone you watch a series with carries on with it, and when someone else adds to the library"
+        "When the TV plays something for you, when someone you watch a series with carries on with it, and when someone else adds to the library"
     } else {
-        "When someone you watch a series with carries on with it"
+        "When the TV plays something for you, and when someone you watch a series with carries on with it"
     }
 }
 

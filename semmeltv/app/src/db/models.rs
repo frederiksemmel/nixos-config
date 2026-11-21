@@ -279,6 +279,15 @@ pub struct PushSubscription {
     pub created_at: i64,
 }
 
+#[derive(Debug, toasty::Model)]
+#[table = "push_notices"]
+#[key(profile_id, about)]
+pub struct PushNotice {
+    pub profile_id: i64,
+    pub about: String,
+    pub sent_at: i64,
+}
+
 pub fn all() -> toasty::ModelSet {
     toasty::models!(
         Profile,
@@ -296,6 +305,7 @@ pub fn all() -> toasty::ModelSet {
         Setting,
         Usage,
         Together,
-        PushSubscription
+        PushSubscription,
+        PushNotice
     )
 }

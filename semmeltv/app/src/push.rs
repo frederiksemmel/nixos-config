@@ -17,9 +17,9 @@ use ring::rand::{SecureRandom, SystemRandom};
 use ring::signature::{self, EcdsaKeyPair, KeyPair};
 use ring::{aead, agreement, hkdf};
 use serde::Serialize;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::OnceCell;
 
@@ -33,6 +33,8 @@ const QUIET_AFTER_CARRYING_ON: u64 = 3 * 60 * 60;
 /// later or after a stop, doesn't notify again: iOS stacks notices that share
 /// a tag instead of replacing them.
 const QUIET_ON_THE_TV: u64 = 3 * 60 * 60;
+/// More episodes of a show someone added within this time don't notify again.
+const QUIET_AFTER_ADDING_EPISODES: u64 = 3 * 60 * 60;
 /// Titles that come back after a glitch on the mount carry their old date.
 const NEW_FOR_DAYS: u64 = 2;
 
@@ -165,7 +167,7 @@ enum Delivered {
 enum Courier {
     Http(ureq::Agent),
     #[cfg(test)]
-    Recorded(Arc<Mutex<Vec<(String, Notice)>>>),
+    Recorded(Arc<std::sync::Mutex<Vec<(String, Notice)>>>),
 }
 
 impl Courier {
@@ -240,8 +242,7 @@ pub struct Push {
     subject: String,
     vapid: Arc<OnceCell<Arc<Vapid>>>,
     courier: Courier,
-    carried_on: Arc<Mutex<HashMap<(ProfileId, String), u64>>>,
-    on_tv: Arc<Mutex<HashMap<(ProfileId, String), u64>>>,
+    said: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl Push {
@@ -262,8 +263,7 @@ impl Push {
             subject,
             vapid: Arc::default(),
             courier,
-            carried_on: Arc::default(),
-            on_tv: Arc::default(),
+            said: Arc::default(),
         }
     }
 
@@ -364,14 +364,6 @@ impl Push {
             Ok(_) => return,
             Err(error) => return eprintln!("push: partners in {}: {error}", show.key),
         };
-        if quieted(
-            &self.carried_on,
-            (player, show.key.clone()),
-            now,
-            QUIET_AFTER_CARRYING_ON,
-        ) {
-            return;
-        }
         let Ok(Some(name)) = self.db.profile(player).await.map(|found| found.map(|found| found.name)) else {
             return;
         };
@@ -385,8 +377,11 @@ impl Push {
             url: format!("/shows/{}", show.key),
             tag: format!("together-{}", show.key),
         };
+        let about = format!("together-{}-{}", show.key, player.0);
         for partner in partners {
-            self.notify(partner, &notice).await;
+            if self.first_in(partner, &about, now, QUIET_AFTER_CARRYING_ON).await {
+                self.notify(partner, &notice).await;
+            }
         }
     }
 
@@ -394,17 +389,17 @@ impl Push {
     /// screen shows it and a tap opens the remote; at most once in a few hours
     /// per person and film or show.
     pub async fn playing_on_tv(&self, owner: ProfileId, library: &Library, path: &Path, now: u64) {
-        let Some((key, notice)) = on_tv(library, path) else {
+        let Some(notice) = on_tv(library, path) else {
             return;
         };
-        if quieted(&self.on_tv, (owner, key), now, QUIET_ON_THE_TV) {
-            return;
+        if self.first_in(owner, &notice.tag, now, QUIET_ON_THE_TV).await {
+            self.notify(owner, &notice).await;
         }
-        self.notify(owner, &notice).await;
     }
 
-    /// Tells each admin what someone else added to the library.
-    pub async fn added(&self, additions: Vec<Addition>) {
+    /// Tells each admin what someone else added to the library, once: a
+    /// title that comes back after the mount went away was told already.
+    pub async fn added(&self, additions: Vec<Addition>, now: u64) {
         if additions.is_empty() {
             return;
         }
@@ -417,27 +412,36 @@ impl Push {
         };
         for addition in additions {
             for admin in admins.iter().filter(|admin| admin.name != addition.by) {
-                self.notify(admin.id, &addition.notice).await;
+                let about = format!("{}-{}", addition.notice.tag, addition.by);
+                if self.first_in(admin.id, &about, now, addition.quiet).await {
+                    self.notify(admin.id, &addition.notice).await;
+                }
             }
         }
     }
 }
 
-/// Whether `key` was let through within `quiet` before `now`; if not, it is
-/// let through now.
-fn quieted(last: &Mutex<HashMap<(ProfileId, String), u64>>, key: (ProfileId, String), now: u64, quiet: u64) -> bool {
-    let mut last = last.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    let at = last.entry(key).or_insert(0);
-    if now < *at + quiet {
-        return true;
+impl Push {
+    /// Whether `profile` wasn't told `about` this within `quiet` before
+    /// `now`, noting that they are told now. Kept in semmeltv.db, so a
+    /// restarted TV doesn't say it all again.
+    async fn first_in(&self, profile: ProfileId, about: &str, now: u64, quiet: u64) -> bool {
+        let _one_at_a_time = self.said.lock().await;
+        match self.db.last_notice(profile, about).await {
+            Ok(Some(at)) if now < at.saturating_add(quiet) => return false,
+            Ok(_) => {}
+            Err(error) => eprintln!("push: what {} was told: {error}", profile.0),
+        }
+        if let Err(error) = self.db.note_notice(profile, about, now).await {
+            eprintln!("push: noting what {} was told: {error}", profile.0);
+        }
+        true
     }
-    *at = now;
-    false
 }
 
-/// The film or show `path` belongs to, and what the TV playing it says on
-/// the lock screen.
-fn on_tv(library: &Library, path: &Path) -> Option<(String, Notice)> {
+/// What the TV playing `path` says on the lock screen, tagged with its film
+/// or show.
+fn on_tv(library: &Library, path: &Path) -> Option<Notice> {
     let (key, body, page) = if let Some((show, episode)) = library.find_episode(path) {
         let body = match &episode.title {
             Some(title) => format!("{} · {} · {title}", show.title, episode.short_label()),
@@ -452,19 +456,20 @@ fn on_tv(library: &Library, path: &Path) -> Option<(String, Notice)> {
         };
         (movie.key.clone(), body, format!("/movies/{}", movie.key))
     };
-    let notice = Notice {
+    Some(Notice {
         title: "Playing on the TV".to_string(),
         body,
         url: format!("{page}#remote"),
         tag: format!("tv-{key}"),
-    };
-    Some((key, notice))
+    })
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Addition {
     pub by: String,
     pub notice: Notice,
+    /// How long the same addition stays quiet after it was told.
+    pub quiet: u64,
 }
 
 /// What `now` has that `before` hadn't and that someone downloaded in the
@@ -501,6 +506,7 @@ pub fn additions(before: &Library, now: &Library, today: u64) -> Vec<Addition> {
                 url: format!("/movies/{}", movie.key),
                 tag: format!("added-{}", movie.key),
             },
+            quiet: NEW_FOR_DAYS * 24 * 60 * 60,
         });
     }
     for show in &now.shows {
@@ -525,6 +531,7 @@ pub fn additions(before: &Library, now: &Library, today: u64) -> Vec<Addition> {
                     url: format!("/shows/{}", show.key),
                     tag: format!("added-{}", show.key),
                 },
+                quiet: QUIET_AFTER_ADDING_EPISODES,
             });
         }
     }
@@ -766,8 +773,9 @@ mod tests {
                 url: "/movies/arrival-2016".to_string(),
                 tag: "added-arrival-2016".to_string(),
             },
+            quiet: NEW_FOR_DAYS * 24 * 60 * 60,
         };
-        push.added(vec![addition("Mami"), addition("Frederik")]).await;
+        push.added(vec![addition("Mami"), addition("Frederik")], NOW).await;
         let sent = push.sent();
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0].0, "https://push.example/frederik");
@@ -823,6 +831,43 @@ mod tests {
         push.playing_on_tv(frederik, &library, Path::new("/elsewhere.mkv"), NOW)
             .await;
         assert_eq!(push.sent().len(), 4);
+    }
+
+    #[tokio::test]
+    async fn a_restarted_tv_remembers_what_it_already_said() {
+        let db = Db::memory().await;
+        let frederik = person(&db, "Frederik", Role::Admin).await;
+        let mami = person(&db, "Mami", Role::Viewer).await;
+        db.subscribe(frederik, &phone("frederik"), 1).await.unwrap();
+        let library = crate::db::test_library();
+        db.set_library(&library);
+        db.set_together(frederik, mami, &library.shows[0].key, true)
+            .await
+            .unwrap();
+        let dark = &library.shows[0];
+        let episode = dark.episodes().next().unwrap();
+        let arrival = Addition {
+            by: "Mami".to_string(),
+            notice: Notice {
+                title: "New in the library".to_string(),
+                body: "Mami added Arrival (2016)".to_string(),
+                url: "/movies/arrival-2016".to_string(),
+                tag: "added-arrival-2016".to_string(),
+            },
+            quiet: NEW_FOR_DAYS * 24 * 60 * 60,
+        };
+
+        let before = Push::recorded(db.clone());
+        before.playing_on_tv(frederik, &library, &episode.path, NOW).await;
+        before.carried_on(mami, dark, episode, NOW).await;
+        before.added(vec![arrival.clone()], NOW).await;
+        assert_eq!(before.sent().len(), 3);
+
+        let after = Push::recorded(db);
+        after.playing_on_tv(frederik, &library, &episode.path, NOW + 600).await;
+        after.carried_on(mami, dark, episode, NOW + 600).await;
+        after.added(vec![arrival], NOW + 600).await;
+        assert_eq!(after.sent(), []);
     }
 
     #[test]

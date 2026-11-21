@@ -1027,14 +1027,18 @@ async fn subscribe(State(api): State<Api>, Who(profile): Who, Json(body): Json<P
         p256dh: body.keys.p256dh,
         auth: body.keys.auth,
     };
-    if let Err(error) = api.core.db().subscribe(profile, &subscription, watching::now()).await {
-        return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
+    let new = match api.core.db().subscribe(profile, &subscription, watching::now()).await {
+        Ok(new) => new,
+        Err(error) => return problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string()),
+    };
+    if !new {
+        return Json(Outcome::done("Notifications are on for this device")).into_response();
     }
     let admin = matches!(api.core.db().profile(profile).await, Ok(Some(found)) if found.role == auth::Role::Admin);
     let body = if admin {
-        "You'll hear here when someone you watch a series with carries on with it, and when someone adds to the library."
+        "You'll hear here when the TV plays something for you, when someone you watch a series with carries on with it, and when someone adds to the library."
     } else {
-        "You'll hear here when someone you watch a series with carries on with it."
+        "You'll hear here when the TV plays something for you, and when someone you watch a series with carries on with it."
     };
     let notice = crate::push::Notice {
         title: "Notifications are on".to_string(),
@@ -2444,7 +2448,7 @@ mod tests {
             "keys": { "p256dh": "BKey", "auth": "secret" },
         });
         assert_eq!(
-            post(&server, "/api/push/subscriptions", phone),
+            post(&server, "/api/push/subscriptions", phone.clone()),
             (
                 200,
                 json!({ "message": "Notifications are on for this device", "ok": true })
@@ -2462,6 +2466,11 @@ mod tests {
         assert_eq!(sent[0].0, "https://web.push.apple.com/QGz8d3");
         assert_eq!(sent[0].1.title, "Notifications are on");
         assert!(sent[0].1.body.contains("adds to the library"));
+        for _ in 0..3 {
+            assert_eq!(post(&server, "/api/push/subscriptions", phone.clone()).0, 200);
+        }
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        assert_eq!(push.sent().len(), 1, "opening Settings again says nothing");
         for endpoint in [
             "http://web.push.apple.com/x",
             "https://127.0.0.1/x",
