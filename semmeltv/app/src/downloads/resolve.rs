@@ -308,13 +308,16 @@ fn decide(wish: &Wish, mut sure: Vec<(Kind, Found)>, unsure: &[(Kind, Found)], m
 }
 
 /// The question for a series asked without a season: one option per season
-/// the library lacks, or the season itself when only one is missing.
-fn season_choice(target: &Target, missing: &[u32]) -> Result<u32, Box<Resolved>> {
+/// the library lacks, or the season itself when only one is missing. With
+/// nothing missing it says when the next season starts, if TMDB knows.
+fn season_choice(
+    target: &Target,
+    missing: &[u32],
+    seasons: &[SeasonSummary],
+    today: Date,
+) -> Result<u32, Box<Resolved>> {
     match missing {
-        [] => Err(Box::new(Resolved::Refused(format!(
-            "The library has every season of {}",
-            target.title
-        )))),
+        [] => Err(Box::new(Resolved::Refused(nothing_missing(target, seasons, today)))),
         [only] => Ok(*only),
         many => Err(Box::new(Resolved::Question {
             text: format!("Which season of {}?", target.title),
@@ -330,6 +333,37 @@ fn season_choice(target: &Target, missing: &[u32]) -> Result<u32, Box<Resolved>>
             season: None,
             episode: target.episode,
         })),
+    }
+}
+
+fn nothing_missing(target: &Target, seasons: &[SeasonSummary], today: Date) -> String {
+    let regular = || seasons.iter().filter(|season| season.season_number > 0);
+    let next = regular()
+        .filter(|season| !aired(season.air_date.as_deref(), today))
+        .filter_map(|season| Some((season.season_number, Date::parse(season.air_date.as_deref()?)?)))
+        .min_by_key(|(number, _)| *number);
+    let starts = |date: Date| {
+        format!(
+            "{} {} {}",
+            date.day(),
+            crate::details::MONTHS[usize::from(date.month() - 1)],
+            date.year()
+        )
+    };
+    if regular().any(|season| aired(season.air_date.as_deref(), today)) {
+        match next {
+            Some((number, date)) => format!(
+                "The library has every season of {} so far: season {number} starts on {}",
+                target.title,
+                starts(date)
+            ),
+            None => format!("The library has every season of {}", target.title),
+        }
+    } else {
+        match next {
+            Some((_, date)) => format!("{} has not aired yet: it starts on {}", target.title, starts(date)),
+            None => format!("{} has not aired yet", target.title),
+        }
     }
 }
 
@@ -408,7 +442,8 @@ fn target(
                 }
                 (None, Mode::Add) => {
                     let seasons = client.seasons(found.id).map_err(|error| format!("TMDB: {error}"))?;
-                    match season_choice(&target, &missing_seasons(&seasons, manifest, found.id, today)) {
+                    let missing = missing_seasons(&seasons, manifest, found.id, today);
+                    match season_choice(&target, &missing, &seasons, today) {
                         Ok(number) => number,
                         Err(asked) => return Ok(*asked),
                     }
@@ -613,14 +648,15 @@ mod tests {
             episodes: Vec::new(),
             folder: None,
         };
-        assert_eq!(season_choice(&target, &[4]), Ok(4));
+        let today = Date::parse("2026-11-15").unwrap();
+        assert_eq!(season_choice(&target, &[4], &[], today), Ok(4));
         assert_eq!(
-            season_choice(&target, &[]),
+            season_choice(&target, &[], &[summary(1, Some("2015-07-28"), 6)], today),
             Err(Box::new(Resolved::Refused(
                 "The library has every season of Taskmaster".to_string()
             )))
         );
-        let Err(asked) = season_choice(&target, &[1, 2, 3]) else {
+        let Err(asked) = season_choice(&target, &[1, 2, 3], &[], today) else {
             panic!("no question");
         };
         let Resolved::Question { text, options, .. } = *asked else {
@@ -637,6 +673,60 @@ mod tests {
                 ("Season 2", 7, Some(2)),
                 ("Season 3", 7, Some(3))
             ]
+        );
+    }
+
+    fn summary(number: u32, air_date: Option<&str>, episodes: u32) -> SeasonSummary {
+        SeasonSummary {
+            season_number: number,
+            air_date: air_date.map(str::to_string),
+            episode_count: episodes,
+        }
+    }
+
+    #[test]
+    fn a_series_with_nothing_missing_yet_says_when_its_next_season_starts() {
+        let target = |title: &str| Target {
+            kind: Kind::Tv,
+            tmdb: 224377,
+            imdb: None,
+            title: title.to_string(),
+            original: None,
+            year: Some(2026),
+            season: None,
+            episode: None,
+            runtime: None,
+            episodes: Vec::new(),
+            folder: None,
+        };
+        let today = Date::parse("2026-11-21").unwrap();
+        let refused = |message: &str| Err(Box::new(Resolved::Refused(message.to_string())));
+        assert_eq!(
+            season_choice(
+                &target("Harry Potter"),
+                &[],
+                &[summary(1, Some("2026-12-25"), 1)],
+                today
+            ),
+            refused("Harry Potter has not aired yet: it starts on 25 Dec 2026")
+        );
+        assert_eq!(
+            season_choice(&target("Harry Potter"), &[], &[summary(1, None, 0)], today),
+            refused("Harry Potter has not aired yet")
+        );
+        assert_eq!(
+            season_choice(
+                &target("Foundation"),
+                &[],
+                &[
+                    summary(0, Some("2021-09-01"), 5),
+                    summary(3, Some("2025-07-11"), 10),
+                    summary(4, Some("2027-01-01"), 10),
+                    summary(5, Some("2028-03-01"), 10),
+                ],
+                today
+            ),
+            refused("The library has every season of Foundation so far: season 4 starts on 1 Jan 2027")
         );
     }
 
