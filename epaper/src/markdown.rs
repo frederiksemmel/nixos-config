@@ -28,6 +28,7 @@ pub fn parse(markdown: &str) -> Vec<Node> {
             Event::End(end) => tree.end(end),
             Event::Text(text) | Event::Html(text) | Event::InlineHtml(text) => tree.text(&text),
             Event::Code(code) => {
+                tree.lead();
                 tree.frames.push(("code", Vec::new()));
                 tree.text(&code);
                 tree.close();
@@ -67,6 +68,12 @@ impl Default for Tree {
 
 impl Tree {
     fn start(&mut self, tag: Tag) {
+        if matches!(
+            tag,
+            Tag::Emphasis | Tag::Strong | Tag::Strikethrough | Tag::Link { .. } | Tag::Image { .. }
+        ) {
+            self.lead();
+        }
         let style = match tag {
             Tag::Emphasis => "emph",
             Tag::Strong => "strong",
@@ -144,15 +151,22 @@ impl Tree {
             if line.is_empty() {
                 continue;
             }
-            if self.new_line && self.started {
-                self.push(line_break());
-            }
-            self.new_line = false;
+            self.lead();
             self.started = true;
-            if let Some(bullet) = self.bullet.take() {
-                self.push(Node::Text(bullet));
-            }
             self.push(Node::Text(line.to_owned()));
+        }
+    }
+
+    /// Puts down what goes before a block's first content: the line break after
+    /// the previous block, and the bullet or number of a list item.
+    fn lead(&mut self) {
+        if self.new_line && self.started {
+            self.push(line_break());
+        }
+        self.new_line = false;
+        if let Some(bullet) = self.bullet.take() {
+            self.started = true;
+            self.push(Node::Text(bullet));
         }
     }
 }
@@ -183,6 +197,14 @@ mod tests {
         assert_eq!(
             json("# Titel\neis\nzwei\n\n- a\n- b"),
             r#"[{"k":"h1","c":["Titel"]},{"k":"br","c":[]},"eis",{"k":"br","c":[]},"zwei",{"k":"br","c":[]},"• ","a",{"k":"br","c":[]},"• ","b"]"#
+        );
+    }
+
+    #[test]
+    fn a_styled_list_item_keeps_its_bullet_plain() {
+        assert_eq!(
+            json("eis\n\n- ~~Salat~~"),
+            r#"["eis",{"k":"br","c":[]},"• ",{"k":"strike","c":["Salat"]}]"#
         );
     }
 

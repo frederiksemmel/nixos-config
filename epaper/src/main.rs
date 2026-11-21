@@ -1,4 +1,5 @@
 mod flow;
+mod markdown;
 mod panel;
 mod render;
 mod replies;
@@ -34,9 +35,9 @@ struct Cli {
     #[arg(long, env = "EPAPER_ROTATION", default_value = "180")]
     rotation: Rotation,
 
-    /// How to change the picture; clearing is always clean.
-    #[arg(long, value_enum, default_value = "fast")]
-    refresh: Refresh,
+    /// How to change the picture; by default grey, and clean for clearing.
+    #[arg(long, value_enum)]
+    refresh: Option<Refresh>,
 
     #[command(subcommand)]
     command: Command,
@@ -123,10 +124,7 @@ fn main() -> Result<()> {
         }
     };
     let canvas = render(&scene, canvas_size(rotation))?;
-    let refresh = match scene.refresh() {
-        Refresh::Fast => cli.refresh,
-        Refresh::Clean => Refresh::Clean,
-    };
+    let refresh = cli.refresh.unwrap_or(scene.refresh());
     panel.show(&canvas, &canvas.planes(rotation), refresh)
 }
 

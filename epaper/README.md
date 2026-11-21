@@ -14,6 +14,21 @@ A bot on semmeltv3 that draws on the Waveshare 2.7" e-Paper HAT. The panel shows
 
 Commands work in any letter case (`/Text` is `/text`). An unknown `/command` gets the help.
 
+## Text
+
+The message is Markdown. Every line of it stays a line on the panel.
+
+| Write | Panel |
+|---|---|
+| `*schräg*` or `_schräg_` | italic |
+| `**wichtig**` | white on black |
+| `~~nöd~~` | struck through |
+| `` `19:30` `` | monospace |
+| `# Titel`, `## Titel` | 1.5× and 1.25× the size of the rest |
+| `- eis`, `1. eis` | a bullet or number per line |
+
+Emoji come from Noto Emoji, a black-and-white outline font. Nothing in a message is run as Typst code; markdown.rs turns it into a tree of strings and style names that text.typ draws.
+
 ## Who it listens to
 
 - **WhatsApp:** only the chats listed in `whatsapp-groups`; the bot ignores every other chat.
@@ -31,8 +46,9 @@ The lines are picked at random from `replies.txt`. That file is data, not code; 
 
 ## Panel
 
-- A drawing uses the **fast** refresh: only the pixels that change are driven, with no flashing. It takes about 0.8 s and leaves faint ghosts.
-- `/clear`, and every 11th drawing, uses the **clean** refresh: the panel flashes black and white and the ghosts go away. It takes about 2.7 s.
+- A drawing uses the **grey** refresh: the panel flashes once and shows four shades (white, light grey, dark grey, black), so text edges and emoji come out smooth. It leaves no ghosts.
+- `/clear` uses the **clean** refresh: black and white only, flashing, about 2.7 s.
+- The **fast** refresh drives only the pixels that change, in about 0.8 s without flashing, but in black and white and with faint ghosts. The bot doesn't use it; `--refresh fast` does.
 - The controller takes one byte per SPI chip select; multi-byte writes are silently garbled.
 
 ## Rotation

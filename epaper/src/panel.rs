@@ -37,6 +37,8 @@ pub enum Refresh {
     Fast,
     /// Flashes the whole panel black and white, in about two seconds, and leaves no ghosts.
     Clean,
+    /// Flashes the whole panel and draws four shades: white, light grey, dark grey, black.
+    Gray,
 }
 
 pub trait Panel: Send {
@@ -146,18 +148,19 @@ impl Hat {
         self.command(0x16, &[0x00])?;
         self.command(0x04, &[])?;
         self.wait("power on")?;
-        self.command(0x00, &[0xbf])?;
-        self.command(0x30, &[0x3a])?;
-        self.command(0x61, &[0x00, 0xb0, 0x01, 0x08])?;
-        self.command(0x82, &[0x12])?;
-
         let waveform = match refresh {
             Refresh::Fast => &FAST,
             Refresh::Clean => &CLEAN,
+            Refresh::Gray => &GRAY,
         };
+        self.command(0x00, &[0xbf])?;
+        self.command(0x30, &[waveform.pll])?;
+        self.command(0x61, &[0x00, 0xb0, 0x01, 0x08])?;
+        self.command(0x82, &[0x12])?;
+
         self.command(0x50, &[waveform.border])?;
         self.command(0x20, &waveform.vcom)?;
-        for (register, lut) in (0x21..).zip(&waveform.luts) {
+        for (register, lut) in (0x21..).zip(waveform.luts) {
             self.command(register, lut)?;
         }
         Ok(())
@@ -170,10 +173,11 @@ impl Hat {
         self.command(0x07, &[0xa5])
     }
 
-    fn refresh(&mut self, old: &[u8], new: &[u8], refresh: Refresh) -> Result<()> {
+    /// Sends the two frames the waveform reads (the old and the new picture, or a grey picture's two bits) and refreshes.
+    fn refresh(&mut self, first: &[u8], second: &[u8], refresh: Refresh) -> Result<()> {
         self.wake(refresh)?;
-        self.command(0x10, old)?;
-        self.command(0x13, new)?;
+        self.command(0x10, first)?;
+        self.command(0x13, second)?;
         self.command(0x12, &[])?;
         sleep(Duration::from_millis(1));
         self.wait("refresh")?;
@@ -193,23 +197,23 @@ fn gpio_chip() -> Result<Chip> {
 
 impl Panel for Hat {
     fn show(&mut self, _canvas: &Canvas, planes: &Planes, refresh: Refresh) -> Result<()> {
-        let new = planes.black.buffer().to_vec();
-        let refresh = if self.fast_in_a_row >= CLEAN_EVERY {
-            Refresh::Clean
-        } else {
-            refresh
+        let new = planes.high.buffer().to_vec();
+        let refresh = match refresh {
+            Refresh::Fast if self.fast_in_a_row >= CLEAN_EVERY => Refresh::Clean,
+            refresh => refresh,
         };
-        let old = match (&self.shown, refresh) {
-            (Some(shown), Refresh::Fast) => shown.clone(),
-            _ => new.iter().map(|byte| !byte).collect(),
+        let (first, second) = match (&self.shown, refresh) {
+            (Some(shown), Refresh::Fast) => (shown.clone(), new.clone()),
+            (_, Refresh::Gray) => (new.clone(), planes.low.buffer().to_vec()),
+            _ => (new.iter().map(|byte| !byte).collect(), new.clone()),
         };
         let start = Instant::now();
         self.shown = None;
-        self.refresh(&old, &new, refresh)?;
+        self.refresh(&first, &second, refresh)?;
         tracing::info!(?refresh, ms = start.elapsed().as_millis(), "drew on the panel");
         self.fast_in_a_row = match refresh {
             Refresh::Fast => self.fast_in_a_row + 1,
-            Refresh::Clean => 0,
+            Refresh::Clean | Refresh::Gray => 0,
         };
         self.shown = Some(new);
         Ok(())
@@ -217,11 +221,12 @@ impl Panel for Hat {
 }
 
 struct Waveform {
+    pll: u8,
     border: u8,
     /// Two leading bytes, then the same rows as the LUTs.
     vcom: [u8; 44],
-    /// White to white, black to white, white to black, black to black.
-    luts: [[u8; 42]; 4],
+    /// For registers 0x21 on: one LUT per pair of bits in the two frames.
+    luts: &'static [[u8; 42]],
 }
 
 const fn lut<const N: usize>(rows: &[[u8; 6]]) -> [u8; N] {
@@ -246,9 +251,10 @@ const FAST: Waveform = {
     let to_white = [[0x80, FAST_FRAMES, 0x01, 0x00, 0x00, 0x01]];
     let to_black = [[0x40, FAST_FRAMES, 0x01, 0x00, 0x00, 0x01]];
     Waveform {
+        pll: 0x3a,
         border: 0x17,
         vcom: lut(&still),
-        luts: [lut(&still), lut(&to_white), lut(&to_black), lut(&still)],
+        luts: &[lut(&still), lut(&to_white), lut(&to_black), lut(&still)],
     }
 };
 
@@ -272,9 +278,49 @@ const CLEAN: Waveform = {
         [0x50, 0x12, 0x12, 0x00, 0x00, 0x01],
     ];
     Waveform {
+        pll: 0x3a,
         border: 0x97,
         vcom: lut(&timing),
-        luts: [lut(&to_white), lut(&to_white), lut(&to_black), lut(&to_black)],
+        luts: &[lut(&to_white), lut(&to_white), lut(&to_black), lut(&to_black)],
+    }
+};
+
+const GRAY: Waveform = {
+    let timing = [
+        [0x00, 0x0a, 0x00, 0x00, 0x00, 0x01],
+        [0x60, 0x14, 0x14, 0x00, 0x00, 0x01],
+        [0x00, 0x14, 0x00, 0x00, 0x00, 0x01],
+        [0x00, 0x13, 0x0a, 0x01, 0x00, 0x01],
+    ];
+    let ww = [
+        [0x40, 0x0a, 0x00, 0x00, 0x00, 0x01],
+        [0x90, 0x14, 0x14, 0x00, 0x00, 0x01],
+        [0x10, 0x14, 0x0a, 0x00, 0x00, 0x01],
+        [0xa0, 0x13, 0x01, 0x00, 0x00, 0x01],
+    ];
+    let bw = [
+        [0x40, 0x0a, 0x00, 0x00, 0x00, 0x01],
+        [0x90, 0x14, 0x14, 0x00, 0x00, 0x01],
+        [0x00, 0x14, 0x0a, 0x00, 0x00, 0x01],
+        [0x99, 0x0c, 0x01, 0x03, 0x04, 0x01],
+    ];
+    let wb = [
+        [0x40, 0x0a, 0x00, 0x00, 0x00, 0x01],
+        [0x90, 0x14, 0x14, 0x00, 0x00, 0x01],
+        [0x00, 0x14, 0x0a, 0x00, 0x00, 0x01],
+        [0x99, 0x0b, 0x04, 0x04, 0x01, 0x01],
+    ];
+    let bb = [
+        [0x80, 0x0a, 0x00, 0x00, 0x00, 0x01],
+        [0x90, 0x14, 0x14, 0x00, 0x00, 0x01],
+        [0x20, 0x14, 0x0a, 0x00, 0x00, 0x01],
+        [0x50, 0x13, 0x01, 0x00, 0x00, 0x01],
+    ];
+    Waveform {
+        pll: 0x90,
+        border: 0x57,
+        vcom: lut(&timing),
+        luts: &[lut(&ww), lut(&bw), lut(&wb), lut(&bb), lut(&ww)],
     }
 };
 
@@ -298,5 +344,7 @@ mod tests {
         assert!(FAST.luts[1][6..].iter().all(|&byte| byte == 0));
         assert_eq!(&CLEAN.vcom[8..14], &[0x60, 0x28, 0x28, 0x00, 0x00, 0x01]);
         assert_eq!(CLEAN.vcom[..2], [0, 0]);
+        assert_eq!(GRAY.luts.len(), 5);
+        assert_eq!(&GRAY.luts[1][18..24], &[0x99, 0x0c, 0x01, 0x03, 0x04, 0x01]);
     }
 }

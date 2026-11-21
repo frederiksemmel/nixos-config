@@ -38,7 +38,9 @@ fn load_dir(dir: &Path) -> Result<Vec<Font>> {
     let mut fonts = Vec::new();
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
-        if path.extension().is_some_and(|e| e == "ttf" || e == "otf") {
+        if path.is_dir() {
+            fonts.extend(load_dir(&path)?);
+        } else if path.extension().is_some_and(|e| e == "ttf" || e == "otf") {
             let data = std::fs::read(&path).with_context(|| path.display().to_string())?;
             fonts.extend(Font::iter(Bytes::new(data)));
         }

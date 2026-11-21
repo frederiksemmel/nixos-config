@@ -2,7 +2,9 @@
   lib,
   pkgs,
   crane,
+  symlinkJoin,
   dejavu_fonts,
+  noto-fonts-monochrome-emoji,
 }:
 
 let
@@ -19,7 +21,15 @@ let
       ];
     };
     strictDeps = true;
-    EPAPER_FONT_DIR = "${dejavu_fonts}/share/fonts/truetype";
+    EPAPER_FONT_DIR = "${
+      symlinkJoin {
+        name = "epaper-fonts";
+        paths = [
+          dejavu_fonts
+          noto-fonts-monochrome-emoji
+        ];
+      }
+    }/share/fonts";
   };
 
   cargoArtifacts = craneLib.buildDepsOnly commonArgs;
