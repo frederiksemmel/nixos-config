@@ -301,12 +301,69 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         return Ok(());
     };
     tracing::info!(chat = %info.source.chat, "whatsapp message");
-    bot.command_message(&chat, &text).await
+    let replying = base
+        .extended_text_message
+        .as_option()
+        .and_then(|text| text.context_info.as_option())
+        .and_then(|context| context.stanza_id.as_deref())
+        .is_some_and(|quoted| bot.replies.lock().unwrap().is_reply(&chat.key(), quoted));
+    match addressed(&text, replying) {
+        Some(text) => bot.message(&chat, &text).await,
+        None => bot.command_message(&chat, &text).await,
+    }
+}
+
+/// The name that makes the bot listen to a group message, as in "Spades, Hoi".
+const NAME: &str = "spades";
+
+/// What a group message asks the bot for when it replies to the bot or names
+/// it: the text without the name, `/help` when nothing else is left. `None`
+/// when the message is not meant for the bot.
+fn addressed(text: &str, replying: bool) -> Option<String> {
+    let named = words(text).find(|&(_, word)| word.trim_start_matches('@').to_lowercase().starts_with(NAME));
+    let rest = match named {
+        Some((start, word)) => {
+            let before = text[..start].trim_end();
+            let after = text[start + word.len()..]
+                .trim_start_matches([',', ':', '!', '.', ';'])
+                .trim_start();
+            if after.starts_with('/') || before.is_empty() {
+                after.to_owned()
+            } else {
+                format!("{before} {after}")
+            }
+        }
+        None if replying => text.to_owned(),
+        None => return None,
+    };
+    let rest = rest.trim();
+    Some(if rest.is_empty() {
+        "/help".to_owned()
+    } else {
+        rest.to_owned()
+    })
+}
+
+/// The whitespace-separated words of `text` with their byte offsets.
+fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
+    text.split_whitespace()
+        .map(move |word| (word.as_ptr() as usize - text.as_ptr() as usize, word))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn naming_the_bot_or_replying_to_it_addresses_it() {
+        assert_eq!(addressed("Spades, Hoi zäme", false).as_deref(), Some("Hoi zäme"));
+        assert_eq!(addressed("hey @spadesvision /ring", false).as_deref(), Some("/ring"));
+        assert_eq!(addressed("Hoi SPADES!", false).as_deref(), Some("Hoi"));
+        assert_eq!(addressed("spades", false).as_deref(), Some("/help"));
+        assert_eq!(addressed("Hoi zäme", true).as_deref(), Some("Hoi zäme"));
+        assert_eq!(addressed("Hoi zäme", false), None);
+        assert_eq!(addressed("/text Hoi", false), None);
+    }
 
     #[test]
     fn the_groups_file_lists_one_jid_per_line() {
