@@ -16,7 +16,11 @@ Commands work in any letter case (`/Text` is `/text`). An unknown `/command` get
 
 ## Who it listens to
 
-- **WhatsApp:** only the groups listed in `whatsapp-groups`; private chats and other groups are ignored. In a group, only commands draw; ordinary chat stays off the panel. A message that names `spades` or replies to the bot counts as meant for it, so `spades hoi` draws `hoi`. Messages older than 10 minutes, edits and the bot's own messages are skipped.
+- **WhatsApp:** only the chats listed in `whatsapp-groups`; the bot ignores every other chat.
+  - A message that is exactly `hoi` (any case) adds its chat to the list, from anyone, and the bot greets. `/stop` removes the chat again, and the bot says goodbye.
+  - In a private chat, every message is meant for the bot, as on Telegram.
+  - In a group, only commands draw; ordinary chat stays off the panel. A message that names `spades` or replies to the bot counts as meant for it, so `spades hoi` draws `hoi`.
+  - Messages older than 10 minutes, edits and the bot's own messages are skipped.
 - **Telegram:** every message is meant for the bot. Plain text draws as if it came after `/text`. `services.epaper.allow` limits who may draw.
 
 ## Replies
@@ -45,7 +49,7 @@ Not in git; they hold chat ids and the WhatsApp session.
 | `replies.txt` | reply lines, by `[kind]` |
 | `replies.jsonl` | sent lines and reactions |
 | `whatsapp.db` | the linked-device session |
-| `whatsapp-groups` | group JIDs allowed to draw, one per line |
+| `whatsapp-groups` | chats allowed to draw, one JID per line; `hoi` and `/stop` edit it |
 | `whatsapp-qr`, `whatsapp-phone` | pairing: the current QR payload, or the number to ask a pair code for |
 
 ## Trying it without the bot

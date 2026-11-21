@@ -29,7 +29,7 @@ in
       description = "Telegram user ids allowed to draw. Everyone may draw when the list is empty.";
     };
 
-    whatsapp.enable = lib.mkEnableOption "answers on WhatsApp too, as a linked device whose session lives in /var/lib/epaper/whatsapp.db. To link it, write the account's number to /var/lib/epaper/whatsapp-phone and enter the pair code the journal shows. Only the chats listed in /var/lib/epaper/whatsapp-groups draw";
+    whatsapp.enable = lib.mkEnableOption "answers on WhatsApp too, as a linked device whose session lives in /var/lib/epaper/whatsapp.db. To link it, write the account's number to /var/lib/epaper/whatsapp-phone and enter the pair code the journal shows. Only the chats listed in /var/lib/epaper/whatsapp-groups draw; a chat that writes hoi is added, /stop removes it";
 
     rotation = lib.mkOption {
       type = lib.types.enum [

@@ -7,7 +7,7 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-use anyhow::{Result, anyhow};
+use anyhow::{Context, Result, anyhow};
 use whatsapp_rust::{
     pair_code::PairCodeOptions,
     prelude::{
@@ -67,6 +67,45 @@ impl Groups {
             .map(|text| parse_groups(&text))
             .unwrap_or_default();
         tracing::info!("whatsapp: {} chat(s) may draw", self.allowed.len());
+    }
+
+    /// Lets `chat` draw from now on; true when it could not before.
+    fn add(&mut self, chat: &str) -> Result<bool> {
+        self.refresh();
+        if self.allowed.contains(chat) {
+            return Ok(false);
+        }
+        let mut text = std::fs::read_to_string(&self.path).unwrap_or_default();
+        if !text.is_empty() && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text.push_str(chat);
+        text.push('\n');
+        self.save(&text)?;
+        Ok(true)
+    }
+
+    /// Stops `chat` from drawing; true when it could before.
+    fn remove(&mut self, chat: &str) -> Result<bool> {
+        self.refresh();
+        if !self.allowed.contains(chat) {
+            return Ok(false);
+        }
+        let text = std::fs::read_to_string(&self.path).unwrap_or_default();
+        let kept: String = text
+            .lines()
+            .filter(|line| line.split('#').next().unwrap_or_default().trim() != chat)
+            .map(|line| format!("{line}\n"))
+            .collect();
+        self.save(&kept)?;
+        Ok(true)
+    }
+
+    fn save(&mut self, text: &str) -> Result<()> {
+        std::fs::write(&self.path, text).with_context(|| self.path.display().to_string())?;
+        self.modified = None;
+        self.refresh();
+        Ok(())
     }
 
     /// Whether `chat` may draw; logs each other group once.
@@ -262,13 +301,6 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
     if info.source.is_from_me || !matches!(info.edit, EditAttribute::Empty) {
         return Ok(());
     }
-    let admitted = groups
-        .lock()
-        .unwrap()
-        .admits(&info.source.chat.to_string(), info.source.is_group);
-    if !admitted {
-        return Ok(());
-    }
     if now() - info.timestamp.timestamp() > STALE_AFTER_SECS {
         tracing::info!("whatsapp: skipping a message from while the bot was away");
         return Ok(());
@@ -277,6 +309,31 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         client: ctx.client.clone(),
         chat: info.source.chat.clone(),
     };
+    let jid = info.source.chat.to_string();
+    let is_group = info.source.is_group;
+    let text = ctx.message.text_content().map(str::to_owned);
+    match text.as_deref().and_then(switch) {
+        Some(Switch::On) => {
+            let added = groups.lock().unwrap().add(&jid)?;
+            if added {
+                tracing::info!(chat = jid, "whatsapp: hoi, this chat may draw now");
+            }
+            chat.send(greeting(is_group)).await?;
+            return Ok(());
+        }
+        Some(Switch::Off) => {
+            let removed = groups.lock().unwrap().remove(&jid)?;
+            if removed {
+                tracing::info!(chat = jid, "whatsapp: this chat stopped the bot");
+                chat.send(FAREWELL).await?;
+            }
+            return Ok(());
+        }
+        None => {}
+    }
+    if !groups.lock().unwrap().admits(&jid, is_group) {
+        return Ok(());
+    }
     let base = ctx.message.get_base_message();
     if let Some(reaction) = base.reaction_message.as_option() {
         let Some(message) = reaction.key.as_option().and_then(|key| key.id.clone()) else {
@@ -293,10 +350,13 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         }
         return Ok(());
     }
-    let Some(text) = ctx.message.text_content().map(str::to_owned) else {
+    let Some(text) = text else {
         return Ok(());
     };
     tracing::info!(chat = %info.source.chat, "whatsapp message");
+    if !is_group {
+        return bot.message(&chat, &text).await;
+    }
     let replying = base
         .extended_text_message
         .as_option()
@@ -308,6 +368,31 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         None => bot.command_message(&chat, &text).await,
     }
 }
+
+enum Switch {
+    On,
+    Off,
+}
+
+/// "hoi" lets a chat use the bot, "/stop" ends that; any case, nothing else in the message.
+fn switch(text: &str) -> Option<Switch> {
+    let text = text.trim().to_lowercase();
+    match text.as_str() {
+        "hoi" => Some(Switch::On),
+        "/stop" => Some(Switch::Off),
+        _ => None,
+    }
+}
+
+fn greeting(is_group: bool) -> &'static str {
+    if is_group {
+        "Hoi zäme! /text <message> puts it on the display. /help lists the commands, /stop sends me away."
+    } else {
+        "Hoi! Whatever you write here goes on the display. /help lists the commands, /stop sends me away."
+    }
+}
+
+const FAREWELL: &str = "Tschüss! I'm quiet here until someone writes hoi.";
 
 /// The name that makes the bot listen to a group message, as in "Spades, Hoi".
 const NAME: &str = "spades";
@@ -384,6 +469,36 @@ mod tests {
         assert!(groups.ignored.contains("2@g.us"));
         assert!(!groups.ignored.contains("41000@s.whatsapp.net"));
         std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn hoi_adds_a_chat_and_stop_removes_it() {
+        let dir = std::env::temp_dir().join(format!("epaper-hoi-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join(GROUPS_FILE);
+        std::fs::write(&path, "# the display\n1@g.us").unwrap();
+        let mut groups = Groups::new(path.clone());
+        assert!(groups.add("41000@s.whatsapp.net").unwrap());
+        assert!(!groups.add("41000@s.whatsapp.net").unwrap());
+        assert!(groups.admits("41000@s.whatsapp.net", false));
+        assert!(groups.admits("1@g.us", true));
+        assert!(groups.remove("1@g.us").unwrap());
+        assert!(!groups.remove("1@g.us").unwrap());
+        assert!(!groups.admits("1@g.us", true));
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "# the display\n41000@s.whatsapp.net\n"
+        );
+        std::fs::remove_dir_all(dir).ok();
+    }
+
+    #[test]
+    fn only_hoi_and_stop_switch_the_bot() {
+        assert!(matches!(switch(" Hoi "), Some(Switch::On)));
+        assert!(matches!(switch("HOI"), Some(Switch::On)));
+        assert!(matches!(switch("/Stop"), Some(Switch::Off)));
+        assert!(switch("hoi zäme").is_none());
+        assert!(switch("/stop now").is_none());
     }
 
     #[test]
