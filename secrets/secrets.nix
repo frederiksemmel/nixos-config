@@ -64,4 +64,5 @@ in
     semmeltv5
     semmeltv3
   ];
+  "gcs_hmac_credentials.age".publicKeys = [ frederik ];
 }

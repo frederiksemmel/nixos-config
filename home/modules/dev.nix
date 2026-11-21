@@ -105,6 +105,16 @@ in
   options.profiles.dev.enable = lib.mkEnableOption "development tools, shells, editors";
 
   config = lib.mkIf cfg.enable {
+    age.secrets.gcs_hmac_credentials = {
+      file = ../../secrets/gcs_hmac_credentials.age;
+      path = "${config.home.homeDirectory}/.aws/credentials";
+    };
+    home.file.".aws/config".text = ''
+      [default]
+      region = auto
+      endpoint_url = https://storage.googleapis.com
+    '';
+
     # foot switches [colors-dark]/[colors-light] on SIGUSR1/SIGUSR2; the server
     # passes it on to its clients.
     theme.files."foot.ini" = p: "initial-color-theme=${p.name}\n";
