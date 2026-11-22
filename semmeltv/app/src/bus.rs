@@ -245,9 +245,11 @@ impl Bus {
         self.screen.lock().unwrap().clone()
     }
 
-    pub fn screen(&self, view: screen::View) {
+    pub fn screen(&self, mut view: screen::View) {
         let mut current = self.screen.lock().unwrap();
+        view.seq = current.seq;
         if *current != view {
+            view.seq += 1;
             *current = view.clone();
             let _ = self.events.send(Event::Screen { screen: view });
         }
@@ -322,6 +324,33 @@ mod tests {
             .collect();
         assert_eq!(positions, [Some(10.1), Some(11.2), None]);
         assert_eq!(bus.now_playing(), None);
+    }
+
+    #[test]
+    fn each_new_screen_is_numbered_one_higher_and_a_repeat_keeps_its_number() {
+        let bus = Bus::default();
+        let (_, mut events) = bus.subscribe();
+        let said = |id| {
+            screen::View::of(
+                &screen::Screen::Tv,
+                Some(screen::Said {
+                    id,
+                    text: "hello".to_string(),
+                    tone: screen::Tone::Quiet,
+                }),
+            )
+        };
+        bus.screen(said(1));
+        bus.screen(said(1));
+        bus.screen(said(2));
+        let seqs: Vec<_> = std::iter::from_fn(|| events.try_recv().ok())
+            .map(|event| match event {
+                Event::Screen { screen } => screen.seq,
+                _ => panic!("only screen events were sent"),
+            })
+            .collect();
+        assert_eq!(seqs, [1, 2]);
+        assert_eq!(bus.screen_state().seq, 2);
     }
 
     #[test]

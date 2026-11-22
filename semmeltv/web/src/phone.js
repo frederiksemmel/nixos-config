@@ -230,6 +230,7 @@ function transient(error) {
 
 function adopt(view) {
   const restarted = boot !== null && view.boot !== undefined && view.boot !== boot;
+  if (!restarted && view.seq !== undefined && screen.seq !== undefined && view.seq < screen.seq) return;
   if (view.boot !== undefined) boot = view.boot;
   screen = view;
   const notice = view.notice;

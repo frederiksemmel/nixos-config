@@ -584,6 +584,7 @@ pub struct View {
     #[serde(flatten)]
     pub on: OnScreen,
     pub boot: u64,
+    pub seq: u64,
     pub notice: Option<Said>,
 }
 
@@ -649,6 +650,7 @@ impl View {
         Self {
             on,
             boot: *BOOT,
+            seq: 0,
             notice,
         }
     }
@@ -1329,7 +1331,9 @@ mod tests {
             let mut json = serde_json::to_value(View::of(&screen, None)).unwrap();
             assert!(json["boot"].is_u64(), "{name}");
             assert_eq!(json["boot"], boot, "{name}");
+            assert_eq!(json["seq"], 0, "{name}");
             json.as_object_mut().unwrap().remove("boot");
+            json.as_object_mut().unwrap().remove("seq");
             assert_eq!(json, expected, "{name}");
         }
     }
