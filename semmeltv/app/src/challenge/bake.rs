@@ -108,9 +108,9 @@ impl Input {
     /// lateness wobbles from press to press, in seconds.
     fn measured(self) -> (f64, f64) {
         match self {
-            Self::Touch => (0.05, 0.008),
+            Self::Touch => (0.01, 0.008),
             Self::Mouse | Self::Keys => (0.04, 0.008),
-            Self::Remote => (0.22, 0.035),
+            Self::Remote => (0.32, 0.035),
         }
     }
 
@@ -225,14 +225,14 @@ mod tests {
     #[test]
     fn the_oven_learns_how_late_an_input_presses_once_it_has_seen_enough() {
         let mut calibration = Calibration::default();
-        assert_eq!(calibration.bias(Input::Remote), 0.22);
+        assert_eq!(calibration.bias(Input::Remote), 0.32);
         calibration.learn(Input::Remote, &[Some(0.30), Some(0.31), None]);
-        assert_eq!(calibration.bias(Input::Remote), 0.22);
+        assert_eq!(calibration.bias(Input::Remote), 0.32);
         for _ in 0..10 {
             calibration.learn(Input::Remote, &[Some(0.29), Some(0.30), Some(5.0)]);
         }
         assert_eq!(calibration.bias(Input::Remote), 0.30);
-        assert_eq!(calibration.bias(Input::Touch), 0.05);
+        assert_eq!(calibration.bias(Input::Touch), 0.01);
     }
 
     /// A simulated player: how far their presses scatter around the moment

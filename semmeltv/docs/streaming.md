@@ -232,12 +232,12 @@ The simulation is a test in `src/challenge/bake.rs`, with hard bounds over
 An input is unfair in two ways, and the game corrects both:
 
 1. **Lateness.** Between the golden frame being shown and the press being
-   registered sits the display's lag plus the input's lag: on a phone about
-   50 ms (touch sampling, a frame or two). On the TV, the remote's IR goes to
+   registered sits the display's lag plus the input's lag: on Frederik's
+   iPhone a measured 10 ms. On the TV, the remote's IR goes to
    the Samsung, which sends a CEC "User Control Pressed" frame. That frame is
    3 blocks of 10 bits at 2.4 ms each plus a 4.5 ms start bit, about 77 ms on
-   the bus alone. Add the TV's own processing and its display lag: an
-   estimated ~220 ms. Without correction, a player on the remote would press
+   the bus alone. Add the TV's own processing and its display lag: measured
+   317 ms on semmeltv5's Samsung (below). Without correction, a player on the remote would press
    that much late every time; the simulation shows the remote winning under
    12% for the same player. So the oven subtracts each input's lateness from
    its presses. It starts from those estimates and **learns** them: the median
@@ -249,41 +249,19 @@ An input is unfair in two ways, and the game corrects both:
    player's presses more. Because the crust falls with the square of the error,
    a wobble with standard deviation σ costs on average exactly 100 × σ² /
    250² points per Semmel. Each input gets exactly that back (`wobble()`):
-   ~2 points per Semmel for the remote's estimated 35 ms, 0.1 for touch's 8 ms.
+   ~2 points per Semmel for the remote's measured 35 ms, 0.1 for touch's 8 ms.
 
-The remote's numbers are estimates until the TV side is built. Then a
-two-minute measurement with Frederik replaces them:
-- he taps a steady beat on the phone and then on the remote. The difference
-  in the variance of the intervals between presses gives the remote's wobble;
-- he presses the phone and the remote at the same moment ten times. The mean
-  offset between their arrival gives the remote's extra lateness against
-  touch.
-The learning in (1) corrects lateness either way. Wobble isn't learnable from
-games, so it stays as measured.
-
-### Flow
-
-1. **Full.** `POST /api/stream/open` answers 429 with `full`: a heading ("Der
-   Ofen ist voll"), the message naming the limit, the people watching (person,
-   device, title, whether they're in a bake-off already), and how long the
-   asker's dough still rests. When the limit hit is the pCloud one, only
-   people watching films that aren't downloaded are listed, because beating
-   anyone else wouldn't free a place.
-2. **Challenge.** The phone shows "Who do you want to challenge for a place
-   in the oven?" and the list. A pick calls `POST /api/challenges {seat,
-   device}`. The challenger then waits ("Waiting for Ramu…", with *Give up*).
-3. **Asked.** Every playing phone asks `GET /api/stream/{id}/challenge` every
-   2 s. When it is challenged, the video pauses and it shows "Semmelstechen!
-   Mami fordert dich zum Semmelstechen heraus…" with *Bake* or *Stop
-   watching*, and the time left to answer. There is no decline.
-4. **Bake.** *Bake* (`POST /api/stream/{id}/challenge/accept`) starts the
-   oven 3 s later for both. Each device sends its presses
-   (`/api/challenges/{id}/presses`, `/api/stream/{id}/challenge/presses`).
-5. **Done.** Both see the result: who won, and each Semmel's crust and rise.
-   A challenger who won gets *Watch*, which opens the film they asked for.
-   A defender who won gets *Back to the film*, which plays on if it was
-   playing. The loser gets *Close*; a defender who lost has their stream
-   stopped by the server.
+**Measured on 2026-11-22.** Frederik played 5 rounds on the TV against a
+challenger played headlessly from the API, and practice bakes on his iPhone.
+His 15 remote presses came 208–458 ms after the golden moment (median 317,
+spread 64 ms). His 16 touch presses: median 10 ms, spread 53 ms. With the
+same player on both inputs, his own timing scatter cancels, so the remote's
+wobble is √(64² − 53²) ≈ 35 ms. The defaults are therefore remote 320 ms /
+35 ms and touch 10 ms / 8 ms. Once an input has 15 presses, the oven uses
+their median for its lateness anyway; the wobble stays as measured. To
+measure again, read `bake-off calibration` from the settings table, with
+the core stopped or as a read-only snapshot: it holds the last 60 signed
+errors per input, in seconds.
 
 ### Practice
 
@@ -346,8 +324,8 @@ A key pressed on the tv's own keyboard (only the VM and a laptop have one)
 goes to mpv and doesn't reach the bake-off; the TV's remote comes through
 the core over CEC.
 
-The remote's lateness and wobble are still the estimates above (220 ms, 35
-ms) until the two-minute measurement with Frederik.
+The remote's lateness and wobble were measured with Frederik (see the
+fairness section).
 
 ### Code
 
