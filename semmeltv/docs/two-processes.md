@@ -246,6 +246,42 @@ While disconnected, the tv:
 - reconnects every 0.5 s, backing off to 5 s;
 - keeps at most one `Ended` to report in its next `Hello`.
 
+### 2.7 The core never waits
+
+The core answers within 100 ms whatever a device or service does. The actor
+(`core/actor.rs`) awaits nothing that touches a disk, a device, a subprocess
+or the network. Such work runs on a task or thread of its own and comes back
+as a `Signal`. A request that needs its result is answered from that task.
+toasty's SQLite driver runs rusqlite on the awaiting thread, so a database
+call is a blocking call that no timeout can cut short. It has to leave the
+actor, not just be wrapped in a timeout.
+
+| Wait | Was | Now | Test |
+|---|---|---|---|
+| A film's file on the pCloud mount (`store.source`, `sidecar::find`) | `block_in_place` in `play_from` | `core/prepare.rs` on a blocking task, 4 s, then `Signal::Prepared`; too late: refused with "Wir kriegen es gerade nicht gebacken: pCloud antwortet nicht" | `a_mount_that_never_answers_leaves_the_api_answering_and_back_cancels_the_play`, `prepare::tests` |
+| ffprobe of the file for the TV set's hand-off | awaited in `play_from` | in `prepare`, 4 s of its own; too late: mpv plays it, ffprobe killed with its future | `prepare::tests::a_probe_that_never_answers_leaves_the_file_to_mpv` |
+| mpv that doesn't quit (a read blocked on the mount, or still opening) | Back waited for it | the player kills mpv 0.8 s after any quit; the play ends as asked | `player::tests::an_mpv_that_does_not_quit_on_back_is_killed_soon_and_still_counts_as_stopped`, VM `tv-playback` |
+| Headphones (`bluetoothctl info`, BlueALSA sinks, volume, delay) | `block_in_place` in `apply_audio`, at every play and profile switch | the `headphones` thread takes the newest preferences | `headphones_whose_radio_never_answers_leave_the_api_answering` |
+| Deleting a title from pCloud | awaited in `change_storage` | a task answers the request; `Signal::Removed` tends the cache | `a_removal_from_pcloud_that_never_ends_leaves_the_api_answering` |
+| Database writes: progress, usage, the TV's profile, dialogue mode, Watch together | awaited | `core/saves.rs`: one `saves` thread runs them in order; the actor keeps the value in memory | `a_database_that_stops_writing_leaves_the_api_answering_and_keeps_every_write`, `saves::tests` |
+| Database reads: profiles (on every Up), partners, names, audio preferences, the progress re-read after the first library | awaited | jobs on the same queue, behind the writes before them, back as `Signal::People`, `WatchWith`, `Reloaded`; `People` loads each profile's progress and dialogue mode into memory | the same test, which holds the database's only connection |
+| The tv (`ToTv`) | | `try_send` into a bounded queue (§2.5) | `a_tv_end_that_never_reads_leaves_the_api_answering`, `a_player_lock_held_forever_leaves_the_api_answering` |
+| The TV set's own player (UPnP) | | `renderer::Session` on a thread of its own | `player::renderer::tests::a_tv_set_that_stops_answering_costs_the_core_nothing` |
+| CEC: wake, on, off, input | | `spawn_blocking`, waking guarded by `waking_tv` | |
+| Segments from TheIntroDB, downloads, push, tending the cache, the library scan | | tasks and threads of their own | `segments_are_looked_up_once_per_play_and_sent_with_its_token` |
+
+What is left, on purpose:
+
+- **Startup.** `Actor::new` reads the profiles, their progress and the
+  downloaded files before the actor serves anything. Until then `api::ask`
+  answers after its own 5 s.
+- **A profile the core has not seen yet.** Its progress and dialogue mode are
+  read from the database once, on first use, if that comes before the next
+  `People`. That's a read of an empty profile, in WAL mode, so no writer can
+  hold it up.
+- **CEC on and off** start one blocking task per request. A CEC adapter that
+  hangs keeps those threads, not the actor.
+
 ## 3. Processes and systemd
 
 ```
