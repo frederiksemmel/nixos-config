@@ -7,7 +7,6 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const RESYNC: Duration = Duration::from_secs(2);
 const MENU_AFTER: Duration = Duration::from_secs(5);
 const ANSWER_WITHIN: Duration = Duration::from_secs(5);
 const POLL: Duration = Duration::from_millis(20);
@@ -31,9 +30,9 @@ pub struct Mode {
 }
 
 impl Mode {
-    fn apply(&self) -> bool {
+    fn apply(&self) {
         let mode = format!("{}x{}@{:.6}Hz", self.width, self.height, self.refresh);
-        answer("wlr-randr", &["--output", &self.output, "--mode", &mode], ANSWER_WITHIN).is_some()
+        answer("wlr-randr", &["--output", &self.output, "--mode", &mode], ANSWER_WITHIN);
     }
 }
 
@@ -173,28 +172,21 @@ impl Wanted {
     }
 }
 
-type Then = Box<dyn FnOnce() + Send>;
-
 enum Change {
     Play(u64, Video),
     Stop(u64),
     Refresh,
 }
 
-static SETTLER: LazyLock<Sender<(Change, Option<Then>)>> = LazyLock::new(|| {
+static SETTLER: LazyLock<Sender<Change>> = LazyLock::new(|| {
     let (settler, changes) = mpsc::channel();
-    thread::spawn(move || serve(&changes, MENU_AFTER, RESYNC, settle));
+    thread::spawn(move || serve(&changes, MENU_AFTER, settle));
     settler
 });
 
-/// Applies each change in order. A film's `then` runs once the TV has had `resync` to take a new
-/// mode. The menu's mode waits `menu_after`, so a next episode at the same rate keeps it.
-fn serve(
-    changes: &Receiver<(Change, Option<Then>)>,
-    menu_after: Duration,
-    resync: Duration,
-    mut settle: impl FnMut(&Wanted) -> bool,
-) {
+/// Applies each change in order. The menu's mode waits `menu_after`, so a next episode at the same
+/// rate keeps the film's.
+fn serve(changes: &Receiver<Change>, menu_after: Duration, mut settle: impl FnMut(&Wanted)) {
     let mut wanted = Wanted::MENU;
     let mut menu_due = None;
     loop {
@@ -202,7 +194,7 @@ fn serve(
             Some(due) => changes.recv_timeout(due - Instant::now().min(due)),
             None => changes.recv().map_err(|_| RecvTimeoutError::Disconnected),
         };
-        let (change, then) = match next {
+        let change = match next {
             Ok(next) => next,
             Err(RecvTimeoutError::Timeout) => {
                 menu_due = None;
@@ -224,16 +216,8 @@ fn serve(
             }
             Change::Refresh => {}
         }
-        let switched = menu_due.is_none() && settle(&wanted);
-        match then {
-            Some(then) if switched => {
-                thread::spawn(move || {
-                    thread::sleep(resync);
-                    then();
-                });
-            }
-            Some(then) => then(),
-            None => {}
+        if menu_due.is_none() {
+            settle(&wanted);
         }
     }
 }
@@ -282,25 +266,30 @@ fn outputs() -> Option<Value> {
     serde_json::from_slice(&answer("wlr-randr", &["--json"], ANSWER_WITHIN)?).ok()
 }
 
-fn settle(wanted: &Wanted) -> bool {
-    let Some(mode) = outputs().and_then(|outputs| wanted.change(&outputs)) else {
-        return false;
-    };
-    eprintln!("display: {mode} for {}", wanted.purpose());
-    mode.apply()
+fn settle(wanted: &Wanted) {
+    if let Some(mode) = outputs().and_then(|outputs| wanted.change(&outputs)) {
+        eprintln!("display: {mode} for {}", wanted.purpose());
+        mode.apply();
+    }
 }
 
-/// Asks for the mode that suits `video`, and calls `then` once the TV shows it.
-pub fn play(player: u64, video: Video, then: impl FnOnce() + Send + 'static) {
-    let _ = SETTLER.send((Change::Play(player, video), Some(Box::new(then))));
+/// What nearly every film is, so the display can switch before mpv has read the file.
+pub const FILM: Video = Video {
+    width: 1920,
+    height: 1080,
+    fps: 24_000.0 / 1_001.0,
+};
+
+pub fn play(player: u64, video: Video) {
+    let _ = SETTLER.send(Change::Play(player, video));
 }
 
 pub fn stop(player: u64) {
-    let _ = SETTLER.send((Change::Stop(player), None));
+    let _ = SETTLER.send(Change::Stop(player));
 }
 
 pub fn refresh() {
-    let _ = SETTLER.send((Change::Refresh, None));
+    let _ = SETTLER.send(Change::Refresh);
 }
 
 #[cfg(test)]
@@ -442,67 +431,38 @@ mod tests {
         assert_eq!(answer("false", &[], ANSWER_WITHIN), None);
     }
 
-    fn served(steps: Vec<(Change, bool)>, wait: Duration) -> (Vec<Option<u64>>, Vec<Duration>) {
+    fn served(steps: Vec<Change>, wait: Duration) -> Vec<Option<u64>> {
         let (sender, changes) = mpsc::channel();
-        let (done, called) = mpsc::channel();
-        let started = Instant::now();
         let settled = std::sync::Arc::new(Mutex::new(Vec::new()));
         let seen = settled.clone();
         let server = thread::spawn(move || {
-            serve(
-                &changes,
-                Duration::from_millis(200),
-                Duration::from_millis(100),
-                |wanted| {
-                    seen.lock().unwrap().push(wanted.film.map(|(player, _)| player));
-                    wanted.film.is_some()
-                },
-            );
+            serve(&changes, Duration::from_millis(200), |wanted| {
+                seen.lock().unwrap().push(wanted.film.map(|(player, _)| player));
+            });
         });
-        for (change, then) in steps {
-            let done = done.clone();
-            let then: Option<Then> = then.then(|| Box::new(move || done.send(started.elapsed()).unwrap()) as Then);
-            sender.send((change, then)).unwrap();
+        for change in steps {
+            sender.send(change).unwrap();
             thread::sleep(Duration::from_millis(20));
         }
         thread::sleep(wait);
         drop(sender);
         server.join().unwrap();
-        drop(done);
-        let settled = settled.lock().unwrap().clone();
-        (settled, called.iter().collect())
+        settled.lock().unwrap().clone()
     }
 
     #[test]
     fn a_next_episode_keeps_the_films_mode_and_the_menu_gets_its_own_later() {
         let film = video(1920, 1080, 23.976);
-        let (settled, _) = served(
-            vec![
-                (Change::Play(1, film), false),
-                (Change::Stop(1), false),
-                (Change::Play(2, film), false),
-            ],
+        let settled = served(
+            vec![Change::Play(1, film), Change::Stop(1), Change::Play(2, film)],
             Duration::from_millis(400),
         );
         assert_eq!(settled, [Some(1), Some(2)]);
-        let (settled, _) = served(
-            vec![
-                (Change::Play(1, film), false),
-                (Change::Stop(1), false),
-                (Change::Refresh, false),
-            ],
+        let settled = served(
+            vec![Change::Play(1, film), Change::Stop(1), Change::Refresh],
             Duration::from_millis(400),
         );
         assert_eq!(settled, [Some(1), None]);
-    }
-
-    #[test]
-    fn a_film_starts_after_the_tvs_resync_only_when_the_mode_changed() {
-        let film = video(1920, 1080, 23.976);
-        let (_, called) = served(vec![(Change::Play(1, film), true)], Duration::from_millis(300));
-        assert!(called[0] >= Duration::from_millis(100), "{called:?}");
-        let (_, called) = served(vec![(Change::Refresh, true)], Duration::from_millis(50));
-        assert!(called[0] < Duration::from_millis(100), "{called:?}");
     }
 
     #[test]

@@ -222,8 +222,6 @@ struct Playback {
     toast_until: Option<Instant>,
     subtitles: Subtitles,
     tracks: Tracks,
-    settling: bool,
-    restarted: bool,
     on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
     health: Health,
@@ -233,9 +231,7 @@ struct Playback {
 
 impl Playback {
     fn video_changed(&mut self, video: Video) -> Option<u64> {
-        let changed = self.video.replace(video) != Some(video);
-        self.settling |= changed;
-        changed.then_some(self.id)
+        (self.video.replace(video) != Some(video)).then_some(self.id)
     }
 
     fn send(&mut self, command: Value) {
@@ -367,22 +363,6 @@ impl Playback {
             self.played += step;
         }
         self.position = position;
-    }
-
-    /// mpv has the first frame; playback starts once the display has its mode too.
-    fn restart(&mut self, now: Instant) {
-        if self.settling {
-            self.restarted = true;
-        } else {
-            self.start(now);
-        }
-    }
-
-    fn settled(&mut self, now: Instant) {
-        self.settling = false;
-        if std::mem::take(&mut self.restarted) {
-            self.start(now);
-        }
     }
 
     fn start(&mut self, now: Instant) {
@@ -642,6 +622,8 @@ impl Player {
         on_key: impl Fn(Command) + Send + 'static,
         on_exit: impl FnOnce(Finish) + Send + 'static,
     ) -> io::Result<Self> {
+        let id = PLAYERS.fetch_add(1, Ordering::Relaxed);
+        display::play(id, display::FILM);
         let socket_path = socket_path();
         let _ = std::fs::remove_file(&socket_path);
         let mut child = Process::new("mpv")
@@ -665,9 +647,9 @@ impl Player {
             .arg("--")
             .arg(path)
             .stdin(Stdio::null())
-            .spawn()?;
+            .spawn()
+            .inspect_err(|_| display::stop(id))?;
         subtitles.started(path, sidecar::find(path));
-        let id = PLAYERS.fetch_add(1, Ordering::Relaxed);
         let playback = Shared::new(Mutex::new(Playback {
             id,
             name,
@@ -1005,11 +987,10 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
             Some(Event::Video(video)) => {
                 let changed = shared.lock().unwrap().video_changed(video);
                 if let Some(id) = changed {
-                    let shared = shared.clone();
-                    display::play(id, video, move || shared.lock().unwrap().settled(Instant::now()));
+                    display::play(id, video);
                 }
             }
-            Some(Event::Started) => shared.lock().unwrap().restart(Instant::now()),
+            Some(Event::Started) => shared.lock().unwrap().start(Instant::now()),
             Some(Event::Key(command)) => shared.lock().unwrap().key(command, Instant::now()),
             Some(Event::Loaded) => {
                 let mut playback = shared.lock().unwrap();
@@ -1299,46 +1280,6 @@ mod tests {
         playback.pause_changed(false);
         assert_eq!(playback.phase, Phase::Ended);
         assert!(playback.phase.started() && !playback.phase.playing());
-    }
-
-    #[test]
-    fn playback_starts_once_both_mpv_and_the_display_are_ready() {
-        let film = Video {
-            width: 1920,
-            height: 1080,
-            fps: 23.976,
-        };
-        let unpaused = |sent: &[Value]| sent.contains(&json!(["set_property", "pause", false]));
-        let sent = sent_by(
-            |playback| {
-                assert!(playback.video_changed(film).is_some());
-                playback.restart(Instant::now());
-                assert_eq!(playback.phase, Phase::Opening);
-            },
-            Playback::default(),
-        );
-        assert!(!unpaused(&sent), "{sent:?}");
-        let sent = sent_by(
-            |playback| {
-                playback.video_changed(film);
-                playback.restart(Instant::now());
-                playback.settled(Instant::now());
-                assert_eq!(playback.phase, Phase::Playing { paused: false });
-            },
-            Playback::default(),
-        );
-        assert!(unpaused(&sent), "{sent:?}");
-        let sent = sent_by(
-            |playback| {
-                playback.video_changed(film);
-                playback.settled(Instant::now());
-                assert_eq!(playback.phase, Phase::Opening);
-                playback.restart(Instant::now());
-                assert_eq!(playback.phase, Phase::Playing { paused: false });
-            },
-            Playback::default(),
-        );
-        assert!(unpaused(&sent), "{sent:?}");
     }
 
     #[test]

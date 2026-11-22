@@ -274,18 +274,16 @@ seconds a press. Changing direction or leaving them alone for 1.2 seconds starts
 over. Up and Down skip a minute. Seeks stop at the start and 5 seconds before the
 end, so a long fast-forward does not end the episode.
 
-While a video opens the screen stays black. As soon as mpv knows the video's
-size and frame rate, the display switches to the matching mode (23.976 Hz for
-most films) with `wlr-randr`, which takes about 75 ms; the Samsung then blanks
-while it re-syncs. mpv stays paused on the first frame until 2 seconds after
-the switch, counted alongside its own opening, so the start is not lost in that
-blank. When the mode is already right, playback starts at once. The menu's
-60 Hz comes back 5 seconds after a film stops, so a next episode or a restart
-at the same rate keeps the mode and the TV never blanks between them. Each
-`wlr-randr` call gets 5 seconds before it is given up. Commands to mpv go
-through a queue to one writer thread, and the thread reading mpv's events does
-nothing slow, so a stalled mpv or display can never hold up the remote, the web
-app or the menu.
+While a video opens the screen stays black. The display switches to 1080p at
+23.976 Hz, what nearly every film is, the moment playback is asked for, while
+mpv opens the file; `wlr-randr` takes about 75 ms. Once mpv knows the video's
+real size and rate, a different one (a 25 fps episode, a 4K film) switches
+again. Playback starts as soon as mpv has its first frame, whether or not the
+TV has finished re-syncing. The menu's 60 Hz comes back 5 seconds after a film
+stops, so a next episode or a restart at the same rate keeps the mode and the
+TV never blanks between them. Each `wlr-randr` call gets 5 seconds before it
+is given up. Commands to mpv go through a queue to one writer thread, and the
+thread reading mpv's events does nothing slow.
 
 Starting, seeking, pausing and resuming show the title, a progress bar, and the
 elapsed and remaining time at the bottom of the screen, for 4 seconds or for as
