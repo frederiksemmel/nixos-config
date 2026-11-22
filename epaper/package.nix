@@ -5,6 +5,8 @@
   symlinkJoin,
   dejavu_fonts,
   noto-fonts-monochrome-emoji,
+  ffmpeg-headless,
+  makeWrapper,
 }:
 
 let
@@ -39,8 +41,18 @@ craneLib.buildPackage (
   // {
     inherit cargoArtifacts;
     doCheck = false;
+    nativeBuildInputs = [ makeWrapper ];
+    postInstall = ''
+      wrapProgram $out/bin/epaper --prefix PATH : ${lib.makeBinPath [ ffmpeg-headless ]}
+    '';
 
-    passthru.tests.cargo = craneLib.cargoTest (commonArgs // { inherit cargoArtifacts; });
+    passthru.tests.cargo = craneLib.cargoTest (
+      commonArgs
+      // {
+        inherit cargoArtifacts;
+        nativeBuildInputs = [ ffmpeg-headless ];
+      }
+    );
 
     meta = {
       description = "Draw on the Waveshare 2.7\" e-Paper HAT (B), by hand or through a Telegram bot";

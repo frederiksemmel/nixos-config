@@ -364,6 +364,19 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         let client = ctx.client.clone();
         return bot.draw_picture(&chat, sticker_picture(&client, sticker)).await;
     }
+    if let Some(gif) = base
+        .video_message
+        .as_option()
+        .filter(|video| video.gif_playback == Some(true))
+    {
+        if is_group && !quotes_the_bot(&bot, &chat, gif.context_info.as_option()) {
+            return Ok(());
+        }
+        tracing::info!(chat = %info.source.chat, "whatsapp gif");
+        let client = ctx.client.clone();
+        let clip = async move { client.download(gif).await.context("downloading the GIF") };
+        return bot.draw_clip(&chat, clip).await;
+    }
     let Some(text) = text else {
         return Ok(());
     };

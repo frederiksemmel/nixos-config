@@ -43,6 +43,21 @@ A picture is fitted into the panel at its current rotation, keeping its shape, a
 - **Line art**, such as a comic: nearly every pixel grey and close to black or white. It is darkened a little, so thin lines survive the scaling, and each pixel takes the nearest shade. Lines stay solid.
 - **Everything else**, such as a sticker or a photo: the contrast is stretched to the full range, the midtones are lifted, and the shades are dithered (Atkinson), so gradients come out as fine dot patterns.
 
+## GIFs
+
+A GIF sent to the bot plays on the panel in black and white, with the same wait and outcome replies as a command. Who may send one is the same as for stickers:
+
+- **WhatsApp:** in a private chat, every GIF. In a group, a GIF that replies to one of the bot's messages.
+- **Telegram:** every GIF, which Telegram sends as an MP4 animation, and a GIF sent as a file.
+
+The clip plays in its own time for at most 15 s; a shorter one plays once. The panel can't keep up with a GIF's pace, so it skips the pictures it is too slow for. Playing goes like this:
+
+1. A clean refresh draws the first picture.
+2. Each later picture is a fast refresh of only the window that changed, while the panel stays powered.
+3. Once the clip is over, a grey refresh draws the first picture again in four shades, so no ghosts stay.
+
+The panel is busy from the first picture to the last refresh. ffmpeg turns an MP4 into ten pictures a second, and a GIF is read directly. Each picture is fitted like a sticker and dithered to black and white with a fixed 4×4 pattern (ordered dithering), so a still area dithers the same in every picture and only what moves is redrawn.
+
 ## xkcd
 
 `/xkcd` reads the comic from xkcd's JSON API and draws its picture as above. Some comics are interactive and have no PNG or JPEG picture; for those, and for numbers with no comic (such as 404), the bot says so and leaves the panel alone. So it does when xkcd can't be reached.
@@ -52,7 +67,7 @@ A picture is fitted into the panel at its current rotation, keeping its shape, a
 - **WhatsApp:** only the chats listed in `whatsapp-groups`; the bot ignores every other chat.
   - A message that is exactly `hoi` (any case) adds its chat to the list, from anyone, and the bot greets. `ciao bello guys` (or `/stop`) removes the chat again, and the bot says goodbye.
   - In a private chat, every message is meant for the bot, as on Telegram.
-  - In a group, only commands draw; ordinary chat stays off the panel. A message that names `spades` or replies to the bot counts as meant for it, so `spades hoi` draws `hoi`. A sticker counts when it replies to the bot.
+  - In a group, only commands draw; ordinary chat stays off the panel. A message that names `spades` or replies to the bot counts as meant for it, so `spades hoi` draws `hoi`. A sticker or GIF counts when it replies to the bot.
   - Messages older than 10 minutes, edits and the bot's own messages are skipped.
 - **Telegram:** every message is meant for the bot. Plain text draws as if it came after `/text`. `services.epaper.allow` limits who may draw.
 
@@ -89,8 +104,22 @@ A message that a mode has no variants of is said in a `swiss` variant. Emoji rea
 
 - A drawing uses the **grey** refresh: the panel flashes black and white five times, then shows four shades (white, light grey, dark grey, black), so text edges and emoji come out smooth. It is slow on purpose, about 6 s, and leaves no ghosts.
 - `/clear` uses the **clean** refresh: black and white only, flashing, about 2.7 s.
-- The **fast** refresh drives only the pixels that change, in about 0.8 s without flashing, but in black and white and with faint ghosts. The bot doesn't use it; `--refresh fast` does.
+- The **fast** refresh drives only the pixels that change, in about 0.8 s without flashing, but in black and white and with faint ghosts. Drawings don't use it; `--refresh fast` does, and so do GIFs.
 - The controller takes one byte per SPI chip select; multi-byte writes are silently garbled.
+
+## Animation speed
+
+The time a refresh takes is mostly its waveform. Its length is fixed by the LUT rows and the frame rate the PLL register (0x30) sets, from the IL91874 datasheet:
+
+| Refresh | Panel frames | Frame rate | Waveform |
+|---|---|---|---|
+| grey | 260 | 50.09 Hz | 5.2 s |
+| clean | 152 | 81.8 Hz | 1.86 s |
+| fast | 26 | 81.8 Hz | 0.32 s |
+
+A fast refresh on its own takes about 0.8 s, because the panel is reset, powered on and off, and sent both pictures each time. A GIF skips that: the panel stays powered between pictures and gets only the changed window. On this controller that is commands 0x14 and 0x15 (old and new pixels for a window) and 0x16 (refresh that window). It has no 0x90 to 0x92 partial window commands. X and width are multiples of 8. Outside the window, the pixels follow the VCOM waveform and stay as they are. The whole panel is still scanned for every refresh, so a small window saves SPI transfer, not waveform time.
+
+`epaper gif` measures it. `--frames N` shows N pictures in order with none skipped, `--lut-frames` shortens the fast waveform (25 by default), and `--full` sends the whole panel instead of the window. With `RUST_LOG=epaper=debug`, every picture logs its window, transfer and refresh time, and every run logs its fps. These timings have not yet been measured on the panel.
 
 ## Rotation
 
@@ -119,4 +148,6 @@ epaper --refresh clean clear
 epaper --preview out.ppm text "Hoi"   # writes an image, leaves the panel alone
 epaper --preview out.ppm picture comic.png
 epaper --preview out.ppm xkcd random    # prints the number, title and punchline
+epaper --rotation 270 gif spinner.gif   # plays as the bot does, logs the fps
+epaper --rotation 270 gif --frames 20 --lut-frames 10 clip.mp4
 ```

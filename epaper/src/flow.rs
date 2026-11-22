@@ -12,6 +12,7 @@ use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
 
 use crate::{
+    animation,
     panel::Panel,
     picture,
     render::{Scene, canvas_size, render},
@@ -71,6 +72,14 @@ impl Screen {
         let planes = canvas.planes(self.rotation);
         self.panel.show(&canvas, &planes, scene.refresh())
     }
+
+    /// Plays a clip with fast refreshes, then draws its first picture in four shades, so no ghosts stay.
+    fn play(&mut self, clip: &[u8]) -> Result<()> {
+        let reel = animation::decode(clip, self.rotation, animation::LIMIT)?;
+        self.panel.play(&reel)?;
+        self.shown = Some(Scene::Picture(Arc::new(reel.cover)));
+        self.draw()
+    }
 }
 
 #[derive(Clone)]
@@ -94,20 +103,33 @@ impl Display {
         })))
     }
 
+    /// Does `work` on the screen, unless a drawing is already running.
+    async fn locked<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&mut Screen) -> Result<T> + Send + 'static,
+    ) -> Result<Shown<T>> {
+        let Ok(mut screen) = self.0.clone().try_lock_owned() else {
+            return Ok(Shown::Busy);
+        };
+        let done = tokio::task::spawn_blocking(move || work(&mut screen)).await??;
+        Ok(Shown::Done(done))
+    }
+
     /// Applies `change` to the screen and redraws it, unless a drawing is already running.
     async fn update<T: Send + 'static>(
         &self,
         change: impl FnOnce(&mut Screen) -> T + Send + 'static,
     ) -> Result<Shown<T>> {
-        let Ok(mut screen) = self.0.clone().try_lock_owned() else {
-            return Ok(Shown::Busy);
-        };
-        let done = tokio::task::spawn_blocking(move || {
-            let done = change(&mut screen);
+        self.locked(|screen| {
+            let done = change(screen);
             screen.draw().map(|()| done)
         })
-        .await??;
-        Ok(Shown::Done(done))
+        .await
+    }
+
+    /// Plays a GIF or video clip; the panel stays busy until the clip has played and its last drawing is done.
+    pub async fn play(&self, clip: Vec<u8>) -> Result<Shown<()>> {
+        self.locked(move |screen| screen.play(&clip)).await
     }
 
     pub async fn show(&self, scene: Scene) -> Result<Shown<()>> {
@@ -254,6 +276,19 @@ impl Bot {
         self.finish(chat, &pending, message, str::to_owned).await
     }
 
+    /// Says a wait line, fetches a GIF or video clip and plays it, then tells the outcome.
+    pub async fn draw_clip<C: Chat>(&self, chat: &C, fetch: impl Future<Output = Result<Vec<u8>>>) -> Result<()> {
+        let pending = self.start(chat).await?;
+        let message = match fetch.await {
+            Ok(clip) => outcome(self.display.play(clip).await).map_or_else(|message| message, |()| Message::Written),
+            Err(err) => {
+                tracing::warn!("no clip to play: {err:#}");
+                Message::Failed
+            }
+        };
+        self.finish(chat, &pending, message, str::to_owned).await
+    }
+
     pub async fn rotate<C: Chat>(&self, chat: &C, arg: &str) -> Result<()> {
         let Some(to) = parse_rotation(arg) else {
             chat.send("Use /rotate 0, 90, 180 or 270, or just /rotate for 90° more")
@@ -379,6 +414,7 @@ fn outcome<T>(shown: Result<Shown<T>>) -> Result<T, Message> {
 mod tests {
     use super::*;
     use crate::{
+        animation::Reel,
         panel::Refresh,
         render::{Canvas, Planes},
         xkcd::tests::{encoded, entry, serve},
@@ -440,6 +476,92 @@ mod tests {
             self.0.fetch_add(1, Ordering::SeqCst);
             Ok(())
         }
+    }
+
+    /// A panel that counts its clips and its drawings, and plays each clip once `release` lets it.
+    struct Player {
+        clips: Arc<AtomicUsize>,
+        drawn: Arc<AtomicUsize>,
+        release: mpsc::Receiver<()>,
+    }
+
+    impl Panel for Player {
+        fn show(&mut self, _: &Canvas, _: &Planes, _: Refresh) -> Result<()> {
+            self.drawn.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn play(&mut self, _: &Reel) -> Result<()> {
+            self.release.recv().ok();
+            self.clips.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
+    fn player() -> (Player, Arc<AtomicUsize>, Arc<AtomicUsize>, mpsc::Sender<()>) {
+        let (clips, drawn) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+        let (release, wait) = mpsc::channel();
+        let panel = Player {
+            clips: clips.clone(),
+            drawn: drawn.clone(),
+            release: wait,
+        };
+        (panel, clips, drawn, release)
+    }
+
+    fn two_pictures() -> Vec<u8> {
+        let mut gif = Vec::new();
+        let frames = [[0, 0, 0, 255], [255; 4]].map(|color| {
+            image::Frame::from_parts(
+                image::RgbaImage::from_pixel(8, 8, image::Rgba(color)),
+                0,
+                0,
+                image::Delay::from_numer_denom_ms(100, 1),
+            )
+        });
+        image::codecs::gif::GifEncoder::new(&mut gif)
+            .encode_frames(frames)
+            .unwrap();
+        gif
+    }
+
+    #[tokio::test]
+    async fn a_clip_plays_then_its_first_picture_is_drawn() {
+        let (panel, clips, drawn, release) = player();
+        drop(release);
+        let bot = bot(Box::new(panel));
+        let chat = Fake::default();
+        bot.draw_clip(&chat, async { Ok(two_pictures()) }).await.unwrap();
+        assert_eq!((clips.load(Ordering::SeqCst), drawn.load(Ordering::SeqCst)), (1, 1));
+        bot.draw_clip(&chat, async { Ok(b"GIF89a, but no more".to_vec()) })
+            .await
+            .unwrap();
+        bot.draw_clip(&chat, async { anyhow::bail!("no network") })
+            .await
+            .unwrap();
+        let messages = chat.messages();
+        assert_eq!(messages[0], "Written it is");
+        assert_ne!(messages[1], messages[0]);
+        assert_eq!(messages[1], messages[2]);
+        assert_eq!((clips.load(Ordering::SeqCst), drawn.load(Ordering::SeqCst)), (1, 1));
+    }
+
+    #[tokio::test]
+    async fn nothing_else_draws_while_a_clip_plays() {
+        let (panel, clips, drawn, release) = player();
+        let display = Display::new(Box::new(panel), DisplayRotation::Rotate90, None);
+        let playing = tokio::spawn({
+            let display = display.clone();
+            async move { display.play(two_pictures()).await.unwrap() }
+        });
+        while display.0.try_lock().is_ok() {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(display.show(Scene::Ring).await.unwrap(), Shown::Busy);
+        assert_eq!(display.play(two_pictures()).await.unwrap(), Shown::Busy);
+        drop(release);
+        assert_eq!(playing.await.unwrap(), Shown::Done(()));
+        assert_eq!((clips.load(Ordering::SeqCst), drawn.load(Ordering::SeqCst)), (1, 1));
     }
 
     fn bot(panel: Box<dyn Panel>) -> Bot {

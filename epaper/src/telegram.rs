@@ -55,6 +55,7 @@ pub async fn run(token: String, bot: flow::Bot, allowed: Vec<u64>) -> Result<()>
         .filter(|msg: Message, allowed: Allowed| allowed.admits(msg.from.as_ref()))
         .branch(dptree::entry().filter_command::<Command>().endpoint(on_command))
         .branch(dptree::filter_map(|msg: Message| msg.sticker().cloned()).endpoint(on_sticker))
+        .branch(dptree::filter_map(|msg: Message| clip(&msg)).endpoint(on_clip))
         .branch(dptree::filter_map(|msg: Message| msg.text().map(str::to_owned)).endpoint(on_text));
     let reactions = Update::filter_message_reaction_updated()
         .filter(|reaction: MessageReactionUpdated, allowed: Allowed| allowed.admits(reaction.user()))
@@ -106,6 +107,26 @@ async fn on_sticker(telegram: Bot, msg: Message, sticker: Sticker, bot: flow::Bo
         return logged(chat.send(flow::STILL_STICKERS_ONLY).await.map(drop));
     };
     logged(bot.draw_picture(&chat, download(&telegram, file)).await)
+}
+
+/// A GIF, which Telegram sends as an MP4 animation, or a GIF sent as a file.
+fn clip(msg: &Message) -> Option<FileId> {
+    if let Some(animation) = msg.animation() {
+        return Some(animation.file.id.clone());
+    }
+    msg.document()
+        .filter(|document| {
+            document
+                .mime_type
+                .as_ref()
+                .is_some_and(|mime| mime.essence_str() == "image/gif")
+        })
+        .map(|document| document.file.id.clone())
+}
+
+async fn on_clip(telegram: Bot, msg: Message, file: FileId, bot: flow::Bot) -> ResponseResult<()> {
+    let chat = conversation(telegram.clone(), &msg);
+    logged(bot.draw_clip(&chat, download(&telegram, file)).await)
 }
 
 async fn download(telegram: &Bot, file: FileId) -> Result<Vec<u8>> {

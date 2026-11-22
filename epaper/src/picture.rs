@@ -28,19 +28,31 @@ const LINE_GAMMA: f32 = 1.4;
 /// Lifts the midtones of photos and stickers, which come out dark on the panel's grey paper.
 const PHOTO_GAMMA: f32 = 0.8;
 
-type Grey = ImageBuffer<Luma<f32>, Vec<f32>>;
+pub type Grey = ImageBuffer<Luma<f32>, Vec<f32>>;
 
 /// Decodes a PNG, JPEG, GIF or WebP; an animation gives its first frame.
 pub fn decode(bytes: &[u8]) -> Result<RgbaImage> {
     let mut reader = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()
         .context("reading the picture")?;
+    reader.limits(limits());
+    Ok(reader.decode().context("decoding the picture")?.into_rgba8())
+}
+
+/// How large a picture, or each frame of a clip, may be.
+pub fn limits() -> Limits {
     let mut limits = Limits::default();
     limits.max_image_width = Some(MAX_SIDE);
     limits.max_image_height = Some(MAX_SIDE);
     limits.max_alloc = Some(MAX_BYTES);
-    reader.limits(limits);
-    Ok(reader.decode().context("decoding the picture")?.into_rgba8())
+    limits
+}
+
+/// The size of a `width` by `height` picture scaled to the largest that fits into `size`.
+pub fn fit(width: u32, height: u32, size: Size) -> (u32, u32) {
+    let scale = f64::min(size.width as f64 / width as f64, size.height as f64 / height as f64);
+    let fit = |side: u32, limit: u32| ((side as f64 * scale).round() as u32).clamp(1, limit);
+    (fit(width, size.width), fit(height, size.height))
 }
 
 /// The picture as shades, row by row, fitted into `size` and centred on white.
@@ -50,9 +62,7 @@ pub fn shades(image: &RgbaImage, size: Size) -> Vec<Shade> {
     if width == 0 || height == 0 || size.width == 0 || size.height == 0 {
         return out;
     }
-    let scale = f64::min(size.width as f64 / width as f64, size.height as f64 / height as f64);
-    let fit = |side: u32, limit: u32| ((side as f64 * scale).round() as u32).clamp(1, limit);
-    let (fit_width, fit_height) = (fit(width, size.width), fit(height, size.height));
+    let (fit_width, fit_height) = fit(width, height, size);
 
     let line_art = is_line_art(image);
     let grey = luminance(image);
@@ -95,7 +105,7 @@ fn to_srgb(v: f32) -> f32 {
 }
 
 /// Each pixel's lightness on a white background, from 0 (black) to 1 (white), sRGB encoded.
-fn luminance(image: &RgbaImage) -> Grey {
+pub fn luminance(image: &RgbaImage) -> Grey {
     Grey::from_fn(image.width(), image.height(), |x, y| {
         let [r, g, b, a] = image.get_pixel(x, y).0.map(|c| c as f32 / 255.0);
         let y = to_srgb(0.2126 * to_linear(r) + 0.7152 * to_linear(g) + 0.0722 * to_linear(b));

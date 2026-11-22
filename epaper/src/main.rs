@@ -1,3 +1,4 @@
+mod animation;
 mod flow;
 mod markdown;
 mod panel;
@@ -63,6 +64,19 @@ enum Command {
         #[arg(default_value = "")]
         comic: String,
     },
+    /// Play a GIF or short video in black and white, as the bot does, refreshing only the window that changed.
+    Gif {
+        file: PathBuf,
+        /// Show this many pictures in order, looping, none skipped; for measuring the panel.
+        #[arg(long)]
+        frames: Option<usize>,
+        /// Panel frames, at 81.8 per second, the fast refresh drives a changing pixel for.
+        #[arg(long, default_value_t = panel::CLIP_LUT_FRAMES)]
+        lut_frames: u8,
+        /// Send and refresh the whole panel for every picture.
+        #[arg(long)]
+        full: bool,
+    },
     /// Run the Telegram bot, and the WhatsApp one with --whatsapp.
     Bot {
         #[arg(long, env = "EPAPER_TOKEN_FILE")]
@@ -110,6 +124,24 @@ fn main() -> Result<()> {
         .init();
     let cli = Cli::parse();
     let rotation = cli.rotation.into();
+    if let Command::Gif {
+        file,
+        frames,
+        lut_frames,
+        full,
+    } = &cli.command
+    {
+        let clip = std::fs::read(file).with_context(|| file.display().to_string())?;
+        let reel = animation::decode(&clip, rotation, animation::LIMIT)?;
+        let mut hat = Hat::open().context("opening the e-Paper HAT")?;
+        let mut playing = hat.animate(&reel.pictures[0].1, *lut_frames, !full)?;
+        let played = match frames {
+            Some(count) => animation::every(&mut playing, &reel, *count),
+            None => animation::in_time(&mut playing, &reel),
+        };
+        playing.finish()?;
+        return played;
+    }
     let mut panel: Box<dyn Panel> = match cli.preview {
         Some(path) => Box::new(Preview(path)),
         None => Box::new(Hat::open().context("opening the e-Paper HAT")?),
@@ -133,6 +165,7 @@ fn main() -> Result<()> {
                 xkcd::Fetched::Missing(num) => bail!("there is no xkcd {num}"),
             }
         }
+        Command::Gif { .. } => unreachable!("played above"),
         Command::Bot {
             token_file,
             allow,

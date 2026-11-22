@@ -138,7 +138,7 @@ impl Canvas {
         self.index(point).map(|i| self.pixels[i])
     }
 
-    fn set(&mut self, point: Point, color: Shade) {
+    pub fn set(&mut self, point: Point, color: Shade) {
         if let Some(i) = self.index(point) {
             self.pixels[i] = color;
         }
