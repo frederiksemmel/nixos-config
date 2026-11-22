@@ -463,7 +463,8 @@ let
   };
   # Bar cell for rbw's lock state. Polls the agent, logs each change as
   # "<epoch> unlocked|locked|off" and sets the vault and vault_tooltip ironvars,
-  # the tooltip summing each state over the past hour and day. Time the poller
+  # the tooltip drawing the past hour and day as timelines with the share
+  # unlocked. Time the poller
   # missed (shutdown, suspend) is logged as off, from the heartbeat it keeps.
   barVault = pkgs.writeShellApplication {
     name = "bar-vault";
@@ -505,22 +506,43 @@ let
             h = int(s / 3600); m = int(s % 3600 / 60)
             return h ? sprintf("%dh %02dm", h, m) : sprintf("%dm", m)
           }
-          function pct(a, b) { return b > 0 ? sprintf(" (%d%%)", 100 * a / b + 0.5) : "" }
+          # Sets U and L to the seconds unlocked and locked within [a, b).
+          function span(a, b, i, x, y) {
+            U = 0; L = 0
+            for (i = 1; i <= NR; i++) {
+              x = t[i] < a ? a : t[i]
+              y = i < NR ? t[i + 1] : now
+              if (y > b) y = b
+              if (y <= x) continue
+              if (s[i] == "unlocked") U += y - x
+              else if (s[i] == "locked") L += y - x
+            }
+          }
           { t[NR] = $1; s[NR] = $2 }
           END {
+            # A timeline per window, oldest left: one cell per slice, white
+            # (the tooltip foreground) as unlocked, black as locked, shaded
+            # for a mix, a dot where the poller mostly was not running.
+            cells = 48
+            split(" |░|▒|▓|█", shade, "|")
             split("3600 86400", win, " ")
-            split("Past 1h: |Past 24h:", name, "|")
+            split("Past 1h |Past 24h", name, "|")
             for (w = 1; w <= 2; w++) {
               start = now - win[w]
-              delete sum
-              for (i = 1; i <= NR; i++) {
-                a = t[i] < start ? start : t[i]
-                b = i < NR ? t[i + 1] : now
-                if (b > a) sum[s[i]] += b - a
+              bar = ""
+              for (c = 0; c < cells; c++) {
+                a = start + win[w] * c / cells
+                b = start + win[w] * (c + 1) / cells
+                span(a, b)
+                if (U + L < (b - a) / 2) bar = bar "·"
+                else bar = bar shade[int(4 * U / (U + L) + 0.5) + 1]
               }
-              on = sum["unlocked"] + sum["locked"]
+              span(start, now)
+              on = U + L
               off = win[w] - on
-              printf "%s  unlocked %s%s · locked %s", name[w], fmt(sum["unlocked"]), pct(sum["unlocked"], on), fmt(sum["locked"])
+              share = on > 0 ? sprintf("%3d%%", 100 * U / on + 0.5) : "   –"
+              printf "%s  ▕%s▏ %s\n", name[w], bar, share
+              printf "          unlocked %s · locked %s", fmt(U), fmt(L)
               if (off >= 60) printf " · off %s", fmt(off)
               printf "\n"
             }
