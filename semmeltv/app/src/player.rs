@@ -200,6 +200,7 @@ impl Phase {
 #[derive(Default)]
 struct Playback {
     commands: Option<Commands>,
+    waiting: Vec<Value>,
     name: String,
     position: f64,
     duration: f64,
@@ -236,9 +237,22 @@ impl Playback {
     }
 
     fn send(&mut self, command: Value) {
-        if let Some(commands) = &self.commands {
+        match &self.commands {
+            Some(commands) => {
+                commands.send(command);
+            }
+            None => self.waiting.push(command),
+        }
+    }
+
+    /// Takes mpv's IPC connection and sends what was asked for before it was
+    /// there.
+    fn connected(&mut self, commands: Commands) {
+        for command in std::mem::take(&mut self.waiting) {
             commands.send(command);
         }
+        self.fader = Some(fade::Fader::start(commands.clone()));
+        self.commands = Some(commands);
     }
 
     fn command(&mut self, command: Command, now: Instant) {
@@ -956,9 +970,7 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared) {
                 commands.send(json!(["observe_property", SUBTITLES_ID, name]));
             }
             {
-                let mut playback = shared.lock().unwrap();
-                playback.fader = Some(fade::Fader::start(commands.clone()));
-                playback.commands = Some(commands);
+                shared.lock().unwrap().connected(commands);
             }
             let ticking = shared.clone();
             thread::spawn(move || tick(&ticking));
@@ -1384,6 +1396,25 @@ mod tests {
         );
         let sent = sent_by(|playback| playback.command(Command::Back, Instant::now()), playing());
         assert_eq!(sent[0], json!(["quit", STOPPED_EXIT_CODE]));
+    }
+
+    #[test]
+    fn back_pressed_before_mpv_listens_still_stops_it_once_it_does() {
+        let mut playback = Playback::default();
+        playback.command(Command::Back, Instant::now());
+        let (stream, mut mpv) = UnixStream::pair().unwrap();
+        playback.connected(Commands::new(stream));
+        drop(playback);
+        let mut sent = String::new();
+        mpv.read_to_string(&mut sent).unwrap();
+        let first = sent
+            .lines()
+            .next()
+            .map(|line| serde_json::from_str::<Value>(line).unwrap());
+        assert_eq!(
+            first.map(|line| line["command"].clone()),
+            Some(json!(["quit", STOPPED_EXIT_CODE]))
+        );
     }
 
     fn sent_by(act: impl FnOnce(&mut Playback), mut playback: Playback) -> Vec<Value> {
