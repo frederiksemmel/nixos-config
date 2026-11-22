@@ -269,14 +269,19 @@ def tv_starts_at():
     return eventually("the TV plays", tv_position, timeout=60)
 
 
+# The unit the core runs in: its own when split, cage's when one process.
+CORE_UNIT = "semmeltv.service" if SPLIT else "cage-tty1.service"
+
+
 def app_restarted():
-    tv.wait_for_unit("semmeltv.service")
+    if SPLIT:
+        tv.wait_for_unit("semmeltv.service")
     tv.wait_for_unit("cage-tty1.service")
     tv.wait_for_open_port(8090)
 
 
 def restart_the_app():
-    tv.systemctl("restart semmeltv.service cage-tty1.service")
+    tv.systemctl("restart semmeltv.service cage-tty1.service" if SPLIT else "restart cage-tty1.service")
 
 
 NO_REMOTE = '[...document.querySelectorAll(".bar, #sheet, .sheet-dim")].every((element) => getComputedStyle(element).display === "none")'
@@ -584,7 +589,8 @@ def watched_a_while(phone, title=None):
 
 
 start_all()
-tv.wait_for_unit("semmeltv.service")
+if SPLIT:
+    tv.wait_for_unit("semmeltv.service")
 tv.wait_for_unit("cage-tty1.service")
 tv.wait_for_open_port(8090)
 tv.wait_for_unit("semmeltv-web.service")

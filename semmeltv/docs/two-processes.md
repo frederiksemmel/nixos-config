@@ -533,9 +533,9 @@ How 4 came out:
 
 - `services.semmeltv.split` switches the layout per host. On, `semmeltv.service`
   runs `semmeltv core` (`Type=notify`, `WatchdogSec=30`, `Restart=always`,
-  `RuntimeDirectory=semmeltv` mode 0700, after the mount) with
-  `coreEnvironment`, and `cage-tty1` runs `semmeltv tv` (after and wanting
-  the core) with only `SEMMELTV_LIBRARY`, `SEMMELTV_META` and the socket
+  `RuntimeDirectory=semmeltv` mode 0700, after the mount and cage) with
+  `coreEnvironment`, and `cage-tty1` runs `semmeltv tv` (wanting the core)
+  with only `SEMMELTV_LIBRARY`, `SEMMELTV_META` and the socket
   from it. Off, cage runs `semmeltv ui` with all of it, as before. semmeltv5
   turns it on.
 - The core says `READY=1` once it serves the socket and the API, and
@@ -572,6 +572,32 @@ How 4 came out:
   that stops the core mid-film and checks the film plays on and is taken
   over. Its frozen-tv case waits for the core's "ending the silent tv"
   instead of systemd's watchdog.
+
+The first switch on semmeltv5 (2026-11-22, b432185), and what changed:
+
+- The core started, served the tv's socket, and then never served its API
+  or said READY; systemd gave up after 90 s and the website was down for
+  five minutes until the rollback. The cause was not the split: ac39c73
+  ran database writes on a thread with a runtime of its own, toasty starts
+  each new connection's worker on the runtime that opens it, and the
+  headphones' first write opened one there, so the next read drew a
+  connection whose worker never ran again. The VM has no headphones and
+  never hit it. ac39c73 was reverted and re-landed with the writes on the
+  core's runtime.
+- Every startup step is now named in the log, and named again every 5 s
+  while it waits, so a start that hangs says where. `semmeltv core` binds
+  its API before READY and exits with the reason when it can't, and
+  `semmeltv.service` never stops restarting (`StartLimitIntervalSec=0`).
+- The core starts after cage instead of cage after the core. Any ordering
+  between the two makes a switch stop the old single-process cage before
+  the core starts, and this way round the TV shows its splash and its
+  "restarting" panel at once instead of staying dark until the core is
+  ready.
+- `bluetoothctl` gets a timeout on every call.
+- The VM group `switch` boots the old single process with headphones on,
+  switches to the split with `switch-to-configuration test` and checks
+  the API answers within 30 s; it also takes the core's port away and
+  checks the core says why and serves once the port is free.
 
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside

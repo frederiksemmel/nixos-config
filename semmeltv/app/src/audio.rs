@@ -20,6 +20,7 @@ pub fn stereo(dialogue: bool) -> &'static str {
     if dialogue { DIALOGUE } else { STEREO }
 }
 const COMMAND_TIMEOUT_SECONDS: &str = "20";
+const LOOKUP_TIMEOUT_SECONDS: &str = "5";
 const HEADPHONE_ICONS: [&str; 2] = ["audio-headphones", "audio-headset"];
 const MONITOR_RESTART: Duration = Duration::from_secs(2);
 const SCANNING: &str = "Open the case near the TV and hold the button on its back until the light flashes white.";
@@ -1121,7 +1122,14 @@ struct Bluetoothctl {
 
 impl Bluetoothctl {
     fn run(args: &[&str]) -> String {
+        let timeout = ["--timeout", LOOKUP_TIMEOUT_SECONDS];
+        let limited = if args.first() == Some(&"--timeout") {
+            &[][..]
+        } else {
+            &timeout[..]
+        };
         Command::new("bluetoothctl")
+            .args(limited)
             .args(args)
             .stdin(Stdio::null())
             .stderr(Stdio::null())

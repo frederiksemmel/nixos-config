@@ -230,7 +230,7 @@ in
     };
 
     systemd.services.cage-tty1 = {
-      after = [ "systemd-tmpfiles-setup.service" ] ++ lib.optional cfg.split "semmeltv.service";
+      after = [ "systemd-tmpfiles-setup.service" ];
       wants = lib.optional cfg.split "semmeltv.service";
       restartIfChanged = lib.mkForce true;
       serviceConfig = {
@@ -245,7 +245,9 @@ in
       after = [
         "systemd-tmpfiles-setup.service"
         "network.target"
+        "cage-tty1.service"
       ];
+      startLimitIntervalSec = 0;
       environment = cfg.coreEnvironment // {
         SEMMELTV_TV_SOCKET = tvSocket;
       };
