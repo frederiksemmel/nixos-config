@@ -71,7 +71,10 @@ in
       certs.${cfg.domain} = {
         dnsProvider = "desec";
         environmentFile = cfg.desecTokenFile;
-        dnsResolver = "9.9.9.9:53";
+        extraLegoFlags = [
+          "--dns.propagation-wait"
+          "5m"
+        ];
         group = config.services.nginx.group;
         reloadServices = [ "nginx.service" ];
       };
