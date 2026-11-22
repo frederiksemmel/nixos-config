@@ -489,7 +489,7 @@ async fn people_page(cx: &Cx) -> Result<impl View> {
         <article class="page people">
             back(href: "/profiles")
             <h1>"People"</h1>
-            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote, voice and sound, and pair their own Bluetooth headphones that nobody else can use, and only those you let download find films and seasons and add them to the library. Admins do all that, and stop downloads, remove titles, pair the TV and manage people."</p>
+            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote and sound, and pair their own Bluetooth headphones that nobody else can use, and only those you let download find films and seasons and add them to the library. Admins do all that, and stop downloads, remove titles, pair the TV and manage people."</p>
             match members {
                 Ok(members) => {
                     <section class="settings">

@@ -69,10 +69,6 @@ for engine, device in (("chromium", "Pixel 7"), ("webkit", "iPhone 15")):
         toaster.goto("/")
         at_home(toaster)
         toaster.until('document.documentElement.hasAttribute("data-phone-ready")')
-        assert toaster.js('!document.getElementById("microphone-note")'), "the top bar has no microphone text"
-        if engine == "chromium":
-            toaster.page.locator("#microphone-talk").tap()
-            toaster.until('!!document.querySelector(".toast[data-tone=error]") && document.getElementById("microphone").dataset.state === "idle"', 8000)
         toaster.js('document.querySelectorAll(".toast").forEach((toast) => toast.remove())')
         raise_toast(toaster, "first")
         raise_toast(toaster, "second")

@@ -44,7 +44,7 @@ mod tests {
         let (link, _never_read) = Link::pair();
         let started = Instant::now();
         for _ in 0..QUEUE * 4 {
-            link.send(ToTv::HideToast);
+            link.send(ToTv::Message(String::new()));
         }
         assert!(
             started.elapsed() < Duration::from_millis(100),
@@ -57,8 +57,8 @@ mod tests {
     fn orders_reach_the_tv_in_the_order_they_were_sent() {
         let (link, received) = Link::pair();
         link.send(ToTv::Message("one".to_string()));
-        link.send(ToTv::HideToast);
+        link.send(ToTv::Message("two".to_string()));
         assert_eq!(received.try_recv(), Ok(ToTv::Message("one".to_string())));
-        assert_eq!(received.try_recv(), Ok(ToTv::HideToast));
+        assert_eq!(received.try_recv(), Ok(ToTv::Message("two".to_string())));
     }
 }

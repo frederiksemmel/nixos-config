@@ -114,11 +114,6 @@ fn drive(orders: &Receiver<ToTv>, tell: &Tell, mut start: impl FnMut(&Play, Call
                     player.toast(&heading, &status, Duration::from_millis(hold_ms));
                 }
             }
-            ToTv::HideToast => {
-                if let Some(player) = player {
-                    player.hide_toast();
-                }
-            }
             ToTv::Subtitles { id, play, change } => {
                 let (message, ok) = match of(&play) {
                     Some(player) => {

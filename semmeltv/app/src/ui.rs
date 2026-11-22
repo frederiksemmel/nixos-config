@@ -54,7 +54,7 @@ struct Screen {
     art: PathBuf,
     images: Sender<Job<Target>>,
     message_timer: Timer,
-    voice_timer: Timer,
+    panel_timer: Timer,
     up_next_timer: Timer,
 }
 
@@ -99,7 +99,7 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
         art: meta.join(artwork::DIR),
         images,
         message_timer: Timer::default(),
-        voice_timer: Timer::default(),
+        panel_timer: Timer::default(),
         up_next_timer: Timer::default(),
     }));
     screen.borrow_mut().present_profile();
@@ -249,7 +249,7 @@ impl Screen {
             Event::Panel(panel) => self.show_panel(panel),
             Event::UpNext(card) => self.show_up_next(card),
             Event::Together(together) => self.show_together(together),
-            Event::Playback { .. } | Event::Voice(_) | Event::Audio(_) | Event::Screen { .. } => {}
+            Event::Playback { .. } | Event::Notice(_) | Event::Audio(_) | Event::Screen { .. } => {}
         }
     }
 
@@ -389,28 +389,16 @@ impl Screen {
         self.ui.set_profile_current(current as i32);
     }
 
-    fn show_panel(&self, panel: Option<Panel>) {
-        let Some(panel) = panel else {
-            self.voice_timer.stop();
-            self.ui.set_voice_transcript("".into());
-            self.ui.set_voice_status("".into());
-            return;
-        };
-        self.ui.set_voice_transcript(panel.heading.into());
-        self.ui.set_voice_status(panel.status.into());
-        self.ui.set_voice_busy(panel.hold.is_none());
-        match panel.hold {
-            Some(time) => {
-                let handle = self.ui.as_weak();
-                self.voice_timer.start(TimerMode::SingleShot, time, move || {
-                    if let Some(ui) = handle.upgrade() {
-                        ui.set_voice_transcript("".into());
-                        ui.set_voice_status("".into());
-                    }
-                });
+    fn show_panel(&self, panel: Panel) {
+        self.ui.set_panel_heading(panel.heading.into());
+        self.ui.set_panel_status(panel.status.into());
+        let handle = self.ui.as_weak();
+        self.panel_timer.start(TimerMode::SingleShot, panel.hold, move || {
+            if let Some(ui) = handle.upgrade() {
+                ui.set_panel_heading("".into());
+                ui.set_panel_status("".into());
             }
-            None => self.voice_timer.stop(),
-        }
+        });
     }
 
     fn show_up_next(&self, card: Option<up_next::Card>) {

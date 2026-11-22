@@ -25,8 +25,8 @@ impl Role {
 #[serde(rename_all = "kebab-case")]
 pub enum Capability {
     /// Play on the TV and use its remote: playback, volume, the TV's power,
-    /// the microphone, moving what plays between the TV and a phone, and
-    /// pairing one's own Bluetooth headphones with the TV and listening on them.
+    /// moving what plays between the TV and a phone, and pairing one's own
+    /// Bluetooth headphones with the TV and listening on them.
     ControlTv,
     /// Find films and seasons and download them into the library, and watch
     /// how the downloads are going. Stopping a download, the TV's storage

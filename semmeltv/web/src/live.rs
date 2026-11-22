@@ -1,4 +1,4 @@
-use crate::api::{Audio, Event, NowPlaying, Output, PairState, Screen, Voice};
+use crate::api::{self, Audio, Event, NowPlaying, Output, PairState, Screen};
 use futures_util::StreamExt;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -60,22 +60,12 @@ impl Raise {
     }
 }
 
-pub fn voice_notice(voice: &Voice) -> Option<(String, String, Tone)> {
-    let plain = |text: &str, tone| Some((text.to_string(), String::new(), tone));
-    match voice {
-        Voice::Heard {
-            text,
-            action,
-            understood,
-        } => Some((
-            format!("“{text}”"),
-            action.clone(),
-            if *understood { Tone::Ok } else { Tone::Error },
-        )),
-        Voice::Nothing => plain("Didn't catch that", Tone::Info),
-        Voice::NoMicrophone => plain("The TV has no microphone", Tone::Error),
-        Voice::Failed { .. } => plain("Speech recognition isn't working right now", Tone::Error),
-        Voice::Listening | Voice::Transcribing | Voice::Cancelled => None,
+pub fn tv_notice(notice: &api::Notice) -> (String, String, Tone) {
+    let tone = if notice.ok { Tone::Ok } else { Tone::Error };
+    if notice.heading.is_empty() {
+        (notice.status.clone(), String::new(), tone)
+    } else {
+        (notice.heading.clone(), notice.status.clone(), tone)
     }
 }
 
@@ -150,7 +140,6 @@ impl From<Option<NowPlaying>> for Tv {
 #[derive(Clone)]
 pub struct Live {
     pub playback: watch::Receiver<Tv>,
-    pub voice: watch::Receiver<Option<Voice>>,
     pub audio: watch::Receiver<Option<Audio>>,
     pub notices: watch::Receiver<Notices>,
     pub screen: watch::Receiver<Option<Screen>>,
@@ -158,7 +147,6 @@ pub struct Live {
 
 pub fn follow(url: String, service: Option<String>) -> Live {
     let (playback, playback_seen) = watch::channel(Tv::Unknown);
-    let (voice, voice_seen) = watch::channel(None);
     let (audio, audio_seen) = watch::channel(None);
     let (notices, notices_seen) = watch::channel(Notices::default());
     let (screen, screen_seen) = watch::channel(None);
@@ -183,11 +171,8 @@ pub fn follow(url: String, service: Option<String>) -> Live {
                             Ok(Event::Playback { now_playing }) => {
                                 playback.send_if_modified(|current| replace(current, Tv::from(now_playing)));
                             }
-                            Ok(Event::Voice(event)) => {
-                                if let Some(notice) = voice_notice(&event) {
-                                    notices.send_modify(|list| raise.push(list, notice));
-                                }
-                                voice.send_replace(Some(event));
+                            Ok(Event::Notice(event)) => {
+                                notices.send_modify(|list| raise.push(list, tv_notice(&event)));
                             }
                             Ok(Event::Audio(state)) => {
                                 let found = audio_notices(audio.borrow().as_ref(), &state);
@@ -215,7 +200,6 @@ pub fn follow(url: String, service: Option<String>) -> Live {
     });
     Live {
         playback: playback_seen,
-        voice: voice_seen,
         audio: audio_seen,
         notices: notices_seen,
         screen: screen_seen,
@@ -277,18 +261,33 @@ mod tests {
     }
 
     #[test]
-    fn heard_requests_and_failures_become_notices_but_progress_does_not() {
-        let heard = Voice::Heard {
-            text: "play dune".to_string(),
-            action: "Playing Dune".to_string(),
-            understood: true,
+    fn notices_from_the_tv_keep_their_heading_and_tone() {
+        let found = api::Notice {
+            heading: "Dune".to_string(),
+            status: "Confirm on the phone's Downloads page.".to_string(),
+            ok: true,
         };
         assert_eq!(
-            voice_notice(&heard),
-            Some(("“play dune”".to_string(), "Playing Dune".to_string(), Tone::Ok))
+            tv_notice(&found),
+            (
+                "Dune".to_string(),
+                "Confirm on the phone's Downloads page.".to_string(),
+                Tone::Ok
+            )
         );
-        assert_eq!(voice_notice(&Voice::Listening), None);
-        assert_eq!(voice_notice(&Voice::Nothing).map(|notice| notice.2), Some(Tone::Info));
+        let silent = api::Notice {
+            heading: String::new(),
+            status: "The download service did not answer".to_string(),
+            ok: false,
+        };
+        assert_eq!(
+            tv_notice(&silent),
+            (
+                "The download service did not answer".to_string(),
+                String::new(),
+                Tone::Error
+            )
+        );
     }
 
     #[test]

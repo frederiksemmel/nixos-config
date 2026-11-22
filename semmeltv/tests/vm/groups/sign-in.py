@@ -32,7 +32,7 @@ with scenario("signed-out visitors land on the picker and sign in with a passwor
     assert visitor.api("GET", "/api/library")["status"] == 401
     visitor.goto(f"/movies/{FILM}")
     visitor.until('location.pathname === "/profiles"')
-    assert visitor.js('!document.querySelector(".bar-open") && !document.querySelector("#microphone")'), "a signed-out visitor gets no player or remote"
+    assert visitor.js('!document.querySelector(".bar-open")'), "a signed-out visitor gets no player or remote"
     visitor.until('[...document.querySelectorAll(".profile-choice")].some((choice) => choice.textContent.includes("Ramu") && choice.textContent.includes("Not set up yet"))')
     visitor.page.locator(".profile-choice", has_text="Ramu").click()
     visitor.until('document.querySelector("#sign-in-note").textContent.includes("invite link")', 5000)
@@ -66,7 +66,7 @@ with scenario("profiles on one phone: each has its own Home, a viewer is limited
     phone.goto("/settings")
     phone.until('!!document.querySelector("main .settings")')
     assert phone.js("""!document.querySelector('main a[href="/storage"], main a[href="/downloads"], [data-post="/api/tv/pair"]')"""), "a viewer has no Storage, Downloads or TV pairing"
-    assert phone.js("""!document.querySelector('[data-post="/api/tv-profile"], #mode, #microphone, .player')"""), "a viewer without TV control sees no TV controls"
+    assert phone.js("""!document.querySelector('[data-post="/api/tv-profile"], #mode, .player')"""), "a viewer without TV control sees no TV controls"
     assert phone.api("POST", "/api/play", {"movie": FILM})["status"] == 403, "a viewer without TV control can't play on the TV"
     flip = {"action": "flip", "to": "tv", "device": {"id": "vm-mami", "name": "phone"}}
     assert phone.api("POST", "/api/screen", flip)["status"] == 403, "nor move what plays to the TV"

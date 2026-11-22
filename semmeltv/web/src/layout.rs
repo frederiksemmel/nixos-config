@@ -12,7 +12,6 @@ use topcoat::runtime::link;
 use topcoat::view::{View, attributes, component, error_boundary, view};
 
 const STYLE: Asset = asset!("./style.css");
-const MICROPHONE: Asset = asset!("./microphone.js");
 const APP: Asset = asset!("./app.js");
 const PHONE: Asset = asset!("./phone.js");
 const TOAST: Asset = asset!("./toast.js");
@@ -59,9 +58,6 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 topcoat::runtime::script()
                 <script type="module" src=(TOAST)></script>
                 <script type="module" src=(AUTH)></script>
-                if controls_tv {
-                    <script type="module" src=(MICROPHONE)></script>
-                }
                 if signed_in {
                     <script type="module" src=(APP)></script>
                     <script type="module" src=(PHONE)></script>
@@ -82,15 +78,6 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     if controls_tv {
                         playing::mode_switch()
                         <span class="mode-note" id="mode-note" role="status"></span>
-                        <div class="microphone" id="microphone" data-state="idle">
-                            <button class="microphone-talk" id="microphone-talk" type="button" aria-label="Talk to the TV" aria-pressed="false">
-                                <svg viewBox="0 0 24 24" aria-hidden="true">
-                                    <path d="M12 15a3.5 3.5 0 0 0 3.5-3.5v-6a3.5 3.5 0 0 0-7 0v6A3.5 3.5 0 0 0 12 15Z"></path>
-                                    <path d="M18.5 11.5a6.5 6.5 0 0 1-13 0M12 18v3.5" fill="none"></path>
-                                </svg>
-                                <i class="microphone-level" id="microphone-level"></i>
-                            </button>
-                        </div>
                     }
                     <button class="top-link feedback-open" id="feedback-open" type="button" aria-label="Send feedback" aria-haspopup="dialog">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -101,7 +88,6 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                     link(href: "/settings", attrs: attributes! { cx => class="top-link" aria-label="Settings" }, playing::settings_icon())
                     auth::profile_button()
                 </header>
-                playing::voice_feedback()
                 playing::notices()
                 <main>
                     error_boundary(

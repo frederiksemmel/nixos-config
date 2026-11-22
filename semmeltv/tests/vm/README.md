@@ -68,9 +68,9 @@ Screenshots of the TV and the phone land in each group's result.
 
 Left to the cargo tests, because they need the Pi's hardware or the internet:
 hardware decoding (drm, v4l2m2m), HDMI-CEC power, input and remote, HDMI display
-modes, Bluetooth headphones, Hailo voice and the wake word, the Samsung UPnP
-volume, the pCloud mount and the offline cache, downloads (Jackett, rqbit,
-Mullvad), and Tailscale, TLS and deSEC.
+modes, Bluetooth headphones, the Samsung UPnP volume, the pCloud mount and the
+offline cache, downloads (Jackett, rqbit, Mullvad), and Tailscale, TLS and
+deSEC.
 
 `checks.x86_64-linux.semmeltv-no-upload` runs the TV's rqbit, built and
 configured by `modules/rqbit.nix`, between a seeder and a third peer that asks

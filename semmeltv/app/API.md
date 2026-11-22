@@ -8,8 +8,8 @@ and nginx expose it; on semmeltv5 it is at
 `https://semmeltv5.semmeltv.ch/api/...`. Every request needs a signed-in
 session, see Sign-in.
 
-Requests that change something on the TV take the same path as voice. The app
-turns them into a request to its core, which resolves it against the library
+Requests that change something on the TV take the same path as the remote. The
+app turns them into a request to its core, which resolves it against the library
 and progress and performs it, without waiting for the TV's screen. They answer
 with what happened:
 
@@ -37,7 +37,7 @@ With it set, every request passes one gate in the app before anything else:
   403 "Only an admin can do that".
 - Controlling the TV needs the `control-tv` capability, else 403 "Only someone
   allowed to control this TV can do that": `/api/play`, `/api/command`,
-  `/api/listen`, `/api/microphone`, `/api/volume/*`, any change under
+  `/api/volume/*`, any change under
   `/api/playback/*`, `/api/tv/*` and `/api/tv-profile`, `/api/audio/track`
   and `/api/subtitles/track|toggle|delay`. Reading them, dialogue mode and the
   subtitle style stay open to everyone signed in. On `POST /api/screen`,
@@ -264,8 +264,7 @@ such image.
 | Method | Path | Body |
 | --- | --- | --- |
 | POST | `/api/play` | `{ "movie": key }`, or `{ "show": key }` to carry on, or `{ "show": key, "season": 2, "episode": 3 }` |
-| POST | `/api/command` | `{ "text": "play outlander season 2" }`, understood exactly like speech |
-| POST | `/api/listen` | none: start listening, as the remote's red, green and blue keys do |
+| POST | `/api/command` | `{ "text": "play outlander season 2" }`, a sentence in English, German or Spanish, as typed into the web app's search box |
 | GET | `/api/playback` | `{ now_playing }`, see below |
 | POST | `/api/playback/{control}` | none. `control` is `pause`, `resume`, `toggle`, `stop`, `mute`, `unmute`, `skip-segment` or `hide-skip`. `skip-segment` does what OK does while the TV shows Skip intro, Skip recap or Play next, `hide-skip` what Back does: it hides that button until the file plays again. Both are refused with 422 while the TV shows none |
 | POST | `/api/playback/seek` | `{ "to": seconds }` or `{ "by": seconds }`, negative to go back |
@@ -276,7 +275,7 @@ such image.
 `{ title, caption, kind, …, position, duration, paused, muted, speed, subtitle, subtitle_delay, audio, loading, jump, skip }`.
 `subtitle` is the id of the subtitle track that shows, or null when none does.
 `subtitle_delay` is the subtitle delay in seconds, positive to show them later. `audio` is the playing
-audio track's id. They follow what mpv reports, so a change made by the remote, by voice or from the web
+audio track's id. They follow what mpv reports, so a change made by the remote or from the web
 reaches every event listener.
 `kind` says what plays: `"movie"` with `movie`, its key; `"episode"` with
 `show`, `season` and `episode`; or `"file"`, a file outside the library, with
@@ -313,7 +312,7 @@ which TV it is and what it can do. `paired` says whether a TV that pairs has
 given SemmelTV a token, and is null for a TV that doesn't pair. `kind` is null while the TV can't be reached
 to tell.
 
-`on`, `off` and `semmeltv` do what the same voice commands do. `on` turns the
+`on`, `off` and `semmeltv` do what the same sentences to `/api/command` do. `on` turns the
 TV on and switches it to SemmelTV, `semmeltv` switches an already-on TV to
 SemmelTV, and `off` puts it in standby. They answer like the playing requests,
 with `ok` true once the command is sent.
@@ -542,14 +541,11 @@ event. It starts with the current playback:
     { "type": "playback", "now_playing": { ... } | null }
 
 After that it sends playback whenever it changes, at most about once a second
-while playing, and every voice event:
+while playing, and what a download asked for through `/api/command` found,
+as the TV shows it; `heading` may be empty, and `ok` is false when nothing can
+be downloaded:
 
-    { "type": "voice", "state": "listening" }
-    { "type": "voice", "state": "transcribing" }
-    { "type": "voice", "state": "heard", "text": "play dune", "action": "Playing Dune", "understood": true }
-    { "type": "voice", "state": "nothing" }
-    { "type": "voice", "state": "no-microphone" }
-    { "type": "voice", "state": "failed", "message": "..." }
+    { "type": "notice", "heading": "Dark season 2", "status": "1080p, 4.2 GB. Confirm on the phone's Downloads page.", "ok": true }
 
 On a TV with headphones it sends the audio state right after the playback, and
 again whenever it changes, with the same body as GET `/api/audio`:
@@ -745,7 +741,7 @@ only for the title the screen has the phone on, so a late report from the
 episode before doesn't take the place of the next one. A phone that hasn't reported for 45 s
 (asleep, gone) stops being played on, keeping its place; one that doesn't
 start within 30 s likewise. Anything the TV itself plays, from the remote,
-voice or `/api/play`, takes the screen back to the TV.
+`/api/command` or `/api/play`, takes the screen back to the TV.
 
 The event stream sends `{ "type": "screen", "screen": {...} }` when it
 connects and whenever the screen changes.
@@ -825,15 +821,6 @@ and the show's place, finishes the file when it stops in the credits or ends,
 and otherwise writes the position into the file's mpv resume entry, so the TV
 carries on from there. While the TV plays the same file, `ok` is false and
 nothing changes. A `stopped` or `ended` report also ends the session.
-
-## Phone microphone
-
-`GET /api/microphone` upgrades to a WebSocket that takes binary messages of
-16 kHz mono signed 16-bit little-endian audio. The app plays them with `aplay`
-into `SEMMELTV_PHONE_MICROPHONE`, an ALSA loopback whose other end is the app's
-own `SEMMELTV_MICROPHONE`. Only one stream is taken at a time, and a second one
-is closed with code 1013. The endpoint answers 404 when no phone microphone is
-set up.
 
 ## Downloads
 

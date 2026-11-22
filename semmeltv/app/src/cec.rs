@@ -348,7 +348,6 @@ fn key_command(code: CecUserControlCode) -> Option<Command> {
         | CecUserControlCode::Pause
         | CecUserControlCode::PlayFunction
         | CecUserControlCode::PausePlayFunction => Some(Command::PlayPause),
-        CecUserControlCode::F1Blue | CecUserControlCode::F2Red => Some(Command::Listen),
         CecUserControlCode::F3Green => Some(Command::Dialogue),
         CecUserControlCode::F4Yellow => Some(Command::Subtitles),
         _ => None,
@@ -541,7 +540,7 @@ mod tests {
 
     #[test]
     fn remote_buttons_become_commands_or_nothing() {
-        let cases: [(&[u8], Reaction); 20] = [
+        let cases: [(&[u8], Reaction); 18] = [
             (&[0x00], Reaction::Press(Command::Select)),
             (&[0x01], Reaction::Press(Command::Up)),
             (&[0x02], Reaction::Press(Command::Down)),
@@ -555,8 +554,6 @@ mod tests {
             (&[0x49], Reaction::Press(Command::Right)),
             (&[0x60], Reaction::Press(Command::PlayPause)),
             (&[0x61], Reaction::Press(Command::PlayPause)),
-            (&[0x71], Reaction::Press(Command::Listen)),
-            (&[0x72], Reaction::Press(Command::Listen)),
             (&[0x73], Reaction::Press(Command::Dialogue)),
             (&[0x74], Reaction::Press(Command::Subtitles)),
             (&[0x40], Reaction::Ignore),

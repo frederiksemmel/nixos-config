@@ -687,8 +687,6 @@ component Toast inherits Rectangle {
     in property <length> u;
     in property <string> heading;
     in property <string> text;
-    in property <bool> voice;
-    in property <bool> busy;
 
     border-radius: 32 * root.u;
     background: #232733;
@@ -698,23 +696,10 @@ component Toast inherits Rectangle {
     drop-shadow-color: #00000099;
 
     HorizontalLayout {
-        padding-left: (root.voice ? 36 : 44) * root.u;
+        padding-left: 44 * root.u;
         padding-right: 44 * root.u;
         padding-top: 24 * root.u;
         padding-bottom: 26 * root.u;
-        spacing: 24 * root.u;
-
-        if root.voice: VerticalLayout {
-            alignment: center;
-
-            Rectangle {
-                width: 22 * root.u;
-                height: 22 * root.u;
-                border-radius: self.width / 2;
-                background: root.busy ? white : #8f95a3;
-                opacity: root.busy ? 0.55 + 0.45 * sin(animation-tick() / 1.2s * 360deg) : 1;
-            }
-        }
 
         VerticalLayout {
             alignment: center;
@@ -724,7 +709,7 @@ component Toast inherits Rectangle {
                 text: root.heading;
                 color: #a8adb8;
                 font-size: 26 * root.u;
-                horizontal-alignment: root.voice ? left : center;
+                horizontal-alignment: center;
                 wrap: word-wrap;
             }
 
@@ -733,7 +718,7 @@ component Toast inherits Rectangle {
                 color: white;
                 font-size: 32 * root.u;
                 font-weight: 500;
-                horizontal-alignment: root.voice ? left : center;
+                horizontal-alignment: center;
                 wrap: word-wrap;
             }
         }
@@ -893,9 +878,8 @@ export component AppWindow inherits Window {
     in property <HeatFocus> show-heat;
 
     in property <string> message;
-    in property <string> voice-transcript;
-    in property <string> voice-status;
-    in property <bool> voice-busy;
+    in property <string> panel-heading;
+    in property <string> panel-status;
     in property <string> empty-note;
     in property <bool> tmdb-notice;
     in property <string> profile-name;
@@ -1164,13 +1148,11 @@ export component AppWindow inherits Window {
             }
         }
 
-        voice-toast := Toast {
+        panel-toast := Toast {
             u: root.u;
-            visible: root.voice-status != "";
-            heading: root.voice-transcript;
-            text: root.voice-status;
-            voice: true;
-            busy: root.voice-busy;
+            visible: root.panel-status != "";
+            heading: root.panel-heading;
+            text: root.panel-status;
             width: min(self.preferred-width, parent.width - 384 * root.u, 1200 * root.u);
             height: self.preferred-height;
             x: (parent.width - self.width) / 2;
@@ -1185,7 +1167,7 @@ export component AppWindow inherits Window {
             height: self.preferred-height;
             x: (parent.width - self.width) / 2;
             y: parent.height - 160 * root.u - self.height
-                - (voice-toast.visible ? voice-toast.height + 24 * root.u : 0);
+                - (panel-toast.visible ? panel-toast.height + 24 * root.u : 0);
         }
     }
 

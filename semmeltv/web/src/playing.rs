@@ -1,4 +1,4 @@
-use crate::api::{Api, Audio, Link, NowPlaying, Output, PhonePlay, Pick, Playing, Screen, TvAbilities, Voice};
+use crate::api::{Api, Audio, Link, NowPlaying, Output, PhonePlay, Pick, Playing, Screen, TvAbilities};
 use crate::live::{Live, Tv};
 use crate::public::Public;
 use crate::settings::dialogue_switch;
@@ -9,7 +9,6 @@ use topcoat::context::{Cx, app_context};
 use topcoat::runtime::{connected, link, procedure, shard};
 use topcoat::view::{View, attributes, component, emit, live, view};
 
-const SETTLE: Duration = Duration::from_secs(4);
 const BAR_ART_WIDTH: u32 = 160;
 const FRESH: Duration = Duration::from_secs(10);
 const SCRUB: Asset = asset!("./scrub.js");
@@ -806,46 +805,6 @@ async fn track(cx: &Cx) -> Result<impl View> {
             }
         }
     })
-}
-
-#[shard]
-pub async fn voice_feedback(cx: &Cx) -> Result<impl View> {
-    Ok(live! {
-        let mut changes = app_context::<Live>(cx).voice.clone();
-        let mut settled = !lasting(&changes.borrow());
-        loop {
-            let state = changes.borrow_and_update().clone();
-            let token = emit! { <i class="voice" data-state=(voice_state(&state, settled)) hidden=(true)></i> }?;
-            if !connected(cx) {
-                break Ok(token);
-            }
-            if settled || lasting(&state) || state.is_none() {
-                if changes.changed().await.is_err() {
-                    break Ok(token);
-                }
-                settled = false;
-            } else {
-                match tokio::time::timeout(SETTLE, changes.changed()).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(_)) => break Ok(token),
-                    Err(_) => settled = true,
-                }
-            }
-        }
-    })
-}
-
-fn lasting(state: &Option<Voice>) -> bool {
-    matches!(state, Some(Voice::Listening | Voice::Transcribing))
-}
-
-fn voice_state(state: &Option<Voice>, settled: bool) -> &'static str {
-    match state {
-        Some(Voice::Listening) => "listening",
-        Some(Voice::Transcribing) => "transcribing",
-        Some(_) if !settled => "done",
-        _ => "",
-    }
 }
 
 #[shard]

@@ -10,7 +10,6 @@ use crate::command::Command;
 use crate::db::Db;
 use crate::downloads::remote::Downloads;
 use crate::intent::{Control, Pick};
-use crate::led::Led;
 use crate::library::Library;
 use crate::offline::Store;
 use crate::profile::ProfileId;
@@ -23,7 +22,6 @@ use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, SubtitleSettings};
 use crate::tv::{self, Television};
-use crate::voice::{self, Heard};
 use crate::watching;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -49,7 +47,6 @@ pub enum Request {
     Seek(Seek),
     HideSkip,
     Speed(f64),
-    Listen,
     Subtitles(subtitles::Change),
     Storage(storage::Change),
     Dismiss(watching::Kind, String, ProfileId),
@@ -127,7 +124,6 @@ impl Outcome {
 }
 
 pub(crate) enum Signal {
-    Heard(Heard),
     Tv(crate::link::messages::FromTv),
     TvSet {
         play: String,
@@ -159,10 +155,6 @@ pub struct Setup {
     pub storage: Option<storage::Cache>,
     pub cache: Cache,
     pub db: Db,
-    pub speech: Option<String>,
-    pub wake_word: Option<voice::WakeWord>,
-    pub microphone: Option<String>,
-    pub led: Option<Led>,
     pub tv_kind: Option<tv::Kind>,
     pub tv_renderer: Option<String>,
     pub handoff: Option<crate::player::renderer::Handoff>,
@@ -211,10 +203,6 @@ impl Core {
             storage,
             cache,
             db,
-            speech,
-            wake_word,
-            microphone,
-            led,
             tv_kind,
             tv_renderer,
             handoff,
@@ -297,10 +285,6 @@ impl Core {
         let hardware = actor::Hardware {
             store,
             storage,
-            speech,
-            wake_word,
-            microphone,
-            led,
             handoff,
             tv: actor::local_tv(&core),
             segments: crate::segments::finder(),

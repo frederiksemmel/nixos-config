@@ -373,10 +373,10 @@ CENTRED = """() => {
 
 TOP_BAR = """() => {
   const box = (selector) => document.querySelector(selector).getBoundingClientRect();
-  const top = box("header.top"), brand = box(".brand"), talk = box(".microphone-talk"), settings = [...document.querySelectorAll("header.top .top-link")].pop().getBoundingClientRect();
+  const top = box("header.top"), brand = box(".brand"), settings = [...document.querySelectorAll("header.top .top-link")].pop().getBoundingClientRect();
   const border = parseFloat(getComputedStyle(document.querySelector("header.top")).borderBottomWidth);
-  return { above: talk.top - top.top, below: top.bottom - border - talk.bottom, left: brand.left, right: innerWidth - settings.right,
-           brand: brand.top + brand.height / 2 - (talk.top + talk.height / 2) };
+  return { above: settings.top - top.top, below: top.bottom - border - settings.bottom, left: brand.left, right: innerWidth - settings.right,
+           brand: brand.top + brand.height / 2 - (settings.top + settings.height / 2) };
 }"""
 
 FILTER_ROW = """() => {

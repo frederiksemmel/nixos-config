@@ -108,7 +108,6 @@ const UNMUTE_PHRASES: [&str; 9] = [
     "activa el sonido",
     "pon el sonido",
 ];
-const WAKE_WORDS: [&str; 3] = ["stevie", "the", "tv"];
 const TV_WORDS: [&str; 7] = ["tv", "telly", "television", "fernseher", "glotze", "tele", "televisor"];
 const ON_WORDS: [&str; 9] = [
     "on",
@@ -211,7 +210,7 @@ const MIN_CONTAINED_LENGTH: usize = 3;
 
 static SEASON_CODE: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^s(\d{1,2})(?:e(\d{1,3}))?$").unwrap());
 static ORDINAL_DIGITS: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^(\d{1,2})(?:st|nd|rd|th)$").unwrap());
-static SEMMELTV_SPOKEN: LazyLock<Regex> =
+static SEMMELTV_SPELT: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\b(?:s[aeiouy]{1,2}mm?[aeiouy]{1,2}ll?|simple) ?tv\b").unwrap());
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -265,67 +264,19 @@ impl Control {
     }
 }
 
-pub fn understand(transcript: &str, library: &Library, progress: &Progress) -> Action {
-    if let Some(command) = after_wake_word(transcript) {
-        if command.is_empty() {
-            return Action::Refuse(format!("Heard only the wake word in \"{}\"", transcript.trim()));
-        }
-        let action = interpret(&command, library, progress);
-        if !matches!(action, Action::Refuse(_)) {
-            return action;
-        }
-    }
-    interpret(transcript, library, progress)
-}
-
-fn after_wake_word(transcript: &str) -> Option<String> {
-    let words: Vec<&str> = transcript.split_whitespace().collect();
-    let key = |word: &str| library::normalize(&deunicode(word)).replace(' ', "");
-    let leftover = (0..WAKE_WORDS.len())
-        .map(|start| &WAKE_WORDS[start..])
-        .chain([&["v"][..]])
-        .find(|tail| {
-            words.len() >= tail.len() && words.iter().zip(tail.iter()).all(|(word, wake)| key(word) == *wake)
-        })?;
-    Some(words[leftover.len()..].join(" "))
-}
-
-const YES_WORDS: [&str; 12] = [
-    "yes", "yeah", "yep", "yup", "ok", "okay", "sure", "ja", "si", "go", "do", "download",
-];
-const NO_WORDS: [&str; 6] = ["no", "nope", "cancel", "nein", "dont", "stop"];
-const REPLY_FILLERS: [&str; 10] = [
-    "stevie", "tv", "it", "please", "that", "the", "thanks", "thank", "you", "so",
-];
-
-pub fn reply(transcript: &str) -> Option<bool> {
-    let command = after_wake_word(transcript).unwrap_or_else(|| transcript.to_string());
-    let folded = library::normalize(&deunicode(&command));
-    let words: Vec<&str> = folded
-        .split_whitespace()
-        .filter(|word| !REPLY_FILLERS.contains(word))
-        .collect();
-    match words.as_slice() {
-        [word] if NO_WORDS.contains(word) => Some(false),
-        [word] if YES_WORDS.contains(word) => Some(true),
-        [first, second] if YES_WORDS.contains(first) && YES_WORDS.contains(second) => Some(true),
-        _ => None,
-    }
-}
-
-fn interpret(transcript: &str, library: &Library, progress: &Progress) -> Action {
-    if let Some(control) = control(transcript) {
+pub fn understand(text: &str, library: &Library, progress: &Progress) -> Action {
+    if let Some(control) = control(text) {
         return Action::Control(control);
     }
-    match parse(transcript) {
+    match parse(text) {
         Some(request) => resolve(&request, library, progress),
-        None => Action::Refuse(format!("Could not understand \"{}\"", transcript.trim())),
+        None => Action::Refuse(format!("Could not understand \"{}\"", text.trim())),
     }
 }
 
-fn control(transcript: &str) -> Option<Control> {
-    let folded = library::normalize(&deunicode(transcript)).replace("t v", "tv");
-    let folded = SEMMELTV_SPOKEN.replace_all(&folded, SEMMELTV);
+fn control(text: &str) -> Option<Control> {
+    let folded = library::normalize(&deunicode(text)).replace("t v", "tv");
+    let folded = SEMMELTV_SPELT.replace_all(&folded, SEMMELTV);
     let tokens: Vec<&str> = folded
         .split_whitespace()
         .filter(|token| !FILLERS.contains(token))
@@ -527,12 +478,12 @@ fn strip_edges<'a, 'b>(mut tokens: &'a [&'b str], verb: &mut Verb) -> &'a [&'b s
         {
             tokens = rest;
         }
-        let spoken = phrases().find_map(|(found, phrase)| {
+        let said = phrases().find_map(|(found, phrase)| {
             starts_with(tokens, phrase)
                 .or_else(|| ends_with(tokens, phrase))
                 .map(|rest| (found, rest))
         });
-        if let Some((found, rest)) = spoken {
+        if let Some((found, rest)) = said {
             *verb = (*verb).max(found);
             tokens = rest;
         }
@@ -549,12 +500,12 @@ pub fn understand_typed_download(text: &str, library: &Library) -> Action {
     }
 }
 
-fn parse(transcript: &str) -> Option<Request> {
-    parse_words(transcript, true)
+fn parse(text: &str) -> Option<Request> {
+    parse_words(text, true)
 }
 
-fn parse_words(transcript: &str, spoken: bool) -> Option<Request> {
-    let folded = library::normalize(&deunicode(transcript));
+fn parse_words(text: &str, sentence: bool) -> Option<Request> {
+    let folded = library::normalize(&deunicode(text));
     let mut words = Words::new(folded.split_whitespace().map(str::to_string).collect());
     let mut season = SeasonChoice::Unspecified;
     let mut episode = None;
@@ -571,8 +522,8 @@ fn parse_words(transcript: &str, spoken: bool) -> Option<Request> {
         episode = Some(number);
     }
     let remaining = words.remaining();
-    let mut verb = if spoken { Verb::Play } else { Verb::Download };
-    let title = if spoken {
+    let mut verb = if sentence { Verb::Play } else { Verb::Download };
+    let title = if sentence {
         strip_edges(&remaining, &mut verb)
     } else {
         &remaining
@@ -903,7 +854,7 @@ mod tests {
     }
 
     #[test]
-    fn a_picked_title_plays_like_the_same_spoken_request() {
+    fn a_picked_title_plays_like_the_same_told_request() {
         let library = library();
         let progress = progress(1, 2, true);
         let show = |season, episode| Pick::Show {
@@ -1024,59 +975,6 @@ mod tests {
     }
 
     #[test]
-    fn the_end_of_the_wake_word_before_a_command_is_ignored() {
-        let library = library();
-        let progress = Progress::default();
-        for (heard, meant) in [
-            ("TV, play Outlander.", "play Outlander"),
-            ("V. Play Outlander", "play Outlander"),
-            ("the TV pause", "pause"),
-            ("Stevie the TV, stop.", "stop"),
-        ] {
-            assert_eq!(
-                understand(heard, &library, &progress),
-                understand(meant, &library, &progress),
-                "{heard}"
-            );
-        }
-        assert_eq!(
-            understand("TV off", &library, &progress),
-            Action::Control(Control::TvOff)
-        );
-        assert_eq!(
-            understand("TV, TV off", &library, &progress),
-            Action::Control(Control::TvOff)
-        );
-    }
-
-    #[test]
-    fn invented_subtitles_from_silence_do_nothing() {
-        for text in [
-            "Thank you for watching.",
-            "Untertitel im Auftrag des ZDF",
-            "Gracias por ver el video",
-        ] {
-            assert!(
-                matches!(understand(text, &library(), &Progress::default()), Action::Refuse(_)),
-                "{text}"
-            );
-        }
-    }
-
-    #[test]
-    fn a_short_yes_or_no_answers_an_offer() {
-        assert_eq!(reply("yes"), Some(true));
-        assert_eq!(reply("Yes, please."), Some(true));
-        assert_eq!(reply("Stevie, do it"), Some(true));
-        assert_eq!(reply("download it"), Some(true));
-        assert_eq!(reply("ok go"), Some(true));
-        assert_eq!(reply("no"), Some(false));
-        assert_eq!(reply("Nein."), Some(false));
-        assert_eq!(reply("play outlander"), None);
-        assert_eq!(reply("download outlander season 8"), None);
-    }
-
-    #[test]
     fn parse_understands_requests_in_every_language() {
         let request = |verb, title: &str, season, episode| {
             Some(Request {
@@ -1194,7 +1092,6 @@ mod tests {
             ("Samuel TV input", Control::ShowSemmelTv),
             ("Simple TV", Control::ShowSemmelTv),
             ("Turn on SemmelTV", Control::ShowSemmelTv),
-            ("Stevie the TV, switch to SemmelTV.", Control::ShowSemmelTv),
         ];
         let library = library();
         for (text, expected) in rows {
@@ -1220,7 +1117,7 @@ mod tests {
     }
 
     #[test]
-    fn spoken_titles_resolve_to_files() {
+    fn told_titles_resolve_to_files() {
         let library = library_from_paths(
             &[
                 &PATHS[..],

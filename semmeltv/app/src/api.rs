@@ -24,7 +24,7 @@ use crate::tmdb::Kind;
 use crate::together::Spot;
 use crate::tv;
 use crate::watching::{self, Current};
-use axum::extract::ws::{CloseFrame, Message, WebSocket, WebSocketUpgrade};
+use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -32,20 +32,15 @@ use axum::routing::{delete, get, post, put};
 use axum::{Extension, Json, Router, middleware};
 use serde::{Deserialize, Serialize};
 use std::path::{Path as FsPath, PathBuf};
-use std::process::Stdio;
-use std::sync::Arc;
 use std::time::UNIX_EPOCH;
-use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::broadcast;
 
 const NEWEST: usize = 12;
 const IMAGE_CACHE: &str = "private, max-age=86400";
-const TRY_AGAIN_LATER: u16 = 1013;
 
 pub struct Config {
     pub address: String,
-    pub phone_microphone: Option<String>,
     pub library: PathBuf,
     pub meta: PathBuf,
     pub stream: PathBuf,
@@ -139,7 +134,6 @@ impl TryFrom<ScreenRequest> for ScreenCommand {
 struct Api {
     core: Core,
     root: PathBuf,
-    microphone: Option<Arc<Microphone>>,
     library: PathBuf,
     stream: PathBuf,
     gate: Option<Gate>,
@@ -153,23 +147,12 @@ impl Api {
     }
 }
 
-struct Microphone {
-    device: String,
-    busy: tokio::sync::Mutex<()>,
-}
-
 pub fn spawn(config: Config, core: Core) {
     let feedback = crate::feedback::Feedback::new(config.feedback, core.bus().clone(), config.grim);
     let deploy = crate::deploy::Deploy::new(feedback.clone(), PathBuf::from(crate::feedback::REVISION));
     let api = Api {
         core,
         root: config.meta,
-        microphone: config.phone_microphone.map(|device| {
-            Arc::new(Microphone {
-                device,
-                busy: tokio::sync::Mutex::new(()),
-            })
-        }),
         library: config.library,
         stream: config.stream,
         gate: config.gate,
@@ -210,7 +193,6 @@ fn router(api: Api) -> Router {
         .route("/api/people/{person}/photo", get(photo))
         .route("/api/play", post(play))
         .route("/api/command", post(command))
-        .route("/api/listen", post(listen))
         .route("/api/playback", get(playback))
         .route("/api/playback/seek", post(seek))
         .route("/api/playback/skip", post(skip))
@@ -220,7 +202,6 @@ fn router(api: Api) -> Router {
         .route("/api/tv-profile", get(tv_profile).post(show_my_profile))
         .route("/api/events", get(events))
         .route("/api/screen", get(screen_view).post(screen_command))
-        .route("/api/microphone", get(microphone))
         .route("/api/audio", get(audio_view).post(choose_audio))
         .route("/api/audio/pair", post(pair_headphones).delete(cancel_pairing))
         .route("/api/audio/headphones", delete(forget_headphones))
@@ -1319,10 +1300,6 @@ async fn command(State(api): State<Api>, Who(profile): Who, Json(body): Json<Com
     ask(&api.core, Request::Understand(body.text, profile)).await
 }
 
-async fn listen(State(api): State<Api>) -> Response {
-    ask(&api.core, Request::Listen).await
-}
-
 #[derive(Serialize)]
 struct PlaybackView {
     now_playing: Option<crate::bus::NowPlaying>,
@@ -1775,55 +1752,10 @@ async fn send_event(socket: &mut WebSocket, event: &Event) -> Result<(), axum::E
     socket.send(Message::Text(text.into())).await
 }
 
-async fn microphone(State(api): State<Api>, upgrade: WebSocketUpgrade) -> Response {
-    match api.microphone {
-        Some(microphone) => upgrade.on_upgrade(move |socket| stream_microphone(socket, microphone)),
-        None => not_found("this TV takes no phone microphone".to_string()),
-    }
-}
-
-async fn stream_microphone(mut socket: WebSocket, microphone: Arc<Microphone>) {
-    let Ok(_streaming) = microphone.busy.try_lock() else {
-        let frame = CloseFrame {
-            code: TRY_AGAIN_LATER,
-            reason: "another phone is streaming".into(),
-        };
-        let _ = socket.send(Message::Close(Some(frame))).await;
-        return;
-    };
-    let player = tokio::process::Command::new("aplay")
-        .args(["-q", "-D", &microphone.device])
-        .args(["-t", "raw", "-f", "S16_LE", "-c", "1", "-r", "16000", "-B", "200000"])
-        .stdin(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn();
-    let mut player = match player {
-        Ok(player) => player,
-        Err(error) => return eprintln!("phone microphone: aplay: {error}"),
-    };
-    eprintln!("phone microphone streaming");
-    if let Some(mut input) = player.stdin.take() {
-        while let Some(Ok(message)) = socket.recv().await {
-            match message {
-                Message::Binary(bytes) => {
-                    if let Err(error) = input.write_all(&bytes).await {
-                        eprintln!("phone microphone: {error}");
-                        break;
-                    }
-                }
-                Message::Close(_) => break,
-                _ => {}
-            }
-        }
-    }
-    let _ = player.wait().await;
-    eprintln!("phone microphone stopped");
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::{NowPlaying, Voice};
+    use crate::bus::{Notice, NowPlaying};
     use crate::import::library_from_paths;
     use crate::profile::ProfileId;
     use crate::progress::Position;
@@ -1928,7 +1860,7 @@ mod tests {
         library
     }
 
-    fn serve(root: PathBuf, microphone: Option<String>) -> Server {
+    fn serve(root: PathBuf) -> Server {
         let mut progress = Progress::default();
         let position = Position {
             season: 1,
@@ -1978,12 +1910,6 @@ mod tests {
         let api = Api {
             core: core.clone(),
             root,
-            microphone: microphone.map(|device| {
-                Arc::new(Microphone {
-                    device,
-                    busy: tokio::sync::Mutex::new(()),
-                })
-            }),
             library: PathBuf::from("/lib"),
             stream: std::env::temp_dir().join(format!("semmeltv-api-stream-{}", std::process::id())),
             gate: None,
@@ -2022,7 +1948,7 @@ mod tests {
 
     #[test]
     fn usage_answers_who_watched_what_in_the_window_asked_for() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let now = watching::now();
         let db = server.core.db();
         server
@@ -2052,7 +1978,7 @@ mod tests {
 
     #[test]
     fn a_deploy_is_asked_for_on_the_tv_and_beast_reports_how_it_went() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let (status, refused) = post(&server, "/api/deploy", json!({}));
         assert_eq!(status, 409, "{refused}");
         let (_, before) = get(&server, "/api/deploy");
@@ -2105,7 +2031,7 @@ mod tests {
 
     #[test]
     fn feedback_is_kept_as_files_and_read_back_newest_first() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let trail = json!([{ "kind": "tap", "message": "button \"Play\"" }]);
         let sent = json!({ "message": "The list jumped", "page": "/shows/dark", "client": { "device": "iPhone 1a2b", "trail": trail } });
         let (status, first) = post(&server, "/api/feedback", sent.clone());
@@ -2128,7 +2054,7 @@ mod tests {
 
     #[test]
     fn feedback_is_new_until_someone_marks_it_and_lists_by_status() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let sent = json!({ "message": "The sheet reopens" });
         let (_, first) = post(&server, "/api/feedback", sent.clone());
         let (_, second) = post(&server, "/api/feedback", sent);
@@ -2201,7 +2127,7 @@ mod tests {
 
     #[test]
     fn a_comment_joins_the_thread_and_reopens_a_settled_report() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let (_, sent) = post(&server, "/api/feedback", json!({ "message": "The sheet reopens" }));
         let id = sent["id"].as_str().unwrap();
         let review = json!({ "state": "needs_review", "why": "Two ways", "decide": "a) close it, b) keep it" });
@@ -2272,7 +2198,7 @@ mod tests {
 
     #[test]
     fn the_library_json_lists_cards_with_progress() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let (status, body) = get(&server, "/api/library");
         assert_eq!(status, 200);
         let titles = |list: &str| -> Vec<String> {
@@ -2325,7 +2251,7 @@ mod tests {
 
     #[test]
     fn a_show_lists_its_seasons_and_where_to_carry_on() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let (status, body) = get(&server, "/api/shows/outlander");
         assert_eq!(status, 200);
         assert_eq!(
@@ -2388,7 +2314,7 @@ mod tests {
 
     #[test]
     fn a_show_says_who_watches_it_together_with_me_and_where_they_are() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let together = |server: &Server| get(server, "/api/shows/outlander").1["together"].clone();
         let names = |people: &Value| -> Vec<String> {
             people
@@ -2436,7 +2362,7 @@ mod tests {
 
     #[test]
     fn a_phone_turns_notifications_on_and_off_and_hears_that_they_are_on() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let (status, key) = get(&server, "/api/push");
         assert_eq!(status, 200);
         assert_eq!(key["key"].as_str().unwrap().len(), 87);
@@ -2499,7 +2425,7 @@ mod tests {
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, b"jpeg").unwrap();
         std::fs::write(artwork::poster(&art, Kind::Movie, 438_631), b"poster").unwrap();
-        let server = serve(root.clone(), None);
+        let server = serve(root.clone());
         let url = format!("{}/api/movies/dune-2021/backdrop", server.base);
         let mut response = agent().get(&url).call().unwrap();
         assert_eq!(response.status(), 200);
@@ -2539,8 +2465,8 @@ mod tests {
     }
 
     #[test]
-    fn the_event_stream_starts_with_playback_and_carries_voice_events() {
-        let server = serve(no_root(), None);
+    fn the_event_stream_starts_with_playback_and_carries_notices() {
+        let server = serve(no_root());
         server.bus.playback(Some(NowPlaying {
             title: "Dune".to_string(),
             ..NowPlaying::default()
@@ -2552,25 +2478,22 @@ mod tests {
         assert_eq!(first["type"], "playback");
         assert_eq!(first["now_playing"]["title"], "Dune");
         assert_eq!(next()["screen"]["kind"], "tv");
-        server.bus.voice(Voice::Listening);
-        assert_eq!(next(), json!({ "type": "voice", "state": "listening" }));
+        server.bus.notice(Notice {
+            heading: "Dune".to_string(),
+            status: "Not found".to_string(),
+            ok: false,
+        });
+        assert_eq!(
+            next(),
+            json!({ "type": "notice", "heading": "Dune", "status": "Not found", "ok": false })
+        );
         server.bus.playback(None);
         assert_eq!(next(), json!({ "type": "playback", "now_playing": null }));
     }
 
     #[test]
-    fn without_a_phone_microphone_its_socket_is_missing() {
-        let server = serve(no_root(), None);
-        let url = format!("{}/api/microphone", server.base.replace("http", "ws"));
-        match tungstenite::connect(url) {
-            Err(tungstenite::Error::Http(response)) => assert_eq!(response.status(), 404),
-            other => panic!("expected a 404, got {:?}", other.map(|_| ())),
-        }
-    }
-
-    #[test]
     fn api_routes_forward_to_the_core() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         let unsupported = "Volume control is not supported by this TV";
         let rows: Vec<(&str, &str, Value, u16, Vec<(&str, Value)>, Option<&str>)> = vec![
             (
@@ -2738,7 +2661,7 @@ mod tests {
 
     #[test]
     fn dialogue_mode_is_off_until_switched_on_and_stays_on() {
-        let server = serve(no_root(), None);
+        let server = serve(no_root());
         assert_eq!(get(&server, "/api/audio/dialogue"), (200, json!({ "on": false })));
         let (status, _) = post(&server, "/api/audio/dialogue", json!({ "on": true }));
         assert_eq!(status, 200);

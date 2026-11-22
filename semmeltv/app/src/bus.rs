@@ -18,7 +18,7 @@ const BACKLOG: usize = 64;
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
-    Voice(Voice),
+    Notice(Notice),
     Playback {
         now_playing: Option<NowPlaying>,
     },
@@ -33,7 +33,7 @@ pub enum Event {
     #[serde(skip)]
     Message(String),
     #[serde(skip)]
-    Panel(Option<Panel>),
+    Panel(Panel),
     #[serde(skip)]
     UpNext(Option<up_next::Card>),
     #[serde(skip)]
@@ -44,7 +44,7 @@ impl Event {
     pub fn for_phones(&self) -> bool {
         matches!(
             self,
-            Self::Voice(_) | Self::Playback { .. } | Self::Audio(_) | Self::Screen { .. }
+            Self::Notice(_) | Self::Playback { .. } | Self::Audio(_) | Self::Screen { .. }
         )
     }
 }
@@ -81,25 +81,14 @@ pub struct Mate {
 pub struct Panel {
     pub heading: String,
     pub status: String,
-    pub hold: Option<Duration>,
+    pub hold: Duration,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(tag = "state", rename_all = "kebab-case")]
-pub enum Voice {
-    Listening,
-    Transcribing,
-    Heard {
-        text: String,
-        action: String,
-        understood: bool,
-    },
-    Nothing,
-    Cancelled,
-    NoMicrophone,
-    Failed {
-        message: String,
-    },
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct Notice {
+    pub heading: String,
+    pub status: String,
+    pub ok: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -217,7 +206,7 @@ impl Bus {
         let _ = self.events.send(Event::Together(together));
     }
 
-    pub fn panel(&self, panel: Option<Panel>) {
+    pub fn panel(&self, panel: Panel) {
         let _ = self.events.send(Event::Panel(panel));
     }
 
@@ -255,8 +244,8 @@ impl Bus {
         }
     }
 
-    pub fn voice(&self, voice: Voice) {
-        let _ = self.events.send(Event::Voice(voice));
+    pub fn notice(&self, notice: Notice) {
+        let _ = self.events.send(Event::Notice(notice));
     }
 
     pub fn playback(&self, now_playing: Option<NowPlaying>) {
@@ -280,23 +269,19 @@ mod tests {
 
     #[test]
     fn events_are_flat_json_objects_tagged_with_their_type() {
-        let heard = Event::Voice(Voice::Heard {
-            text: "play dune".to_string(),
-            action: "Playing Dune".to_string(),
-            understood: true,
+        let notice = Event::Notice(Notice {
+            heading: "Dune".to_string(),
+            status: "Confirm on the phone's Downloads page.".to_string(),
+            ok: true,
         });
         assert_eq!(
-            serde_json::to_value(&heard).unwrap(),
-            json!({ "type": "voice", "state": "heard", "text": "play dune", "action": "Playing Dune", "understood": true })
+            serde_json::to_value(&notice).unwrap(),
+            json!({ "type": "notice", "heading": "Dune", "status": "Confirm on the phone's Downloads page.", "ok": true })
         );
         let stopped = Event::Playback { now_playing: None };
         assert_eq!(
             serde_json::to_value(&stopped).unwrap(),
             json!({ "type": "playback", "now_playing": null })
-        );
-        assert_eq!(
-            serde_json::to_value(Event::Voice(Voice::NoMicrophone)).unwrap(),
-            json!({ "type": "voice", "state": "no-microphone" })
         );
     }
 

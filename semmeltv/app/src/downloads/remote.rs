@@ -1,5 +1,5 @@
 use super::resolve::Wish;
-use super::{Outcome, Proposal, SearchBody};
+use super::{Proposal, SearchBody};
 use crate::subfetch::{Fetched, Wanted};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -53,17 +53,10 @@ impl Downloads {
                 episode,
             }),
             pick: None,
-            from: Some("voice".to_string()),
+            from: Some("tv".to_string()),
             by,
         };
         self.post("/api/downloads/search", &body)
-    }
-
-    pub fn confirm(&self, proposal: &str) -> Result<Outcome, String> {
-        self.post(
-            "/api/downloads/confirm",
-            &serde_json::json!({ "proposal": proposal, "choice": 0 }),
-        )
     }
 
     pub fn subtitles(&self, wanted: &Wanted) -> Result<Fetched, String> {
@@ -88,9 +81,5 @@ impl Downloads {
                 .unwrap_or("downloads: the subtitle fetch failed")
                 .to_string())
         }
-    }
-
-    pub fn dismiss(&self, proposal: &str) -> Result<Outcome, String> {
-        self.post("/api/downloads/dismiss", &serde_json::json!({ "proposal": proposal }))
     }
 }

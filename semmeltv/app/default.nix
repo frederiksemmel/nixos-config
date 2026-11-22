@@ -7,7 +7,6 @@
   fontconfig,
   mpv,
   wlr-randr,
-  alsa-utils,
   bluez,
   ffmpeg-headless,
   callPackage,
@@ -68,7 +67,6 @@ craneLib.buildPackage (
         lib.makeBinPath [
           mpv
           wlr-randr
-          alsa-utils
           bluez
           ffmpeg-headless
           (callPackage ./bluez-alsa.nix { })

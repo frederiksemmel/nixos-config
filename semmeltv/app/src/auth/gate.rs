@@ -67,7 +67,7 @@ pub fn access(method: &Method, path: &str) -> Access {
         | ["api", "downloads", "jobs", _, "stop"]
         | ["api", "downloads", "pcloud", ..] => Access::Admin,
         ["api", "downloads", ..] => Access::Needs(Capability::Download),
-        ["api", "play" | "command" | "listen" | "microphone" | "volume", ..]
+        ["api", "play" | "command" | "volume", ..]
         | ["api", "audio", "track" | "pair" | "headphones" | "delay"]
         | ["api", "subtitles", "track" | "toggle" | "delay"] => Access::Needs(Capability::ControlTv),
         ["api", "playback", _] | ["api", "tv", _] | ["api", "tv-profile"] | ["api", "audio"] if writes(method) => {
@@ -212,8 +212,6 @@ mod tests {
         let (get, post, put, delete) = (Method::GET, Method::POST, Method::PUT, Method::DELETE);
         let rows = [
             (&post, "/api/command", Access::Needs(Capability::ControlTv)),
-            (&post, "/api/listen", Access::Needs(Capability::ControlTv)),
-            (&get, "/api/microphone", Access::Needs(Capability::ControlTv)),
             (&get, "/api/playback", Access::Signed),
             (&post, "/api/playback/seek", Access::Needs(Capability::ControlTv)),
             (&post, "/api/playback/toggle", Access::Needs(Capability::ControlTv)),

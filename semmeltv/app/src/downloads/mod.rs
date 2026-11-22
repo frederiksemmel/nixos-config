@@ -1692,12 +1692,12 @@ added = 2025-01-01
     }
 
     #[test]
-    fn whoever_confirms_starts_the_download_and_a_voice_offer_keeps_the_person_who_asked() {
+    fn whoever_confirms_starts_the_download_and_a_tv_offer_keeps_the_person_who_asked() {
         let mut book = Book::default();
         let searched = |id: &str, by: Option<&str>| Proposal {
             id: id.to_string(),
             asked: "dark".to_string(),
-            from: "voice".to_string(),
+            from: "tv".to_string(),
             by: by.map(str::to_string),
             created: now(),
             answer: Answer::Searched(Searched {
@@ -1843,7 +1843,7 @@ added = 2025-01-01
         serde_json::to_value(Proposal {
             id: "p".to_string(),
             asked: "dark season 2".to_string(),
-            from: "voice".to_string(),
+            from: "tv".to_string(),
             by: None,
             created: 1,
             answer,

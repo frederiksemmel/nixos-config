@@ -20,7 +20,6 @@ mod hold;
 mod imdb;
 mod import;
 mod intent;
-mod led;
 mod library;
 mod library_db;
 #[allow(dead_code)]
@@ -53,9 +52,7 @@ mod tv;
 mod ui;
 mod up_next;
 mod usage;
-mod voice;
 mod watching;
-mod wyoming;
 
 use cache::Cache;
 use db::Db;
@@ -65,18 +62,14 @@ use std::fs;
 use std::future::Future;
 use std::path::{self, Path, PathBuf};
 use std::process::ExitCode;
-use std::sync::mpsc;
-use std::time::{Duration, Instant};
 
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
-                [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
-                [--api HOST:PORT]";
-const DEFAULT_WAKE_WORD: &str = "stevie_the_tv";
+                [--refresh] [--api HOST:PORT]";
 
 struct Args {
     mode: String,
@@ -92,10 +85,6 @@ struct Args {
     refresh: bool,
     transcript: String,
     toasty: Vec<String>,
-    recording: Option<PathBuf>,
-    speech: Option<String>,
-    wake: Option<String>,
-    wake_word: String,
     api: Option<String>,
 }
 
@@ -129,13 +118,6 @@ fn parse_args() -> Result<Args, String> {
         refresh: false,
         transcript: String::new(),
         toasty: Vec::new(),
-        recording: None,
-        speech: env::var("SEMMELTV_SPEECH").ok().filter(|address| !address.is_empty()),
-        wake: env::var("SEMMELTV_WAKE").ok().filter(|address| !address.is_empty()),
-        wake_word: env::var("SEMMELTV_WAKE_WORD")
-            .ok()
-            .filter(|name| !name.is_empty())
-            .unwrap_or_else(|| DEFAULT_WAKE_WORD.to_string()),
         api: env::var("SEMMELTV_API").ok().filter(|address| !address.is_empty()),
     };
     let mut raw = env::args().skip(1);
@@ -151,17 +133,10 @@ fn parse_args() -> Result<Args, String> {
                 args.transcript = value("understand")?;
                 args.mode = argument;
             }
-            "hear" => {
-                args.recording = Some(value("hear")?.into());
-                args.mode = argument;
-            }
             "invite" => {
                 args.transcript = value("invite")?;
                 args.mode = argument;
             }
-            "--speech" => args.speech = Some(value("--speech")?),
-            "--wake" => args.wake = Some(value("--wake")?),
-            "--wake-word" => args.wake_word = value("--wake-word")?,
             "--api" => args.api = Some(value("--api")?),
             "--library" => args.library = value("--library")?.into(),
             "--meta" => args.meta = Some(value("--meta")?.into()),
@@ -209,13 +184,6 @@ fn list(library: &library::Library) {
     for movie in &library.movies {
         println!("{} {:?}", movie.title, movie.year);
     }
-}
-
-fn wake_word(args: &Args) -> Option<voice::WakeWord> {
-    args.wake.clone().map(|address| voice::WakeWord {
-        address,
-        name: args.wake_word.clone(),
-    })
 }
 
 async fn open_db(args: &Args) -> Result<Db, String> {
@@ -273,7 +241,6 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
         }),
         _ => None,
     };
-    let wake_word = wake_word(&args);
     let meta = args.meta().to_path_buf();
     let kind = env::var("SEMMELTV_TV_KIND").ok().filter(|kind| !kind.is_empty());
     let feedback =
@@ -287,9 +254,6 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
         address,
         library: args.library.clone(),
         meta: meta.clone(),
-        phone_microphone: env::var("SEMMELTV_PHONE_MICROPHONE")
-            .ok()
-            .filter(|device| !device.is_empty()),
         stream: env_path("SEMMELTV_STREAM_DIR").unwrap_or_else(|| PathBuf::from("/dev/shm/semmeltv-stream")),
         gate,
         feedback,
@@ -306,10 +270,6 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
         tv_kind: kind.as_deref().map(tv::Kind::parse).transpose()?,
         tv_renderer: env::var("SEMMELTV_TV_RENDERER").ok().filter(|url| !url.is_empty()),
         handoff: handoff()?,
-        wake_word,
-        speech: args.speech,
-        microphone: env::var("SEMMELTV_MICROPHONE").ok().filter(|device| !device.is_empty()),
-        led: env_path("SEMMELTV_LED").map(|dir| led::Led::new(&dir)),
         headphones: env_text("SEMMELTV_HEADPHONES").is_some_and(|value| value == "bluetooth"),
         downloads: env_text("SEMMELTV_DOWNLOADS").map(downloads::remote::Downloads::new),
         push_subject: env_text("SEMMELTV_ORIGINS")
@@ -653,50 +613,6 @@ fn run_downloads(args: &Args) -> Result<(), String> {
     })
 }
 
-fn hear(args: &Args) -> Result<(), String> {
-    let path = args.recording.as_ref().ok_or("hear needs a WAV file")?;
-    let speech = args
-        .speech
-        .as_deref()
-        .ok_or("hear needs --speech HOST:PORT or SEMMELTV_SPEECH")?;
-    let bytes = fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
-    let samples = voice::read_wav(&bytes)?;
-    let length = Duration::from_secs_f64(samples.len() as f64 / f64::from(wyoming::RATE));
-    let wake_word = wake_word(args);
-    match &wake_word {
-        Some(wake_word) => println!("recording {:.2}s, waiting for {}", length.as_secs_f64(), wake_word.name),
-        None => println!("recording {:.2}s", length.as_secs_f64()),
-    }
-    let listen = wake_word.is_none();
-    let (heard, received) = mpsc::channel();
-    let voice = voice::spawn(
-        speech.to_string(),
-        wake_word,
-        voice::Source::Recording(samples),
-        move |event| {
-            let _ = heard.send(event);
-        },
-    );
-    if listen {
-        voice.listen();
-    }
-    let started = Instant::now();
-    let text = loop {
-        let event = received
-            .recv_timeout(length + Duration::from_secs(10))
-            .map_err(|_| "nothing happened: no wake word heard")?;
-        println!("{:.2}s {event:?}", started.elapsed().as_secs_f64());
-        match event {
-            voice::Heard::Listening | voice::Heard::Transcribing => {}
-            voice::Heard::Transcript(text) => break text,
-            other => return Err(format!("{other:?}")),
-        }
-    };
-    let library = library::load(&args.library, args.meta())?;
-    println!("{:?}", intent::understand(&text, &library, &stored_progress(args)));
-    Ok(())
-}
-
 fn run() -> Result<(), String> {
     let args = parse_args()?;
     let cache = Cache::new(args.cache.clone());
@@ -731,7 +647,6 @@ fn run() -> Result<(), String> {
             }
         }
         "library" => run_library(&args)?,
-        "hear" => hear(&args)?,
         "invite" => waiting(invite(&args))??,
         "stats" => waiting(stats(&args))??,
         "tv-set" => run_tv_set(&args.toasty)?,

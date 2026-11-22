@@ -749,18 +749,18 @@ pub async fn search_download(cx: &Cx, query: Signal<String>) -> Result<impl View
 #[component]
 async fn waiting(cx: &Cx, shown: Signal<String>) -> Result<impl View> {
     let overview = downloads(cx)?.overview().await.unwrap_or_default();
-    let voice: Vec<Proposal> = overview
+    let asked: Vec<Proposal> = overview
         .proposals
         .into_iter()
-        .filter(|proposal| proposal.from == "voice" && proposal.found())
+        .filter(|proposal| proposal.from == "tv" && proposal.found())
         .collect();
     Ok(view! {
-        if !voice.is_empty() {
+        if !asked.is_empty() {
             <section class="settings">
-                <h2>"Asked for by voice"</h2>
+                <h2>"Asked for on the TV"</h2>
                 <div class="tracks">
                     #[key(found.id.clone())]
-                    for found in &voice {
+                    for found in &asked {
                         let id = found.id.clone();
                         <button type="button" class="track" @click=$(|_e| shown.set(id.to_owned()))>
                             <b>(found.heading().to_string())</b>
@@ -885,7 +885,7 @@ mod tests {
     #[test]
     fn a_proposal_reads_as_refused_a_question_with_its_season_or_a_search() {
         let read = |answer: Value| {
-            let mut proposal = json!({ "id": "p", "asked": "dark season 2", "from": "voice", "created": 1 });
+            let mut proposal = json!({ "id": "p", "asked": "dark season 2", "from": "tv", "created": 1 });
             proposal
                 .as_object_mut()
                 .unwrap()

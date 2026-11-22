@@ -505,27 +505,16 @@ fn normal_speed() -> f64 {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(tag = "state", rename_all = "kebab-case")]
-pub enum Voice {
-    Listening,
-    Transcribing,
-    Heard {
-        text: String,
-        action: String,
-        understood: bool,
-    },
-    Nothing,
-    Cancelled,
-    NoMicrophone,
-    Failed {
-        message: String,
-    },
+pub struct Notice {
+    pub heading: String,
+    pub status: String,
+    pub ok: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
-    Voice(Voice),
+    Notice(Notice),
     Playback { now_playing: Option<NowPlaying> },
     Audio(Audio),
     Screen { screen: Screen },
@@ -1307,13 +1296,14 @@ mod tests {
 
     #[test]
     fn events_from_the_tv_are_understood() {
-        let heard = r#"{"type":"voice","state":"heard","text":"play dune","action":"Playing Dune","understood":true}"#;
+        let notice =
+            r#"{"type":"notice","heading":"Dune","status":"Confirm on the phone's Downloads page.","ok":true}"#;
         assert_eq!(
-            serde_json::from_str::<Event>(heard).unwrap(),
-            Event::Voice(Voice::Heard {
-                text: "play dune".to_string(),
-                action: "Playing Dune".to_string(),
-                understood: true
+            serde_json::from_str::<Event>(notice).unwrap(),
+            Event::Notice(Notice {
+                heading: "Dune".to_string(),
+                status: "Confirm on the phone's Downloads page.".to_string(),
+                ok: true
             })
         );
         let playing = r#"{"type":"playback","now_playing":{"title":"Dune","caption":"2021","kind":"movie","movie":"dune-2021",

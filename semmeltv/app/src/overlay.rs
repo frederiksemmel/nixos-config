@@ -297,8 +297,8 @@ mod tests {
 
     #[test]
     fn a_toast_is_centred_and_fits_its_text() {
-        let short = toast("", "Listening…");
-        let long = toast("“Play White Lotus”", "Playing The White Lotus · season 1, episode 1");
+        let short = toast("", "Paused");
+        let long = toast("The White Lotus", "Playing The White Lotus · season 1, episode 1");
         let (left, right) = toast_box(&long);
         assert!((left + right - f64::from(WIDTH)).abs() < 0.2);
         assert!(toast_box(&short).1 - toast_box(&short).0 < right - left);
@@ -306,7 +306,7 @@ mod tests {
     }
 
     #[test]
-    fn a_long_transcript_is_shortened_to_one_line() {
+    fn a_long_heading_is_shortened_to_one_line() {
         let rendered = toast(&"word ".repeat(40), "Playing");
         let (left, right) = toast_box(&rendered);
         assert!(left >= LEFT && right <= RIGHT);

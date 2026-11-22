@@ -34,7 +34,7 @@ pub enum ToTv {
     Home(Home),
     Key(Command),
     Message(String),
-    Panel(Option<Panel>),
+    Panel(Panel),
     Together(Together),
     UpNext(Option<UpNextCard>),
     Play(Box<Play>),
@@ -77,7 +77,6 @@ pub enum ToTv {
         status: String,
         hold_ms: u64,
     },
-    HideToast,
     Segments {
         play: String,
         segments: Vec<Segment>,
@@ -116,7 +115,6 @@ impl ToTv {
             Self::AudioDevice { .. } => "audio device",
             Self::Dialogue { .. } => "dialogue",
             Self::Toast { .. } => "toast",
-            Self::HideToast => "hide toast",
             Self::Segments { .. } => "segments",
             Self::Subtitles { .. } => "subtitles",
             Self::Stop { .. } => "stop",
@@ -423,12 +421,11 @@ mod tests {
             }),
             ToTv::Key(Command::Down),
             ToTv::Message("Dialogue mode on".to_string()),
-            ToTv::Panel(Some(Panel {
-                heading: "“play dark”".to_string(),
-                status: "Playing Dark".to_string(),
-                hold: Some(Duration::from_secs(6)),
-            })),
-            ToTv::Panel(None),
+            ToTv::Panel(Panel {
+                heading: "Dark season 2".to_string(),
+                status: "Confirm on the phone's Downloads page.".to_string(),
+                hold: Duration::from_secs(60),
+            }),
             ToTv::Together(Together {
                 show: "dark".to_string(),
                 people: vec![Mate {
@@ -492,7 +489,6 @@ mod tests {
                 status: "Speed 1.25×".to_string(),
                 hold_ms: 3000,
             },
-            ToTv::HideToast,
             ToTv::Segments {
                 play: "a-play".to_string(),
                 segments: vec![Segment {

@@ -1,14 +1,6 @@
-{ config, pkgs, ... }:
+{ pkgs, ... }:
 let
   buildEnv = import ./app/build-env.nix pkgs;
-  parakeet = pkgs.callPackage ./parakeet { };
-  parakeetModel = pkgs.callPackage ./parakeet/model.nix { };
-  speechPort = toString config.processes.speech.ports.wyoming.value;
-  wakePort = toString config.processes.wake.ports.wyoming.value;
-  listening = port: {
-    exec = "exec 3<>/dev/tcp/127.0.0.1/${port}";
-    period = 1;
-  };
 in
 {
   languages.rust = {
@@ -17,7 +9,6 @@ in
   };
 
   packages = with pkgs; [
-    alsa-utils
     bacon
     fontconfig
     mpv
@@ -28,9 +19,6 @@ in
 
   env = {
     SEMMELTV_FONT_DIR = buildEnv.SEMMELTV_FONT_DIR;
-    SEMMELTV_SPEECH = "tcp://127.0.0.1:${speechPort}";
-    SEMMELTV_WAKE = "tcp://127.0.0.1:${wakePort}";
-    SEMMELTV_MICROPHONE = "default";
   };
 
   scripts.semmeltv-stats = {
@@ -56,19 +44,6 @@ in
         dir="''${library#"$HOME/pcloud/"}" recursive=true > /dev/null \
         || echo "warming $library failed; the library loads folder by folder"
     '';
-  };
-
-  processes = {
-    speech = {
-      ports.wyoming.allocate = 10300;
-      exec = "${pkgs.lib.getExe parakeet} --uri tcp://127.0.0.1:${speechPort} --model ${parakeetModel}";
-      ready = listening speechPort;
-    };
-    wake = {
-      ports.wyoming.allocate = 10400;
-      exec = "${pkgs.lib.getExe pkgs.wyoming-openwakeword} --uri tcp://127.0.0.1:${wakePort} --custom-model-dir ${./wake/models}";
-      ready = listening wakePort;
-    };
   };
 
   enterShell = ''

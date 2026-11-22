@@ -56,10 +56,9 @@ const WAITING_ID: u64 = 10;
 const PROMPT_ID: u64 = 1;
 const OVERLAY_ID: u64 = 3;
 const TOAST_ID: u64 = 4;
-const KEYBINDS: [(&str, &str); 12] = [
+const KEYBINDS: [(&str, &str); 11] = [
     ("ESC", "script-message semmeltv-back"),
     ("BS", "script-message semmeltv-back"),
-    ("v", "script-message semmeltv-listen"),
     ("s", "script-message semmeltv-subtitles"),
     ("d", "script-message semmeltv-dialogue"),
     ("ENTER", "script-message semmeltv-select"),
@@ -164,7 +163,6 @@ fn key_command(message: &str) -> Option<Command> {
         "semmeltv-up" => Some(Command::Up),
         "semmeltv-down" => Some(Command::Down),
         "semmeltv-back" => Some(Command::Back),
-        "semmeltv-listen" => Some(Command::Listen),
         "semmeltv-subtitles" => Some(Command::Subtitles),
         "semmeltv-dialogue" => Some(Command::Dialogue),
         _ => None,
@@ -262,7 +260,7 @@ impl Playback {
             Command::Right => self.step(Direction::Forward, now),
             Command::Up => self.jump(LONG_JUMP, now),
             Command::Down => self.jump(-LONG_JUMP, now),
-            Command::Listen | Command::Dialogue => {}
+            Command::Dialogue => {}
             Command::Subtitles => {
                 self.change_subtitles(Change::Toggle, now);
                 return;
@@ -402,7 +400,7 @@ impl Playback {
 
     fn key(&mut self, command: Command, now: Instant) {
         match (command, &self.on_key) {
-            (Command::Back | Command::Listen | Command::Dialogue, Some(on_key)) => on_key(command),
+            (Command::Back | Command::Dialogue, Some(on_key)) => on_key(command),
             _ => self.command(command, now),
         }
     }
@@ -905,10 +903,6 @@ impl Player {
         self.toast("", text, SAY_FOR);
     }
 
-    pub fn hide_toast(&self) {
-        self.playback.lock().unwrap().hide_toast();
-    }
-
     pub fn subtitles(&self, change: Change) -> Answer {
         self.playback.lock().unwrap().change_subtitles(change, Instant::now())
     }
@@ -1370,7 +1364,7 @@ mod tests {
     }
 
     #[test]
-    fn back_and_listen_keys_go_to_the_app_which_decides() {
+    fn back_and_dialogue_keys_go_to_the_app_which_decides() {
         let (keys, received) = std::sync::mpsc::channel();
         let playback = Playback {
             on_key: Some(Box::new(move |command| keys.send(command).unwrap())),
@@ -1379,14 +1373,14 @@ mod tests {
         let sent = sent_by(
             |playback| {
                 playback.key(Command::Back, Instant::now());
-                playback.key(Command::Listen, Instant::now());
+                playback.key(Command::Dialogue, Instant::now());
             },
             playback,
         );
         assert!(sent.iter().all(|command| command[0] != "quit"));
         assert_eq!(
             received.try_iter().collect::<Vec<_>>(),
-            [Command::Back, Command::Listen]
+            [Command::Back, Command::Dialogue]
         );
         let sent = sent_by(|playback| playback.command(Command::Back, Instant::now()), playing());
         assert_eq!(sent[0], json!(["quit", STOPPED_EXIT_CODE]));

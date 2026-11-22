@@ -23,7 +23,7 @@ library: import and artwork work on a local copy of `library.db`, which the
 
 One async core on Tokio owns everything the app knows and drives: the library,
 every profile's progress, the database, mpv, HDMI-CEC and the TV, headphones,
-voice, the offline cache and downloads (`src/core/`). Two frontends use it
+the offline cache and downloads (`src/core/`). Two frontends use it
 through one interface, the `Core` handle: typed requests in
 (`core.send`, `core.ask`), events and snapshots out (`core.subscribe`,
 `core.home()`, `core.library()` and so on).
@@ -91,7 +91,7 @@ step too; see Ratings. `review = true`, on a show, an episode or a film, marks
 something a person should check; it changes nothing in the app.
 `downloaded_by`, on an episode or a film, is the profile name of whoever asked
 the downloads service for it: the person signed in on the phone who searched or
-confirmed, the TV's profile for a voice request, or `semmeltv get fetch --by`.
+confirmed, the TV's profile for a download told to the TV, or `semmeltv get fetch --by`.
 The title page lists it under Downloaded by; titles from before it have none.
 
 Home and the rows sort by `added`, shows by their newest episode. Newly Added is
@@ -215,8 +215,8 @@ pulse. Once the TV sends Standby, plugging in leaves it off until the TV shows i
 is on again. A cold boot wakes it regardless. With a stored EDID (below) the
 connector never unplugs, so only the cold boot wakes it this way.
 
-Starting or resuming a video wakes the TV too, from the TV, the web app, the API
-or by voice. The app asks the TV for its power status over CEC. If the TV is on
+Starting or resuming a video wakes the TV too, from the TV, the web app or the
+API. The app asks the TV for its power status over CEC. If the TV is on
 and SemmelTV is the active source, it does nothing. If the TV is on another
 input, it switches it to SemmelTV and keeps playing. If the TV is in standby or
 does not answer, it turns it on and pauses the video until the TV reports on with
@@ -224,7 +224,7 @@ SemmelTV as the active source, plus 2 seconds for the picture, or at most 20
 seconds. A pause or resume in the meantime wins. SemmelTV is the active source
 from its own Active Source until the TV sends Standby or routes elsewhere.
 
-Waking the TV, by voice, for a video or on plug-in, sends Image View On, asks the
+Waking the TV, when told to, for a video or on plug-in, sends Image View On, asks the
 TV for its power status every half second until it reports on (at most 15
 seconds), then claims the input with Active Source. Until 5 seconds after that,
 the app takes the input back if the TV routes elsewhere while it starts up.
@@ -358,53 +358,32 @@ open someone marked as the intro, as on several Community episodes. Their
 terms allow personal, non-commercial use and forbid passing the data on, so
 timings must not be exported or committed.
 
-## Voice commands
+## Telling the TV
 
-`semmeltv understand TEXT` shows what a spoken sentence would do, in English,
-German or Spanish:
+For those who may control the TV, the web app's search box also tells the TV
+what to do: the text goes to `/api/command`. `semmeltv understand TEXT` shows
+what a sentence would do, in English, German or Spanish:
 
     continue playing Outlander
     spiele Outlander Staffel 2 Folge 3
     descarga la siguiente temporada de Outlander
 
 Continuing plays the next episode once the last one ended. Titles match the
-library loosely, so transcription slips are forgiven; translated titles are not
-known. Download requests are understood but not carried out yet.
+library loosely, so slips are forgiven; translated titles are not known. A
+download request asks the downloads service for the title, in the TV
+profile's name.
 
 "Turn on the TV" and "switch to SemmelTV" ("auf SemmelTV umschalten",
 "SemmelTV input") both end with the TV on and showing SemmelTV. The name is
-recognised however speech recognition spells it: Semmel TV, SimilTV, Simmel TV,
-Semel TV, Samuel TV, Simple TV and the like.
+recognised however it is spelt: Semmel TV, SimilTV, Simmel TV, Semel TV,
+Samuel TV, Simple TV and the like.
 
-The wake word "Stevie the TV", the red or blue key on the remote, or V on a
-keyboard starts listening, during a video too. The wake word is detected a
-few hundred milliseconds after it ends, so the recording begins with the last
-0.6 seconds of audio. That keeps a command said in the same breath ("Stevie
-the TV, play Chernobyl"), and a leading "TV", "the TV" or "Stevie the TV" in
-what was heard is dropped. The pre-roll doesn't count as speech, so after the
-wake word alone it still waits for the command. The model and how it was
-trained are in [../wake](../wake/README.md). While it listens or works out what was said,
-Back or Exit on the remote, or Esc or Backspace, cancels it: the panel goes,
-the video is unmuted, and nothing is done with what was heard. Otherwise they
-go back as usual. A panel above the details line shows Listening…, with a pulsing
-dot, until you stop speaking, then Working out what you said…, then what it
-heard in quotes with what it does below, for 6 seconds. Other messages use the
-same panel, without the dot. During a video the panel is drawn at the top
-instead, clear of the progress bar and the Skip button; mpv cannot measure text,
-so its width is estimated from the length and lines longer than 72 characters
-are cut short. Each attempt also prints a line such as
-
-    voice: 2.3 s recorded, speech from 0.3 s to 1.5 s, noise floor 180, recognised in 290 ms
-
-so a slow answer can be traced to the recording running on or to recognition.
-Recording ends after 0.8 seconds below three times the noise floor (at least
-400), gives up after 5 seconds without speech, and stops at 10.
-
-`SEMMELTV_LED` names a Linux LED, such as `/sys/class/leds/ACT`, that lights
-while the app listens and works out what was said. The app's user must be able
-to write its `brightness`.
-
-What the app hears and does goes out on the API's event stream; see
+What a download search found shows in a panel above the details line, for a
+minute when there is something to confirm on the phone's Downloads page and
+for 6 seconds otherwise. During a video the panel is drawn at the top instead,
+clear of the progress bar and the Skip button; mpv cannot measure text, so its
+width is estimated from the length and lines longer than 72 characters are cut
+short. The same goes out on the API's event stream as a `notice`; see
 [API.md](API.md).
 
 ## Database
@@ -471,8 +450,8 @@ Frederik is the admin; Mami, Miriam, Ramu and Chris are viewers. Viewers
 browse, watch on their own phone or laptop while nothing else plays, set
 dialogue mode and keep their own subtitle style. Playing on the TV is a
 capability an admin grants per person and per TV, on the People page
-(`control-tv`): with it a viewer also plays on the TV, uses its remote, the
-microphone and the TV/phone switch, and a phone of theirs takes over from
+(`control-tv`): with it a viewer also plays on the TV, uses its remote and
+the TV/phone switch, and a phone of theirs takes over from
 whatever plays. New profiles start without it; on semmeltv5 only Chris has it
 (migration `0006` granted it). It also lets them pair their own Bluetooth
 headphones with the TV in Settings, send the sound to them and set their timing
@@ -502,13 +481,13 @@ Bluetooth bonds themselves. The rules:
 - A video's progress always goes to the profile that started it, whoever
   pauses, seeks or stops it, on the TV or a phone. A phone stream belongs to
   the profile that opened it; a handoff keeps the owner.
-- The TV's own screen, remote and voice act as the TV profile: whoever last
+- The TV's own screen and remote act as the TV profile: whoever last
   started something on the TV from the web app or a phone, moved a video to
   the TV, paired headphones or pressed Show mine in Settings. It survives a
   restart, and its name shows at the top right of Home. Up from the top row of
   Home opens the profiles there; Up and Down move, OK switches, and Left or
-  Back return to the rows. Voice and the remote
-  work without signing in, because whoever holds the remote is in the room;
+  Back return to the rows. The remote
+  works without signing in, because whoever holds the remote is in the room;
   a PIN on the TV would only slow them down.
 - When B plays something on the TV while A's video plays, A's video stops
   with its place saved to A, the TV becomes B's, and B's video plays. Pausing
@@ -738,10 +717,3 @@ listing per folder, about a minute in all. Entering the shell runs
 (`$XDG_RUNTIME_DIR/rclone-pcloud.sock`) to list the library recursively in one
 go, about two seconds, after which a load takes about as long. The mount keeps
 listings for 30 days and learns of changes from pCloud within a minute.
-
-For voice commands, `devenv up` runs the two servers semmeltv5 runs as system
-services: `speech` (Parakeet) and `wake` (openWakeWord, "Stevie the TV"), on ports
-from 10300 and 10400 or the next free ones. The shell points `SEMMELTV_SPEECH`
-and `SEMMELTV_WAKE` at them and records from ALSA's `default` device through
-PipeWire, because the sound card itself is held by PipeWire. Run the app in a
-second terminal while they are up.

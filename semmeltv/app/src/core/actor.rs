@@ -1,15 +1,14 @@
 use super::tending::{self, Tended};
 use super::{Core, Input, Outcome, Request, ScreenCommand, ScreenKind, Seek, Signal, TV_PROFILE, sound};
 use crate::audio::{self, Audio};
-use crate::bus::{Home, Mate, NowPlaying, Panel, Playing, Skip, Together, Voice as VoiceEvent};
+use crate::bus::{Home, Mate, Notice, NowPlaying, Panel, Playing, Skip, Together};
 use crate::command::Command;
 use crate::db::{self, Db};
 use crate::downloads::remote::Downloads;
-use crate::downloads::{Answer, Outcome as Started, Proposal};
+use crate::downloads::{Answer, Proposal};
 use crate::fetch;
 use crate::hold::{self, Hold};
 use crate::intent::{self, Action, Control};
-use crate::led::Led;
 use crate::library::Library;
 use crate::link::messages::{Ended, FromTv, Play, Report, Target, ToTv};
 use crate::link::{self, Link};
@@ -28,7 +27,6 @@ use crate::subtitles::{self, SubtitleSettings};
 use crate::together;
 use crate::tv::{self, Television};
 use crate::up_next::{self, Press, UpNext};
-use crate::voice::{self, Heard, Voice};
 use crate::watching;
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
@@ -42,8 +40,7 @@ use tokio::sync::{mpsc, oneshot};
 use tokio::task::{block_in_place, spawn_blocking};
 use tokio::time::MissedTickBehavior;
 
-const VOICE_RESULT_TIME: Duration = Duration::from_secs(6);
-const VOICE_WAITING_TIME: Duration = Duration::from_secs(20);
+const NOTICE_TIME: Duration = Duration::from_secs(6);
 const OUT_OF_REACH: &str = "Not downloaded, and pCloud can't be reached right now";
 const NOTHING_PLAYING: &str = "Nothing is playing";
 const PLAYBACK_EVERY: Duration = Duration::from_millis(500);
@@ -60,10 +57,6 @@ type Boxed<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 pub struct Hardware {
     pub store: Store,
     pub storage: Option<storage::Cache>,
-    pub speech: Option<String>,
-    pub wake_word: Option<voice::WakeWord>,
-    pub microphone: Option<String>,
-    pub led: Option<Led>,
     pub handoff: Option<Handoff>,
     pub tv: Link,
     pub segments: segments::Finder,
@@ -71,14 +64,7 @@ pub struct Hardware {
 
 pub enum Found {
     Proposal(Proposal),
-    Started(Started),
     Failed(String),
-}
-
-struct Offer {
-    proposal: String,
-    label: String,
-    until: Instant,
 }
 
 /// Where the orders for a playback go: the tv, or the TV set's own player.
@@ -187,16 +173,12 @@ pub struct Actor {
     downloading: Option<PathBuf>,
     online: bool,
     problem: Option<String>,
-    voice: Option<Voice>,
-    ear: voice::Ear,
     queued: Option<PathBuf>,
     up_next: Option<UpNext>,
-    led: Option<Led>,
     subtitles: SubtitleSettings,
     television: Television,
     downloads: Option<Downloads>,
     audio: Option<Audio>,
-    offer: Option<Offer>,
     waking_tv: Arc<AtomicBool>,
     screen: screen::Screen,
     notice: Option<screen::Said>,
@@ -224,10 +206,6 @@ impl Actor {
         let Hardware {
             store,
             storage,
-            speech,
-            wake_word,
-            microphone,
-            led,
             handoff,
             tv,
             segments,
@@ -237,12 +215,6 @@ impl Actor {
         let progress = core.progress(profile).await;
         let downloading = core.clone();
         let fetcher = fetch::spawn(store.clone(), move |path| downloading.signal(Signal::Downloading(path)));
-        let voice = speech.map(|speech| {
-            let hearing = core.clone();
-            voice::spawn(speech, wake_word, voice::Source::Microphone(microphone), move |event| {
-                hearing.signal(Signal::Heard(event));
-            })
-        });
         let audio = core.audio().cloned();
         if let Some(audio) = &audio {
             if sound::claimed(&db).await.is_empty()
@@ -282,13 +254,9 @@ impl Actor {
             downloading: None,
             online: true,
             problem: None,
-            voice,
-            ear: voice::Ear::Idle,
             queued: None,
             up_next: None,
-            led,
             audio,
-            offer: None,
             waking_tv: Arc::new(AtomicBool::new(false)),
             screen: screen::Screen::Tv,
             notice: None,
@@ -347,7 +315,6 @@ impl Actor {
 
     async fn signalled(&mut self, signal: Signal) {
         match signal {
-            Signal::Heard(heard) => self.hear(heard).await,
             Signal::Tv(said) => self.tv_said(said).await,
             Signal::TvSet { play, told } => self.tv_set_told(&play, told).await,
             Signal::Poll { online } => {
@@ -374,14 +341,6 @@ impl Actor {
     }
 
     async fn key(&mut self, command: Command) {
-        if command == Command::Listen {
-            self.listen();
-            return;
-        }
-        if command == Command::Back && self.ear.active() {
-            self.cancel_voice();
-            return;
-        }
         if command == Command::Dialogue {
             self.toggle_dialogue().await;
             return;
@@ -981,106 +940,6 @@ impl Actor {
         }
     }
 
-    fn listen(&self) {
-        match &self.voice {
-            Some(voice) => voice.listen(),
-            None => self.tell("Voice control is not set up"),
-        }
-    }
-
-    async fn hear(&mut self, heard: Heard) {
-        let muting = heard == Heard::Listening && self.on_tv.as_ref().is_some_and(|tv| !tv.last.state.muted);
-        let before = self.ear;
-        let (ear, pass) = before.hear(&heard, muting);
-        self.ear = ear;
-        if pass == voice::Pass::Drop {
-            return;
-        }
-        if let Some(led) = &self.led {
-            led.set(ear.active());
-        }
-        if heard == Heard::Transcribing {
-            self.core.bus.voice(VoiceEvent::Transcribing);
-            self.show_voice("", "Working out what you said…", None);
-            return;
-        }
-        if heard == Heard::Listening {
-            self.core.bus.voice(VoiceEvent::Listening);
-            if let Some(tv) = self.on_tv.as_ref().filter(|_| muting) {
-                tv.mute(true);
-            }
-            self.show_voice("", "Listening…", None);
-            return;
-        }
-        let unmute = before.unmute();
-        if let Heard::Transcript(text) = &heard
-            && self.answer_offer(text, unmute)
-        {
-            return;
-        }
-        let action = match &heard {
-            Heard::Transcript(text) if !text.is_empty() => {
-                eprintln!("heard: {text}");
-                Some(intent::understand(text, &self.library, &self.progress))
-            }
-            _ => None,
-        };
-        if unmute
-            && action != Some(Action::Control(Control::Mute))
-            && let Some(tv) = &self.on_tv
-        {
-            tv.mute(false);
-        }
-        match (heard, action) {
-            (Heard::Transcript(text), Some(action)) => {
-                let understood = !matches!(action, Action::Refuse(_));
-                let outcome = self.describe(&action);
-                self.core.bus.voice(VoiceEvent::Heard {
-                    text: text.clone(),
-                    action: outcome.clone(),
-                    understood,
-                });
-                self.show_voice(&format!("“{text}”"), &outcome, Some(VOICE_RESULT_TIME));
-                self.act(action).await;
-            }
-            (Heard::NoMicrophone, _) => {
-                self.core.bus.voice(VoiceEvent::NoMicrophone);
-                self.show_voice("", "No microphone is connected", Some(VOICE_RESULT_TIME));
-            }
-            (Heard::Failed(error), _) => {
-                eprintln!("voice: {error}");
-                self.core.bus.voice(VoiceEvent::Failed { message: error });
-                self.show_voice("", "Voice control failed", Some(VOICE_RESULT_TIME));
-            }
-            (Heard::Transcript(_), None) => {
-                self.core.bus.voice(VoiceEvent::Nothing);
-                self.show_voice("", "I didn't catch that", Some(VOICE_RESULT_TIME));
-            }
-            _ => {
-                self.core.bus.voice(VoiceEvent::Nothing);
-                self.show_voice("", "I didn't hear anything", Some(VOICE_RESULT_TIME));
-            }
-        }
-    }
-
-    fn cancel_voice(&mut self) {
-        if let Some(voice) = &self.voice {
-            voice.cancel();
-        }
-        let unmute = std::mem::replace(&mut self.ear, voice::Ear::Cancelled).unmute();
-        if let Some(led) = &self.led {
-            led.set(false);
-        }
-        if unmute && let Some(tv) = &self.on_tv {
-            tv.mute(false);
-        }
-        self.core.bus.voice(VoiceEvent::Cancelled);
-        self.core.bus.panel(None);
-        if let Some(tv) = &self.on_tv {
-            tv.send(ToTv::HideToast);
-        }
-    }
-
     async fn answer(&mut self, request: Request) -> Outcome {
         let action = match request {
             Request::Understand(text, by) => {
@@ -1131,15 +990,6 @@ impl Actor {
             }
             Request::TvProfile(by) => return self.show_profile(by).await,
             Request::Dialogue(by) => return self.apply_dialogue(by).await,
-            Request::Listen => {
-                return match &self.voice {
-                    Some(voice) => {
-                        voice.listen();
-                        Outcome::done("Listening")
-                    }
-                    None => Outcome::refused("Voice control is not set up"),
-                };
-            }
         };
         let message = self.describe(&action);
         let ok = match &action {
@@ -1845,7 +1695,6 @@ impl Actor {
         let Some(downloads) = self.downloads.clone() else {
             return;
         };
-        self.offer = None;
         let core = self.core.clone();
         let said = match season {
             Some(season) => format!("{title} season {season}"),
@@ -1869,15 +1718,10 @@ impl Actor {
                     Some(best) => {
                         self.tell_download(
                             &heading,
-                            &format!("{}. Say “yes” to download it, or confirm on the phone.", best.facts),
+                            &format!("{}. Confirm on the phone's Downloads page.", best.facts),
                             OFFER_TIME,
                             true,
                         );
-                        self.offer = Some(Offer {
-                            proposal: proposal.id,
-                            label: heading,
-                            until: Instant::now() + OFFER_TIME,
-                        });
                     }
                     None => {
                         let status = match &proposal.answer {
@@ -1886,71 +1730,31 @@ impl Actor {
                             }
                             _ => proposal.message().to_string(),
                         };
-                        self.tell_download(&heading, &status, VOICE_RESULT_TIME, false);
+                        self.tell_download(&heading, &status, NOTICE_TIME, false);
                     }
                 }
             }
-            Found::Started(outcome) => self.tell_download("", &outcome.message, VOICE_RESULT_TIME, outcome.ok),
             Found::Failed(error) => {
                 eprintln!("{error}");
-                self.tell_download("", "The download service did not answer", VOICE_RESULT_TIME, false);
+                self.tell_download("", "The download service did not answer", NOTICE_TIME, false);
             }
         }
     }
 
-    fn tell_download(&self, heading: &str, status: &str, hold: Duration, understood: bool) {
-        self.core.bus.voice(VoiceEvent::Heard {
-            text: heading.trim_matches(['“', '”']).to_string(),
-            action: status.to_string(),
-            understood,
+    fn tell_download(&self, heading: &str, status: &str, hold: Duration, ok: bool) {
+        self.core.bus.notice(Notice {
+            heading: heading.to_string(),
+            status: status.to_string(),
+            ok,
         });
-        self.show_voice(heading, status, Some(hold));
-    }
-
-    fn answer_offer(&mut self, text: &str, unmute: bool) -> bool {
-        let Some(offer) = self.offer.take().filter(|offer| offer.until > Instant::now()) else {
-            return false;
-        };
-        let Some(yes) = intent::reply(text) else {
-            self.offer = Some(offer);
-            return false;
-        };
-        let Some(downloads) = self.downloads.clone() else {
-            return false;
-        };
-        if unmute && let Some(tv) = &self.on_tv {
-            tv.mute(false);
+        if let Some(tv) = &self.on_tv {
+            tv.toast(heading, status, hold);
         }
-        eprintln!("heard: {text}");
-        if !yes {
-            let label = offer.label.clone();
-            spawn_blocking(move || {
-                let _ = downloads.dismiss(&offer.proposal);
-            });
-            self.tell_download(
-                &format!("“{text}”"),
-                &format!("Not downloading {label}"),
-                VOICE_RESULT_TIME,
-                true,
-            );
-            return true;
-        }
-        let status = format!("Starting {}…", offer.label);
-        self.core.bus.voice(VoiceEvent::Heard {
-            text: text.to_string(),
-            action: status.clone(),
-            understood: true,
+        self.core.bus.panel(Panel {
+            heading: heading.to_string(),
+            status: status.to_string(),
+            hold,
         });
-        self.show_voice(&format!("“{text}”"), &status, None);
-        let core = self.core.clone();
-        spawn_blocking(move || {
-            let found = match downloads.confirm(&offer.proposal) {
-                Ok(outcome) => Found::Started(outcome),
-                Err(error) => Found::Failed(error),
-            };
-            core.signal(Signal::Download(found));
-        });
-        true
     }
 
     fn tell(&self, text: &str) {
@@ -2012,17 +1816,6 @@ impl Actor {
         Outcome::done(format!("The TV shows what {name} is watching"))
     }
 
-    fn show_voice(&self, heard: &str, status: &str, hold: Option<Duration>) {
-        if let Some(tv) = &self.on_tv {
-            tv.toast(heard, status, hold.unwrap_or(VOICE_WAITING_TIME));
-        }
-        self.core.bus.panel(Some(Panel {
-            heading: heard.to_string(),
-            status: status.to_string(),
-            hold,
-        }));
-    }
-
     fn show_message(&self, message: String) {
         self.core.bus.message(message);
     }
@@ -2037,10 +1830,6 @@ mod tests {
         Hardware {
             store: Store::new(PathBuf::from("/lib"), None, None),
             storage: None,
-            speech: None,
-            wake_word: None,
-            microphone: None,
-            led: None,
             handoff: None,
             tv: Link::pair().0,
             segments: Arc::new(|_, _| Err("no segments in tests".to_string())),
@@ -2101,7 +1890,7 @@ mod tests {
 
     /// Waits until the actor has handled everything sent before.
     async fn settled(core: &Core) {
-        core.ask(Request::Listen).await.unwrap();
+        core.ask(Request::HideSkip).await.unwrap();
     }
 
     async fn saved_at(core: &Core) -> Option<f64> {
@@ -2496,7 +2285,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_download_asked_for_by_voice_names_the_tvs_profile() {
+    async fn a_download_asked_for_on_the_tv_names_the_tvs_profile() {
         let (core, _inbox) = Core::detached(db::test_library()).await;
         let mut actor = Actor::new(core, ProfileId::FIRST, hardware()).await;
         assert_eq!(actor.asked_by().as_deref(), Some("Frederik"));
