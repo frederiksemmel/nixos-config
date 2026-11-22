@@ -599,6 +599,21 @@ The first switch on semmeltv5 (2026-11-22, b432185), and what changed:
   the API answers within 30 s; it also takes the core's port away and
   checks the core says why and serves once the port is free.
 
+After the switch (c45f96f, live on semmeltv5 at 20:59):
+
+- The core waited 10 s for "the headphones" before it served: the AirPods
+  are bonded but not connected, and bluetoothctl's lookups ran into their
+  timeouts. The headphones thread now asks the radio which are paired,
+  and the actor hears the answer as `Signal::Headphones`; the first
+  owner and the TV profile's choice are applied then, behind the writes.
+  The core serves without waiting on the radio.
+- The tv opened several connections at once while the core started: the
+  socket is bound early, so the tv's connect succeeded, waited 5 s for a
+  `Welcome` the starting core couldn't send yet, gave up and connected
+  again, and the core accepted the whole queue. The tv now waits 60 s on
+  the connection it opened; a core that restarts closes it, which ends the
+  wait at once.
+
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
 its listed files.

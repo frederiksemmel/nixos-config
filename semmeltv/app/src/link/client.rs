@@ -21,7 +21,10 @@ use std::time::{Duration, Instant};
 
 const FIRST_RETRY: Duration = Duration::from_millis(500);
 const LAST_RETRY: Duration = Duration::from_secs(5);
-const WELCOME_TIME: Duration = Duration::from_secs(5);
+/// How long the tv waits for the core's welcome on a connection it opened.
+/// A core that is still starting has accepted nothing yet; another
+/// connection would only queue up beside this one.
+const WELCOME_TIME: Duration = Duration::from_secs(60);
 const WRITE_TIME: Duration = Duration::from_secs(2);
 const HEARTBEAT: Duration = Duration::from_secs(1);
 const AWAY_FOR: Duration = Duration::from_secs(4);
@@ -413,6 +416,26 @@ mod tests {
             unreachable!()
         };
         assert_eq!((playing, kept), (None, Some(an_ending())));
+    }
+
+    #[test]
+    fn a_core_slow_to_welcome_gets_one_connection_not_one_per_retry() {
+        let dir = std::env::temp_dir().join(format!("semmeltv-client-{}-slow", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("tv.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let (link, _orders) = Link::pair();
+        let (_said, telling) = std::sync::mpsc::channel();
+        start(path, link, telling, "this-build".to_string(), None);
+        thread::sleep(Duration::from_secs(8));
+        listener.set_nonblocking(true).unwrap();
+        let mut connections = Vec::new();
+        while let Ok((stream, _)) = listener.accept() {
+            connections.push(stream);
+        }
+        assert_eq!(connections.len(), 1, "the tv waited on the one it opened");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
