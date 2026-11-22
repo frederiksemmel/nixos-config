@@ -8,6 +8,7 @@ use crate::command::Command;
 use crate::display::{self, Video};
 use crate::link::messages::{Ended, Play, Report};
 use crate::overlay::{self, View};
+use crate::profile::ProfileId;
 use crate::progress::{self, Place, Tracks};
 use crate::seek::{self, Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment};
@@ -228,6 +229,7 @@ struct Playback {
     health: Health,
     fader: Option<fade::Fader>,
     wanted_paused: Option<bool>,
+    start_paused: bool,
     nudge: Option<Nudge>,
 }
 
@@ -382,14 +384,18 @@ impl Playback {
 
     fn start(&mut self, now: Instant) {
         if self.phase == Phase::Opening {
-            self.send(json!(["set_property", "pause", false]));
+            if !self.start_paused {
+                self.send(json!(["set_property", "pause", false]));
+            }
             self.begin(now);
         }
     }
 
     fn begin(&mut self, now: Instant) {
         if self.phase == Phase::Opening {
-            self.phase = Phase::Playing { paused: false };
+            self.phase = Phase::Playing {
+                paused: self.start_paused,
+            };
             self.health.begin(now);
             self.wake(now);
         }
@@ -543,9 +549,11 @@ impl Playback {
         }
     }
 
-    fn ended(&self, play: &str, finish: Finish) -> Ended {
+    fn ended(&self, play: &str, file: &Path, owner: ProfileId, finish: Finish) -> Ended {
         Ended {
             play: play.to_string(),
+            file: file.to_path_buf(),
+            owner,
             finish,
             place: self.place(),
             tracks: self.tracks,
@@ -774,13 +782,14 @@ impl Player {
             tracks: play.tracks,
             speed: 1.0,
             next: play.next,
+            start_paused: play.paused,
             on_key: Some(key),
             on_remember: Some(remember),
             ..Playback::default()
         }));
         let nudge = report_mpv(&playback, &play.play, report);
         let shared = playback.clone();
-        let token = play.play.clone();
+        let (token, file, owner) = (play.play.clone(), play.file.clone(), play.owner);
         thread::spawn(move || {
             connect(&mut child, &socket_path, &shared);
             let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
@@ -796,7 +805,7 @@ impl Player {
                         total.summary()
                     );
                 }
-                playback.ended(&token, finish)
+                playback.ended(&token, &file, owner, finish)
             };
             display::stop(id);
             let _ = std::fs::remove_file(&socket_path);
@@ -1327,6 +1336,21 @@ mod tests {
             ["--start=1234.500", "--aid=2", "--sid=3", "--sub-visibility=no"]
         );
         assert!(resume_args(0.0, Tracks::default()).is_empty());
+    }
+
+    #[test]
+    fn a_video_asked_to_start_paused_stays_paused_once_it_starts() {
+        let sent = sent_by(
+            |playback| {
+                playback.start(Instant::now());
+                assert_eq!(playback.phase, Phase::Playing { paused: true });
+            },
+            Playback {
+                start_paused: true,
+                ..Playback::default()
+            },
+        );
+        assert!(!sent.contains(&json!(["set_property", "pause", false])), "{sent:?}");
     }
 
     #[test]

@@ -10,7 +10,7 @@ use crate::fetch;
 use crate::hold::{self, Hold};
 use crate::intent::{self, Action, Control};
 use crate::library::Library;
-use crate::link::messages::{self, Ended, FromTv, Play, Report, Target, ToTv, UiRequest, UpNextCard};
+use crate::link::messages::{self, Ended, FromTv, Play, Report, Running, Target, ToTv, UiRequest, UpNextCard};
 use crate::link::{self, Link};
 use crate::offline::{Source, Store};
 use crate::player::renderer::{self, Handoff};
@@ -48,6 +48,12 @@ const SCREEN_EVERY: Duration = Duration::from_secs(2);
 const OFFER_TIME: Duration = Duration::from_secs(60);
 const TV_WAKE_WAIT: Duration = Duration::from_secs(20);
 const TV_PICTURE_SETTLE: Duration = Duration::from_secs(2);
+const TV_STALE: Duration = Duration::from_secs(5);
+const TV_LOST_FOR: Duration = Duration::from_secs(120);
+const PICKED_UP_WITHIN: Duration = Duration::from_secs(600);
+const PICKED_UP_AT_MOST: usize = 2;
+const PICKED_UP_BEFORE: f64 = 3.0;
+const TV_RESTARTING: &str = "The TV app is restarting";
 const TV_ANSWER_TIME: Duration = Duration::from_secs(2);
 const TV_SILENT: &str = "The TV did not answer";
 const TV_SET_SUBTITLES: &str = "The TV's own player shows the subtitles: choose them with the TV's remote";
@@ -86,6 +92,16 @@ struct OnTv {
     last: Report,
     saved: f64,
     unsegmented: Option<Title>,
+    lost: Option<Instant>,
+    resumes: Vec<Instant>,
+}
+
+/// A playback started again on a tv that came back: its token, whether it
+/// was paused, and when it was picked up before.
+struct Again {
+    play: String,
+    paused: bool,
+    resumes: Vec<Instant>,
 }
 
 impl OnTv {
@@ -188,6 +204,7 @@ pub struct Actor {
     segments: segments::Finder,
     questions: HashMap<u64, oneshot::Sender<Outcome>>,
     asked: u64,
+    heard: Instant,
     library_revision: u64,
     library_sent: Option<u64>,
     home_sent: Option<messages::Home>,
@@ -198,6 +215,16 @@ pub struct Actor {
 pub fn local_tv(core: &Core, menu: impl Fn(ToTv) + Send + 'static) -> Link {
     let telling = core.clone();
     link::local::spawn(move |said| telling.signal(Signal::Tv(said)), Player::start, menu)
+}
+
+/// Whether `request` steers what the TV plays, which nothing can while the
+/// tv is away.
+fn steers_the_tv(request: &Request) -> bool {
+    match request {
+        Request::Control(control) => !control.is_tv(),
+        Request::PlayPause | Request::Seek(_) | Request::HideSkip | Request::Speed(_) | Request::Subtitles(_) => true,
+        _ => false,
+    }
 }
 
 fn asked(request: UiRequest) -> Request {
@@ -278,6 +305,7 @@ impl Actor {
             segments,
             questions: HashMap::new(),
             asked: 0,
+            heard: Instant::now(),
             library_revision: 1,
             library_sent: None,
             home_sent: None,
@@ -298,6 +326,11 @@ impl Actor {
         loop {
             tokio::select! {
                 input = inbox.recv() => match input {
+                    Some(Input::Request(request, reply)) if self.tv_lost() && steers_the_tv(&request) => {
+                        if let Some(reply) = reply {
+                            let _ = reply.send(Outcome::refused(TV_RESTARTING));
+                        }
+                    }
                     Some(Input::Request(Request::Subtitles(change), reply)) if self.on_tv.is_some() => {
                         self.ask_tv_subtitles(change, reply);
                     }
@@ -318,6 +351,10 @@ impl Actor {
                     if self.up_next.as_ref().is_some_and(|up| up.due(Instant::now())) {
                         self.play_up_next().await;
                     }
+                    if self.on_tv.as_ref().and_then(|tv| tv.lost).is_some_and(|since| since.elapsed() > TV_LOST_FOR) {
+                        eprintln!("tv: gone for {TV_LOST_FOR:?}, the playback is over");
+                        self.finish_playback(Finish::Stopped).await;
+                    }
                 }
                 _ = watching_screen.tick() => {
                     if self.screen != screen::Screen::Tv {
@@ -330,8 +367,11 @@ impl Actor {
 
     async fn signalled(&mut self, signal: Signal) {
         match signal {
-            Signal::Tv(said) => self.tv_said(said).await,
-            Signal::TvGone { at } => self.tv_gone(at),
+            Signal::Tv(said) => {
+                self.heard = Instant::now();
+                self.tv_said(said).await;
+            }
+            Signal::TvGone { at } => self.tv_gone(at).await,
             Signal::TvSet { play, told } => self.tv_set_told(&play, told).await,
             Signal::Poll { online } => {
                 let reconnected = online && !self.online;
@@ -554,6 +594,12 @@ impl Actor {
     }
 
     fn play_from<'a>(&'a mut self, path: &'a Path, start: f64, owner: ProfileId) -> Boxed<'a> {
+        self.play_as(path, start, owner, None)
+    }
+
+    /// Plays `path` from `start` for `owner`, as a new playback or as one
+    /// picked up `again`.
+    fn play_as<'a>(&'a mut self, path: &'a Path, start: f64, owner: ProfileId, again: Option<Again>) -> Boxed<'a> {
         Box::pin(async move {
             self.cancel_up_next();
             if self.screen != screen::Screen::Tv {
@@ -578,13 +624,17 @@ impl Actor {
                 _ => progress::Tracks::default(),
             };
             let dialogue = self.core.dialogue(owner).await.load(Ordering::SeqCst);
+            let (token, paused, resumes) = match again {
+                Some(Again { play, paused, resumes }) => (play, paused, resumes),
+                None => (crate::auth::token(), false, Vec::new()),
+            };
             let play = Play {
-                play: crate::auth::token(),
+                play: token,
                 owner,
                 file: path.to_path_buf(),
                 source: source.clone(),
                 start,
-                paused: false,
+                paused,
                 tracks,
                 caption: self.caption(path),
                 subtitles: self.subtitles.for_play(owner, path, sidecars),
@@ -622,6 +672,8 @@ impl Actor {
                 last: Report::before(&play),
                 saved: play.start,
                 unsegmented: if handed_off { None } else { self.title(path) },
+                lost: None,
+                resumes,
                 play: play.play,
             });
             self.publish_playback();
@@ -657,11 +709,11 @@ impl Actor {
 
     /// What the TV set's player told about `play`, taken as a tv's report.
     async fn tv_set_told(&mut self, play: &str, told: renderer::Told) {
-        let Some(tracks) = self
+        let Some((tracks, file, owner)) = self
             .on_tv
             .as_ref()
             .filter(|tv| tv.play == play)
-            .map(|tv| tv.last.tracks)
+            .map(|tv| (tv.last.tracks, tv.file.clone(), tv.owner))
         else {
             return;
         };
@@ -669,7 +721,9 @@ impl Actor {
             renderer::Told::Started => self.started(play).await,
             renderer::Told::Failed(error) => self.failed(play, &error),
             renderer::Told::Seen(seen) => self.reported(seen.report(play, tracks)).await,
-            renderer::Told::Ended { finish, seen } => self.ended(seen.ended(play, finish, tracks)).await,
+            renderer::Told::Ended { finish, seen } => {
+                self.ended(seen.ended(play, &file, owner, finish, tracks)).await;
+            }
         }
     }
 
@@ -750,19 +804,143 @@ impl Actor {
             FromTv::Ask(request) => {
                 self.answer(asked(request)).await;
             }
-            FromTv::Hello { .. } => self.tv_came(),
+            FromTv::Hello { playing, ended, .. } => self.tv_came(playing, ended).await,
         }
     }
 
-    /// A tv connected: it starts with nothing, so it gets the menu again.
-    fn tv_came(&mut self) {
+    fn tv_lost(&self) -> bool {
+        self.on_tv.as_ref().is_some_and(|tv| tv.lost.is_some())
+    }
+
+    /// A tv connected. It gets the menu again, then the core records what
+    /// ended while it was away and goes on with what plays: the playback
+    /// the tv kept, or the one it lost.
+    async fn tv_came(&mut self, playing: Option<Running>, ended: Option<Ended>) {
         self.library_sent = None;
         self.home_sent = None;
         self.publish_home();
+        if let Some(ended) = ended {
+            self.ended_away(ended).await;
+        }
+        match playing {
+            Some(running) if self.on_tv.as_ref().is_some_and(|tv| tv.play == running.play) => {
+                if let Some(tv) = &mut self.on_tv {
+                    tv.lost = None;
+                }
+                eprintln!("tv: back, still playing");
+                self.publish_playback();
+            }
+            Some(running) => self.adopt(running),
+            None => self.pick_up().await,
+        }
     }
 
-    fn tv_gone(&mut self, _at: Instant) {
-        eprintln!("tv: the core lost the tv");
+    /// The tv went away. What it played keeps its place, and the core waits
+    /// for it to come back.
+    async fn tv_gone(&mut self, at: Instant) {
+        let Some(tv) = self.on_tv.as_mut().filter(|tv| !tv.handed_off() && tv.lost.is_none()) else {
+            eprintln!("tv: gone");
+            return;
+        };
+        tv.lost = Some(at);
+        eprintln!("tv: gone while it played {}", tv.file.display());
+        self.record_place().await;
+        self.publish_playback();
+    }
+
+    /// Records a playback that ended while the core was away.
+    async fn ended_away(&mut self, ended: Ended) {
+        if self.on_tv.is_none() {
+            self.adopt(Running {
+                play: ended.play.clone(),
+                owner: ended.owner,
+                file: ended.file.clone(),
+                position: ended.place.position,
+                paused: false,
+            });
+        }
+        eprintln!(
+            "tv: {} ended as {:?} while the core was away",
+            ended.file.display(),
+            ended.finish
+        );
+        self.ended(ended).await;
+    }
+
+    /// Takes over a playback a tv kept going while the core was away.
+    fn adopt(&mut self, running: Running) {
+        if self.on_tv.as_ref().is_some_and(OnTv::handed_off) {
+            return;
+        }
+        eprintln!("tv: took over {} at {:.0} s", running.file.display(), running.position);
+        self.subtitles.set_owner(running.owner);
+        let last = Report {
+            play: Some(running.play.clone()),
+            state: player::State {
+                position: running.position,
+                paused: running.paused,
+                speed: 1.0,
+                started: true,
+                ..player::State::default()
+            },
+            place: progress::Place {
+                position: running.position,
+                ..progress::Place::default()
+            },
+            ..Report::default()
+        };
+        self.on_tv = Some(OnTv {
+            backend: Backend::Tv(self.tv.clone()),
+            shown: self.now_playing_for(&running.file),
+            unsegmented: self.title(&running.file),
+            file: running.file,
+            owner: running.owner,
+            hold: Hold::default(),
+            play: running.play,
+            last,
+            saved: running.position,
+            lost: None,
+            resumes: Vec::new(),
+        });
+        self.publish_playback();
+    }
+
+    /// The tv came back with nothing playing. What it lost plays again a
+    /// little before where it stopped, unless it was lost long ago, was being
+    /// stopped, something else waits to play, or it stopped the tv twice.
+    async fn pick_up(&mut self) {
+        let queued = self.queued.is_some();
+        let Some(tv) = self.on_tv.as_mut().filter(|tv| !tv.handed_off()) else {
+            return;
+        };
+        let now = Instant::now();
+        let since = *tv.lost.get_or_insert(now);
+        tv.resumes.retain(|at| now.duration_since(*at) < PICKED_UP_WITHIN);
+        if queued || tv.hold.stopping() || now.duration_since(since) > TV_LOST_FOR {
+            eprintln!("tv: back; what it played is over");
+            self.finish_playback(Finish::Stopped).await;
+            return;
+        }
+        if tv.resumes.len() >= PICKED_UP_AT_MOST {
+            eprintln!("tv: back, but {} stopped it twice; not again", tv.file.display());
+            self.finish_playback(Finish::Stopped).await;
+            self.show_message("This video stopped the TV twice".to_string());
+            return;
+        }
+        let mut resumes = tv.resumes.clone();
+        resumes.push(now);
+        let again = Again {
+            play: tv.play.clone(),
+            paused: tv.last.state.paused,
+            resumes,
+        };
+        let (file, owner) = (tv.file.clone(), tv.owner);
+        let from = (tv.last.place.position - PICKED_UP_BEFORE).max(0.0);
+        eprintln!("tv: back; picking up {} at {from:.0} s", file.display());
+        self.play_as(&file, from, owner, Some(again)).await;
+        if let Some(tv) = &self.on_tv {
+            tv.say("Picked up where it stopped");
+        }
     }
 
     async fn reported(&mut self, report: Report) {
@@ -1581,8 +1759,10 @@ impl Actor {
     }
 
     fn publish_playback(&self) {
-        let now_playing = self.on_tv.as_ref().map(|OnTv { last, shown: base, .. }| {
-            let state = last.state;
+        let stale = self.heard.elapsed() > TV_STALE;
+        let now_playing = self.on_tv.as_ref().map(|tv| {
+            let (state, base) = (tv.last.state, &tv.shown);
+            let away = tv.lost.is_some() || (stale && !tv.handed_off());
             NowPlaying {
                 position: state.position,
                 duration: state.duration,
@@ -1592,7 +1772,7 @@ impl Actor {
                 subtitle: state.subtitle,
                 subtitle_delay: state.subtitle_delay,
                 audio: state.audio,
-                loading: !state.started,
+                loading: !state.started || away,
                 jump: state.jump,
                 skip: state.skip.map(Skip::from),
                 ..base.clone()
@@ -2176,6 +2356,8 @@ mod tests {
         assert_eq!(core.subtitles().remembered(&up(&core)).delay, 0.5);
         core.signal(Signal::Tv(FromTv::Finished(Ended {
             play: first,
+            file: up(&core),
+            owner: ProfileId::FIRST,
             finish: Finish::Stopped,
             place: progress::Place::default(),
             tracks: progress::Tracks::default(),
@@ -2221,6 +2403,8 @@ mod tests {
         assert_eq!(core.subtitles().playing(), Some(shown));
         core.signal(Signal::Tv(FromTv::Finished(Ended {
             play,
+            file: up(&core),
+            owner: ProfileId::FIRST,
             finish: Finish::Stopped,
             place: progress::Place::default(),
             tracks: progress::Tracks::default(),
@@ -2291,6 +2475,8 @@ mod tests {
         core.signal(reported(&play, 40.0, true));
         core.signal(Signal::Tv(FromTv::Finished(Ended {
             play,
+            file: up(&core),
+            owner: ProfileId::FIRST,
             finish: Finish::Stopped,
             place: progress::Place {
                 position: 1234.0,
@@ -2609,5 +2795,210 @@ mod tests {
         assert_eq!(key, Command::Down);
         let paused = core.ask(Request::Control(Control::Pause)).await.unwrap();
         assert_eq!(paused, Outcome::refused("Pause, but nothing is playing"));
+    }
+    /// A core whose fake tv started the first movie and reported it at
+    /// `position`: the core, what its tv is told, and the play's token.
+    async fn reported_at(position: f64) -> (Core, std::sync::mpsc::Receiver<ToTv>, String) {
+        let (core, orders) = core_and_tv().await;
+        core.ask(Request::PlayFile(up(&core))).await.unwrap();
+        let play = told(&orders, |order| match order {
+            ToTv::Play(play) => Some(play.play),
+            _ => None,
+        });
+        core.signal(Signal::Tv(FromTv::Started { play: play.clone() }));
+        core.signal(reported(&play, position, true));
+        settled(&core).await;
+        (core, orders, play)
+    }
+
+    fn back(playing: Option<Running>, ended: Option<Ended>) -> Signal {
+        Signal::Tv(FromTv::Hello {
+            protocol: messages::PROTOCOL,
+            revision: "this-build".to_string(),
+            playing,
+            ended,
+        })
+    }
+
+    fn gone(ago: Duration) -> Signal {
+        Signal::TvGone {
+            at: Instant::now() - ago,
+        }
+    }
+
+    fn played_again(orders: &std::sync::mpsc::Receiver<ToTv>) -> Box<Play> {
+        told(orders, |order| match order {
+            ToTv::Play(play) => Some(play),
+            _ => None,
+        })
+    }
+
+    fn plays_told(orders: &std::sync::mpsc::Receiver<ToTv>) -> usize {
+        orders.try_iter().filter(|order| matches!(order, ToTv::Play(_))).count()
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tv_lost_mid_film_keeps_its_place_refuses_controls_and_is_picked_up_three_seconds_back() {
+        let (core, orders, play) = reported_at(20.0).await;
+        assert_eq!(saved_at(&core).await, None);
+        core.signal(gone(Duration::ZERO));
+        settled(&core).await;
+        assert_eq!(saved_at(&core).await, Some(20.0), "saved at once");
+        assert_eq!(core.now_playing().map(|playing| playing.loading), Some(true));
+        assert_eq!(
+            core.ask(Request::Seek(Seek::To(90.0))).await,
+            Some(Outcome::refused(TV_RESTARTING))
+        );
+        assert_eq!(
+            core.ask(Request::Control(Control::Pause)).await,
+            Some(Outcome::refused(TV_RESTARTING))
+        );
+        core.signal(back(None, None));
+        let again = played_again(&orders);
+        assert_eq!(
+            (again.play.as_str(), again.start, again.paused),
+            (play.as_str(), 17.0, false)
+        );
+        let toast = told(&orders, |order| match order {
+            ToTv::Toast { status, .. } => Some(status),
+            _ => None,
+        });
+        assert_eq!(toast, "Picked up where it stopped");
+        assert_eq!(
+            core.ask(Request::Seek(Seek::To(90.0))).await,
+            Some(Outcome::done("Seeking"))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tv_back_after_more_than_two_minutes_finds_the_film_stopped() {
+        let (core, orders, _) = reported_at(20.0).await;
+        core.signal(gone(Duration::from_secs(150)));
+        core.signal(back(None, None));
+        settled(&core).await;
+        assert_eq!(core.now_playing(), None);
+        assert_eq!(plays_told(&orders), 0);
+        assert_eq!(saved_at(&core).await, Some(20.0));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_film_that_stopped_the_tv_twice_is_not_picked_up_a_third_time() {
+        let (core, orders, play) = reported_at(600.0).await;
+        for _ in 0..2 {
+            core.signal(gone(Duration::ZERO));
+            core.signal(back(None, None));
+            assert_eq!(played_again(&orders).play, play);
+        }
+        core.signal(gone(Duration::ZERO));
+        core.signal(back(None, None));
+        let message = told(&orders, |order| match order {
+            ToTv::Play(_) => panic!("picked up a third time"),
+            ToTv::Message(message) => Some(message),
+            _ => None,
+        });
+        assert_eq!(message, "This video stopped the TV twice");
+        assert_eq!(core.now_playing(), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tv_back_with_the_film_still_playing_carries_on_without_starting_it_again() {
+        let (core, orders, play) = reported_at(200.0).await;
+        core.signal(gone(Duration::ZERO));
+        core.signal(back(
+            Some(Running {
+                play: play.clone(),
+                owner: ProfileId::FIRST,
+                file: up(&core),
+                position: 201.0,
+                paused: false,
+            }),
+            None,
+        ));
+        settled(&core).await;
+        assert_eq!(plays_told(&orders), 0);
+        assert_eq!(
+            core.ask(Request::Seek(Seek::To(90.0))).await,
+            Some(Outcome::done("Seeking"))
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn what_was_asked_to_play_while_the_tv_was_away_plays_when_it_is_back() {
+        let (core, orders, play) = reported_at(200.0).await;
+        core.signal(gone(Duration::ZERO));
+        let dark = core.library().shows[0].seasons[0].episodes[0].path.clone();
+        assert!(core.ask(Request::PlayFile(dark.clone())).await.unwrap().ok);
+        core.signal(back(None, None));
+        let next = played_again(&orders);
+        assert_ne!(next.play, play);
+        assert_eq!(next.file, dark);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_restarted_core_takes_over_the_film_the_tv_kept_playing() {
+        let (core, orders) = core_and_tv().await;
+        core.signal(back(
+            Some(Running {
+                play: "kept".to_string(),
+                owner: ProfileId::FIRST,
+                file: up(&core),
+                position: 500.0,
+                paused: false,
+            }),
+            None,
+        ));
+        settled(&core).await;
+        let shown = core.now_playing().expect("the film the tv kept");
+        assert_eq!(
+            (shown.title.as_str(), shown.position, shown.loading),
+            ("Up", 500.0, false)
+        );
+        assert_eq!(
+            core.ask(Request::Seek(Seek::To(90.0))).await,
+            Some(Outcome::done("Seeking"))
+        );
+        let sought = told(&orders, |order| match order {
+            ToTv::Seek { play, .. } => Some(play),
+            _ => None,
+        });
+        assert_eq!(sought, "kept");
+        core.signal(reported("kept", 530.0, true));
+        settled(&core).await;
+        assert_eq!(position(&core), Some(530.0));
+        assert_eq!(saved_at(&core).await, Some(530.0));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_restarted_core_records_the_film_that_ended_while_it_was_away() {
+        let (core, _orders) = core_and_tv().await;
+        core.signal(back(
+            None,
+            Some(Ended {
+                play: "ended-away".to_string(),
+                file: up(&core),
+                owner: ProfileId::FIRST,
+                finish: Finish::Stopped,
+                place: progress::Place {
+                    position: 1234.0,
+                    duration: 9000.0,
+                    credits: None,
+                },
+                tracks: progress::Tracks::default(),
+                played: 600.0,
+            }),
+        ));
+        settled(&core).await;
+        assert_eq!(saved_at(&core).await, Some(1234.0));
+        assert_eq!(core.now_playing(), None);
+    }
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tv_silent_for_five_seconds_shows_the_phones_a_loading_film_until_it_reports() {
+        let (core, _orders, play) = reported_at(200.0).await;
+        assert_eq!(core.now_playing().map(|playing| playing.loading), Some(false));
+        tokio::time::sleep(TV_STALE + Duration::from_millis(700)).await;
+        assert_eq!(core.now_playing().map(|playing| playing.loading), Some(true));
+        core.signal(reported(&play, 205.0, true));
+        settled(&core).await;
+        assert_eq!(core.now_playing().map(|playing| playing.loading), Some(false));
     }
 }

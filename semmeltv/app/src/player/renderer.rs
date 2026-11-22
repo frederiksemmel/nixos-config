@@ -5,6 +5,7 @@ use super::{Finish, REPORT_EVERY, State};
 use crate::command::Command;
 use crate::link::QUEUE;
 use crate::link::messages::{Ended, Report, Target, ToTv};
+use crate::profile::ProfileId;
 use crate::progress::{Place, Tracks};
 use crate::seek::{Direction, Scrub};
 use crate::stream::probe::Media;
@@ -477,9 +478,11 @@ impl Seen {
     }
 
     /// How `play` ended if this was the last thing seen of it.
-    pub fn ended(&self, play: &str, finish: Finish, tracks: Tracks) -> Ended {
+    pub fn ended(&self, play: &str, file: &Path, owner: ProfileId, finish: Finish, tracks: Tracks) -> Ended {
         Ended {
             play: play.to_string(),
+            file: file.to_path_buf(),
+            owner,
             finish,
             place: self.place(),
             tracks,

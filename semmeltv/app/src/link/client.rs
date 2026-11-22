@@ -324,6 +324,8 @@ mod tests {
     fn an_ending() -> Ended {
         Ended {
             play: "a-play".to_string(),
+            file: PathBuf::from("/lib/Up.mkv"),
+            owner: ProfileId(2),
             finish: Finish::Stopped,
             place: Place {
                 position: 600.0,

@@ -249,6 +249,8 @@ pub struct Running {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Ended {
     pub play: String,
+    pub file: PathBuf,
+    pub owner: ProfileId,
     pub finish: Finish,
     pub place: Place,
     pub tracks: Tracks,
@@ -391,6 +393,8 @@ mod tests {
     fn ended() -> Ended {
         Ended {
             play: "a-play".to_string(),
+            file: PathBuf::from("/lib/Dark/S01E02.mkv"),
+            owner: ProfileId(2),
             finish: Finish::Next,
             place: report().place,
             tracks: report().tracks,

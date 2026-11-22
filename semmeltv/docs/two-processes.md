@@ -466,8 +466,30 @@ How 3 came out (3a, the transport):
   `/run/semmeltv/tv.sock`); `semmeltv tv` runs the menu, the player and the
   client; `semmeltv ui` keeps both in one process. `semmeltv tv --dump`
   connects as a tv, so the real one loses the link until it reconnects.
-- On `Hello` the core sends the library and home screen again. Recovery
-  (§2.6) is 3b.
+- On `Hello` the core sends the library and home screen again.
+
+How 3b (recovery) came out:
+
+- `Signal::TvGone { at }` marks the playback lost and saves its place at
+  once. While it is lost, everything that steers playback (controls, seek,
+  speed, skip, subtitles) answers "The TV app is restarting"; a play asked
+  for meanwhile waits in `queued`. Phones see `loading` while it is lost
+  and when nothing came from the tv for 5 s.
+- On `Hello` with nothing playing, the core sends the same `Play` token
+  again from 3 s before the last reported place, paused if it was, and
+  toasts "Picked up where it stopped". It gives up instead, finishing the
+  playback as stopped, when it was lost over 2 minutes ago, was being
+  stopped by a handover, something waits in `queued` (which then plays),
+  or it was picked up twice in the last 10 minutes ("This video stopped
+  the TV twice"). A playback lost for 2 minutes also ends on the tick,
+  without waiting for a `Hello`.
+- `Hello.playing` with the same token is a link that came back: the core
+  carries on. Another token means the core restarted: it takes the
+  playback over, with the library's caption and segments looked up again.
+- `Ended` carries the file and the owner, so a core that restarted can
+  record a playback that ended while it was away.
+- The player now honours `Play.paused`: a playback started paused stays
+  paused once mpv starts.
 
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
