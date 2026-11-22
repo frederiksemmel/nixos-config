@@ -69,7 +69,7 @@ The panel is busy from the first picture to the last refresh. ffmpeg turns an MP
 - **WhatsApp:** only the chats listed in `whatsapp-groups`; the bot ignores every other chat.
   - A message that is exactly `hoi` (any case) adds its chat to the list, from anyone, and the bot greets. `ciao bello guys` (or `/stop`) removes the chat again, and the bot says goodbye.
   - In a private chat, every message is meant for the bot, as on Telegram.
-  - In a group, only commands draw; ordinary chat stays off the panel. A message that names `spades` or replies to the bot counts as meant for it, so `spades hoi` draws `hoi`. A sticker or GIF counts when it replies to the bot. A text or sticker that completes a sticker-and-text pair counts too.
+  - In a group, only commands draw; ordinary chat stays off the panel. A message that names `spades`, @mentions the bot or replies to it counts as meant for it, and the name or mention isn't drawn: `spades hoi` and `@bot hoi` both draw `hoi`. A sticker or GIF counts when it replies to the bot. A text or sticker that completes a sticker-and-text pair counts too.
   - Messages older than 10 minutes, edits and the bot's own messages are skipped.
 - **Telegram:** every message is meant for the bot. Plain text draws as if it came after `/text`. `services.epaper.allow` limits who may draw.
 

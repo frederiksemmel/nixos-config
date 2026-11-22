@@ -390,16 +390,26 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         return Ok(());
     };
     tracing::info!(chat = %info.source.chat, "whatsapp message");
+    let context = base
+        .extended_text_message
+        .as_option()
+        .and_then(|text| text.context_info.as_option());
+    let own: Vec<String> = [ctx.client.pn(), ctx.client.lid()]
+        .into_iter()
+        .flatten()
+        .map(|jid| jid.user.to_string())
+        .collect();
+    let mentioned = context.map_or(&[][..], |context| &context.mentioned_jid[..]);
+    let (text, mentioning) = named_by_mention(&text, &own, mentioned);
     if !is_group {
+        let text = if mentioning {
+            addressed(&text, true).unwrap_or(text)
+        } else {
+            text
+        };
         return bot.message(&chat, &text).await;
     }
-    let replying = quotes_the_bot(
-        &bot,
-        &chat,
-        base.extended_text_message
-            .as_option()
-            .and_then(|text| text.context_info.as_option()),
-    );
+    let replying = mentioning || quotes_the_bot(&bot, &chat, context);
     match addressed(&text, replying) {
         Some(text) => bot.message(&chat, &text).await,
         None if flow::parse_command(&text).is_none() && bot.display.pairs(&chat.author(), true) => {
@@ -461,7 +471,7 @@ fn addressed(text: &str, replying: bool) -> Option<String> {
     let named = words(text).find(|&(_, word)| word.trim_start_matches('@').to_lowercase().starts_with(NAME));
     let rest = match named {
         Some((start, word)) => {
-            let before = text[..start].trim_end();
+            let before = text[..start].trim_end().trim_end_matches([',', ':', ';']);
             let after = text[start + word.len()..]
                 .trim_start_matches([',', ':', '!', '.', ';'])
                 .trim_start();
@@ -482,6 +492,20 @@ fn addressed(text: &str, replying: bool) -> Option<String> {
     })
 }
 
+/// `text` with each @mention of the bot, which WhatsApp writes as `@` and the
+/// bot's number or LID, turned into `@spades`; and whether there was one.
+fn named_by_mention(text: &str, own: &[String], mentioned: &[String]) -> (String, bool) {
+    let mut text = text.to_owned();
+    let mut mentioning = false;
+    for user in mentioned.iter().filter_map(|jid| jid.split(['@', ':']).next()) {
+        if own.iter().any(|own| own == user) {
+            text = text.replace(&format!("@{user}"), &format!("@{NAME}"));
+            mentioning = true;
+        }
+    }
+    (text, mentioning)
+}
+
 /// The whitespace-separated words of `text` with their byte offsets.
 fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
     text.split_whitespace()
@@ -491,6 +515,22 @@ fn words(text: &str) -> impl Iterator<Item = (usize, &str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_at_mention_of_the_bot_addresses_it_and_is_not_drawn() {
+        let own = ["41790000000".to_owned(), "123456789".to_owned()];
+        let mentioned = ["123456789@lid".to_owned(), "41771111111@s.whatsapp.net".to_owned()];
+        let (text, mentioning) = named_by_mention("@123456789 Hoi @41771111111", &own, &mentioned);
+        assert!(mentioning);
+        assert_eq!(addressed(&text, true).as_deref(), Some("Hoi @41771111111"));
+        let (text, _) = named_by_mention("Hoi zäme, @123456789!", &own, &mentioned);
+        assert_eq!(addressed(&text, true).as_deref(), Some("Hoi zäme"));
+        let (text, _) = named_by_mention("@123456789 /ring", &own, &mentioned);
+        assert_eq!(addressed(&text, true).as_deref(), Some("/ring"));
+        let (text, mentioning) = named_by_mention("Hoi @41771111111", &own, &mentioned[1..]);
+        assert!(!mentioning);
+        assert_eq!(text, "Hoi @41771111111");
+    }
 
     #[test]
     fn naming_the_bot_or_replying_to_it_addresses_it() {
