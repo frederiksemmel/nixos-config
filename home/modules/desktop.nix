@@ -520,11 +520,13 @@ let
           }
           { t[NR] = $1; s[NR] = $2 }
           END {
-            # A timeline per window, oldest left: one cell per slice, white
-            # (the tooltip foreground) as unlocked, black as locked, shaded
-            # for a mix, a dot where the poller mostly was not running.
+            # A framed timeline per window, oldest left: one cell per slice,
+            # white (the tooltip foreground) as mostly unlocked, black as
+            # mostly locked, a dot where the poller mostly was not running.
+            # Eighth blocks above, below and at the ends draw the frame
+            # flush against the cells.
             cells = 48
-            split(" |░|▒|▓|█", shade, "|")
+            for (c = 0; c < cells; c++) { top = top "▁"; bottom = bottom "▔" }
             split("3600 86400", win, " ")
             split("Past 1h |Past 24h", name, "|")
             for (w = 1; w <= 2; w++) {
@@ -535,14 +537,16 @@ let
                 b = start + win[w] * (c + 1) / cells
                 span(a, b)
                 if (U + L < (b - a) / 2) bar = bar "·"
-                else bar = bar shade[int(4 * U / (U + L) + 0.5) + 1]
+                else bar = bar (U >= L ? "█" : " ")
               }
               span(start, now)
               on = U + L
               off = win[w] - on
               share = on > 0 ? sprintf("%3d%%", 100 * U / on + 0.5) : "   –"
+              printf "           %s\n", top
               printf "%s  ▕%s▏ %s\n", name[w], bar, share
-              printf "          unlocked %s · locked %s", fmt(U), fmt(L)
+              printf "           %s\n", bottom
+              printf "           unlocked %s · locked %s", fmt(U), fmt(L)
               if (off >= 60) printf " · off %s", fmt(off)
               printf "\n"
             }
