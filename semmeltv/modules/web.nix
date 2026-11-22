@@ -300,10 +300,32 @@ in
           })
         ];
 
-        systemd.services.${if cfg.split then "semmeltv" else "cage-tty1"}.serviceConfig.ExecStop =
+        systemd.services.${if cfg.split then "semmeltv" else "cage-tty1"}.serviceConfig.ExecStop = [
           "-${pkgs.writeShellScript "semmeltv-announce-restart" ''
             SEMMELTV_FRONT_CONTROL=127.0.0.1:${toString front.controlPort} exec ${maintenance} restarting
-          ''}";
+          ''}"
+        ];
+      })
+
+      (lib.mkIf cfg.web.enable {
+        systemd.services.semmeltv-update-card = {
+          description = "Tells SemmelTV before cage-tty1 stops, so the TV shows the update card and plays on after";
+          after = [ "cage-tty1.service" ] ++ lib.optional cfg.split "semmeltv.service";
+          partOf = [ "cage-tty1.service" ];
+          wantedBy = [ "cage-tty1.service" ];
+          restartIfChanged = false;
+          serviceConfig = {
+            Type = "oneshot";
+            RemainAfterExit = true;
+            User = "semmeltv";
+            ExecStart = "${pkgs.coreutils}/bin/true";
+            ExecStop = "-${pkgs.writeShellScript "semmeltv-announce-update" ''
+              { printf 'Authorization: Bearer '; cat ${signIn.serviceTokenFile}; } \
+                | ${lib.getExe pkgs.curl} --silent --show-error --max-time 6 --header @- \
+                  --request POST ${api}/api/restarting
+            ''}";
+          };
+        };
       })
 
       (lib.mkIf (cfg.web.enable && cfg.web.tailscale) {

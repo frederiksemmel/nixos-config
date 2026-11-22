@@ -199,6 +199,7 @@ fn router(api: Api) -> Router {
         .route("/api/playback/skip", post(skip))
         .route("/api/playback/speed", post(speed))
         .route("/api/playback/{control}", post(control))
+        .route("/api/restarting", post(restarting))
         .route("/api/tv/{control}", post(tv))
         .route("/api/tv-profile", get(tv_profile).post(show_my_profile))
         .route("/api/events", get(events))
@@ -1325,6 +1326,12 @@ async fn control(State(api): State<Api>, Path(name): Path<String>) -> Response {
         _ => return not_found(format!("no playback control {name}")),
     };
     ask(&api.core, request).await
+}
+
+/// SemmelTV's stop hook says it restarts for an update: the TV shows the
+/// update card, and what plays is picked up after the restart.
+async fn restarting(State(api): State<Api>) -> Response {
+    ask(&api.core, Request::Restarting).await
 }
 
 async fn tv_profile(State(api): State<Api>, Who(profile): Who) -> Response {
@@ -2611,6 +2618,7 @@ mod tests {
                 None,
             ),
             ("POST", "/api/playback/dance", json!({}), 404, vec![], None),
+            ("POST", "/api/restarting", json!({}), 200, vec![], Some("Restarting")),
             ("POST", "/api/tv/on", json!({}), 200, vec![], Some("Control(TvOn)")),
             ("POST", "/api/tv/off", json!({}), 200, vec![], Some("Control(TvOff)")),
             (

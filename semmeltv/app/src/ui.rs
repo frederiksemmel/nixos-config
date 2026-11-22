@@ -100,9 +100,16 @@ struct Screen {
     up_next_timer: Timer,
 }
 
-pub fn run(inbox: Inbox, tell: impl Fn(FromTv) + 'static, meta: &Path) -> Result<(), slint::PlatformError> {
+/// Runs the menu until its window closes. `shown` runs once its first frame
+/// is on the screen.
+pub fn run(
+    inbox: Inbox,
+    tell: impl Fn(FromTv) + 'static,
+    shown: impl FnOnce() + 'static,
+    meta: &Path,
+) -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
-    splash_after_first_frame(&ui);
+    splash_after_first_frame(&ui, shown);
     let handle = ui.as_weak();
     let images = loader::spawn(move |target, pixels| {
         let handle = handle.clone();
@@ -158,18 +165,26 @@ pub fn run(inbox: Inbox, tell: impl Fn(FromTv) + 'static, meta: &Path) -> Result
     ui.run()
 }
 
-fn splash_after_first_frame(ui: &AppWindow) {
+fn splash_after_first_frame(ui: &AppWindow, shown: impl FnOnce() + 'static) {
     let handle = ui.as_weak();
+    let shown = Rc::new(RefCell::new(Some(shown)));
+    let showing = shown.clone();
     let notified = ui.window().set_rendering_notifier(move |state, _| {
         if let slint::RenderingState::AfterRendering = state
             && let Some(ui) = handle.upgrade()
             && !ui.get_painted()
         {
             ui.set_painted(true);
+            if let Some(shown) = showing.borrow_mut().take() {
+                shown();
+            }
         }
     });
     if notified.is_err() {
         ui.set_painted(true);
+        if let Some(shown) = shown.borrow_mut().take() {
+            shown();
+        }
     }
 }
 
@@ -281,6 +296,7 @@ impl Screen {
             ToTv::Panel(panel) => self.show_panel(panel),
             ToTv::UpNext(card) => self.show_up_next(card.map(|card| card.card(Instant::now()))),
             ToTv::Together(together) => self.show_together(together),
+            ToTv::Update(shown) => self.ui.set_updating(shown),
             _ => {}
         }
     }

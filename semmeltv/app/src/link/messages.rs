@@ -96,6 +96,8 @@ pub enum ToTv {
     Bakeoff(Option<View>),
     /// A remote key while the bake-off shows.
     BakeKey(Command),
+    /// Whether the TV shows that SemmelTV is being updated, over everything.
+    Update(bool),
 }
 
 impl ToTv {
@@ -126,6 +128,7 @@ impl ToTv {
             Self::Stop { .. } => "stop",
             Self::Bakeoff(_) => "bake-off",
             Self::BakeKey(_) => "bake-off key",
+            Self::Update(_) => "update",
         }
     }
 }
@@ -538,6 +541,7 @@ mod tests {
             })),
             ToTv::Bakeoff(None),
             ToTv::BakeKey(Command::Select),
+            ToTv::Update(true),
         ];
         for order in &orders {
             crosses(order);

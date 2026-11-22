@@ -161,7 +161,8 @@ fn drive(
             | ToTv::Message(_)
             | ToTv::Panel(_)
             | ToTv::Together(_)
-            | ToTv::UpNext(_) => menu(order),
+            | ToTv::UpNext(_)
+            | ToTv::Update(_) => menu(order),
             ToTv::Welcome { .. } => {}
             ToTv::Bakeoff(Some(view)) => {
                 let now = Instant::now();

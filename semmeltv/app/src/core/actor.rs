@@ -32,6 +32,7 @@ use crate::together;
 use crate::tv::{self, Television};
 use crate::up_next::{self, Press, UpNext};
 use crate::watching;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -61,6 +62,13 @@ const PICKED_UP_BEFORE: f64 = 3.0;
 const TV_RESTARTING: &str = "The TV app is restarting";
 const TV_ANSWER_TIME: Duration = Duration::from_secs(2);
 const TV_SILENT: &str = "The TV did not answer";
+const LEFT_FOR_UPDATE: &str = "left_for_update";
+const UPDATE_SHOWN: &str = "The TV shows that SemmelTV is being updated";
+const UPDATE_SHOWN_FOR: Duration = Duration::from_secs(2);
+const UPDATE_HIDES_AFTER: Duration = Duration::from_millis(1500);
+const NO_RESTART_WITHIN: Duration = Duration::from_secs(if cfg!(test) { 3 } else { 30 });
+const PICKED_UP: &str = "Picked up where it stopped";
+const PICKED_UP_AFTER_UPDATE: &str = "Wieder gebacken. Weiter geht's!";
 const TV_SET_SUBTITLES: &str = "The TV's own player shows the subtitles: choose them with the TV's remote";
 
 type Boxed<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
@@ -118,6 +126,18 @@ struct Again {
     play: String,
     paused: bool,
     resumes: Vec<Instant>,
+    said: &'static str,
+}
+
+/// What played on the TV when SemmelTV restarted for an update, kept in the
+/// database for the next start to pick up.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+struct Left {
+    file: PathBuf,
+    owner: ProfileId,
+    position: f64,
+    paused: bool,
+    at: u64,
 }
 
 impl OnTv {
@@ -230,6 +250,9 @@ pub struct Actor {
     library_sent: Option<u64>,
     home_sent: Option<messages::Home>,
     bake: Option<Shown>,
+    update_card: Option<Instant>,
+    leaving: Option<Instant>,
+    left: Option<Left>,
 }
 
 /// How long the TV shows a bake-off's result before the film goes on or
@@ -361,9 +384,13 @@ impl Actor {
             library_sent: None,
             home_sent: None,
             bake: None,
+            update_card: None,
+            leaving: None,
+            left: None,
         };
         actor.apply_audio(profile);
         actor.people = step("the people", people(&actor.db, &actor.core)).await;
+        actor.left = step("what an update left playing", left_for_update(&actor.db)).await;
         actor.publish_home();
         actor.queue_downloads(false);
         actor.tend();
@@ -390,6 +417,7 @@ impl Actor {
                     Some(Input::Request(Request::WatchWithOnTv { show, with }, reply)) => {
                         self.watch_with_on_tv(show, with, reply);
                     }
+                    Some(Input::Request(Request::Restarting, reply)) => self.restarting(reply).await,
                     Some(Input::Request(request, reply)) => {
                         let outcome = self.answer(request).await;
                         if let Some(reply) = reply {
@@ -402,6 +430,10 @@ impl Actor {
                 _ = playback.tick() => {
                     crate::notify::alive();
                     self.tend_bakeoff();
+                    if self.leaving.is_some_and(|since| since.elapsed() > NO_RESTART_WITHIN) {
+                        self.play_on_without_restart().await;
+                    }
+                    self.tend_update_card();
                     self.publish_playback();
                     if self.on_tv.is_none() {
                         self.hear_sound();
@@ -739,7 +771,7 @@ impl Actor {
             return;
         };
         let path = file.as_path();
-        let picked_up = again.is_some();
+        let picked_up = again.as_ref().map(|again| again.said);
         let (source, sidecars, media) = match prepared {
             Prepared::Ready(ready) => {
                 let prepare::Ready {
@@ -767,7 +799,9 @@ impl Actor {
         };
         let dialogue = self.core.dialogue(owner).await.load(Ordering::SeqCst);
         let (token, paused, resumes) = match again {
-            Some(Again { play, paused, resumes }) => (play, paused, resumes),
+            Some(Again {
+                play, paused, resumes, ..
+            }) => (play, paused, resumes),
             None => (crate::auth::token(), false, Vec::new()),
         };
         let play = Play {
@@ -819,8 +853,8 @@ impl Actor {
             play: play.play,
         });
         self.publish_playback();
-        if let Some(tv) = self.on_tv.as_ref().filter(|_| picked_up) {
-            tv.say("Picked up where it stopped");
+        if let (Some(tv), Some(said)) = (&self.on_tv, picked_up) {
+            tv.say(said);
         }
     }
 
@@ -876,6 +910,9 @@ impl Actor {
             return;
         };
         let (file, owner, handed_off) = (tv.file.clone(), tv.owner, tv.handed_off());
+        if let Some(until) = &mut self.update_card {
+            *until = (*until).min(Instant::now() + UPDATE_HIDES_AFTER);
+        }
         if !handed_off {
             self.wake_tv();
         }
@@ -1096,6 +1133,12 @@ impl Actor {
         if let Some(ended) = ended {
             self.ended_away(ended).await;
         }
+        if playing.is_none() && self.on_tv.is_none() {
+            self.take_over_from_update();
+        }
+        if self.update_card.is_none() {
+            self.tv.send(ToTv::Update(false));
+        }
         match playing {
             Some(running) if self.on_tv.as_ref().is_some_and(|tv| tv.play == running.play) => {
                 if let Some(tv) = &mut self.on_tv {
@@ -1184,6 +1227,11 @@ impl Actor {
     /// stopped, something else waits to play, or it stopped the tv twice.
     async fn pick_up(&mut self) {
         let queued = self.queued.is_some();
+        let said = if self.update_card.is_some() {
+            PICKED_UP_AFTER_UPDATE
+        } else {
+            PICKED_UP
+        };
         let Some(tv) = self.on_tv.as_mut().filter(|tv| !tv.handed_off()) else {
             return;
         };
@@ -1207,11 +1255,126 @@ impl Actor {
             play: tv.play.clone(),
             paused: tv.last.state.paused,
             resumes,
+            said,
         };
         let (file, owner) = (tv.file.clone(), tv.owner);
         let from = (tv.last.place.position - PICKED_UP_BEFORE).max(0.0);
         eprintln!("tv: back; picking up {} at {from:.0} s", file.display());
         self.play_as(&file, from, owner, Some(again)).await;
+    }
+
+    /// SemmelTV is about to restart for an update. The TV shows the update
+    /// card, and the answer waits until what played is kept and the card has
+    /// been seen, before the restart takes the screen.
+    async fn restarting(&mut self, reply: Option<oneshot::Sender<Outcome>>) {
+        let kept = self.leave_for_update().await;
+        let Some(reply) = reply else {
+            return;
+        };
+        let Some(kept) = kept else {
+            let _ = reply.send(Outcome::done(NOTHING_PLAYING));
+            return;
+        };
+        tokio::spawn(async move {
+            let _ = tokio::join!(
+                tokio::time::sleep(UPDATE_SHOWN_FOR),
+                tokio::time::timeout(UPDATE_SHOWN_FOR * 2, kept)
+            );
+            let _ = reply.send(Outcome::done(UPDATE_SHOWN));
+        });
+    }
+
+    /// Keeps the place of what plays on the TV and leaves it for the next
+    /// start, in memory and in the database, then shows the update card and
+    /// stops the film. Gives what says when the database has it, or None
+    /// when nothing played.
+    async fn leave_for_update(&mut self) -> Option<oneshot::Receiver<()>> {
+        let tv = self.on_tv.as_ref().filter(|tv| !tv.handed_off() && tv.lost.is_none())?;
+        let left = Left {
+            file: tv.file.clone(),
+            owner: tv.owner,
+            position: tv.last.place.position,
+            paused: tv.last.state.paused,
+            at: watching::now(),
+        };
+        self.record_place().await;
+        let stored = serde_json::to_string(&left).expect("a place serialises");
+        let (done, kept) = oneshot::channel();
+        self.core.saves().save(move |db| async move {
+            if let Err(error) = db.set_setting(LEFT_FOR_UPDATE, Some(&stored)).await {
+                eprintln!("update: could not keep what plays: {error}");
+            }
+            let _ = done.send(());
+        });
+        eprintln!("update: {} left at {:.0} s", left.file.display(), left.position);
+        self.left = Some(left);
+        self.tv.send(ToTv::Update(true));
+        if let Some(tv) = self.on_tv.take() {
+            tv.stop();
+        }
+        self.leaving = Some(Instant::now());
+        self.publish_playback();
+        Some(kept)
+    }
+
+    /// The restart an update announced never came: the film plays on.
+    async fn play_on_without_restart(&mut self) {
+        self.leaving = None;
+        eprintln!("update: no restart came within {NO_RESTART_WITHIN:?}; playing on");
+        if self.on_tv.is_none() && self.preparing.is_none() {
+            self.take_over_from_update();
+            self.pick_up().await;
+        } else {
+            self.update_card = Some(Instant::now());
+        }
+    }
+
+    /// Takes over what an update left playing, as a playback the tv lost,
+    /// for the tv's `Hello` to pick up, and shows the update card until it
+    /// plays.
+    fn take_over_from_update(&mut self) {
+        let Some(left) = self.left.take() else {
+            return;
+        };
+        self.core.saves().save(|db| async move {
+            if let Err(error) = db.set_setting(LEFT_FOR_UPDATE, None).await {
+                eprintln!("update: {error}");
+            }
+        });
+        let ago = Duration::from_secs(watching::now().saturating_sub(left.at));
+        if ago > TV_LOST_FOR {
+            eprintln!(
+                "update: {} was left {ago:?} ago, too long to pick up",
+                left.file.display()
+            );
+            return;
+        }
+        self.adopt(Running {
+            play: crate::auth::token(),
+            owner: left.owner,
+            file: left.file,
+            position: left.position,
+            paused: left.paused,
+        });
+        let now = Instant::now();
+        if let Some(tv) = &mut self.on_tv {
+            tv.lost = Some(now.checked_sub(ago).unwrap_or(now));
+        }
+        self.update_card = Some(now + TV_LOST_FOR);
+        self.tv.send(ToTv::Update(true));
+        self.publish_playback();
+    }
+
+    /// Takes the update card away once the film plays again, or once nothing
+    /// will.
+    fn tend_update_card(&mut self) {
+        let Some(until) = self.update_card else {
+            return;
+        };
+        if Instant::now() >= until || (self.on_tv.is_none() && self.preparing.is_none()) {
+            self.update_card = None;
+            self.tv.send(ToTv::Update(false));
+        }
     }
 
     async fn reported(&mut self, report: Report) {
@@ -1439,6 +1602,10 @@ impl Actor {
             Request::Storage(change) => {
                 self.change_storage(change, None);
                 return Outcome::done("Removing it from pCloud");
+            }
+            Request::Restarting => {
+                let shown = self.leave_for_update().await.is_some();
+                return Outcome::done(if shown { UPDATE_SHOWN } else { NOTHING_PLAYING });
             }
             Request::Understand(text, by) => {
                 let progress = self.progress_of(by).await;
@@ -2348,6 +2515,18 @@ impl Actor {
 
 /// Who has a profile, with each one's progress and dialogue mode loaded into
 /// the core's memory on the way.
+/// What an update left playing, read once at the start.
+async fn left_for_update(db: &Db) -> Option<Left> {
+    let stored = db
+        .setting(LEFT_FOR_UPDATE)
+        .await
+        .inspect_err(|error| eprintln!("update: {error}"))
+        .ok()??;
+    serde_json::from_str(&stored)
+        .inspect_err(|error| eprintln!("update: {error}"))
+        .ok()
+}
+
 async fn people(db: &Db, core: &Core) -> Vec<(ProfileId, String)> {
     let profiles = db.profiles().await.unwrap_or_else(|error| {
         eprintln!("profiles: {error}");
@@ -3665,5 +3844,129 @@ mod tests {
         core.signal(reported(&play, 205.0, true));
         settled(&core).await;
         assert_eq!(core.now_playing().map(|playing| playing.loading), Some(false));
+    }
+
+    fn update_card(order: ToTv) -> Option<bool> {
+        match order {
+            ToTv::Update(shown) => Some(shown),
+            _ => None,
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_update_mid_film_shows_the_card_stops_the_film_and_leaves_its_place() {
+        let (core, orders, play) = reported_at(20.0).await;
+        let asked = Instant::now();
+        let outcome = core.ask(Request::Restarting).await;
+        assert!(asked.elapsed() >= UPDATE_SHOWN_FOR, "{:?}", asked.elapsed());
+        assert_eq!(outcome, Some(Outcome::done(UPDATE_SHOWN)));
+        assert!(told(&orders, update_card), "the card shows before the film stops");
+        let stopped = told(&orders, |order| match order {
+            ToTv::Stop { play } => Some(play),
+            _ => None,
+        });
+        assert_eq!(stopped, play);
+        assert_eq!(saved_at(&core).await, Some(20.0));
+        let left: Left = serde_json::from_str(&core.db().setting(LEFT_FOR_UPDATE).await.unwrap().unwrap()).unwrap();
+        assert_eq!(
+            (left.file, left.owner, left.position, left.paused),
+            (up(&core), ProfileId::FIRST, 20.0, false)
+        );
+        assert!(watching::now() - left.at < 5);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_update_while_nothing_plays_answers_at_once_and_leaves_nothing() {
+        let (core, orders) = core_and_tv().await;
+        let outcome = at_once(&core, Request::Restarting).await;
+        assert_eq!(outcome, Outcome::done(NOTHING_PLAYING));
+        assert!(!orders.try_iter().any(|order| matches!(order, ToTv::Update(_))));
+        core.saves().flushed().await;
+        assert_eq!(core.db().setting(LEFT_FOR_UPDATE).await.unwrap(), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tv_that_crashed_is_picked_up_as_before_and_shows_no_update_card() {
+        let (core, orders, _) = reported_at(20.0).await;
+        core.signal(gone(Duration::ZERO));
+        assert_eq!(
+            at_once(&core, Request::Restarting).await,
+            Outcome::done(NOTHING_PLAYING)
+        );
+        core.signal(back(None, None));
+        let toast = told(&orders, |order| match order {
+            ToTv::Update(true) => panic!("an update card after a crash"),
+            ToTv::Toast { status, .. } => Some(status),
+            _ => None,
+        });
+        assert_eq!(toast, PICKED_UP);
+    }
+
+    /// A core that starts after an update left the first movie `ago` seconds
+    /// before, at 600 s and paused.
+    async fn started_after_update(ago: u64) -> (Core, std::sync::mpsc::Receiver<ToTv>) {
+        let (core, inbox) = Core::detached(db::test_library()).await;
+        let left = Left {
+            file: up(&core),
+            owner: ProfileId::FIRST,
+            position: 600.0,
+            paused: true,
+            at: watching::now() - ago,
+        };
+        let stored = serde_json::to_string(&left).unwrap();
+        core.db().set_setting(LEFT_FOR_UPDATE, Some(&stored)).await.unwrap();
+        let (link, orders) = Link::pair();
+        (core_with_tv(core, inbox, link).await, orders)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn after_an_update_the_tv_shows_the_card_and_picks_the_film_up_three_seconds_back() {
+        let (core, orders) = started_after_update(4).await;
+        core.signal(back(None, None));
+        assert!(told(&orders, update_card));
+        let again = played_again(&orders);
+        core.saves().flushed().await;
+        assert_eq!(core.db().setting(LEFT_FOR_UPDATE).await.unwrap(), None);
+        assert_eq!(
+            (again.file.clone(), again.start, again.paused),
+            (up(&core), 597.0, true)
+        );
+        let toast = told(&orders, |order| match order {
+            ToTv::Toast { status, .. } => Some(status),
+            _ => None,
+        });
+        assert_eq!(toast, PICKED_UP_AFTER_UPDATE);
+        core.signal(Signal::Tv(FromTv::Started {
+            play: again.play.clone(),
+        }));
+        let hidden = Instant::now();
+        assert!(!told(&orders, update_card));
+        assert!(hidden.elapsed() < UPDATE_HIDES_AFTER + Duration::from_secs(1));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_update_whose_restart_never_comes_plays_the_film_on() {
+        let (core, orders, _) = reported_at(20.0).await;
+        core.ask(Request::Restarting).await.unwrap();
+        assert!(told(&orders, update_card));
+        let again = played_again(&orders);
+        assert_eq!((again.file.clone(), again.start), (up(&core), 17.0));
+        core.signal(Signal::Tv(FromTv::Started {
+            play: again.play.clone(),
+        }));
+        told(&orders, |order| matches!(order, ToTv::Update(false)).then_some(()));
+        core.saves().flushed().await;
+        assert_eq!(core.db().setting(LEFT_FOR_UPDATE).await.unwrap(), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_update_left_more_than_two_minutes_ago_is_not_picked_up() {
+        let (core, orders) = started_after_update(150).await;
+        core.signal(back(None, None));
+        settled(&core).await;
+        assert_eq!(core.now_playing(), None);
+        assert_eq!(plays_told(&orders), 0);
+        core.saves().flushed().await;
+        assert_eq!(core.db().setting(LEFT_FOR_UPDATE).await.unwrap(), None);
     }
 }

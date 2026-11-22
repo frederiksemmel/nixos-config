@@ -228,7 +228,16 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     let meta = args.meta().to_path_buf();
     let (menu, inbox) = ui::inbox();
     let core = runtime.block_on(start_core(args, cache, core::TvEnd::Local(Box::new(menu))))?;
-    let shown = ui::run(inbox, move |said| core.tv_said(said), &meta).map_err(|error| error.to_string());
+    let here = core.clone();
+    let hello = move || {
+        here.tv_said(link::messages::FromTv::Hello {
+            protocol: link::messages::PROTOCOL,
+            revision: link::revision(),
+            playing: None,
+            ended: None,
+        });
+    };
+    let shown = ui::run(inbox, move |said| core.tv_said(said), hello, &meta).map_err(|error| error.to_string());
     runtime.shutdown_background();
     shown
 }
@@ -327,6 +336,7 @@ fn run_tv(args: &Args) -> Result<(), String> {
         move |message| {
             let _ = said.send(message);
         },
+        || {},
         args.meta(),
     )
     .map_err(|error| error.to_string())

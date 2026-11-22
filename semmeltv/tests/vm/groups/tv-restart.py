@@ -116,6 +116,33 @@ with scenario("a film plays on while the core restarts, and the restarted core t
     tv_plays_past(stopped_at + 6, timeout=15)
     stop_everything(phone)
 
+with scenario("an update mid-film shows the update card, then plays the film on where it was"):
+    split_tv()
+    film_plays_at_100()
+    left_at = tv_position() or 0
+    tv.succeed("systemctl --no-block restart semmeltv.service cage-tty1.service")
+    restarted = time.monotonic()
+    eventually(
+        "the core leaves the film for the update",
+        lambda: "left at" in tv.succeed("journalctl -b -u semmeltv.service -o cat | grep '^update: ' || true"),
+        timeout=20,
+        every=0.2,
+    )
+    seen = []
+
+    def card_shows():
+        seen.append(tv.get_screen_text())
+        return any(word in seen[-1] for word in ("versemmelt", "Update"))
+
+    try:
+        eventually("the TV shows the update card", card_shows, timeout=20, every=0.2)
+    finally:
+        tv.screenshot("tv-update-card")
+        print(f"the TV showed: {seen!r}")
+    resumes_near(left_at, restarted, 60)
+    tv_plays_past(left_at + 2, timeout=15)
+    stop_everything(phone)
+
 with scenario("a frozen tv process leaves the API up, and the core ends it so the tv and the film come back"):
     before = split_tv()
     ended = silent_tvs_ended()

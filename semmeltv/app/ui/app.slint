@@ -899,6 +899,7 @@ export component AppWindow inherits Window {
 
     property <length> u: self.height / 1080;
     in property <bool> painted;
+    in property <bool> updating;
     property <bool> splash-in;
     property <bool> splash-out;
 
@@ -1202,6 +1203,46 @@ export component AppWindow inherits Window {
             opacity: root.splash-in ? 1 : 0;
             animate opacity { duration: 200ms; }
             animate height { duration: 450ms; easing: ease-out-back; }
+        }
+    }
+
+    if root.updating: Rectangle {
+        background: root.background;
+
+        HorizontalLayout {
+            alignment: center;
+            spacing: 72 * root.u;
+            padding-left: 120 * root.u;
+            padding-right: 120 * root.u;
+
+            VerticalLayout {
+                alignment: center;
+
+                Image {
+                    source: @image-url("../../assets/logo/semmeltv-dark.png");
+                    height: 240 * root.u;
+                    width: self.height * self.source.width / self.source.height;
+                }
+            }
+
+            VerticalLayout {
+                alignment: center;
+                spacing: 20 * root.u;
+
+                Text {
+                    text: "Wir haben's versemmelt";
+                    color: white;
+                    font-size: 72 * root.u;
+                    font-weight: 700;
+                }
+
+                Text {
+                    text: "Deswegen gibt's ein Update.\nGleich kriegen wir's wieder gebacken.";
+                    color: #c3c7d1;
+                    font-size: 40 * root.u;
+                    wrap: word-wrap;
+                }
+            }
         }
     }
 }

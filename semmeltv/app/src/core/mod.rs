@@ -55,13 +55,22 @@ pub enum Request {
     Storage(storage::Change),
     Dismiss(watching::Kind, String, ProfileId),
     Mark(watching::Kind, String, Option<(u32, u32)>, watching::Mark, ProfileId),
-    CatchUp { show: String, to: ProfileId, by: ProfileId },
+    CatchUp {
+        show: String,
+        to: ProfileId,
+        by: ProfileId,
+    },
     TogetherOnTv(String),
-    WatchWithOnTv { show: String, with: ProfileId },
+    WatchWithOnTv {
+        show: String,
+        with: ProfileId,
+    },
     Phone(stream::Report),
     Screen(ScreenCommand, ProfileId),
     TvProfile(ProfileId),
     Dialogue(ProfileId),
+    /// SemmelTV is about to restart for an update.
+    Restarting,
 }
 
 #[derive(Clone, Debug, PartialEq)]
