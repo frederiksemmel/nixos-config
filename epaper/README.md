@@ -10,6 +10,7 @@ A bot on semmeltv3 that draws on the Waveshare 2.7" e-Paper HAT. The panel shows
 | `/ring` | the hand |
 | `/clear` | white |
 | `/rotate [0\|90\|180\|270]` | the same picture, turned; with no angle, 90° further |
+| `/xkcd [random\|<number>]` | the newest [xkcd](https://xkcd.com) comic, a random one, or that one; the reply carries its number, title and punchline |
 | `/help` | nothing; the bot lists the commands |
 | `/mode [name]` | nothing; the chat's replies switch to a mode, such as `office`, or back with `swiss`. With no name, the bot names the chat's mode and the others. |
 
@@ -42,6 +43,10 @@ A picture is fitted into the panel at its current rotation, keeping its shape, a
 - **Line art**, such as a comic: nearly every pixel grey and close to black or white. It is darkened a little, so thin lines survive the scaling, and each pixel takes the nearest shade. Lines stay solid.
 - **Everything else**, such as a sticker or a photo: the contrast is stretched to the full range, the midtones are lifted, and the shades are dithered (Atkinson), so gradients come out as fine dot patterns.
 
+## xkcd
+
+`/xkcd` reads the comic from xkcd's JSON API and draws its picture as above. Some comics are interactive and have no PNG or JPEG picture; for those, and for numbers with no comic (such as 404), the bot says so and leaves the panel alone. So it does when xkcd can't be reached.
+
 ## Who it listens to
 
 - **WhatsApp:** only the chats listed in `whatsapp-groups`; the bot ignores every other chat.
@@ -64,7 +69,7 @@ Three words describe what the bot says:
 | Message | Said when | Placeholder |
 |---|---|---|
 | `wait` | a drawing starts |  |
-| `written` | the text or picture is on the panel |  |
+| `written` | the text or picture is on the panel; after an xkcd, its number, title and punchline follow the variant |  |
 | `ring` | the hand is on the panel |  |
 | `rotated` | the picture is turned | `{deg}`, the new angle |
 | `busy` | the panel is still drawing; the command is dropped |  |
@@ -113,4 +118,5 @@ epaper --rotation 270 text "Hoi"
 epaper --refresh clean clear
 epaper --preview out.ppm text "Hoi"   # writes an image, leaves the panel alone
 epaper --preview out.ppm picture comic.png
+epaper --preview out.ppm xkcd random    # prints the number, title and punchline
 ```

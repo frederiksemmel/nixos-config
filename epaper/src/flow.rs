@@ -16,6 +16,7 @@ use crate::{
     picture,
     render::{Scene, canvas_size, render},
     replies::{Message, Replies},
+    xkcd::{Fetched, Pick, Xkcd},
 };
 
 #[derive(BotCommands, Clone, Debug)]
@@ -33,6 +34,8 @@ pub enum Command {
     Rotate(String),
     #[command(description = "answer in a mode, such as /mode office; /mode swiss is the usual")]
     Mode(String),
+    #[command(description = "draw the newest xkcd, /xkcd random or /xkcd <number>")]
+    Xkcd(String),
 }
 
 /// A conversation the bot answers in.
@@ -129,11 +132,12 @@ fn read_rotation(file: &Path) -> Option<DisplayRotation> {
     parse_rotation(&std::fs::read_to_string(file).ok()?).flatten()
 }
 
-/// The display and the reply lines, shared by every chat.
+/// The display, the reply lines and the comic source, shared by every chat.
 #[derive(Clone)]
 pub struct Bot {
     pub display: Display,
     pub replies: SharedReplies,
+    pub xkcd: Xkcd,
 }
 
 pub fn quarter_turn(rotation: DisplayRotation) -> DisplayRotation {
@@ -212,6 +216,7 @@ impl Bot {
             }
             Command::Rotate(arg) => return self.rotate(chat, &arg).await,
             Command::Mode(arg) => return self.mode(chat, &arg).await,
+            Command::Xkcd(arg) => return self.comic(chat, &arg).await,
             Command::Text(text) if text.trim().is_empty() => {
                 chat.send("Use /text <message>").await?;
                 return Ok(());
@@ -264,6 +269,41 @@ impl Bot {
             }
             Err(message) => self.finish(chat, &pending, message, str::to_owned).await,
         }
+    }
+
+    /// Draws an xkcd comic, then tells its number, title and punchline after the outcome.
+    pub async fn comic<C: Chat>(&self, chat: &C, arg: &str) -> Result<()> {
+        let Some(pick) = Pick::parse(arg) else {
+            chat.send("Use /xkcd for the newest comic, /xkcd random or /xkcd <number>")
+                .await?;
+            return Ok(());
+        };
+        let pending = self.start(chat).await?;
+        let refusal = match self.xkcd.fetch(pick).await {
+            Ok(Fetched::Drawable { info, picture }) => {
+                return match outcome(self.display.show(Scene::Picture(picture)).await) {
+                    Ok(()) => {
+                        let caption = info.caption();
+                        self.finish(chat, &pending, Message::Written, |variant| {
+                            format!("{variant}\n\n{caption}")
+                        })
+                        .await
+                    }
+                    Err(message) => self.finish(chat, &pending, message, str::to_owned).await,
+                };
+            }
+            Ok(Fetched::Undrawable(info)) => format!(
+                "xkcd {} ({}) has no picture I can draw: https://xkcd.com/{}/",
+                info.num, info.title, info.num
+            ),
+            Ok(Fetched::Missing(num)) => format!("There is no xkcd {num}"),
+            Err(err) => {
+                tracing::warn!("fetching xkcd: {err:#}");
+                "xkcd can't be reached right now".to_owned()
+            }
+        };
+        chat.follow_up(&pending, &refusal).await?;
+        Ok(())
     }
 
     /// Names the chat's mode and the others, or switches the chat to one.
@@ -341,8 +381,12 @@ mod tests {
     use crate::{
         panel::Refresh,
         render::{Canvas, Planes},
+        xkcd::tests::{encoded, entry, serve},
     };
-    use std::sync::mpsc;
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        mpsc,
+    };
 
     struct Slow(mpsc::Receiver<()>);
 
@@ -388,11 +432,81 @@ mod tests {
         }
     }
 
+    /// A panel that counts its drawings.
+    struct Counted(Arc<AtomicUsize>);
+
+    impl Panel for Counted {
+        fn show(&mut self, _: &Canvas, _: &Planes, _: Refresh) -> Result<()> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+    }
+
     fn bot(panel: Box<dyn Panel>) -> Bot {
         Bot {
             display: Display::new(panel, DisplayRotation::Rotate90, None),
             replies: Arc::new(SyncMutex::new(Replies::open(None).unwrap())),
+            xkcd: Xkcd::default(),
         }
+    }
+
+    /// A bot whose comics come from a fake site, and the count of its drawings.
+    fn comic_bot(site: &str) -> (Bot, Arc<AtomicUsize>) {
+        let drawn = Arc::new(AtomicUsize::new(0));
+        let bot = Bot {
+            xkcd: Xkcd::at(site),
+            ..bot(Box::new(Counted(drawn.clone())))
+        };
+        (bot, drawn)
+    }
+
+    fn comic_site() -> String {
+        let picture = image::RgbaImage::from_pixel(30, 20, image::Rgba([0, 0, 0, 255]));
+        let png = encoded(&picture, image::ImageFormat::Png);
+        serve(|site| {
+            vec![
+                ("/info.0.json".to_owned(), entry(site, 7, "seven.png")),
+                ("/7/info.0.json".to_owned(), entry(site, 7, "seven.png")),
+                ("/6/info.0.json".to_owned(), entry(site, 6, "")),
+                ("/comics/seven.png".to_owned(), png),
+            ]
+        })
+    }
+
+    #[tokio::test]
+    async fn a_comic_is_drawn_and_its_punchline_told() {
+        let (bot, drawn) = comic_bot(&comic_site());
+        let chat = Fake::default();
+        bot.message(&chat, "/xkcd").await.unwrap();
+        bot.message(&chat, "/XKCD 7").await.unwrap();
+        assert_eq!(chat.messages(), ["Written it is\n\nxkcd 7: Comic 7\nPunchline 7"; 2]);
+        assert_eq!(drawn.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn comics_that_cant_be_drawn_leave_the_panel_alone() {
+        let (bot, drawn) = comic_bot(&comic_site());
+        let chat = Fake::default();
+        bot.message(&chat, "/xkcd 6").await.unwrap();
+        bot.message(&chat, "/xkcd 404").await.unwrap();
+        bot.message(&chat, "/xkcd seven").await.unwrap();
+        let messages = chat.messages();
+        assert!(messages[0].contains("xkcd 6 (Comic 6) has no picture"), "{messages:?}");
+        assert_eq!(messages[1], "There is no xkcd 404");
+        assert!(messages[2].starts_with("Use /xkcd"), "{messages:?}");
+        assert_eq!(drawn.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_xkcd_gets_a_short_reply() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let site = format!("http://{}", listener.local_addr().unwrap());
+        drop(listener);
+        let (bot, drawn) = comic_bot(&site);
+        let chat = Fake::default();
+        bot.message(&chat, "/xkcd random").await.unwrap();
+        assert_eq!(chat.messages(), ["xkcd can't be reached right now"]);
+        assert_eq!(drawn.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -572,6 +686,7 @@ mod tests {
         let bot = Bot {
             display: Display::new(Box::new(Instant), DisplayRotation::Rotate90, None),
             replies: Arc::new(SyncMutex::new(Replies::open(Some(&dir)).unwrap())),
+            xkcd: Xkcd::default(),
         };
         let chat = Fake::default();
         bot.message(&chat, "/mode").await.unwrap();

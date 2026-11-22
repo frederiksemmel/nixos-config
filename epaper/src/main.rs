@@ -14,7 +14,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use epd_waveshare::graphics::DisplayRotation;
 
@@ -58,6 +58,11 @@ enum Command {
     Clear,
     /// Draw a PNG, JPEG, GIF or WebP picture, fitted and in four shades.
     Picture { path: PathBuf },
+    /// Draw an xkcd comic: the newest, `random`, or the one with this number.
+    Xkcd {
+        #[arg(default_value = "")]
+        comic: String,
+    },
     /// Run the Telegram bot, and the WhatsApp one with --whatsapp.
     Bot {
         #[arg(long, env = "EPAPER_TOKEN_FILE")]
@@ -117,6 +122,17 @@ fn main() -> Result<()> {
             Scene::Picture(Arc::new(picture::decode(&bytes)?))
         }
         Command::Text { words } => Scene::Text { text: words.join(" ") },
+        Command::Xkcd { comic } => {
+            let pick = xkcd::Pick::parse(&comic).context("pick nothing for the newest comic, random or a number")?;
+            match tokio::runtime::Runtime::new()?.block_on(xkcd::Xkcd::default().fetch(pick))? {
+                xkcd::Fetched::Drawable { info, picture } => {
+                    println!("{}", info.caption());
+                    Scene::Picture(picture)
+                }
+                xkcd::Fetched::Undrawable(info) => bail!("xkcd {} has no picture that can be drawn", info.num),
+                xkcd::Fetched::Missing(num) => bail!("there is no xkcd {num}"),
+            }
+        }
         Command::Bot {
             token_file,
             allow,
@@ -127,6 +143,7 @@ fn main() -> Result<()> {
             let bot = flow::Bot {
                 display: flow::Display::new(panel, rotation, state_dir.as_ref().map(|dir| dir.join(ROTATION_FILE))),
                 replies: Arc::new(Mutex::new(Replies::open(state_dir.as_deref())?)),
+                xkcd: xkcd::Xkcd::default(),
             };
             return tokio::runtime::Runtime::new()?.block_on(serve(token, bot, allow, state_dir.filter(|_| whatsapp)));
         }
