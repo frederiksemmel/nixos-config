@@ -1,6 +1,7 @@
 mod actor;
 mod library;
 mod prepare;
+mod saves;
 pub mod sound;
 mod tending;
 
@@ -150,6 +151,21 @@ pub(crate) enum Signal {
         prepared: prepare::Prepared,
     },
     Removed,
+    Paired {
+        show: String,
+    },
+    WatchWith {
+        show: String,
+        with: ProfileId,
+        by: ProfileId,
+        paired: bool,
+        reply: Option<oneshot::Sender<Outcome>>,
+    },
+    People(Vec<(ProfileId, String)>),
+    Reloaded {
+        profile: ProfileId,
+        progress: Arc<Progress>,
+    },
 }
 
 pub(crate) enum Input {
@@ -196,6 +212,7 @@ struct Published {
 
 struct Parts {
     db: Db,
+    saves: saves::Saves,
     subtitles: SubtitleSettings,
     television: Television,
     audio: Option<Audio>,
@@ -286,6 +303,7 @@ impl Core {
             published: Arc::default(),
             parts: Arc::new(Parts {
                 push: Push::new(db.clone(), push_subject),
+                saves: saves::Saves::start(db.clone()),
                 db,
                 subtitles,
                 television,
@@ -361,6 +379,7 @@ impl Core {
             parts: Arc::new(Parts {
                 push: Push::recorded(db.clone()),
                 subtitles: SubtitleSettings::load(&db, ProfileId::FIRST).await,
+                saves: saves::Saves::start(db.clone()),
                 db,
                 television: Television::new(tv::Settings {
                     kind: None,
@@ -520,6 +539,11 @@ impl Core {
 
     pub(crate) fn db(&self) -> &Db {
         &self.parts.db
+    }
+
+    /// Writes to the database that nobody waits for.
+    pub(crate) fn saves(&self) -> &saves::Saves {
+        &self.parts.saves
     }
 
     fn audio(&self) -> Option<&Audio> {

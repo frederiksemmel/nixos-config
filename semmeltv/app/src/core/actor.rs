@@ -353,8 +353,8 @@ impl Actor {
             home_sent: None,
             bake: None,
         };
-        actor.apply_audio(profile).await;
-        actor.refresh_people().await;
+        actor.apply_audio(profile);
+        actor.people = people(&actor.db, &actor.core).await;
         actor.publish_home();
         actor.queue_downloads(false);
         actor.tend();
@@ -378,6 +378,9 @@ impl Actor {
                         self.ask_tv_subtitles(change, reply);
                     }
                     Some(Input::Request(Request::Storage(change), reply)) => self.change_storage(change, reply),
+                    Some(Input::Request(Request::WatchWithOnTv { show, with }, reply)) => {
+                        self.watch_with_on_tv(show, with, reply);
+                    }
                     Some(Input::Request(request, reply)) => {
                         let outcome = self.answer(request).await;
                         if let Some(reply) = reply {
@@ -440,6 +443,29 @@ impl Actor {
             Signal::Tended(tended) => self.tended(tended),
             Signal::Prepared { id, prepared } => self.prepared(id, prepared).await,
             Signal::Removed => self.tend(),
+            Signal::Paired { show } => self.publish_together(&show),
+            Signal::WatchWith {
+                show,
+                with,
+                by,
+                paired,
+                reply,
+            } => {
+                let outcome = self.watched_with(&show, with, by, paired).await;
+                if let Some(reply) = reply {
+                    let _ = reply.send(outcome);
+                }
+            }
+            Signal::Reloaded { profile, progress } => {
+                if profile == self.profile {
+                    self.progress = progress;
+                    self.publish_home();
+                }
+            }
+            Signal::People(people) => {
+                self.people = people;
+                self.publish_home();
+            }
         }
     }
 
@@ -478,7 +504,7 @@ impl Actor {
             return;
         }
         if command == Command::Up {
-            self.refresh_people().await;
+            self.refresh_people();
         }
         self.tv.send(ToTv::Key(command));
     }
@@ -497,12 +523,14 @@ impl Actor {
 
     async fn toggle_dialogue(&mut self) {
         let by = self.on_tv.as_ref().map_or(self.profile, |tv| tv.owner);
-        let on = !self.core.dialogue(by).await.load(Ordering::SeqCst);
-        if let Err(error) = self.core.save_dialogue(by, on).await {
-            eprintln!("dialogue mode: {error}");
-            self.show_message("Dialogue mode could not be saved".to_string());
-            return;
-        }
+        let flag = self.core.dialogue(by).await;
+        let on = !flag.load(Ordering::SeqCst);
+        flag.store(on, Ordering::SeqCst);
+        self.core.saves().save(move |db| async move {
+            if let Err(error) = db.save_dialogue(by, on).await {
+                eprintln!("dialogue mode: {error}");
+            }
+        });
         let outcome = self.apply_dialogue(by).await;
         if self.on_tv.is_none() {
             self.show_message(outcome.message);
@@ -543,13 +571,14 @@ impl Actor {
         }
     }
 
-    async fn refresh_people(&mut self) {
-        let profiles = self.db.profiles().await.unwrap_or_else(|error| {
-            eprintln!("profiles: {error}");
-            Vec::new()
+    /// Reads who has a profile behind the writes before, and has each one's
+    /// progress and dialogue mode in memory before the actor asks for them.
+    fn refresh_people(&self) {
+        let core = self.core.clone();
+        self.core.saves().save(move |db| async move {
+            let people = people(&db, &core).await;
+            core.signal(Signal::People(people));
         });
-        self.people = profiles.into_iter().map(|profile| (profile.id, profile.name)).collect();
-        self.publish_home();
     }
 
     async fn progress_of(&self, profile: ProfileId) -> Arc<Progress> {
@@ -566,9 +595,12 @@ impl Actor {
         if profile == self.profile {
             self.progress = progress.clone();
         }
-        if let Err(error) = self.db.save_progress(profile, &progress).await {
-            eprintln!("progress: {error}");
-        }
+        let saved = progress.clone();
+        self.core.saves().save(move |db| async move {
+            if let Err(error) = db.save_progress(profile, &saved).await {
+                eprintln!("progress: {error}");
+            }
+        });
         if profile == self.profile {
             self.publish_home();
             self.queue_downloads(false);
@@ -632,8 +664,12 @@ impl Actor {
         tokio::spawn(async move { push.added(added, watching::now()).await });
         let library = Arc::new(library);
         if self.db.set_library(&library) {
-            self.core.forget_progress();
-            self.progress = self.core.progress(self.profile).await;
+            let (core, profile) = (self.core.clone(), self.profile);
+            self.core.saves().save(move |_| async move {
+                core.forget_progress();
+                let progress = core.progress(profile).await;
+                core.signal(Signal::Reloaded { profile, progress });
+            });
         }
         self.library = library.clone();
         self.library_revision += 1;
@@ -712,7 +748,7 @@ impl Actor {
             }
         };
         self.subtitles.set_owner(owner);
-        self.apply_audio(owner).await;
+        self.apply_audio(owner);
         let theirs = self.progress_of(owner).await;
         let tracks = match theirs.files.get(path) {
             Some(watched) if start > 0.0 => watched.tracks(),
@@ -1306,14 +1342,15 @@ impl Actor {
         let Some(tv) = &self.on_tv else {
             return;
         };
-        let caption = self.caption(&tv.file);
-        let noted = self
-            .db
-            .note_play(&tv.play, watching::now(), tv.owner, "TV", &caption, tv.last.played)
-            .await;
-        if let Err(error) = noted {
-            eprintln!("usage: {error}");
-        }
+        let (play, owner, caption, played) = (tv.play.clone(), tv.owner, self.caption(&tv.file), tv.last.played);
+        self.core.saves().save(move |db| async move {
+            if let Err(error) = db
+                .note_play(&play, watching::now(), owner, "TV", &caption, played)
+                .await
+            {
+                eprintln!("usage: {error}");
+            }
+        });
     }
 
     async fn record_place(&mut self) {
@@ -1426,10 +1463,13 @@ impl Actor {
             Request::Mark(kind, key, episode, mark, by) => return self.mark(kind, &key, episode, mark, by).await,
             Request::CatchUp { show, to, by } => return self.catch_up(&show, to, by).await,
             Request::TogetherOnTv(show) => {
-                self.publish_together(&show).await;
+                self.publish_together(&show);
                 return Outcome::done("");
             }
-            Request::WatchWithOnTv { show, with } => return self.watch_with_on_tv(&show, with).await,
+            Request::WatchWithOnTv { show, with } => {
+                self.watch_with_on_tv(show, with, None);
+                return Outcome::done("");
+            }
             Request::Phone(report) => return self.phone(report).await,
             Request::Screen(command, by) => {
                 if matches!(command, ScreenCommand::Flip { to: ScreenKind::Tv, .. }) {
@@ -1510,7 +1550,7 @@ impl Actor {
         let Some(show) = library.shows.iter().find(|show| show.key == key) else {
             return Outcome::refused(format!("There is no {key} in the library"));
         };
-        let name = self.core.profile_name(to).await.unwrap_or_else(|| "them".to_string());
+        let name = self.name_of(to);
         let theirs = self.progress_of(to).await;
         let mut mine = (*self.progress_of(by).await).clone();
         if !together::catch_up(&mut mine, &theirs, show, watching::now()) {
@@ -1524,82 +1564,79 @@ impl Actor {
         Outcome::done(format!("You're at {name}'s place now: {place}"))
     }
 
-    async fn together_on_tv(&self, key: &str) -> Option<Together> {
-        let library = self.library.clone();
-        let show = library.shows.iter().find(|show| show.key == key)?;
-        let partners = self.db.partners(self.profile, key).await.unwrap_or_else(|error| {
-            eprintln!("together: partners of {} in {key}: {error}", self.profile.0);
-            Vec::new()
+    /// Sends the tv who watches `key` together with the TV's profile, read
+    /// from the database behind the writes before it.
+    fn publish_together(&self, key: &str) {
+        let (core, library, profile, mine, tv, key) = (
+            self.core.clone(),
+            self.library.clone(),
+            self.profile,
+            self.progress.clone(),
+            self.tv.clone(),
+            key.to_string(),
+        );
+        self.core.saves().save(move |db| async move {
+            if let Some(together) = together_on_tv(&db, &core, &library, profile, &mine, &key).await {
+                tv.send(ToTv::Together(together));
+            }
         });
-        let profiles = self.db.profiles().await.unwrap_or_else(|error| {
-            eprintln!("together: profiles: {error}");
-            Vec::new()
-        });
-        let here = together::Spot::of(&self.progress, show);
-        let mut people = Vec::new();
-        for partner in &partners {
-            let Some(found) = profiles.iter().find(|found| found.id == *partner) else {
-                continue;
-            };
-            let spot = together::Spot::of(&*self.progress_of(*partner).await, show);
-            people.push(Mate {
-                id: *partner,
-                name: found.name.clone(),
-                line: spot.line(spot.same_as(here)),
-                paired: true,
+    }
+
+    /// Pairs the TV's profile with `with` for `key`, or moves it to their
+    /// place when they already are a pair, once the database says which.
+    fn watch_with_on_tv(&self, show: String, with: ProfileId, reply: Option<oneshot::Sender<Outcome>>) {
+        let (by, core) = (self.profile, self.core.clone());
+        self.core.saves().save(move |db| async move {
+            let paired = db
+                .partners(by, &show)
+                .await
+                .is_ok_and(|partners| partners.contains(&with));
+            core.signal(Signal::WatchWith {
+                show,
+                with,
+                by,
+                paired,
+                reply,
             });
-        }
-        let others = profiles
-            .iter()
-            .filter(|found| found.id != self.profile && !partners.contains(&found.id));
-        people.extend(others.map(|found| Mate {
-            id: found.id,
-            name: found.name.clone(),
-            line: "Watch together".to_string(),
-            paired: false,
-        }));
-        Some(Together {
-            show: key.to_string(),
-            people,
-        })
+        });
     }
 
-    async fn publish_together(&self, key: &str) {
-        if let Some(together) = self.together_on_tv(key).await {
-            self.tv.send(ToTv::Together(together));
-        }
-    }
-
-    async fn watch_with_on_tv(&mut self, key: &str, with: ProfileId) -> Outcome {
-        let by = self.profile;
-        let paired = self
-            .db
-            .partners(by, key)
-            .await
-            .is_ok_and(|partners| partners.contains(&with));
+    async fn watched_with(&mut self, show: &str, with: ProfileId, by: ProfileId, paired: bool) -> Outcome {
         let outcome = if paired {
-            self.catch_up(key, with, by).await
+            let outcome = self.catch_up(show, with, by).await;
+            self.publish_together(show);
+            outcome
         } else {
-            self.pair(key, with, by).await
+            self.pair(show, with, by)
         };
         self.show_message(outcome.message.clone());
-        self.publish_together(key).await;
         outcome
     }
 
-    async fn pair(&self, key: &str, with: ProfileId, by: ProfileId) -> Outcome {
+    fn pair(&self, key: &str, with: ProfileId, by: ProfileId) -> Outcome {
         let Some(show) = self.library.shows.iter().find(|show| show.key == key) else {
             return Outcome::refused(format!("There is no {key} in the library"));
         };
-        let name = self.core.profile_name(with).await.unwrap_or_else(|| "them".to_string());
-        match self.db.set_together(by, with, key, true).await {
-            Ok(true) => Outcome::done(format!("You watch {} together with {name}", show.title)),
-            Ok(false) => Outcome::refused(format!("You can't watch {} with {name}", show.title)),
-            Err(error) => {
-                eprintln!("together: {} with {}: {error}", by.0, with.0);
-                Outcome::refused("Watching together could not be saved")
-            }
+        let name = self.name_of(with);
+        if by == with {
+            return Outcome::refused(format!("You can't watch {} with {name}", show.title));
         }
+        let (core, key) = (self.core.clone(), key.to_string());
+        self.core.saves().save(move |db| async move {
+            match db.set_together(by, with, &key, true).await {
+                Ok(true) => core.signal(Signal::Paired { show: key }),
+                Ok(false) => eprintln!("together: {} with {} in {key} was refused", by.0, with.0),
+                Err(error) => eprintln!("together: {} with {}: {error}", by.0, with.0),
+            }
+        });
+        Outcome::done(format!("You watch {} together with {name}", show.title))
+    }
+
+    fn name_of(&self, profile: ProfileId) -> String {
+        self.people
+            .iter()
+            .find(|(id, _)| *id == profile)
+            .map_or_else(|| "them".to_string(), |(_, name)| name.clone())
     }
 
     fn place_of(&self, file: &Path, position: f64) -> Option<screen::Place> {
@@ -2235,42 +2272,104 @@ impl Actor {
             self.subtitles.set_owner(profile);
         }
         self.core.set_tv_profile(profile);
-        if let Err(error) = self.db.set_setting(TV_PROFILE, Some(&profile.0.to_string())).await {
-            eprintln!("tv profile: {error}");
-        }
+        self.core.saves().save(move |db| async move {
+            if let Err(error) = db.set_setting(TV_PROFILE, Some(&profile.0.to_string())).await {
+                eprintln!("tv profile: {error}");
+            }
+        });
         if self.on_tv.is_none() {
-            self.apply_audio(profile).await;
+            self.apply_audio(profile);
         }
-        self.refresh_people().await;
+        self.refresh_people();
         self.queue_downloads(false);
     }
 
-    async fn apply_audio(&self, profile: ProfileId) {
+    fn apply_audio(&self, profile: ProfileId) {
         if self.audio.is_none() {
             return;
         }
-        let prefs = self.db.audio_prefs(profile).await.unwrap_or_else(|error| {
-            eprintln!("headphones: {error}");
-            db::AudioPrefs::default()
-        });
-        if let Some(choosing) = &self.choosing {
+        let Some(choosing) = self.choosing.clone() else {
+            return;
+        };
+        self.core.saves().save(move |db| async move {
+            let prefs = db.audio_prefs(profile).await.unwrap_or_else(|error| {
+                eprintln!("headphones: {error}");
+                db::AudioPrefs::default()
+            });
             let _ = choosing.send(prefs);
-        }
+        });
     }
 
     async fn show_profile(&mut self, profile: ProfileId) -> Outcome {
         self.become_profile(profile).await;
-        let name = self
-            .core
-            .profile_name(profile)
-            .await
-            .unwrap_or_else(|| format!("profile {}", profile.0));
+        let name = self.name_of(profile);
         Outcome::done(format!("The TV shows what {name} is watching"))
     }
 
     fn show_message(&self, message: String) {
         self.tv.send(ToTv::Message(message));
     }
+}
+
+/// Who has a profile, with each one's progress and dialogue mode loaded into
+/// the core's memory on the way.
+async fn people(db: &Db, core: &Core) -> Vec<(ProfileId, String)> {
+    let profiles = db.profiles().await.unwrap_or_else(|error| {
+        eprintln!("profiles: {error}");
+        Vec::new()
+    });
+    for profile in &profiles {
+        core.progress(profile.id).await;
+        core.dialogue(profile.id).await;
+    }
+    profiles.into_iter().map(|profile| (profile.id, profile.name)).collect()
+}
+
+/// Who watches `key` together with `profile`, and where each one is.
+async fn together_on_tv(
+    db: &Db,
+    core: &Core,
+    library: &Library,
+    profile: ProfileId,
+    mine: &Progress,
+    key: &str,
+) -> Option<Together> {
+    let show = library.shows.iter().find(|show| show.key == key)?;
+    let partners = db.partners(profile, key).await.unwrap_or_else(|error| {
+        eprintln!("together: partners of {} in {key}: {error}", profile.0);
+        Vec::new()
+    });
+    let profiles = db.profiles().await.unwrap_or_else(|error| {
+        eprintln!("together: profiles: {error}");
+        Vec::new()
+    });
+    let here = together::Spot::of(mine, show);
+    let mut people = Vec::new();
+    for partner in &partners {
+        let Some(found) = profiles.iter().find(|found| found.id == *partner) else {
+            continue;
+        };
+        let spot = together::Spot::of(&*core.progress(*partner).await, show);
+        people.push(Mate {
+            id: *partner,
+            name: found.name.clone(),
+            line: spot.line(spot.same_as(here)),
+            paired: true,
+        });
+    }
+    let others = profiles
+        .iter()
+        .filter(|found| found.id != profile && !partners.contains(&found.id));
+    people.extend(others.map(|found| Mate {
+        id: found.id,
+        name: found.name.clone(),
+        line: "Watch together".to_string(),
+        paired: false,
+    }));
+    Some(Together {
+        show: key.to_string(),
+        people,
+    })
 }
 
 /// A thread that picks a profile's headphones with bluetoothctl and BlueALSA,
@@ -2568,6 +2667,40 @@ mod tests {
                 at_once(&core, Request::Control(Control::Pause)).await;
             }
             assert!(!removing.is_finished(), "the removal still waits on pCloud");
+        });
+    }
+
+    #[test]
+    fn a_database_that_stops_writing_leaves_the_api_answering_and_keeps_every_write() {
+        on_a_runtime_left_behind(async {
+            let (core, orders) = core_and_tv().await;
+            settled(&core).await;
+            core.saves().flushed().await;
+            let release = core.db().hold().await;
+            assert!(at_once(&core, Request::PlayFile(up(&core))).await.ok);
+            let play = told(&orders, |order| match order {
+                ToTv::Play(play) => Some(play.play),
+                _ => None,
+            });
+            core.signal(Signal::Tv(FromTv::Started { play: play.clone() }));
+            core.signal(reported(&play, 45.0, true));
+            settled(&core).await;
+            let mami = ProfileId(2);
+            at_once(&core, Request::Key(Command::Up)).await;
+            at_once(&core, Request::Key(Command::Dialogue)).await;
+            at_once(&core, Request::TvProfile(mami)).await;
+            at_once(&core, Request::TvProfile(ProfileId::FIRST)).await;
+            core.send(Request::WatchWithOnTv {
+                show: "dark".to_string(),
+                with: mami,
+            });
+            the_api_answers_while_the_tv_takes_nothing(&core).await;
+            assert_eq!(saved_at(&core).await, Some(45.0), "the place is kept in memory");
+            drop(release);
+            core.saves().flushed().await;
+            core.forget_progress();
+            assert_eq!(saved_at(&core).await, Some(45.0), "and lands in the database");
+            assert!(core.db().dialogue(ProfileId::FIRST).await.unwrap());
         });
     }
 
@@ -3026,6 +3159,7 @@ mod tests {
         assert_eq!(kept, Some(Outcome::done("Kept the place")));
         assert_eq!(core.progress(mami).await.files[&up].stopped_at(), Some(600.0));
         assert!(!core.progress(ProfileId::FIRST).await.files.contains_key(&up));
+        core.saves().flushed().await;
         core.forget_progress();
         assert_eq!(core.progress(mami).await.files[&up].stopped_at(), Some(600.0));
     }
@@ -3194,9 +3328,9 @@ mod tests {
             core.ask(with_mami()).await.unwrap(),
             Outcome::done("You watch Dark together with Mami")
         );
-        assert_eq!(core.db().partners(mami, "dark").await.unwrap(), [ProfileId::FIRST]);
         let together = next_together(&orders);
         assert_eq!(people(&together)[0], ("Mami", "Hasn't started yet", true));
+        assert_eq!(core.db().partners(mami, "dark").await.unwrap(), [ProfileId::FIRST]);
         assert_eq!(people(&together).len(), 3);
         assert_eq!(
             core.ask(with_mami()).await.unwrap(),
@@ -3222,7 +3356,10 @@ mod tests {
             core.ask(with_mami()).await.unwrap(),
             Outcome::done("You're at Mami's place now: Dark · S1 E2")
         );
-        let together = next_together(&orders);
+        let mut together = next_together(&orders);
+        while together.people[0].line == "Up next S1 E2" {
+            together = next_together(&orders);
+        }
         assert_eq!(people(&together)[0], ("Mami", "At your place", true));
     }
 
