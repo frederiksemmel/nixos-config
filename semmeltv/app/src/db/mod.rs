@@ -159,13 +159,6 @@ impl Db {
         Self::ready(Sqlite::in_memory()).await.unwrap()
     }
 
-    /// Takes the only connection of a database in memory, so every other use
-    /// waits until the returned one is dropped, as on an SD card that stalls.
-    #[cfg(test)]
-    pub async fn hold(&self) -> toasty::Connection {
-        self.db.connection().await.unwrap()
-    }
-
     async fn ready(driver: Sqlite) -> Result<Self> {
         let db = toasty::Db::builder().models(models::all()).build(driver).await?;
         MIGRATIONS.apply(&db).await?;
