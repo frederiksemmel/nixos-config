@@ -191,13 +191,6 @@ fn found(inbox: mpsc::UnboundedSender<Input>) -> audio::Found {
     })
 }
 
-/// Where the tv is: in this process, with its menu, or at the other end of
-/// a socket.
-pub enum TvEnd {
-    Local(Box<dyn Fn(crate::link::messages::ToTv) + Send>),
-    Socket(crate::link::socket::Listening),
-}
-
 pub struct Setup {
     pub root: PathBuf,
     pub meta: PathBuf,
@@ -213,7 +206,7 @@ pub struct Setup {
     pub ready: Option<PathBuf>,
     pub headphones: bool,
     pub push_subject: String,
-    pub tv: TvEnd,
+    pub tv: crate::link::socket::Listening,
 }
 
 #[derive(Default)]
@@ -351,17 +344,13 @@ impl Core {
             store,
             storage,
             handoff,
-            tv: match tv {
-                TvEnd::Local(menu) => actor::local_tv(&core, menu),
-                TvEnd::Socket(listening) => {
-                    let hearing = core.clone();
-                    listening
-                        .serve(move |heard| match heard {
-                            Heard::Said(said) => hearing.signal(Signal::Tv(*said)),
-                            Heard::Gone => hearing.signal(Signal::TvGone { at: Instant::now() }),
-                        })
-                        .expect("serving the tv's socket")
-                }
+            tv: {
+                let hearing = core.clone();
+                tv.serve(move |heard| match heard {
+                    Heard::Said(said) => hearing.signal(Signal::Tv(*said)),
+                    Heard::Gone => hearing.signal(Signal::TvGone { at: Instant::now() }),
+                })
+                .expect("serving the tv's socket")
             },
             segments: crate::segments::finder(),
             remove: tending::remover(),
@@ -446,11 +435,6 @@ impl Core {
         let (reply, answer) = oneshot::channel();
         self.inbox.send(Input::Request(request, Some(reply))).ok()?;
         tokio::time::timeout(ANSWER_TIME, answer).await.ok()?.ok()
-    }
-
-    /// Passes on what the tv said, as the in-process tv end's menu does.
-    pub fn tv_said(&self, said: crate::link::messages::FromTv) {
-        self.signal(Signal::Tv(said));
     }
 
     pub(crate) fn signal(&self, signal: Signal) {

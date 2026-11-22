@@ -69,7 +69,7 @@ use std::process::ExitCode;
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|core|tv [--dump]|list|artwork|import|downloads|understand TEXT|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv core|tv [--dump]|list|artwork|import|downloads|understand TEXT|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--api HOST:PORT]";
@@ -105,7 +105,7 @@ fn env_path(name: &str) -> Option<PathBuf> {
 fn parse_args() -> Result<Args, String> {
     let home = env_path("HOME").unwrap_or_default();
     let mut args = Args {
-        mode: "ui".to_string(),
+        mode: String::new(),
         library: env_path("SEMMELTV_LIBRARY").unwrap_or_else(|| home.join("pcloud/SemmelTV")),
         meta: env_path("SEMMELTV_META"),
         cache: env_path("SEMMELTV_CACHE")
@@ -129,7 +129,7 @@ fn parse_args() -> Result<Args, String> {
     while let Some(argument) = raw.next() {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
-            "ui" | "core" | "tv" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
+            "core" | "tv" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
             "toasty" | "library" | "get" | "tv-set" | "stats" => {
                 args.toasty = raw.by_ref().collect();
                 args.mode = argument;
@@ -219,29 +219,6 @@ fn stored_progress(args: &Args) -> progress::Progress {
     })
 }
 
-fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .thread_name("semmeltv-core")
-        .enable_all()
-        .build()
-        .map_err(|error| error.to_string())?;
-    let meta = args.meta().to_path_buf();
-    let (menu, inbox) = ui::inbox();
-    let core = runtime.block_on(start_core(args, cache, core::TvEnd::Local(Box::new(menu))))?;
-    let here = core.clone();
-    let hello = move || {
-        here.tv_said(link::messages::FromTv::Hello {
-            protocol: link::messages::PROTOCOL,
-            revision: link::revision(),
-            playing: None,
-            ended: None,
-        });
-    };
-    let shown = ui::run(inbox, move |said| core.tv_said(said), hello, &meta).map_err(|error| error.to_string());
-    runtime.shutdown_background();
-    shown
-}
-
 /// How long a thread of the tv may go without a beat before the tv ends
 /// itself, so that systemd starts it again.
 const TV_STUCK_FOR: std::time::Duration = std::time::Duration::from_secs(15);
@@ -263,7 +240,7 @@ fn run_core(args: Args, cache: Cache) -> Result<(), String> {
     let listening =
         link::socket::bind(&path, link::revision()).map_err(|error| format!("{}: {error}", path.display()))?;
     runtime.block_on(async {
-        start_core(args, cache, core::TvEnd::Socket(listening)).await?;
+        start_core(args, cache, listening).await?;
         notify::ready();
         std::future::pending::<Result<(), String>>().await
     })
@@ -336,15 +313,13 @@ fn run_tv(args: &Args) -> Result<(), String> {
         move |message| {
             let _ = said.send(message);
         },
-        || {},
         args.meta(),
     )
     .map_err(|error| error.to_string())
 }
 
-async fn start_core(args: Args, cache: Cache, tv: core::TvEnd) -> Result<core::Core, String> {
+async fn start_core(args: Args, cache: Cache, tv: link::socket::Listening) -> Result<core::Core, String> {
     let started = std::time::Instant::now();
-    let needs_api = matches!(tv, core::TvEnd::Socket(_));
     let db = startup::step("the database", open_db(&args)).await?;
     let capacity: Option<u64> = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
@@ -404,11 +379,9 @@ async fn start_core(args: Args, cache: Cache, tv: core::TvEnd) -> Result<core::C
     };
     let core = core::Core::start(setup).await;
     if let Some(config) = api {
-        match startup::step("the API's address", api::spawn(config, core.clone())).await {
-            Ok(()) => {}
-            Err(error) if needs_api => return Err(format!("start: the API can't listen: {error}")),
-            Err(error) => eprintln!("api: {error}"),
-        }
+        startup::step("the API's address", api::spawn(config, core.clone()))
+            .await
+            .map_err(|error| format!("start: the API can't listen: {error}"))?;
     }
     eprintln!("start: serving after {:.1?}", started.elapsed());
     Ok(core)
@@ -776,7 +749,7 @@ fn run() -> Result<(), String> {
         "tv-set" => run_tv_set(&args.toasty)?,
         "core" => run_core(args, cache)?,
         "tv" => run_tv(&args)?,
-        _ => run_ui(args, cache)?,
+        _ => return Err(USAGE.to_string()),
     }
     Ok(())
 }

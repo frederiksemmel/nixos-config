@@ -14,11 +14,11 @@ use crate::fetch;
 use crate::hold::{self, Hold};
 use crate::intent::{self, Action, Control};
 use crate::library::Library;
+use crate::link::Link;
 use crate::link::messages::{self, Ended, FromTv, Play, Report, Running, Target, ToTv, UiRequest, UpNextCard};
-use crate::link::{self, Link};
 use crate::offline::Store;
 use crate::player::renderer::{self, Handoff};
-use crate::player::{self, Finish, Player};
+use crate::player::{self, Finish};
 use crate::profile::ProfileId;
 use crate::progress::{self, Position, Progress};
 use crate::screen;
@@ -267,13 +267,6 @@ struct Shown {
     resume: bool,
     /// When the result showed, and whether the TV lost.
     result: Option<(Instant, bool)>,
-}
-
-/// The in-process tv end for mpv: a thread that owns the player, tells the
-/// core what happens through its inbox and passes the menu's news to `menu`.
-pub fn local_tv(core: &Core, menu: impl Fn(ToTv) + Send + 'static) -> Link {
-    let telling = core.clone();
-    link::local::spawn(move |said| telling.signal(Signal::Tv(said)), Player::start, menu)
 }
 
 /// Whether `request` steers what the TV plays, which nothing can while the
@@ -2619,6 +2612,8 @@ fn chooser(audio: Audio) -> Sender<db::AudioPrefs> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::link;
+    use crate::player::Player;
     use tokio::task::block_in_place;
 
     fn hardware() -> Hardware {
@@ -3545,7 +3540,7 @@ mod tests {
     async fn the_tv_lists_who_to_watch_a_series_with_and_ok_pairs_then_moves_to_their_place() {
         let (core, orders) = core_and_tv().await;
         let mami = ProfileId(2);
-        core.tv_said(FromTv::Ask(UiRequest::TogetherOnTv("dark".to_string())));
+        core.signal(Signal::Tv(FromTv::Ask(UiRequest::TogetherOnTv("dark".to_string()))));
         let together = next_together(&orders);
         assert_eq!(together.show, "dark");
         assert_eq!(
@@ -3583,7 +3578,7 @@ mod tests {
             },
         );
         core.publish_progress(mami, theirs);
-        core.tv_said(FromTv::Ask(UiRequest::TogetherOnTv("dark".to_string())));
+        core.signal(Signal::Tv(FromTv::Ask(UiRequest::TogetherOnTv("dark".to_string()))));
         let mut together = next_together(&orders);
         while together.people[0].line == "Hasn't started yet" {
             together = next_together(&orders);
@@ -3631,7 +3626,7 @@ mod tests {
     #[tokio::test(flavor = "multi_thread")]
     async fn a_remote_key_goes_to_the_screen_while_nothing_plays() {
         let (core, orders) = core_and_tv().await;
-        core.tv_said(FromTv::Key(Command::Down));
+        core.signal(Signal::Tv(FromTv::Key(Command::Down)));
         let key = told(&orders, |order| match order {
             ToTv::Key(key) => Some(key),
             _ => None,

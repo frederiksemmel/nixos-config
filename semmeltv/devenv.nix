@@ -26,6 +26,20 @@ in
     exec = ''ssh "''${2:-semmeltv5}" semmeltv-stats "''${1:-7}"'';
   };
 
+  scripts.semmeltv-run = {
+    description = "Run SemmelTV here as on the TV: `semmeltv core` and `semmeltv tv`, two processes on one socket";
+    exec = ''
+      cd "$DEVENV_ROOT/app"
+      cargo build --quiet
+      export SEMMELTV_TV_SOCKET="''${XDG_RUNTIME_DIR:-/tmp}/semmeltv-run/tv.sock"
+      mkdir -p "$(dirname "$SEMMELTV_TV_SOCKET")"
+      cargo run --quiet -- core "$@" &
+      core=$!
+      trap 'kill "$core"' EXIT
+      cargo run --quiet -- tv "$@"
+    '';
+  };
+
   tasks."semmeltv:warm-library" = {
     description = "List the pCloud library folder in one call so the app loads in seconds";
     before = [ "devenv:enterShell" ];

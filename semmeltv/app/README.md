@@ -701,7 +701,11 @@ place to theirs (`Request::WatchWithOnTv`). Ending a pairing is on the web page.
     cd semmeltv/app
     devenv shell
     cargo test
-    cargo run -- ui
+    semmeltv-run
+
+`semmeltv-run` starts the app as the TV runs it, `semmeltv core` and
+`semmeltv tv` as two processes talking over a socket in
+`$XDG_RUNTIME_DIR/semmeltv-run`; its arguments go to both.
 
 `semmeltv/devenv.nix` holds the tooling: the Rust toolchain, `slint-lsp`, `mpv`,
 `wlr-randr` and `bacon`, with the build environment the package uses
