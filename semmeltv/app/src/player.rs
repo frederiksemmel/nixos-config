@@ -23,6 +23,7 @@ use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -228,6 +229,7 @@ struct Playback {
     health: Health,
     fader: Option<fade::Fader>,
     wanted_paused: Option<bool>,
+    nudge: Option<Nudge>,
 }
 
 impl Playback {
@@ -382,8 +384,15 @@ impl Playback {
     }
 
     fn pause_changed(&mut self, paused: bool) {
+        self.wanted_paused = None;
         if let Phase::Playing { .. } = self.phase {
             self.phase = Phase::Playing { paused };
+        }
+    }
+
+    fn nudge(&self) {
+        if let Some(nudge) = &self.nudge {
+            nudge.nudge();
         }
     }
 
@@ -481,7 +490,10 @@ impl Playback {
         State {
             position: self.scrub.target().unwrap_or(self.position),
             duration: self.duration,
-            paused: self.phase.paused(),
+            paused: match (self.phase, self.wanted_paused) {
+                (Phase::Playing { .. }, Some(wanted)) => wanted,
+                _ => self.phase.paused(),
+            },
             muted: self.muted,
             speed: self.speed,
             subtitle,
@@ -625,6 +637,7 @@ fn prompt_command(prompt: Option<Kind>) -> Value {
 
 pub struct Player {
     backend: Backend,
+    nudge: Nudge,
 }
 
 enum Backend {
@@ -659,27 +672,47 @@ pub struct State {
 /// Runs `read` every `REPORT_EVERY` on a thread of its own and passes on what
 /// it reads, until it reads nothing. A slow `read` delays the reports and
 /// nothing else.
-fn report_every(read: impl Fn() -> Option<Report> + Send + 'static, report: Box<dyn Fn(Report) + Send>) {
+/// Wakes a reporter to report now rather than at its next tick. Nudges
+/// that come while one is pending count once.
+#[derive(Clone)]
+struct Nudge(SyncSender<()>);
+
+impl Nudge {
+    fn nudge(&self) {
+        let _ = self.0.try_send(());
+    }
+}
+
+/// Runs `read` every `REPORT_EVERY`, and whenever nudged, on a thread of its
+/// own and passes on what it reads, until it reads nothing. A slow `read`
+/// delays the reports and nothing else.
+fn report_every(read: impl Fn() -> Option<Report> + Send + 'static, report: Box<dyn Fn(Report) + Send>) -> Nudge {
+    let (nudge, nudged) = mpsc::sync_channel(1);
     thread::spawn(move || {
         loop {
-            thread::sleep(REPORT_EVERY);
+            if let Err(RecvTimeoutError::Disconnected) = nudged.recv_timeout(REPORT_EVERY) {
+                thread::sleep(REPORT_EVERY);
+            }
             match read() {
                 Some(read) => report(read),
                 None => return,
             }
         }
     });
+    Nudge(nudge)
 }
 
-fn report_mpv(playback: &Shared, play: &str, report: Box<dyn Fn(Report) + Send>) {
+fn report_mpv(playback: &Shared, play: &str, report: Box<dyn Fn(Report) + Send>) -> Nudge {
     let (reading, play) = (playback.clone(), play.to_string());
-    report_every(
+    let nudge = report_every(
         move || {
             let playback = reading.lock().unwrap();
             (!playback.closed).then(|| playback.report(&play, Instant::now()))
         },
         report,
     );
+    playback.lock().unwrap().nudge = Some(nudge.clone());
+    nudge
 }
 
 impl Player {
@@ -724,7 +757,7 @@ impl Player {
             on_key: Some(key),
             ..Playback::default()
         }));
-        report_mpv(&playback, &play.play, report);
+        let nudge = report_mpv(&playback, &play.play, report);
         let shared = playback.clone();
         let (token, title) = (play.play.clone(), play.title);
         thread::spawn(move || {
@@ -750,6 +783,7 @@ impl Player {
         });
         Ok(Self {
             backend: Backend::Mpv(playback),
+            nudge,
         })
     }
 
@@ -777,7 +811,7 @@ impl Player {
         })?;
         let seen = session.watched();
         let token = play.to_string();
-        report_every(
+        let nudge = report_every(
             move || {
                 if done.load(Ordering::SeqCst) {
                     return None;
@@ -796,6 +830,7 @@ impl Player {
         );
         Ok(Self {
             backend: Backend::TvSet { session },
+            nudge,
         })
     }
 
@@ -807,9 +842,10 @@ impl Player {
             on_key: Some(callbacks.key),
             ..Playback::default()
         }));
-        report_mpv(&playback, play, callbacks.report);
+        let nudge = report_mpv(&playback, play, callbacks.report);
         Self {
             backend: Backend::Mpv(playback),
+            nudge,
         }
     }
 
@@ -843,6 +879,12 @@ impl Player {
             Backend::Mpv(playback) => playback.lock().unwrap().command(command, Instant::now()),
             Backend::TvSet { session } => session.key(command),
         }
+    }
+
+    /// Reports at once, so what an order changed reaches the core without
+    /// waiting for the next tick.
+    pub fn report_now(&self) {
+        self.nudge.nudge();
     }
 
     pub fn stop(&self) {
@@ -1065,6 +1107,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 playback.pause_changed(paused);
                 playback.wake(now);
                 playback.present(now);
+                playback.nudge();
             }
             Some(Event::Video(video)) => {
                 let changed = shared.lock().unwrap().video_changed(video);
@@ -1072,7 +1115,11 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                     display::play(id, video);
                 }
             }
-            Some(Event::Started) => shared.lock().unwrap().start(Instant::now()),
+            Some(Event::Started) => {
+                let mut playback = shared.lock().unwrap();
+                playback.start(Instant::now());
+                playback.nudge();
+            }
             Some(Event::Key(command)) => shared.lock().unwrap().key(command, Instant::now()),
             Some(Event::Loaded) => {
                 let mut playback = shared.lock().unwrap();
@@ -1088,6 +1135,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 if let Some(tracks) = playback.subtitles.tracks() {
                     playback.tracks = tracks;
                 }
+                playback.nudge();
             }
             Some(Event::Chapters(credits)) => shared.lock().unwrap().chapter_credits = credits,
             Some(Event::Health(reading)) => shared.lock().unwrap().health.observe(reading),
@@ -1351,6 +1399,25 @@ mod tests {
             ["--start=1234.500", "--aid=2", "--sid=3", "--sub-visibility=no"]
         );
         assert!(resume_args(0.0, Tracks::default()).is_empty());
+    }
+
+    #[test]
+    fn a_pause_asked_for_is_reported_before_mpv_confirms_it_and_mpv_has_the_last_word() {
+        let mut playback = Playback {
+            phase: Phase::Playing { paused: false },
+            ..Playback::default()
+        };
+        playback.set_paused(true);
+        assert!(playback.state(Instant::now()).paused, "asked for, still fading out");
+        playback.pause_changed(true);
+        assert!(playback.state(Instant::now()).paused);
+        playback.pause_changed(false);
+        assert!(!playback.state(Instant::now()).paused, "mpv resumed by itself");
+        let opening = Playback {
+            wanted_paused: Some(false),
+            ..Playback::default()
+        };
+        assert!(opening.state(Instant::now()).paused, "not started yet");
     }
 
     #[test]

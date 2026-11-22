@@ -41,6 +41,15 @@ fn callbacks(tell: &Tell) -> Callbacks {
     }
 }
 
+/// Carries out an order on the player it names, if that one still plays,
+/// and has it report at once so the core sees the change.
+fn control(player: Option<&Player>, act: impl FnOnce(&Player)) {
+    if let Some(player) = player {
+        act(player);
+        player.report_now();
+    }
+}
+
 fn drive(orders: &Receiver<ToTv>, tell: &Tell, mut start: impl FnMut(&Play, Callbacks) -> io::Result<Player>) {
     let mut playing: Option<(String, Player)> = None;
     for order in orders {
@@ -62,41 +71,22 @@ fn drive(orders: &Receiver<ToTv>, tell: &Tell, mut start: impl FnMut(&Play, Call
                     error: error.to_string(),
                 }),
             },
-            ToTv::Command { play, command } => {
-                if let Some(player) = of(&play) {
-                    player.command(command);
-                }
-            }
-            ToTv::Pause { play, paused } => {
-                if let Some(player) = of(&play) {
-                    player.set_paused(paused);
-                }
-            }
-            ToTv::Mute { play, muted } => {
-                if let Some(player) = of(&play) {
-                    player.set_muted(muted);
-                }
-            }
-            ToTv::Speed { play, speed } => {
-                if let Some(player) = of(&play) {
-                    player.set_speed(speed);
-                }
-            }
-            ToTv::Seek { play, target } => match (of(&play), target) {
-                (Some(player), Target::To(seconds)) => player.seek_to(seconds),
-                (Some(player), Target::By(seconds)) => player.seek_by(seconds),
-                (None, _) => {}
-            },
-            ToTv::SkipSegment { play } => {
-                if let Some(player) = of(&play) {
-                    player.skip_segment();
-                }
-            }
-            ToTv::HideSkip { play } => {
-                if let Some(player) = of(&play) {
-                    player.hide_skip();
-                }
-            }
+            ToTv::Command { play, command } => control(of(&play), |player| player.command(command)),
+            ToTv::Pause { play, paused } => control(of(&play), |player| player.set_paused(paused)),
+            ToTv::Mute { play, muted } => control(of(&play), |player| player.set_muted(muted)),
+            ToTv::Speed { play, speed } => control(of(&play), |player| {
+                player.set_speed(speed);
+            }),
+            ToTv::Seek { play, target } => control(of(&play), |player| match target {
+                Target::To(seconds) => player.seek_to(seconds),
+                Target::By(seconds) => player.seek_by(seconds),
+            }),
+            ToTv::SkipSegment { play } => control(of(&play), |player| {
+                player.skip_segment();
+            }),
+            ToTv::HideSkip { play } => control(of(&play), |player| {
+                player.hide_skip();
+            }),
             ToTv::Stop { play } => {
                 if let Some(player) = of(&play) {
                     player.stop();
@@ -132,6 +122,7 @@ fn drive(orders: &Receiver<ToTv>, tell: &Tell, mut start: impl FnMut(&Play, Call
                 let (message, ok) = match of(&play) {
                     Some(player) => {
                         let answer = player.subtitles(change);
+                        player.report_now();
                         (answer.message, answer.ok)
                     }
                     None => ("Nothing is playing".to_string(), false),
@@ -255,6 +246,50 @@ mod tests {
         });
         link.send(ToTv::Play(play("a-play")));
         assert_eq!(next(&heard), FromTv::Key(crate::command::Command::Back));
+    }
+
+    #[test]
+    fn what_an_order_changed_is_reported_at_once_not_at_the_next_tick() {
+        let (said, heard) = mpsc::channel();
+        let said = Mutex::new(said);
+        let link = spawn(
+            move |message| {
+                let _ = said.lock().unwrap().send(message);
+            },
+            |play, callbacks| Ok(Player::without_mpv(&play.play, callbacks)),
+        );
+        link.send(ToTv::Play(play("a-play")));
+        while !matches!(next(&heard), FromTv::Started { .. }) {}
+        let report = |heard: &Receiver<FromTv>| loop {
+            if let FromTv::Report(report) = next(heard) {
+                return report;
+            }
+        };
+        report(&heard);
+        let ordered = std::time::Instant::now();
+        link.send(ToTv::Speed {
+            play: "a-play".to_string(),
+            speed: 1.5,
+        });
+        let sped = report(&heard);
+        assert!(
+            ordered.elapsed() < Duration::from_millis(100),
+            "{:?}",
+            ordered.elapsed()
+        );
+        assert_eq!(sped.state.speed, 1.5);
+        let ordered = std::time::Instant::now();
+        link.send(ToTv::Mute {
+            play: "a-play".to_string(),
+            muted: true,
+        });
+        let muted = report(&heard);
+        assert!(
+            ordered.elapsed() < Duration::from_millis(100),
+            "{:?}",
+            ordered.elapsed()
+        );
+        assert!(muted.state.muted);
     }
 
     fn quiet() -> Callbacks {
