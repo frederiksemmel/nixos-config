@@ -27,13 +27,6 @@ pub async fn step<T>(name: &str, work: impl Future<Output = T>) -> T {
     done
 }
 
-/// Runs the blocking `work` on a blocking thread as one `step`.
-pub async fn blocking<T: Send + 'static>(name: &str, work: impl FnOnce() -> T + Send + 'static) -> T {
-    step(name, tokio::task::spawn_blocking(work))
-        .await
-        .expect("a startup step panicked")
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

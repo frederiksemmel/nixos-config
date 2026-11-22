@@ -155,6 +155,9 @@ pub trait Radio: Send + Sync {
 
 pub type Mover = Box<dyn Fn(Route) + Send + Sync>;
 
+/// Hears which headphones are paired once the radio has said.
+pub type Found = Box<dyn FnOnce(Option<Device>) + Send>;
+
 #[derive(Clone, Copy)]
 struct Timing {
     sink_wait: Duration,
@@ -354,7 +357,7 @@ impl Silent {
 #[cfg(test)]
 impl Radio for Silent {
     fn paired(&self) -> Option<Device> {
-        None
+        self.hang()
     }
     fn bonded(&self, _: &str) -> Option<Device> {
         self.hang()
@@ -398,14 +401,20 @@ impl Radio for Silent {
 }
 
 impl Audio {
-    /// Headphones whose radio never answers.
+    /// Headphones whose radio never answers, not even which are paired.
     #[cfg(test)]
-    pub fn silent(bus: Bus) -> Self {
-        Self::new(Box::new(Silent), bus, Box::new(|_| {}), TIMING)
+    pub fn silent(bus: Bus, found: Found) -> Self {
+        let audio = Self::new(Box::new(Silent), bus, Box::new(|_| {}), TIMING);
+        audio.look_up_paired(found);
+        audio
     }
 
-    pub fn spawn(bus: Bus, mover: Mover) -> Self {
+    /// Headphones over bluetoothctl and BlueALSA. Which are paired is looked
+    /// up on a thread of its own and told to `found`, so nothing waits on the
+    /// radio to start.
+    pub fn spawn(bus: Bus, mover: Mover, found: Found) -> Self {
         let audio = Self::new(Box::new(Bluetoothctl::default()), bus, mover, TIMING);
+        audio.look_up_paired(found);
         let watching = audio.clone();
         let spawned = thread::Builder::new()
             .name("headphones".to_string())
@@ -417,13 +426,9 @@ impl Audio {
     }
 
     fn new(radio: Box<dyn Radio>, bus: Bus, mover: Mover, timing: Timing) -> Self {
-        let headphones = radio.paired().map(|device| Known::new(device, Wire::Idle));
         let audio = Self {
             inner: Arc::new(Inner {
-                state: Mutex::new(State {
-                    headphones,
-                    ..State::default()
-                }),
+                state: Mutex::new(State::default()),
                 radio,
                 bus,
                 mover,
@@ -432,6 +437,30 @@ impl Audio {
         };
         audio.publish(&audio.inner.state.lock().unwrap());
         audio
+    }
+
+    /// Asks the radio which headphones are paired and keeps them, unless
+    /// some were chosen in the meantime.
+    fn learn_paired(&self) -> Option<Device> {
+        let paired = self.inner.radio.paired();
+        let mut state = self.inner.state.lock().unwrap();
+        if state.headphones.is_none()
+            && let Some(device) = &paired
+        {
+            state.headphones = Some(Known::new(device.clone(), Wire::Idle));
+            self.publish(&state);
+        }
+        paired
+    }
+
+    fn look_up_paired(&self, found: Found) {
+        let looking = self.clone();
+        let spawned = thread::Builder::new()
+            .name("headphones".to_string())
+            .spawn(move || found(looking.learn_paired()));
+        if let Err(error) = spawned {
+            eprintln!("headphones: {error}");
+        }
     }
 
     pub fn view(&self) -> View {
@@ -591,10 +620,6 @@ impl Audio {
 
     pub fn bonded(&self, address: &str) -> Option<Device> {
         self.inner.radio.bonded(address)
-    }
-
-    pub fn headphones(&self) -> Option<Device> {
-        self.inner.state.lock().unwrap().device().cloned()
     }
 
     pub fn select(&self, headphones: Option<Device>) {
@@ -1459,6 +1484,7 @@ mod tests {
                 poll: Duration::from_millis(10),
             },
         );
+        audio.learn_paired();
         Rig {
             audio,
             bus,

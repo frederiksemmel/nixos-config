@@ -302,20 +302,6 @@ impl Actor {
         let fetcher = fetch::spawn(store.clone(), move |path| downloading.signal(Signal::Downloading(path)));
         let audio = core.audio().cloned();
         if let Some(audio) = &audio {
-            if step("whose headphones", sound::claimed(&db)).await.is_empty()
-                && let Some(headphones) =
-                    step("the paired headphones", audio_lock(audio.clone(), Audio::headphones)).await
-            {
-                let prefs = db::AudioPrefs::Unpaired.pairing(headphones.address.clone());
-                let saved = step(
-                    "the headphones' first owner",
-                    db.save_audio_prefs(ProfileId::FIRST, &prefs),
-                )
-                .await;
-                if let Err(error) = saved {
-                    eprintln!("headphones: {error}");
-                }
-            }
             let claimed = step("whose headphones", sound::claimed(&db)).await;
             step(
                 "the headphones' owners",
@@ -464,6 +450,7 @@ impl Actor {
             Signal::TvShowing => self.resume_after_tv(),
             Signal::TvSilent => self.tell("The TV did not answer"),
             Signal::Audio(route) => self.move_audio(&route),
+            Signal::Headphones(paired) => self.headphones_found(paired),
             Signal::Tended(tended) => self.tended(tended),
             Signal::Prepared { id, prepared } => self.prepared(id, prepared).await,
             Signal::Removed => self.tend(),
@@ -2308,6 +2295,30 @@ impl Actor {
         self.queue_downloads(false);
     }
 
+    /// The radio said which headphones are paired. Headphones nobody owns go
+    /// to the first profile, and the TV profile's choice is applied again.
+    fn headphones_found(&self, paired: Option<audio::Device>) {
+        let Some(audio) = self.audio.clone() else {
+            return;
+        };
+        eprintln!(
+            "headphones: paired {}",
+            paired.as_ref().map_or("none", |device| device.address.as_str())
+        );
+        self.core.saves().save(move |db| async move {
+            if let Some(headphones) = paired
+                && sound::claimed(&db).await.is_empty()
+            {
+                let prefs = db::AudioPrefs::Unpaired.pairing(headphones.address.clone());
+                if let Err(error) = db.save_audio_prefs(ProfileId::FIRST, &prefs).await {
+                    eprintln!("headphones: {error}");
+                }
+            }
+            audio.set_kept(sound::claimed(&db).await);
+        });
+        self.apply_audio(self.profile);
+    }
+
     fn apply_audio(&self, profile: ProfileId) {
         if self.audio.is_none() {
             return;
@@ -2649,9 +2660,32 @@ mod tests {
     }
 
     #[test]
+    fn a_start_whose_radio_never_says_what_is_paired_serves_at_once() {
+        on_a_runtime_left_behind(async {
+            let (core, inbox) =
+                Core::detached_with_audio(db::test_library(), |bus, found| Some(Audio::silent(bus, found))).await;
+            let (link, _orders) = Link::pair();
+            let started = Instant::now();
+            let core = tokio::time::timeout(Duration::from_secs(2), core_with_tv(core, inbox, link))
+                .await
+                .expect("the actor started without waiting on the radio");
+            assert!(
+                started.elapsed() < Duration::from_millis(500),
+                "{:?}",
+                started.elapsed()
+            );
+            assert_eq!(
+                at_once(&core, Request::Control(Control::Pause)).await,
+                Outcome::refused("Pause, but nothing is playing")
+            );
+        });
+    }
+
+    #[test]
     fn headphones_whose_radio_never_answers_leave_the_api_answering() {
         on_a_runtime_left_behind(async {
-            let (core, inbox) = Core::detached_with_audio(db::test_library(), |bus| Some(Audio::silent(bus))).await;
+            let (core, inbox) =
+                Core::detached_with_audio(db::test_library(), |bus, found| Some(Audio::silent(bus, found))).await;
             let paired = db::AudioPrefs::Unpaired.pairing("00:11:22:33:44:55".to_string());
             core.db().save_audio_prefs(ProfileId::FIRST, &paired).await.unwrap();
             let (link, orders) = Link::pair();

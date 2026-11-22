@@ -21,7 +21,7 @@ use crate::push::Push;
 use crate::screen;
 use crate::seek::Direction;
 use crate::sidecar;
-use crate::startup::{self, step};
+use crate::startup::step;
 use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, SubtitleSettings};
@@ -129,6 +129,7 @@ impl Outcome {
 
 pub(crate) enum Signal {
     Tv(crate::link::messages::FromTv),
+    Headphones(Option<audio::Device>),
     TvGone {
         at: std::time::Instant,
     },
@@ -172,6 +173,13 @@ pub(crate) enum Signal {
 pub(crate) enum Input {
     Request(Request, Option<oneshot::Sender<Outcome>>),
     Signal(Signal),
+}
+
+/// Tells the actor which headphones are paired once the radio said.
+fn found(inbox: mpsc::UnboundedSender<Input>) -> audio::Found {
+    Box::new(move |paired| {
+        let _ = inbox.send(Input::Signal(Signal::Headphones(paired)));
+    })
 }
 
 /// Where the tv is: in this process, with its menu, or at the other end of
@@ -292,23 +300,16 @@ impl Core {
         });
         let bus = Bus::default();
         let (inbox, received) = mpsc::unbounded_channel();
-        let audio = match headphones {
-            true => {
-                let (inbox, bus) = (inbox.clone(), bus.clone());
-                Some(
-                    startup::blocking("the headphones", move || {
-                        Audio::spawn(
-                            bus,
-                            Box::new(move |route| {
-                                let _ = inbox.send(Input::Signal(Signal::Audio(route)));
-                            }),
-                        )
-                    })
-                    .await,
-                )
-            }
-            false => None,
-        };
+        let audio = headphones.then(|| {
+            let (moving, finding) = (inbox.clone(), inbox.clone());
+            Audio::spawn(
+                bus.clone(),
+                Box::new(move |route| {
+                    let _ = moving.send(Input::Signal(Signal::Audio(route)));
+                }),
+                found(finding),
+            )
+        });
         let subtitles = step("the subtitle settings", SubtitleSettings::load(&db, profile)).await;
         let core = Self {
             inbox,
@@ -371,20 +372,20 @@ impl Core {
 
     #[cfg(test)]
     pub(crate) async fn detached(library: Library) -> (Self, mpsc::UnboundedReceiver<Input>) {
-        Self::detached_with_audio(library, |_| None).await
+        Self::detached_with_audio(library, |_, _| None).await
     }
 
     /// A core of its own for a test, with the headphones `audio` makes.
     #[cfg(test)]
     pub(crate) async fn detached_with_audio(
         library: Library,
-        audio: impl FnOnce(Bus) -> Option<Audio>,
+        audio: impl FnOnce(Bus, audio::Found) -> Option<Audio>,
     ) -> (Self, mpsc::UnboundedReceiver<Input>) {
         let db = Db::memory().await;
         db.set_library(&library);
         let (inbox, received) = mpsc::unbounded_channel();
         let bus = Bus::default();
-        let audio = audio(bus.clone());
+        let audio = audio(bus.clone(), found(inbox.clone()));
         let core = Self {
             inbox,
             bus,
