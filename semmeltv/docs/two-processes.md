@@ -357,9 +357,6 @@ shows the splash and reconnects until it gets `Welcome`.
 
 - **semmeltv5** (Pi 5, 8 GB): everything above, with headphones and downloads
   on the core's side.
-- **semmeltv3** (Pi 3, 1 GB, zram): stays one process (`semmeltv ui` under
-  cage, `services.semmeltv.split` off). Only semmeltv5 is split; nothing about
-  semmeltv3 changes, and nobody deploys or tests the split there.
 - **laptop / `semmeltv ui`**: one process, the in-memory link, the same code
   paths.
 
@@ -386,7 +383,7 @@ functions (`play_from`, `record_place`, `publish_playback`, `key`,
 | **1e** | Renderer: the steering thread sends `Seen` as `Signal::TvSet`. The actor keeps it like a `Report`. The renderer backend leaves `Player`. | The renderer's existing session tests, plus one where `seen` is never locked by the actor | After 1b. Parallel with 1c and 1d (different functions, `renderer.rs`). |
 | **2** | **Menu over the link.** `Home`, `Key`, `Message`, `Panel`, `UpNext`, `Together` become `ToTv`; `ui.rs` sends `FromTv::Ask`/`Key` instead of `core.send`. The bus drops its `#[serde(skip)]` variants. `ui::run` no longer gets the core's runtime handle. | The existing "a new library reaches both frontends" and "a remote key goes to the screen" tests rewritten against the link; a test that the library is sent only when its revision changes | After 1b. Parallel with 1c–1e if it keeps to `ui.rs`/`bus.rs`. |
 | **3** | **The socket.** `link::socket`: the core's listener (peer uid, single slot, bounded writer, timeouts, stale/lost), the tv's client (reconnect, `Hello`, local keys while disconnected). Subcommands `semmeltv core` and `semmeltv tv`; `semmeltv ui` keeps the in-memory link. `semmeltv tv --dump`. | Socket tests on a temp dir: wrong uid refused (skipped when not root); a second client replaces the first; a reader that stops makes the core drop it within 2 s without blocking `send`; a revision mismatch closes it; a 16 MB line limit. Recovery tests (§2.6): a resume after `Lost`, giving up after 2 minutes, the crash-loop guard, adoption from `Hello.playing`, `Hello.ended`. | After 2 |
-| **4** | **Two units.** `semmeltv.service` + `cage-tty1` running `semmeltv tv`, env from 0b, sd_notify (`READY`, `WATCHDOG`) in both, polkit, `hosts/mount.nix` ordering. Move the `ExecStop` that announces a restart to the front (`semmeltv-maintenance restarting`, set on `cage-tty1` in `modules/web.nix`) to `semmeltv.service`, so phones see "Der Ofen wird neu angeheizt" when the core restarts and not when only the tv does. Behind `services.semmeltv.split`, on for semmeltv5 only; semmeltv3 keeps one process, and its RSS check is dropped. | VM `tv-restart` (0c) now passes; all VM groups pass with the split; a VM case that stops `semmeltv.service` mid-film and checks the film keeps playing and is adopted. | After 3 |
+| **4** | **Two units.** `semmeltv.service` + `cage-tty1` running `semmeltv tv`, env from 0b, sd_notify (`READY`, `WATCHDOG`) in both, polkit, `hosts/mount.nix` ordering. Move the `ExecStop` that announces a restart to the front (`semmeltv-maintenance restarting`, set on `cage-tty1` in `modules/web.nix`) to `semmeltv.service`, so phones see "Der Ofen wird neu angeheizt" when the core restarts and not when only the tv does. Behind `services.semmeltv.split`, on for semmeltv5 only; | VM `tv-restart` (0c) now passes; all VM groups pass with the split; a VM case that stops `semmeltv.service` mid-film and checks the film keeps playing and is adopted. | After 3 |
 | **5** | Clean-up: drop `Core::bus()` uses by `ui.rs`, the leftovers of `block_in_place` around playback, and the README/ADR text. Write ADR 4 from this doc. | — | After 4 |
 
 How 1b came out, where it differs from the table above:
@@ -682,7 +679,7 @@ its listed files.
    - grim captured 1 MB.
 
    No `SupplementaryGroups=` is needed.
-6. **Memory on semmeltv3**: moot, since semmeltv3 stays one process.
+6. **Memory on the Pi 3**: moot, since the Pi 3 no longer runs SemmelTV.
 7. **The renderer stays in the core.** A hung UPnP call is on its own thread
    and touches no shared lock after step 1e, but it is still core code talking
    to a flaky device. The alternative, a third process, is not proposed.

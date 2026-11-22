@@ -27,7 +27,7 @@ knows, now asks for a deploy as its button does, main sends main's newest
 commits (FILE, as semmeltv-deploy-watch writes it), and running, finished and
 failed tell the TV how the deploy it asked for goes.
 
-HOST is semmeltv5 or semmeltv3. Talks to the TV's API on 127.0.0.1 over ssh
+HOST is semmeltv5. Talks to the TV's API on 127.0.0.1 over ssh
 with the TV's service token, which never leaves the TV.
 EOF
   exit 2

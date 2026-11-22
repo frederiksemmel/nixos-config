@@ -183,12 +183,12 @@ in
           type = lib.types.attrsOf lib.types.str;
           default = { };
           example = {
-            "semmeltv3.semmeltv.ch" = "192.168.1.179:8443";
+            "beachparty.semmeltv.ch" = "192.168.1.230:8445";
           };
           description = ''
-            Names of other TVs behind the same router port forward. Their HTTPS connections arrive
+            Names of other hosts behind the same router port forward. Their HTTPS connections arrive
             here and pass through unopened, by TLS server name, to the given `host:port`, which must be
-            that TV's `relayPort`: every relayed connection starts with a PROXY protocol header naming
+            that host's `relayPort`: every relayed connection starts with a PROXY protocol header naming
             the visitor's address.
           '';
         };

@@ -7,7 +7,7 @@ let
   cfg = config.profiles.semmeltv;
 in
 {
-  options.profiles.semmeltv.enable = lib.mkEnableOption "ssh access to the SemmelTV Pis and the TMDB and MDBList keys for library imports";
+  options.profiles.semmeltv.enable = lib.mkEnableOption "ssh access to semmeltv5 and rpi3 and the TMDB and MDBList keys for library imports";
 
   config = lib.mkIf cfg.enable {
     age.secrets = {
@@ -30,7 +30,7 @@ in
       MDBLIST_API_KEY_FILE = config.age.secrets.mdblist_api_key.path;
     };
 
-    programs.ssh.settings."semmeltv*" = {
+    programs.ssh.settings."semmeltv* rpi3" = {
       User = "frederik";
       IdentityFile = "~/.ssh/id_semmeltv";
       IdentitiesOnly = true;

@@ -120,9 +120,7 @@ yourself, without subagents.
    you touched, run step 2 again. `git push origin HEAD:main`; when it's
    rejected, fetch, rebase and push again. Resolve conflicts so both sides'
    intent survives: the other side is another session's landed work.
-5. Deploy from your worktree: `semmeltv-deploy semmeltv5`, and
-   `semmeltv-deploy semmeltv3` if `tailscale status` shows semmeltv3 online
-   (otherwise say semmeltv3 gets it with its next deploy). It takes the lock
+5. Deploy from your worktree: `semmeltv-deploy semmeltv5`. It takes the lock
    all sessions share, always deploys the newest origin/main, so it never rolls
    back another session's work, skips a TV that already runs it, and prints
    the revision the TV runs afterwards. A deploy that restarts the TV app

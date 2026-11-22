@@ -24,30 +24,29 @@ start() {
     --permission-mode auto --settings "$SETTINGS" --strict-mcp-config "$brief"
 }
 
-for host in semmeltv5 semmeltv3; do
-  if ! reports=$(semmeltv-feedback "$host" list new 2>"$state/$host.error" && semmeltv-feedback "$host" list reopened 2>>"$state/$host.error"); then
-    echo "$host: $(tail -n 1 "$state/$host.error")"
+host=semmeltv5
+if ! reports=$(semmeltv-feedback "$host" list new 2>"$state/$host.error" && semmeltv-feedback "$host" list reopened 2>>"$state/$host.error"); then
+  echo "$host: $(tail -n 1 "$state/$host.error")"
+  exit 0
+fi
+while read -r id marked kind; do
+  [[ -n $id ]] || continue
+  if jq -e --arg name "feedback-$id" 'any(.[]; .name == $name)' <<<"$sessions" >/dev/null; then
     continue
   fi
-  while read -r id marked kind; do
-    [[ -n $id ]] || continue
-    if jq -e --arg name "feedback-$id" 'any(.[]; .name == $name)' <<<"$sessions" >/dev/null; then
-      continue
-    fi
-    key="$host $id $marked $kind"
-    if (($(grep -cxF "$key" "$state/handed" || true) >= 2)); then
-      continue
-    fi
-    if ((running >= max)); then
-      echo "$host $id waits: $running feedback sessions are running"
-      continue
-    fi
-    if start "$host" "$id" "$kind" </dev/null; then
-      echo "$key" >>"$state/handed"
-      running=$((running + 1))
-      echo "started feedback-$id for $host $id ($kind)"
-    else
-      echo "starting a session for $host $id failed"
-    fi
-  done < <(jq -r '"\(.id) \(.marked_at // 0) \(.status.state)"' <<<"$reports")
-done
+  key="$host $id $marked $kind"
+  if (($(grep -cxF "$key" "$state/handed" || true) >= 2)); then
+    continue
+  fi
+  if ((running >= max)); then
+    echo "$host $id waits: $running feedback sessions are running"
+    continue
+  fi
+  if start "$host" "$id" "$kind" </dev/null; then
+    echo "$key" >>"$state/handed"
+    running=$((running + 1))
+    echo "started feedback-$id for $host $id ($kind)"
+  else
+    echo "starting a session for $host $id failed"
+  fi
+done < <(jq -r '"\(.id) \(.marked_at // 0) \(.status.state)"' <<<"$reports")

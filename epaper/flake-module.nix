@@ -12,7 +12,7 @@
     let
       epaper =
         if system == "aarch64-linux" then
-          self.nixosConfigurations.semmeltv3.config.services.epaper.package
+          self.nixosConfigurations.rpi3.config.services.epaper.package
         else
           pkgs.callPackage ./package.nix { inherit (inputs) crane; };
     in

@@ -55,24 +55,23 @@ deploy() {
   git -C "$repo" worktree remove --force "$checkout" || true
 }
 
-for host in semmeltv5 semmeltv3; do
-  if ! answer=$(semmeltv-feedback "$host" deploy state 2>&1); then
-    say "$host" "$host: asking it about deploys failed: $(tail -n 1 <<<"$answer")"
-    continue
+host=semmeltv5
+if ! answer=$(semmeltv-feedback "$host" deploy state 2>&1); then
+  say "$host" "$host: asking it about deploys failed: $(tail -n 1 <<<"$answer")"
+  exit 0
+fi
+if ! jq -e --arg main "$main" '.main == $main' <<<"$answer" >/dev/null &&
+  ! answer=$(semmeltv-feedback "$host" deploy main "$commits" 2>&1); then
+  say "$host" "$host: telling it main failed: $(tail -n 1 <<<"$answer")"
+  exit 0
+fi
+say "$host" ""
+if jq -e '.asked != null and .run.state != "running"' <<<"$answer" >/dev/null; then
+  deploy "$host"
+elif jq -e '.run.state == "running"' <<<"$answer" >/dev/null; then
+  if jq -e '.revision == .main' <<<"$answer" >/dev/null; then
+    semmeltv-feedback "$host" deploy finished >/dev/null
+  else
+    semmeltv-feedback "$host" deploy failed "Beast stopped before the deploy finished. Deploy now tries again." >/dev/null
   fi
-  if ! jq -e --arg main "$main" '.main == $main' <<<"$answer" >/dev/null &&
-    ! answer=$(semmeltv-feedback "$host" deploy main "$commits" 2>&1); then
-    say "$host" "$host: telling it main failed: $(tail -n 1 <<<"$answer")"
-    continue
-  fi
-  say "$host" ""
-  if jq -e '.asked != null and .run.state != "running"' <<<"$answer" >/dev/null; then
-    deploy "$host"
-  elif jq -e '.run.state == "running"' <<<"$answer" >/dev/null; then
-    if jq -e '.revision == .main' <<<"$answer" >/dev/null; then
-      semmeltv-feedback "$host" deploy finished >/dev/null
-    else
-      semmeltv-feedback "$host" deploy failed "Beast stopped before the deploy finished. Deploy now tries again." >/dev/null
-    fi
-  fi
-done
+fi

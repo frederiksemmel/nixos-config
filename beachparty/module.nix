@@ -35,7 +35,7 @@ in
 
     target = lib.mkOption {
       type = lib.types.str;
-      example = "semmeltv3.semmeltv.ch";
+      example = "semmeltv5.semmeltv.ch";
       description = "Name the CNAME of `domain` points at, one that reaches this host's `port`.";
     };
 

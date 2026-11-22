@@ -99,6 +99,20 @@
             ];
           };
 
+          nixosConfigurations.rpi3 = inputs.nixos-raspberrypi.lib.nixosSystem {
+            specialArgs = specialArgs // {
+              inherit (inputs) nixos-raspberrypi;
+            };
+            modules = [ ./configurations/nixos/rpi3 ];
+          };
+
+          deploy.nodes.rpi3 = {
+            hostname = "rpi3";
+            sshUser = "frederik";
+            user = "root";
+            profiles.system.path = inputs.deploy-rs.lib.aarch64-linux.activate.nixos self.nixosConfigurations.rpi3;
+          };
+
           homeModules.frederik = ./home/users/frederik.nix;
 
           overlays.default = final: prev: {

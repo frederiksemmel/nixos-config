@@ -57,7 +57,7 @@ let
   triageSettings = pkgs.writers.writeJSON "semmeltv-triage-settings.json" {
     autoMode.allow = [
       "$defaults"
-      "SemmelTV downloads: a SemmelTV feedback session running `semmeltv get search`, `semmeltv get fetch` or `semmeltv get jobs` on semmeltv5 or semmeltv3 over ssh, as the semmeltv-get skill shows (sudo -u semmeltv with the semmeltv-downloads service's environment), to download a film or series a report asks for. Frederik asked these sessions to start such downloads themselves."
+      "SemmelTV downloads: a SemmelTV feedback session running `semmeltv get search`, `semmeltv get fetch` or `semmeltv get jobs` on semmeltv5 over ssh, as the semmeltv-get skill shows (sudo -u semmeltv with the semmeltv-downloads service's environment), to download a film or series a report asks for. Frederik asked these sessions to start such downloads themselves."
     ];
   };
 

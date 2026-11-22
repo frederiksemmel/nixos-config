@@ -1,6 +1,6 @@
 # epaper
 
-A bot on semmeltv3 that draws on the Waveshare 2.7" e-Paper HAT. The panel shows four shades of grey.
+A bot on rpi3 that draws on the Waveshare 2.7" e-Paper HAT. The panel shows four shades of grey.
 
 ## Commands
 
