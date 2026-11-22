@@ -16,7 +16,7 @@ with scenario("an episode that ends on the TV counts down to the next, OK plays 
     counting = time.monotonic()
     time.sleep(1)
     tv.screenshot("tv-up-next")
-    shown = tv.get_screen_text()
+    shown = "\n".join(tv.get_screen_text_variants())
     assert "Up next" in shown and re.search(r"Plays ?in", shown), f"the TV shows the Up next card: {shown!r}"
     eventually("the countdown plays episode 3", lambda: mpv("get_property", "pid") is not None, timeout=30, every=0.3)
     assert time.monotonic() - counting > UP_NEXT_SECONDS * 0.7, "episode 3 waits for the countdown"
