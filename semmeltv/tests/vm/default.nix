@@ -38,11 +38,7 @@ let
     "bakeoff"
     "tv-restart"
     "maintenance"
-    "switch"
   ];
-  # The switch group boots the old single process with headphones on and
-  # switches to the split itself; every other group boots split.
-  switching = group: group == "switch";
   expectedToFail = [ ];
   proxied = {
     proxyWebsockets = true;
@@ -77,9 +73,7 @@ let
         boot.kernelModules = [ "snd-dummy" ];
 
         services.semmeltv = {
-          split = !switching group;
-          updateCard = true;
-          headphones.enable = switching group;
+          headphones.enable = true;
           enable = true;
           adminUser = "root";
           package = semmeltv;
@@ -91,10 +85,6 @@ let
               serviceTokenFile = "${serviceToken}";
             };
           };
-        };
-
-        specialisation = pkgs.lib.optionalAttrs (switching group) {
-          split.configuration.services.semmeltv.split = pkgs.lib.mkForce true;
         };
 
         services.semmeltv.tv = {
@@ -186,7 +176,6 @@ let
         QUIET_SECONDS = ${toString timing.quiet}
         WATCHING_SECONDS = ${toString timing.watching}
         EXPECTED_TO_FAIL = ${if builtins.elem group expectedToFail then "True" else "False"}
-        SPLIT = ${if switching group then "False" else "True"}
       ''
       + pkgs.lib.concatMapStrings builtins.readFile [
         ./common.py

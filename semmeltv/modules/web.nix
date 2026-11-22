@@ -72,11 +72,6 @@ let
 in
 {
   options.services.semmeltv = {
-    updateCard = lib.mkEnableOption ''
-      the update card: before cage-tty1 stops, the TV says "Wir haben's
-      versemmelt" and keeps what plays, and plays it on after the restart
-    '';
-
     api = {
       enable = lib.mkEnableOption "the app's HTTP API on 127.0.0.1, for the web app and any other client";
 
@@ -305,17 +300,20 @@ in
           })
         ];
 
-        systemd.services.${if cfg.split then "semmeltv" else "cage-tty1"}.serviceConfig.ExecStop = [
+        systemd.services.semmeltv.serviceConfig.ExecStop = [
           "-${pkgs.writeShellScript "semmeltv-announce-restart" ''
             SEMMELTV_FRONT_CONTROL=127.0.0.1:${toString front.controlPort} exec ${maintenance} restarting
           ''}"
         ];
       })
 
-      (lib.mkIf (cfg.web.enable && cfg.updateCard) {
+      (lib.mkIf cfg.web.enable {
         systemd.services.semmeltv-update-card = {
           description = "Tells SemmelTV before cage-tty1 stops, so the TV shows the update card and plays on after";
-          after = [ "cage-tty1.service" ] ++ lib.optional cfg.split "semmeltv.service";
+          after = [
+            "cage-tty1.service"
+            "semmeltv.service"
+          ];
           partOf = [ "cage-tty1.service" ];
           wantedBy = [ "cage-tty1.service" ];
           restartIfChanged = false;

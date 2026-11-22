@@ -62,21 +62,13 @@ in
       description = "Home of the `semmeltv` user, holding `library`, `cache`, the database `semmeltv.db` and the feedback reports in `feedback`.";
     };
 
-    split = lib.mkEnableOption ''
-      two processes: the core (`semmeltv core`: the API, the library, the
-      TV's remote and what plays) as `semmeltv.service`, and the tv
-      (`semmeltv tv`: the menu and mpv) under cage, talking over a Unix
-      socket. Each has a watchdog, and a tv that freezes or crashes no
-      longer takes the API with it. Off, the app runs as one process under
-      cage'';
-
     coreEnvironment = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = { };
       example = {
         SEMMELTV_HEADPHONES = "bluetooth";
       };
-      description = "Environment of the SemmelTV core: the API, the database, the library, downloads, headphones and TV control. With `split` it is `semmeltv.service`'s; without, the app under cage gets it on top of `services.cage.environment`.";
+      description = "Environment of the SemmelTV core: the API, the database, the library, downloads, headphones and TV control. It is `semmeltv.service`'s; the tv under cage gets only the library and artwork paths from it.";
     };
 
     adminUser = lib.mkOption {
@@ -186,28 +178,19 @@ in
       package = pkgs.cage.override {
         wlroots_0_20 = pkgs.wlroots_0_20.override { enableXWayland = false; };
       };
-      program = if cfg.split then "${lib.getExe cfg.package} tv" else lib.getExe cfg.package;
-      environment =
-        (
-          if cfg.split then
-            lib.filterAttrs (name: _: lib.elem name tvReads) cfg.coreEnvironment
-            // {
-              SEMMELTV_TV_SOCKET = tvSocket;
-            }
-          else
-            cfg.coreEnvironment
-        )
-        // {
-          FONTCONFIG_FILE = "${pkgs.makeFontsConf {
-            fontDirectories = [
-              pkgs.dejavu_fonts
-              pkgs.inter
-            ];
-          }}";
-          XCURSOR_THEME = "blank";
-          WLR_LIBINPUT_NO_DEVICES = "1";
-          SEMMELTV_DECODER = cfg.decoder;
-        };
+      program = "${lib.getExe cfg.package} tv";
+      environment = lib.filterAttrs (name: _: lib.elem name tvReads) cfg.coreEnvironment // {
+        SEMMELTV_TV_SOCKET = tvSocket;
+        FONTCONFIG_FILE = "${pkgs.makeFontsConf {
+          fontDirectories = [
+            pkgs.dejavu_fonts
+            pkgs.inter
+          ];
+        }}";
+        XCURSOR_THEME = "blank";
+        WLR_LIBINPUT_NO_DEVICES = "1";
+        SEMMELTV_DECODER = cfg.decoder;
+      };
     };
 
     assertions = [
@@ -231,7 +214,7 @@ in
 
     systemd.services.cage-tty1 = {
       after = [ "systemd-tmpfiles-setup.service" ];
-      wants = lib.optional cfg.split "semmeltv.service";
+      wants = [ "semmeltv.service" ];
       restartIfChanged = lib.mkForce true;
       serviceConfig = {
         Restart = "always";
@@ -239,7 +222,7 @@ in
       };
     };
 
-    systemd.services.semmeltv = lib.mkIf cfg.split {
+    systemd.services.semmeltv = {
       description = "SemmelTV core: the API, the library, the TV's remote and what plays";
       wantedBy = [ "multi-user.target" ];
       after = [

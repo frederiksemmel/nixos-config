@@ -96,7 +96,9 @@ with scenario("profiles on one phone: each has its own Home, a viewer is limited
     phone.until(f'location.pathname === "/" && {AVATAR} === "M"')
     phone.goto("/settings")
     phone.until('!!document.querySelector("#mode") && !!document.querySelector(\'[data-post="/api/tv-profile"]\')')
-    assert phone.api("POST", "/api/audio/pair")["status"] == 404, "TV control brings her own headphones with it: only this TV's lack of Bluetooth refuses the pairing"
+    pairing = phone.api("POST", "/api/audio/pair")
+    assert pairing["status"] != 403, f"TV control brings her own headphones with it: {pairing}"
+    phone.api("DELETE", "/api/audio/pair")
     phone.goto("/profiles")
     password_sign_in(phone, "Frederik", "frederik-pass")
     phone.until(f'location.pathname === "/" && {AVATAR} === "F"')

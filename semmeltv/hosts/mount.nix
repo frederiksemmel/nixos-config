@@ -101,7 +101,7 @@ in
       wants = [ "semmeltv-mount.service" ];
     };
 
-    systemd.services.semmeltv = lib.mkIf cfg.split {
+    systemd.services.semmeltv = {
       after = [ "semmeltv-mount.service" ];
       wants = [ "semmeltv-mount.service" ];
     };

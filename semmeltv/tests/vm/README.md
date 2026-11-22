@@ -34,7 +34,6 @@ touches:
 | `sign-in` | `semmeltv-vm-sign-in` | invites, the profile picker with passwords, profiles on one phone and their limits |
 | `bakeoff` | `semmeltv-vm-bakeoff` | a full oven: challenging someone who watches over the API and on a phone, dropping off, losing a bake-off, the rest after it ([streaming](../../docs/streaming.md)) |
 | `tv-restart` | `semmeltv-vm-tv-restart` | the [two processes](../../docs/two-processes.md): a killed or frozen tv process comes back with the film while the API answers, and a film plays on while the core restarts |
-| `switch` | `semmeltv-vm-switch` | a TV running one process, with headphones, switched live to the core and the tv as two units: the API answers within 30 s, and a core that can't take its port says why and serves once it can |
 | `maintenance` | `semmeltv-vm-maintenance` | the bakery's closed screen from the front: planned work with `semmeltv-maintenance`, a stopped core, the guess growing once it runs over, the page coming back by itself |
 
 One group, on nixbuild:
@@ -58,8 +57,9 @@ failure names the group's `EXPECTED_FAILURE`; a scenario failing for any other
 reason, or every scenario passing, fails the check. Once the layout lands, take
 the group out of `expectedToFail` and delete its `EXPECTED_FAILURE` line.
 
-The VM runs the core and the tv apart (`services.semmeltv.split`), as
-semmeltv5 does: "the app" restarts as `semmeltv.service` and `cage-tty1`.
+The VM runs the core and the tv as the Pis do, `semmeltv.service` and
+`semmeltv tv` under `cage-tty1`, with the headphones on: "the app"
+restarts as both units.
 
 The VM shortens the app's fixed waits through its environment, set in
 `default.nix`: `SEMMELTV_UP_NEXT_SECONDS` for the Up next countdown,

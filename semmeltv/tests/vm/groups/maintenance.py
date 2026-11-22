@@ -27,7 +27,7 @@ def the_guess_moves_past(promised, timeout):
 
 def reopened():
     tv.succeed("semmeltv-maintenance off")
-    tv.systemctl(f"start {CORE_UNIT} cage-tty1.service")
+    tv.systemctl("start semmeltv.service cage-tty1.service")
     app_restarted()
 
 
@@ -60,7 +60,7 @@ with scenario("planned work shows the bakery's closed screen with its reason, an
 with scenario("a stopped core shows the closed screen at once, guesses again once it runs over, and the page comes back by itself"):
     film_page(phone)
     stopped = time.monotonic()
-    tv.systemctl(f"stop {CORE_UNIT}")
+    tv.systemctl("stop semmeltv.service")
     first = maintenance()
     assert first["state"] == "closed" and first["cause"] == "restarting", first
 
@@ -69,23 +69,20 @@ with scenario("a stopped core shows the closed screen at once, guesses again onc
     status, _, body = front_answer("/api/library")
     assert status == 503 and json.loads(body)["cause"] == "restarting", f"{status}: {body}"
     phone.shot("maintenance-restarting")
-    if SPLIT:
-        tv_shows("Ofen wird neu", timeout=30)
-        tv_shows("Wieder da in", timeout=10)
-        tv.screenshot("tv-maintenance-restarting")
+    tv_shows("Ofen wird neu", timeout=30)
+    tv_shows("Wieder da in", timeout=10)
+    tv.screenshot("tv-maintenance-restarting")
 
     the_guess_moves_past(first["promised"], timeout=100)
     phone.until(LATE, 10000)
     phone.shot("maintenance-restarting-overdue")
-    if SPLIT:
-        tv_shows("als gedacht", timeout=20)
-        tv.screenshot("tv-maintenance-restarting-overdue")
+    tv_shows("als gedacht", timeout=20)
+    tv.screenshot("tv-maintenance-restarting-overdue")
 
-    tv.systemctl(f"start {CORE_UNIT}")
+    tv.systemctl("start semmeltv.service")
     app_restarted()
     phone.until('!!document.querySelector("main button.play[data-play-movie]")', 60000)
-    if SPLIT:
-        eventually("the TV's panel goes once the core is back", lambda: "Ofen wird neu" not in tv.get_screen_text(), timeout=60, every=2)
+    eventually("the TV's panel goes once the core is back", lambda: "Ofen wird neu" not in tv.get_screen_text(), timeout=60, every=2)
     took = time.monotonic() - stopped
     assert maintenance()["state"] == "open"
 

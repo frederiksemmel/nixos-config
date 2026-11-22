@@ -1,19 +1,14 @@
 import threading
 
-NOT_SPLIT = "the core and the tv are not split into semmeltv.service and cage-tty1's `semmeltv tv`"
-
-
 def tv_processes():
     return [int(pid) for pid in tv.succeed("pgrep -u semmeltv -f '^/nix/store/[^ ]*/bin/semmeltv tv$' || true").split()]
 
 
-def split_tv():
+def the_tv():
+    """The one `semmeltv tv` process, beside a running core."""
     core = tv.succeed("systemctl is-active semmeltv.service || true").strip()
-    core_line = tv.succeed("tr '\\0' ' ' < /proc/$(systemctl show -P MainPID semmeltv.service)/cmdline 2>/dev/null || true")
     tvs = tv_processes()
-    assert core == "active" and " core" in core_line and len(tvs) == 1, (
-        f"{NOT_SPLIT}: semmeltv.service is {core!r} running {core_line.strip()!r}, `semmeltv tv` in cage-tty1: {tvs}"
-    )
+    assert core == "active" and len(tvs) == 1, f"semmeltv.service is {core!r}, `semmeltv tv` processes: {tvs}"
     return tvs[0]
 
 
@@ -80,7 +75,7 @@ def resumes_near(left_at, since, within):
 PROBE_COOKIE = session_cookie("Frederik")
 
 with scenario("a film resumes within 10 s where it was after the tv process is killed, and the API answers throughout"):
-    before = split_tv()
+    before = the_tv()
     film_plays_at_100()
     probe = Probe(PROBE_COOKIE)
     CLEANUP.append(probe.stopping.set)
@@ -97,7 +92,7 @@ with scenario("a film resumes within 10 s where it was after the tv process is k
     stop_everything(phone)
 
 with scenario("a film plays on while the core restarts, and the restarted core takes it over"):
-    split_tv()
+    the_tv()
     film_plays_at_100()
     tv.systemctl("stop semmeltv.service")
     stopped_at = tv_position() or 0
@@ -117,7 +112,7 @@ with scenario("a film plays on while the core restarts, and the restarted core t
     stop_everything(phone)
 
 with scenario("an update mid-film shows the update card, then plays the film on where it was"):
-    split_tv()
+    the_tv()
     film_plays_at_100()
     left_at = tv_position() or 0
     tv.succeed("systemctl --no-block restart semmeltv.service cage-tty1.service")
@@ -144,7 +139,7 @@ with scenario("an update mid-film shows the update card, then plays the film on 
     stop_everything(phone)
 
 with scenario("a frozen tv process leaves the API up, and the core ends it so the tv and the film come back"):
-    before = split_tv()
+    before = the_tv()
     ended = silent_tvs_ended()
     film_plays_at_100()
     probe = Probe(PROBE_COOKIE)
