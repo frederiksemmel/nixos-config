@@ -2,8 +2,9 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use teloxide::{
+    net::Download,
     prelude::*,
-    types::{MessageId, MessageReactionUpdated, ReactionType, User, UserId},
+    types::{FileId, MessageId, MessageReactionUpdated, ReactionType, Sticker, User, UserId},
     utils::command::BotCommands,
 };
 
@@ -53,6 +54,7 @@ pub async fn run(token: String, bot: flow::Bot, allowed: Vec<u64>) -> Result<()>
         })
         .filter(|msg: Message, allowed: Allowed| allowed.admits(msg.from.as_ref()))
         .branch(dptree::entry().filter_command::<Command>().endpoint(on_command))
+        .branch(dptree::filter_map(|msg: Message| msg.sticker().cloned()).endpoint(on_sticker))
         .branch(dptree::filter_map(|msg: Message| msg.text().map(str::to_owned)).endpoint(on_text));
     let reactions = Update::filter_message_reaction_updated()
         .filter(|reaction: MessageReactionUpdated, allowed: Allowed| allowed.admits(reaction.user()))
@@ -90,6 +92,27 @@ async fn on_command(telegram: Bot, msg: Message, cmd: Command, bot: flow::Bot) -
 async fn on_text(telegram: Bot, msg: Message, text: String, bot: flow::Bot) -> ResponseResult<()> {
     let chat = conversation(telegram, &msg);
     logged(bot.message(&chat, &text).await)
+}
+
+/// Draws a still sticker, or the still thumbnail of one that moves.
+async fn on_sticker(telegram: Bot, msg: Message, sticker: Sticker, bot: flow::Bot) -> ResponseResult<()> {
+    let chat = conversation(telegram.clone(), &msg);
+    let file = if sticker.is_static() {
+        Some(sticker.file.id)
+    } else {
+        sticker.thumbnail.map(|thumbnail| thumbnail.file.id)
+    };
+    let Some(file) = file else {
+        return logged(chat.send(flow::STILL_STICKERS_ONLY).await.map(drop));
+    };
+    logged(bot.draw_picture(&chat, download(&telegram, file)).await)
+}
+
+async fn download(telegram: &Bot, file: FileId) -> Result<Vec<u8>> {
+    let file = telegram.get_file(file).await?;
+    let mut bytes = Vec::new();
+    telegram.download_file(&file.path, &mut bytes).await?;
+    Ok(bytes)
 }
 
 async fn on_reaction(reaction: MessageReactionUpdated, bot: flow::Bot) -> ResponseResult<()> {

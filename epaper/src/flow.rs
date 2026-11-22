@@ -13,6 +13,7 @@ use tokio::sync::Mutex;
 
 use crate::{
     panel::Panel,
+    picture,
     render::{Scene, canvas_size, render},
     replies::{Message, Replies},
 };
@@ -45,6 +46,9 @@ pub trait Chat: Send + Sync {
     /// Tells how what the bot's `waiting` message announced turned out, and returns the id of the message that tells it.
     fn follow_up(&self, waiting: &str, text: &str) -> impl Future<Output = Result<String>> + Send;
 }
+
+/// The answer to a sticker that moves and has no still picture to draw.
+pub const STILL_STICKERS_ONLY: &str = "I can only draw still stickers.";
 
 pub type SharedReplies = Arc<SyncMutex<Replies>>;
 
@@ -231,6 +235,20 @@ impl Bot {
         self.finish(chat, &pending, message, str::to_owned).await
     }
 
+    /// Says a wait line, fetches a picture and draws it, then tells the outcome.
+    pub async fn draw_picture<C: Chat>(&self, chat: &C, fetch: impl Future<Output = Result<Vec<u8>>>) -> Result<()> {
+        let pending = self.start(chat).await?;
+        let message = match fetch.await.and_then(|bytes| picture::decode(&bytes)) {
+            Ok(image) => outcome(self.display.show(Scene::Picture(Arc::new(image))).await)
+                .map_or_else(|message| message, |()| Message::Written),
+            Err(err) => {
+                tracing::warn!("no picture to draw: {err:#}");
+                Message::Failed
+            }
+        };
+        self.finish(chat, &pending, message, str::to_owned).await
+    }
+
     pub async fn rotate<C: Chat>(&self, chat: &C, arg: &str) -> Result<()> {
         let Some(to) = parse_rotation(arg) else {
             chat.send("Use /rotate 0, 90, 180 or 270, or just /rotate for 90° more")
@@ -412,6 +430,28 @@ mod tests {
         assert_eq!(chat.messages(), ["Written it is", "ine gluegt"]);
         bot.message(&chat, "/rotate").await.unwrap();
         assert_eq!(chat.messages()[2], "Rotated to 180°");
+    }
+
+    #[tokio::test]
+    async fn a_picture_says_wait_then_written_or_failed() {
+        let bot = bot(Box::new(Instant));
+        let chat = Fake::default();
+        let mut png = Vec::new();
+        image::RgbaImage::new(4, 4)
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        bot.draw_picture(&chat, async { Ok(png) }).await.unwrap();
+        bot.draw_picture(&chat, async { Ok(b"no picture".to_vec()) })
+            .await
+            .unwrap();
+        bot.draw_picture(&chat, async { anyhow::bail!("no network") })
+            .await
+            .unwrap();
+        let messages = chat.messages();
+        assert_eq!(messages.len(), 3, "{messages:?}");
+        assert_eq!(messages[0], "Written it is");
+        assert_eq!(messages[1], messages[2]);
+        assert_ne!(messages[1], messages[0]);
     }
 
     #[tokio::test]

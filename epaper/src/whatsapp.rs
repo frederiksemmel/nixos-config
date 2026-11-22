@@ -352,6 +352,18 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         }
         return Ok(());
     }
+    if let Some(sticker) = base.sticker_message.as_option() {
+        if is_group && !quotes_the_bot(&bot, &chat, sticker.context_info.as_option()) {
+            return Ok(());
+        }
+        tracing::info!(chat = %info.source.chat, "whatsapp sticker");
+        if sticker.is_lottie == Some(true) && sticker.png_thumbnail.is_none() {
+            chat.send(flow::STILL_STICKERS_ONLY).await?;
+            return Ok(());
+        }
+        let client = ctx.client.clone();
+        return bot.draw_picture(&chat, sticker_picture(&client, sticker)).await;
+    }
     let Some(text) = text else {
         return Ok(());
     };
@@ -359,16 +371,34 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
     if !is_group {
         return bot.message(&chat, &text).await;
     }
-    let replying = base
-        .extended_text_message
-        .as_option()
-        .and_then(|text| text.context_info.as_option())
-        .and_then(|context| context.stanza_id.as_deref())
-        .is_some_and(|quoted| bot.replies.lock().unwrap().is_reply(&chat.key(), quoted));
+    let replying = quotes_the_bot(
+        &bot,
+        &chat,
+        base.extended_text_message
+            .as_option()
+            .and_then(|text| text.context_info.as_option()),
+    );
     match addressed(&text, replying) {
         Some(text) => bot.message(&chat, &text).await,
         None => bot.command_message(&chat, &text).await,
     }
+}
+
+/// Whether a message with `context` quotes one of the bot's replies in `chat`.
+fn quotes_the_bot(bot: &flow::Bot, chat: &Conversation, context: Option<&wa::ContextInfo>) -> bool {
+    context
+        .and_then(|context| context.stanza_id.as_deref())
+        .is_some_and(|quoted| bot.replies.lock().unwrap().is_reply(&chat.key(), quoted))
+}
+
+/// The sticker's WebP, downloaded and decrypted; for a Lottie sticker, its PNG thumbnail.
+async fn sticker_picture(client: &Client, sticker: &wa::message::StickerMessage) -> Result<Vec<u8>> {
+    if sticker.is_lottie == Some(true)
+        && let Some(thumbnail) = sticker.png_thumbnail.as_deref()
+    {
+        return Ok(thumbnail.to_vec());
+    }
+    client.download(sticker).await.context("downloading the sticker")
 }
 
 enum Switch {

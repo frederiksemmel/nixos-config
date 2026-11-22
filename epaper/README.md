@@ -30,12 +30,24 @@ The message is Markdown. Every line of it stays a line on the panel.
 
 Emoji come from Noto Emoji, a black-and-white outline font. Nothing in a message is run as Typst code; markdown.rs turns it into a tree of strings and style names that text.typ draws.
 
+## Stickers and pictures
+
+A sticker sent to the bot goes on the panel, with the same wait and outcome replies as a command.
+
+- **WhatsApp:** in a private chat, every sticker. In a group, a sticker that replies to one of the bot's messages; any other sticker stays chat. An animated sticker draws its first frame.
+- **Telegram:** a still sticker draws as it is. An animated or video sticker draws its still thumbnail; without one, the bot answers that it can only draw still stickers.
+
+A picture is fitted into the panel at its current rotation, keeping its shape, and centred on white; transparent parts are white. How it is turned into four shades depends on the picture:
+
+- **Line art**, such as a comic: nearly every pixel grey and close to black or white. It is darkened a little, so thin lines survive the scaling, and each pixel takes the nearest shade. Lines stay solid.
+- **Everything else**, such as a sticker or a photo: the contrast is stretched to the full range, the midtones are lifted, and the shades are dithered (Atkinson), so gradients come out as fine dot patterns.
+
 ## Who it listens to
 
 - **WhatsApp:** only the chats listed in `whatsapp-groups`; the bot ignores every other chat.
   - A message that is exactly `hoi` (any case) adds its chat to the list, from anyone, and the bot greets. `ciao bello guys` (or `/stop`) removes the chat again, and the bot says goodbye.
   - In a private chat, every message is meant for the bot, as on Telegram.
-  - In a group, only commands draw; ordinary chat stays off the panel. A message that names `spades` or replies to the bot counts as meant for it, so `spades hoi` draws `hoi`.
+  - In a group, only commands draw; ordinary chat stays off the panel. A message that names `spades` or replies to the bot counts as meant for it, so `spades hoi` draws `hoi`. A sticker counts when it replies to the bot.
   - Messages older than 10 minutes, edits and the bot's own messages are skipped.
 - **Telegram:** every message is meant for the bot. Plain text draws as if it came after `/text`. `services.epaper.allow` limits who may draw.
 
@@ -52,11 +64,11 @@ Three words describe what the bot says:
 | Message | Said when | Placeholder |
 |---|---|---|
 | `wait` | a drawing starts |  |
-| `written` | the text is on the panel |  |
+| `written` | the text or picture is on the panel |  |
 | `ring` | the hand is on the panel |  |
 | `rotated` | the picture is turned | `{deg}`, the new angle |
 | `busy` | the panel is still drawing; the command is dropped |  |
-| `failed` | the panel broke; the journal says why |  |
+| `failed` | the panel broke, or the picture could not be fetched or read; the journal says why |  |
 | `switched` | the chat just switched to this mode | `{mode}`, its name |
 
 | Mode | Voice |
