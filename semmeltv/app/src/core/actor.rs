@@ -37,7 +37,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
-use tokio::task::{block_in_place, spawn_blocking};
+use tokio::task::spawn_blocking;
 use tokio::time::MissedTickBehavior;
 
 const NOTICE_TIME: Duration = Duration::from_secs(6);
@@ -201,6 +201,7 @@ pub struct Actor {
     online: bool,
     problem: Option<String>,
     queued: Option<PathBuf>,
+    choosing: Option<Sender<db::AudioPrefs>>,
     preparing: Option<Preparing>,
     prepared: u64,
     files: Files,
@@ -309,6 +310,7 @@ impl Actor {
             online: true,
             problem: None,
             queued: None,
+            choosing: audio.clone().map(chooser),
             preparing: None,
             prepared: 0,
             files,
@@ -2074,25 +2076,16 @@ impl Actor {
     }
 
     async fn apply_audio(&self, profile: ProfileId) {
-        let Some(audio) = &self.audio else {
+        if self.audio.is_none() {
             return;
-        };
+        }
         let prefs = self.db.audio_prefs(profile).await.unwrap_or_else(|error| {
             eprintln!("headphones: {error}");
             db::AudioPrefs::default()
         });
-        block_in_place(|| {
-            let headphones = prefs.headphones().and_then(|address| audio.bonded(address));
-            let have = headphones.is_some();
-            audio.select(headphones);
-            let connected = audio
-                .view()
-                .headphones
-                .is_some_and(|headphones| headphones.state == audio::Link::Connected);
-            if prefs.output() == db::Output::Headphones && have && connected {
-                audio.choose(audio::Output::Headphones);
-            }
-        });
+        if let Some(choosing) = &self.choosing {
+            let _ = choosing.send(prefs);
+        }
     }
 
     async fn show_profile(&mut self, profile: ProfileId) -> Outcome {
@@ -2110,9 +2103,40 @@ impl Actor {
     }
 }
 
+/// A thread that picks a profile's headphones with bluetoothctl and BlueALSA,
+/// which can take seconds or hang. Of the profiles sent while it is busy only
+/// the last is picked.
+fn chooser(audio: Audio) -> Sender<db::AudioPrefs> {
+    let (choose, chosen) = std::sync::mpsc::channel::<db::AudioPrefs>();
+    let spawned = std::thread::Builder::new()
+        .name("headphones".to_string())
+        .spawn(move || {
+            while let Ok(mut prefs) = chosen.recv() {
+                while let Ok(newer) = chosen.try_recv() {
+                    prefs = newer;
+                }
+                let headphones = prefs.headphones().and_then(|address| audio.bonded(address));
+                let have = headphones.is_some();
+                audio.select(headphones);
+                let connected = audio
+                    .view()
+                    .headphones
+                    .is_some_and(|headphones| headphones.state == audio::Link::Connected);
+                if prefs.output() == db::Output::Headphones && have && connected {
+                    audio.choose(audio::Output::Headphones);
+                }
+            }
+        });
+    if let Err(error) = spawned {
+        eprintln!("headphones: {error}");
+    }
+    choose
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::task::block_in_place;
 
     fn hardware() -> Hardware {
         Hardware {
@@ -2327,6 +2351,24 @@ mod tests {
                 orders.try_iter().all(|order| !matches!(order, ToTv::Play(_))),
                 "nothing plays while its file is not found"
             );
+        });
+    }
+
+    #[test]
+    fn headphones_whose_radio_never_answers_leave_the_api_answering() {
+        on_a_runtime_left_behind(async {
+            let (core, inbox) = Core::detached_with_audio(db::test_library(), |bus| Some(Audio::silent(bus))).await;
+            let paired = db::AudioPrefs::Unpaired.pairing("00:11:22:33:44:55".to_string());
+            core.db().save_audio_prefs(ProfileId::FIRST, &paired).await.unwrap();
+            let (link, orders) = Link::pair();
+            let core = core_with_tv(core, inbox, link).await;
+            assert!(at_once(&core, Request::PlayFile(up(&core))).await.ok);
+            told(&orders, |order| match order {
+                ToTv::Play(play) => Some(play.play),
+                _ => None,
+            });
+            shown(&core).await;
+            the_api_answers_while_the_tv_takes_nothing(&core).await;
         });
     }
 

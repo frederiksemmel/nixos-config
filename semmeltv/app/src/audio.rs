@@ -337,7 +337,72 @@ pub struct Audio {
 #[derive(Debug, PartialEq, Eq)]
 pub struct Busy;
 
+/// A radio that never answers, as bluetoothctl does when BlueZ hangs.
+#[cfg(test)]
+struct Silent;
+
+#[cfg(test)]
+impl Silent {
+    fn hang<T>(&self) -> T {
+        loop {
+            thread::park();
+        }
+    }
+}
+
+#[cfg(test)]
+impl Radio for Silent {
+    fn paired(&self) -> Option<Device> {
+        None
+    }
+    fn bonded(&self, _: &str) -> Option<Device> {
+        self.hang()
+    }
+    fn connect(&self, _: &str) -> Result<(), String> {
+        self.hang()
+    }
+    fn disconnect(&self, _: &str) {
+        self.hang()
+    }
+    fn start_scan(&self) {
+        self.hang()
+    }
+    fn stop_scan(&self) {
+        self.hang()
+    }
+    fn found(&self) -> Option<Device> {
+        self.hang()
+    }
+    fn pair(&self, _: &str) -> Result<(), String> {
+        self.hang()
+    }
+    fn forget(&self, _: &str) {
+        self.hang()
+    }
+    fn sinks(&self) -> Vec<String> {
+        self.hang()
+    }
+    fn volume(&self, _: &str) -> Option<Level> {
+        self.hang()
+    }
+    fn delay_adjustment(&self, _: &str) -> Option<i32> {
+        self.hang()
+    }
+    fn set_delay_adjustment(&self, _: &str, _: i32) -> Result<(), String> {
+        self.hang()
+    }
+    fn set_volume(&self, _: &str, _: Level) -> Result<(), String> {
+        self.hang()
+    }
+}
+
 impl Audio {
+    /// Headphones whose radio never answers.
+    #[cfg(test)]
+    pub fn silent(bus: Bus) -> Self {
+        Self::new(Box::new(Silent), bus, Box::new(|_| {}), TIMING)
+    }
+
     pub fn spawn(bus: Bus, mover: Mover) -> Self {
         let audio = Self::new(Box::new(Bluetoothctl::default()), bus, mover, TIMING);
         let watching = audio.clone();

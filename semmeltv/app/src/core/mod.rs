@@ -337,12 +337,23 @@ impl Core {
 
     #[cfg(test)]
     pub(crate) async fn detached(library: Library) -> (Self, mpsc::UnboundedReceiver<Input>) {
+        Self::detached_with_audio(library, |_| None).await
+    }
+
+    /// A core of its own for a test, with the headphones `audio` makes.
+    #[cfg(test)]
+    pub(crate) async fn detached_with_audio(
+        library: Library,
+        audio: impl FnOnce(Bus) -> Option<Audio>,
+    ) -> (Self, mpsc::UnboundedReceiver<Input>) {
         let db = Db::memory().await;
         db.set_library(&library);
         let (inbox, received) = mpsc::unbounded_channel();
+        let bus = Bus::default();
+        let audio = audio(bus.clone());
         let core = Self {
             inbox,
-            bus: Bus::default(),
+            bus,
             published: Arc::default(),
             parts: Arc::new(Parts {
                 push: Push::recorded(db.clone()),
@@ -353,7 +364,7 @@ impl Core {
                     renderer: None,
                     token: tv::Token::memory(),
                 }),
-                audio: None,
+                audio,
                 downloads: None,
                 ready: None,
                 store: Store::new(PathBuf::new(), None, None),
