@@ -10,6 +10,7 @@
     ../mount.nix
     nixos-raspberrypi.nixosModules.raspberry-pi-3.base
     flake.self.nixosModules.epaper
+    flake.self.nixosModules.beachparty
   ];
 
   services.epaper = {
@@ -19,6 +20,14 @@
     whatsapp.enable = true;
   };
   users.users.frederik.extraGroups = [ "epaper" ];
+
+  services.beachparty = {
+    enable = true;
+    domain = "beachparty.semmeltv.ch";
+    target = "semmeltv3.semmeltv.ch";
+    relayedFrom = "192.168.1.178";
+    desecTokenFile = config.age.secrets.desec_token.path;
+  };
   age.secrets.epaper_telegram_token.file = ../../../secrets/epaper_telegram_token.age;
 
   networking.hostName = "semmeltv3";

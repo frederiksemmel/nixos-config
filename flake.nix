@@ -76,6 +76,7 @@
           inputs.treefmt-nix.flakeModule # `nix fmt`
           ./semmeltv/flake-module.nix
           ./epaper/flake-module.nix
+          ./beachparty/flake-module.nix
           {
             options.flake = flake-parts-lib.mkSubmoduleOptions {
               deploy.nodes = lib.mkOption {
