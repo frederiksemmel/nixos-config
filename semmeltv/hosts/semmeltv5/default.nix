@@ -16,6 +16,7 @@
 
   services.semmeltv = {
     split = true;
+    updateCard = true;
     offlineCacheGiB = 60;
     tv = {
       kind = "samsung";

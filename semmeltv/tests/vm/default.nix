@@ -78,6 +78,7 @@ let
 
         services.semmeltv = {
           split = !switching group;
+          updateCard = true;
           headphones.enable = switching group;
           enable = true;
           adminUser = "root";
