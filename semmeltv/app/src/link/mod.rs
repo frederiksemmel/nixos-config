@@ -1,15 +1,42 @@
 //! The seam between the core and the tv.
 
+pub mod client;
 pub mod local;
 #[allow(dead_code)]
 pub mod messages;
+pub mod socket;
 
 use messages::ToTv;
+use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, SyncSender, TrySendError};
 
 /// How many orders wait for a tv that is slow to take them before new ones
 /// are dropped.
 pub const QUEUE: usize = 256;
+
+/// The longest line either side reads; a longer one ends the connection.
+pub const LINE_LIMIT: usize = 16 << 20;
+
+/// Where the core listens for the tv unless `SEMMELTV_TV_SOCKET` says
+/// otherwise.
+pub const SOCKET: &str = "/run/semmeltv/tv.sock";
+
+/// What a core and a tv compare to know they are the same build: the path
+/// of the running program, which in the Nix store names the build.
+pub fn revision() -> String {
+    std::env::current_exe()
+        .and_then(std::fs::canonicalize)
+        .unwrap_or_else(|_| PathBuf::from("unknown"))
+        .display()
+        .to_string()
+}
+
+/// One message as a line of JSON.
+pub fn line_of(message: &impl serde::Serialize) -> Vec<u8> {
+    let mut line = serde_json::to_vec(message).expect("messages serialise");
+    line.push(b'\n');
+    line
+}
 
 /// The core's end of the link to a tv. Sending never waits: an order the tv
 /// has no room for is dropped and logged.

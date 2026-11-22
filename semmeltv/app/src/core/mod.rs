@@ -11,6 +11,7 @@ use crate::db::Db;
 use crate::downloads::remote::Downloads;
 use crate::intent::{Control, Pick};
 use crate::library::Library;
+use crate::link::socket::Heard;
 use crate::offline::Store;
 use crate::profile::ProfileId;
 use crate::progress::Progress;
@@ -29,7 +30,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::sync::{mpsc, oneshot};
 
 const ANSWER_TIME: Duration = Duration::from_secs(5);
@@ -125,6 +126,9 @@ impl Outcome {
 
 pub(crate) enum Signal {
     Tv(crate::link::messages::FromTv),
+    TvGone {
+        at: std::time::Instant,
+    },
     TvSet {
         play: String,
         told: crate::player::renderer::Told,
@@ -147,6 +151,13 @@ pub(crate) enum Input {
     Signal(Signal),
 }
 
+/// Where the tv is: in this process, with its menu, or at the other end of
+/// a socket.
+pub enum TvEnd {
+    Local(Box<dyn Fn(crate::link::messages::ToTv) + Send>),
+    Socket(crate::link::socket::Listening),
+}
+
 pub struct Setup {
     pub root: PathBuf,
     pub meta: PathBuf,
@@ -162,7 +173,7 @@ pub struct Setup {
     pub ready: Option<PathBuf>,
     pub headphones: bool,
     pub push_subject: String,
-    pub menu: Box<dyn Fn(crate::link::messages::ToTv) + Send>,
+    pub tv: TvEnd,
 }
 
 #[derive(Default)]
@@ -211,7 +222,7 @@ impl Core {
             ready,
             headphones,
             push_subject,
-            menu,
+            tv,
         } = setup;
         let saved = cache.saved_manifest();
         let library = match library::listed(&root, &saved)
@@ -288,7 +299,18 @@ impl Core {
             store,
             storage,
             handoff,
-            tv: actor::local_tv(&core, menu),
+            tv: match tv {
+                TvEnd::Local(menu) => actor::local_tv(&core, menu),
+                TvEnd::Socket(listening) => {
+                    let hearing = core.clone();
+                    listening
+                        .serve(move |heard| match heard {
+                            Heard::Said(said) => hearing.signal(Signal::Tv(*said)),
+                            Heard::Gone => hearing.signal(Signal::TvGone { at: Instant::now() }),
+                        })
+                        .expect("serving the tv's socket")
+                }
+            },
             segments: crate::segments::finder(),
         };
         let actor = actor::Actor::new(core.clone(), profile, hardware).await;

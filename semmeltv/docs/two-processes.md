@@ -443,6 +443,32 @@ How 2 came out:
   `Core::subscribe()` are gone, and the bus carries only the phones'
   events.
 
+How 3 came out (3a, the transport):
+
+- `link::socket` is the core's end: it binds the socket mode 0600 before
+  the core starts, checks `SO_PEERCRED`, waits 5 s for `Hello`, and keeps
+  one tv; a new one closes the one before without telling the actor it is
+  gone. The actor's `Link` is still the in-process queue of 256; one thread
+  forwards it to the connected tv's own queue of 256, and a full one or a
+  write that takes 2 s drops the tv (`Signal::TvGone`). A tv silent for
+  15 s is dropped too, so the tv sends an empty `Report` after each second
+  with nothing to say.
+- The build both sides compare is the path of the running program, not
+  `/etc/semmeltv/revision`: in the Nix store it names the build, so a
+  deploy that changes only configuration doesn't restart the tv, and one
+  that changes the program always does. A tv of another build gets the
+  core's `Welcome` and the connection closes; it exits with 3.
+- `link::client` is the tv's end: it reconnects every 0.5 s, backing off to
+  5 s, and says `Hello` with what plays and the last ending it could not
+  tell. While the core is away, keys go to the player or the menu, the
+  menu's asks show "SemmelTV is restarting…", and reports are dropped.
+- `semmeltv core` serves `SEMMELTV_TV_SOCKET` (default
+  `/run/semmeltv/tv.sock`); `semmeltv tv` runs the menu, the player and the
+  client; `semmeltv ui` keeps both in one process. `semmeltv tv --dump`
+  connects as a tv, so the real one loses the link until it reconnects.
+- On `Hello` the core sends the library and home screen again. Recovery
+  (§2.6) is 3b.
+
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
 its listed files.

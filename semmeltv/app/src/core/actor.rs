@@ -331,6 +331,7 @@ impl Actor {
     async fn signalled(&mut self, signal: Signal) {
         match signal {
             Signal::Tv(said) => self.tv_said(said).await,
+            Signal::TvGone { at } => self.tv_gone(at),
             Signal::TvSet { play, told } => self.tv_set_told(&play, told).await,
             Signal::Poll { online } => {
                 let reconnected = online && !self.online;
@@ -749,8 +750,19 @@ impl Actor {
             FromTv::Ask(request) => {
                 self.answer(asked(request)).await;
             }
-            FromTv::Hello { .. } => {}
+            FromTv::Hello { .. } => self.tv_came(),
         }
+    }
+
+    /// A tv connected: it starts with nothing, so it gets the menu again.
+    fn tv_came(&mut self) {
+        self.library_sent = None;
+        self.home_sent = None;
+        self.publish_home();
+    }
+
+    fn tv_gone(&mut self, _at: Instant) {
+        eprintln!("tv: the core lost the tv");
     }
 
     async fn reported(&mut self, report: Report) {

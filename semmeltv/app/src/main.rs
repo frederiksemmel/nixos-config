@@ -66,7 +66,7 @@ use std::process::ExitCode;
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv [ui|core|tv [--dump]|list|artwork|import|downloads|understand TEXT|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--api HOST:PORT]";
@@ -86,6 +86,7 @@ struct Args {
     transcript: String,
     toasty: Vec<String>,
     api: Option<String>,
+    dump: bool,
 }
 
 impl Args {
@@ -119,12 +120,13 @@ fn parse_args() -> Result<Args, String> {
         transcript: String::new(),
         toasty: Vec::new(),
         api: env::var("SEMMELTV_API").ok().filter(|address| !address.is_empty()),
+        dump: false,
     };
     let mut raw = env::args().skip(1);
     while let Some(argument) = raw.next() {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
-            "ui" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
+            "ui" | "core" | "tv" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
             "toasty" | "library" | "get" | "tv-set" | "stats" => {
                 args.toasty = raw.by_ref().collect();
                 args.mode = argument;
@@ -148,6 +150,7 @@ fn parse_args() -> Result<Args, String> {
             "--manifest" => args.manifest = Some(value("--manifest")?.into()),
             "--listing" => args.listing = Some(value("--listing")?.into()),
             "--refresh" => args.refresh = true,
+            "--dump" => args.dump = true,
             other => return Err(format!("unknown argument {other}\n{USAGE}")),
         }
     }
@@ -221,17 +224,62 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         .map_err(|error| error.to_string())?;
     let meta = args.meta().to_path_buf();
     let (menu, inbox) = ui::inbox();
-    let core = runtime.block_on(start_core(args, cache, Box::new(menu)))?;
+    let core = runtime.block_on(start_core(args, cache, core::TvEnd::Local(Box::new(menu))))?;
     let shown = ui::run(inbox, move |said| core.tv_said(said), &meta).map_err(|error| error.to_string());
     runtime.shutdown_background();
     shown
 }
 
-async fn start_core(
-    args: Args,
-    cache: Cache,
-    menu: Box<dyn Fn(link::messages::ToTv) + Send>,
-) -> Result<core::Core, String> {
+fn tv_socket() -> PathBuf {
+    env_path("SEMMELTV_TV_SOCKET").unwrap_or_else(|| PathBuf::from(link::SOCKET))
+}
+
+/// The core on its own: the API, the library, the TV's remote and the
+/// decisions, with the tv at the other end of its socket.
+fn run_core(args: Args, cache: Cache) -> Result<(), String> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .thread_name("semmeltv-core")
+        .enable_all()
+        .build()
+        .map_err(|error| error.to_string())?;
+    let path = tv_socket();
+    let listening =
+        link::socket::bind(&path, link::revision()).map_err(|error| format!("{}: {error}", path.display()))?;
+    runtime.block_on(async {
+        start_core(args, cache, core::TvEnd::Socket(listening)).await?;
+        std::future::pending::<Result<(), String>>().await
+    })
+}
+
+/// The tv on its own: the menu and the player, steered by the core over its
+/// socket.
+fn run_tv(args: &Args) -> Result<(), String> {
+    let path = tv_socket();
+    if args.dump {
+        return link::client::dump(&path).map_err(|error| format!("{}: {error}", path.display()));
+    }
+    let (menu, inbox) = ui::inbox();
+    let (said, heard) = std::sync::mpsc::channel();
+    let telling = said.clone();
+    let tv = link::local::spawn(
+        move |message| {
+            let _ = telling.send(message);
+        },
+        player::Player::start,
+        menu,
+    );
+    link::client::start(path, tv, heard, link::revision());
+    ui::run(
+        inbox,
+        move |message| {
+            let _ = said.send(message);
+        },
+        args.meta(),
+    )
+    .map_err(|error| error.to_string())
+}
+
+async fn start_core(args: Args, cache: Cache, tv: core::TvEnd) -> Result<core::Core, String> {
     let db = open_db(&args).await?;
     let capacity: Option<u64> = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
@@ -287,7 +335,7 @@ async fn start_core(
             })
             .unwrap_or_else(|| "https://semmeltv.ch".to_string()),
         ready: env_path("SEMMELTV_READY"),
-        menu,
+        tv,
     };
     let core = core::Core::start(setup).await;
     if let Some(config) = api {
@@ -656,6 +704,8 @@ fn run() -> Result<(), String> {
         "invite" => waiting(invite(&args))??,
         "stats" => waiting(stats(&args))??,
         "tv-set" => run_tv_set(&args.toasty)?,
+        "core" => run_core(args, cache)?,
+        "tv" => run_tv(&args)?,
         _ => run_ui(args, cache)?,
     }
     Ok(())
