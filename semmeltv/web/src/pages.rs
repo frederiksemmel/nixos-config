@@ -63,30 +63,68 @@ fn failed(error: String) -> topcoat::Error {
     topcoat::Error::msg(error)
 }
 
+pub(crate) struct ScoreLinks {
+    imdb: Option<String>,
+    tomatoes: String,
+}
+
+fn tomatoes_search(title: &str) -> String {
+    format!(
+        "https://www.rottentomatoes.com/search?search={}",
+        crate::api::encode(title)
+    )
+}
+
 #[component]
-async fn scores(of: &Ratings) -> Result<impl View> {
+async fn scores(of: &Ratings, to: Option<&ScoreLinks>) -> Result<impl View> {
     let imdb = of.imdb.map(|score| format!("{score:.1}"));
     let tomatoes = of.rotten_tomatoes.map(|score| format!("{score}%"));
     let popcorn = of.popcorn.map(|score| format!("{score}%"));
     let fresh = of.fresh.unwrap_or(false);
     let full = of.full.unwrap_or(false);
+    let rt_class = if fresh { "rating rt fresh" } else { "rating rt rotten" };
+    let popcorn_class = if full {
+        "rating popcorn full"
+    } else {
+        "rating popcorn spilled"
+    };
+    let rt_href = to.map(|to| to.tomatoes.clone());
+    let imdb_href = to.and_then(|to| to.imdb.clone());
     Ok(view! {
         if imdb.is_some() || tomatoes.is_some() || popcorn.is_some() {
             <span class="ratings">
                 if let Some(tomatoes) = tomatoes {
-                    <span class=(if fresh { "rating rt fresh" } else { "rating rt rotten" }) title="Tomatometer">
-                        <i aria-hidden="true"></i>
-                        (tomatoes)
-                    </span>
+                    if let Some(href) = &rt_href {
+                        <a class=(rt_class) href=(href.as_str()) target="_blank" rel="noopener" title="Tomatometer">
+                            <i aria-hidden="true"></i>
+                            (tomatoes)
+                        </a>
+                    } else {
+                        <span class=(rt_class) title="Tomatometer">
+                            <i aria-hidden="true"></i>
+                            (tomatoes)
+                        </span>
+                    }
                 }
                 if let Some(popcorn) = popcorn {
-                    <span class=(if full { "rating popcorn full" } else { "rating popcorn spilled" }) title="Popcornmeter">
-                        <i aria-hidden="true"></i>
-                        (popcorn)
-                    </span>
+                    if let Some(href) = &rt_href {
+                        <a class=(popcorn_class) href=(href.as_str()) target="_blank" rel="noopener" title="Popcornmeter">
+                            <i aria-hidden="true"></i>
+                            (popcorn)
+                        </a>
+                    } else {
+                        <span class=(popcorn_class) title="Popcornmeter">
+                            <i aria-hidden="true"></i>
+                            (popcorn)
+                        </span>
+                    }
                 }
                 if let Some(imdb) = imdb {
-                    <span class="rating imdb"><b>"IMDb"</b> (imdb)</span>
+                    if let Some(href) = &imdb_href {
+                        <a class="rating imdb" href=(href.as_str()) target="_blank" rel="noopener"><b>"IMDb"</b> (imdb)</a>
+                    } else {
+                        <span class="rating imdb"><b>"IMDb"</b> (imdb)</span>
+                    }
                 }
             </span>
         }
@@ -115,7 +153,7 @@ async fn tile(cx: &Cx, public: &Public, card: &Card, priority: Priority) -> Resu
             <span class="tile-name">(card.title.as_str())</span>
             <span class="tile-sub">
                 (card.subtitle.as_str())
-                scores(of: &card.ratings)
+                scores(of: &card.ratings, to: None)
             </span>
             if let Some(because) = &card.because {
                 <span class="tile-why">(because.as_str())</span>
@@ -625,6 +663,10 @@ async fn heading(public: &Public, card: &Card, about: &About, line: &str) -> Res
     let poster = card.poster.as_deref();
     let fit = &DETAIL_POSTER;
     let original = about.original_title.clone();
+    let to = ScoreLinks {
+        imdb: about.imdb.clone(),
+        tomatoes: tomatoes_search(&card.title),
+    };
     Ok(view! {
         <div class="detail-head">
             <span class="art poster detail-poster" style=(tint(&card.title))>
@@ -643,7 +685,7 @@ async fn heading(public: &Public, card: &Card, about: &About, line: &str) -> Res
                     <p class="detail-line">(line)</p>
                 }
                 <p class="title-sub detail-ratings">
-                    scores(of: &card.ratings)
+                    scores(of: &card.ratings, to: Some(&to))
                     more_scores(of: &about.scores)
                 </p>
             </div>
@@ -845,7 +887,7 @@ async fn episode_row(
                 </span>
                 <span class="episode-text">
                     <b>(episode.label.as_str())</b>
-                    scores(of: &episode.ratings)
+                    scores(of: &episode.ratings, to: None)
                     <span>(dotted(&episode.short_label, &episode.watch.details))</span>
                 </span>
             </button>
@@ -1355,6 +1397,50 @@ mod tests {
             downloaded_by(&["Frederik".to_string(), "Mami".to_string(), "Ramu".to_string()]),
             Some(("Downloaded by", "Frederik, Mami and Ramu".to_string()))
         );
+    }
+
+    #[component]
+    async fn dune_scores(linked: bool) -> Result<impl View> {
+        let ratings: Ratings = serde_json::from_value(json!({
+            "imdb": 8.0, "rotten_tomatoes": 92, "fresh": true, "popcorn": 90, "full": true,
+        }))
+        .unwrap();
+        let to = ScoreLinks {
+            imdb: Some("https://www.imdb.com/title/tt15239678/".to_string()),
+            tomatoes: tomatoes_search("Dune: Part Two"),
+        };
+        Ok(view! { scores(of: &ratings, to: linked.then_some(&to)) })
+    }
+
+    #[tokio::test]
+    async fn the_details_scores_open_imdb_and_rotten_tomatoes() {
+        let render = |linked: bool| async move {
+            let cx = &Cx::default();
+            view! { cx => dune_scores(linked: linked) }
+                .single()
+                .await
+                .unwrap()
+                .render(cx)
+        };
+        let linked = render(true).await;
+        assert!(
+            linked.contains(r#"<a class="rating imdb" href="https://www.imdb.com/title/tt15239678/" target="_blank" rel="noopener">"#),
+            "{linked}"
+        );
+        let search = r#"href="https://www.rottentomatoes.com/search?search=Dune%3A%20Part%20Two" target="_blank" rel="noopener""#;
+        assert!(
+            linked.contains(&format!(r#"<a class="rating rt fresh" {search} title="Tomatometer">"#)),
+            "{linked}"
+        );
+        assert!(
+            linked.contains(&format!(
+                r#"<a class="rating popcorn full" {search} title="Popcornmeter">"#
+            )),
+            "{linked}"
+        );
+        let plain = render(false).await;
+        assert!(!plain.contains("<a "), "{plain}");
+        assert!(plain.contains(r#"<span class="rating imdb">"#), "{plain}");
     }
 
     #[test]

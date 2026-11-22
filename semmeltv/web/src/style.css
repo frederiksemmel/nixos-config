@@ -571,6 +571,10 @@ main {
 
 .rating.popcorn.spilled i { transform: rotate(-35deg); opacity: 0.8; }
 
+a.rating { position: relative; }
+a.rating::after { content: ""; position: absolute; inset: -6px 0; }
+a.rating:active { opacity: 0.6; }
+
 /* Title pages */
 
 .title { position: relative; margin: -12px calc(-1 * var(--gutter)) 0; }
