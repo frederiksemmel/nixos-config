@@ -185,6 +185,27 @@ pub struct Report {
     pub subtitles: Option<subtitles::Playing>,
 }
 
+impl Report {
+    /// What the core assumes about `play` until its first report arrives.
+    pub fn before(play: &Play) -> Self {
+        Self {
+            play: Some(play.play.clone()),
+            state: State {
+                position: play.start,
+                paused: play.paused,
+                speed: 1.0,
+                ..State::default()
+            },
+            place: Place {
+                position: play.start,
+                ..Place::default()
+            },
+            tracks: play.tracks,
+            ..Self::default()
+        }
+    }
+}
+
 /// A playback the tv kept running while the core was away.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Running {

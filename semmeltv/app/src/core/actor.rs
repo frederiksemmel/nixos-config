@@ -11,9 +11,10 @@ use crate::hold::{self, Hold};
 use crate::intent::{self, Action, Control};
 use crate::led::Led;
 use crate::library::Library;
+use crate::link::messages::{Ended, FromTv, Play, PlaySubtitles, Report};
 use crate::offline::{Source, Store};
 use crate::player::renderer::{self, Handoff};
-use crate::player::{self, Finish, Player};
+use crate::player::{self, Callbacks, Finish, Player};
 use crate::profile::ProfileId;
 use crate::progress::{self, Position, Progress};
 use crate::screen;
@@ -21,6 +22,7 @@ use crate::seek::Direction;
 use crate::segments::{Kind, Title};
 use crate::storage;
 use crate::stream;
+use crate::subtitles::Remembered;
 use crate::subtitles::{self, Subtitles};
 use crate::together;
 use crate::tv::{self, Television};
@@ -83,6 +85,8 @@ struct OnTv {
     owner: ProfileId,
     hold: Hold,
     play: String,
+    last: Report,
+    saved: f64,
 }
 
 impl OnTv {
@@ -96,7 +100,7 @@ impl OnTv {
     }
 
     fn playing(&self) -> bool {
-        !self.player.state().paused
+        !self.last.state.paused
     }
 }
 
@@ -242,7 +246,9 @@ impl Actor {
                 },
                 _ = playback.tick() => {
                     self.publish_playback();
-                    self.hear_sound();
+                    if self.on_tv.is_none() {
+                        self.hear_sound();
+                    }
                     if self.up_next.as_ref().is_some_and(|up| up.due(Instant::now())) {
                         self.play_up_next().await;
                     }
@@ -259,8 +265,7 @@ impl Actor {
     async fn signalled(&mut self, signal: Signal) {
         match signal {
             Signal::Heard(heard) => self.hear(heard).await,
-            Signal::Saved => self.record_place().await,
-            Signal::Finished(finish) => self.finish_playback(finish).await,
+            Signal::Tv(said) => self.tv_said(said).await,
             Signal::Poll { online } => {
                 let reconnected = online && !self.online;
                 self.online = online;
@@ -495,12 +500,30 @@ impl Actor {
                 Some(watched) if start > 0.0 => watched.tracks(),
                 _ => progress::Tracks::default(),
             };
-            let saving = self.core.clone();
-            let saved = move || saving.signal(Signal::Saved);
-            let finishing = self.core.clone();
-            let finished = move |finish: Finish| finishing.signal(Signal::Finished(finish));
-            let keys = self.core.clone();
             let dialogue = self.core.dialogue(owner).await.load(Ordering::SeqCst);
+            let play = Play {
+                play: crate::auth::token(),
+                owner,
+                file: path.to_path_buf(),
+                source: source.clone(),
+                start,
+                paused: false,
+                tracks,
+                caption: self.caption(path),
+                title: self.title(path),
+                subtitles: PlaySubtitles {
+                    settings: self.subtitles.settings_of(owner),
+                    remembered: Remembered {
+                        delay: self.subtitles.file_delay(&source),
+                        embedded: self.subtitles.embedded(&source),
+                    },
+                    sidecars: Vec::new(),
+                },
+                audio_device: self.audio_device(),
+                dialogue,
+                next: up_next::follows(&self.library, path),
+            };
+            let callbacks = self.callbacks();
             let started = match self.tv_set_takes(&source).await {
                 Some((handoff, renderer, media)) => {
                     let feed = renderer::feed(&media, tracks.audio);
@@ -512,12 +535,13 @@ impl Actor {
                             television.wait_until_showing(TV_WAKE_WAIT);
                         }
                     };
-                    let finished = move |finish: Finish| {
+                    let Callbacks { report, key, exit } = callbacks;
+                    let exit = Box::new(move |ended: Ended| {
                         if let Err(failure) = returning.show_semmeltv() {
                             eprintln!("TV: could not switch back to SemmelTV: {failure:?}");
                         }
-                        finished(finish);
-                    };
+                        exit(ended);
+                    });
                     let start = renderer::Start {
                         renderer,
                         port: handoff.port,
@@ -527,35 +551,22 @@ impl Actor {
                         from: start,
                         name: self.caption(path),
                     };
-                    Player::hand_off(start, tracks, prepare, saved, finished)
+                    Player::hand_off(&play.play, start, tracks, prepare, Callbacks { report, key, exit })
                 }
-                None => block_in_place(|| {
-                    Player::start(
-                        &source,
-                        start,
-                        tracks,
-                        self.caption(path),
-                        self.title(path),
-                        self.subtitles.clone(),
-                        &self.audio_device(),
-                        dialogue,
-                        saved,
-                        move |command| keys.send(Request::Key(command)),
-                        finished,
-                    )
-                }),
+                None => block_in_place(|| Player::start(&play, self.subtitles.clone(), callbacks)),
             };
             match started {
                 Ok(player) => {
                     let handed_off = player.handed_off();
-                    player.offer_next(up_next::follows(&self.library, path));
                     self.on_tv = Some(OnTv {
                         player,
                         shown: self.now_playing_for(path),
                         file: path.to_path_buf(),
                         owner,
                         hold: Hold::default(),
-                        play: crate::auth::token(),
+                        last: Report::before(&play),
+                        saved: play.start,
+                        play: play.play,
                     });
                     self.publish_playback();
                     if !handed_off {
@@ -568,6 +579,53 @@ impl Actor {
                 Err(error) => self.show_message(format!("The video did not start: {error}")),
             }
         })
+    }
+
+    fn callbacks(&self) -> Callbacks {
+        let (reporting, keys, finishing) = (self.core.clone(), self.core.clone(), self.core.clone());
+        Callbacks {
+            report: Box::new(move |report| reporting.signal(Signal::Tv(FromTv::Report(Box::new(report))))),
+            key: Box::new(move |command| keys.send(Request::Key(command))),
+            exit: Box::new(move |ended| finishing.signal(Signal::Tv(FromTv::Finished(ended)))),
+        }
+    }
+
+    async fn tv_said(&mut self, said: FromTv) {
+        match said {
+            FromTv::Report(report) => self.reported(*report).await,
+            FromTv::Finished(ended) => self.ended(ended).await,
+            _ => {}
+        }
+    }
+
+    async fn reported(&mut self, report: Report) {
+        let Some(tv) = self
+            .on_tv
+            .as_mut()
+            .filter(|tv| report.play.as_deref() == Some(tv.play.as_str()))
+        else {
+            return;
+        };
+        let due = report.state.started && player::save_due(tv.saved, report.place.position);
+        if due {
+            tv.saved = report.place.position;
+        }
+        tv.last = report;
+        self.publish_playback();
+        self.hear_sound();
+        if due {
+            self.record_place().await;
+        }
+    }
+
+    async fn ended(&mut self, ended: Ended) {
+        let Some(tv) = self.on_tv.as_mut().filter(|tv| tv.play == ended.play) else {
+            return;
+        };
+        tv.last.place = ended.place;
+        tv.last.tracks = ended.tracks;
+        tv.last.played = ended.played;
+        self.finish_playback(ended.finish).await;
     }
 
     async fn tv_set_takes(&self, source: &Path) -> Option<(Handoff, tv::upnp::Renderer, stream::probe::Media)> {
@@ -666,7 +724,7 @@ impl Actor {
         let caption = self.caption(&tv.file);
         let noted = self
             .db
-            .note_play(&tv.play, watching::now(), tv.owner, "TV", &caption, tv.player.played())
+            .note_play(&tv.play, watching::now(), tv.owner, "TV", &caption, tv.last.played)
             .await;
         if let Err(error) = noted {
             eprintln!("usage: {error}");
@@ -674,14 +732,11 @@ impl Actor {
     }
 
     async fn record_place(&mut self) {
-        let Some(OnTv {
-            player, file, owner, ..
-        }) = &self.on_tv
-        else {
+        let Some(OnTv { file, owner, last, .. }) = &self.on_tv else {
             return;
         };
         let (file, owner) = (file.clone(), *owner);
-        let (place, tracks, played) = (player.place(), player.tracks(), player.played());
+        let (place, tracks, played) = (last.place, last.tracks, last.played);
         let mut progress = (*self.progress_of(owner).await).clone();
         progress.record(&file, place);
         progress.keep_tracks(&file, tracks);
@@ -753,7 +808,7 @@ impl Actor {
     }
 
     async fn hear(&mut self, heard: Heard) {
-        let muting = heard == Heard::Listening && self.player().is_some_and(|player| !player.muted());
+        let muting = heard == Heard::Listening && self.on_tv.as_ref().is_some_and(|tv| !tv.last.state.muted);
         let before = self.ear;
         let (ear, pass) = before.hear(&heard, muting);
         self.ear = ear;
@@ -870,7 +925,7 @@ impl Actor {
             }
             Request::Control(control) => Action::Control(control),
             Request::PlayPause => {
-                let paused = self.player().is_some_and(|player| player.state().paused);
+                let paused = self.on_tv.as_ref().is_some_and(|tv| tv.last.state.paused);
                 Action::Control(if paused { Control::Resume } else { Control::Pause })
             }
             Request::Seek(seek) => return self.seek(seek),
@@ -1095,7 +1150,7 @@ impl Actor {
 
     fn tv_place(&self) -> Option<screen::Place> {
         let tv = self.on_tv.as_ref().filter(|tv| !tv.hold.stopping())?;
-        self.place_of(&tv.file, tv.player.place().position)
+        self.place_of(&tv.file, tv.last.place.position)
     }
 
     async fn screen_step(&mut self, event: screen::Event, by: ProfileId) {
@@ -1373,14 +1428,18 @@ impl Actor {
             Seek::By(seconds) => player.seek_by(seconds),
             Seek::Step(Direction::Back) => player.command(Command::Left),
             Seek::Step(Direction::Forward) => player.command(Command::Right),
-            Seek::Segment => return self.skip_segment(player),
+            Seek::Segment => return self.skip_segment(),
         }
         self.publish_playback();
         Outcome::done("Seeking")
     }
 
-    fn skip_segment(&self, player: &Player) -> Outcome {
-        let Some(kind) = player.state().skip.filter(|_| player.skip_segment()) else {
+    fn skip_segment(&self) -> Outcome {
+        let skipped = self
+            .on_tv
+            .as_ref()
+            .and_then(|tv| tv.last.state.skip.filter(|_| tv.player.skip_segment()));
+        let Some(kind) = skipped else {
             return Outcome::refused("The TV shows nothing to skip right now");
         };
         self.publish_playback();
@@ -1439,7 +1498,7 @@ impl Actor {
         let playing = self
             .on_tv
             .as_ref()
-            .map(|on_tv| on_tv.player.state())
+            .map(|on_tv| on_tv.last.state)
             .filter(|state| state.started && !state.paused)
             .map(|state| (state.position, state.speed));
         let now = Instant::now();
@@ -1447,27 +1506,23 @@ impl Actor {
     }
 
     fn publish_playback(&self) {
-        let now_playing = self.on_tv.as_ref().map(
-            |OnTv {
-                 player, shown: base, ..
-             }| {
-                let state = player.state();
-                NowPlaying {
-                    position: state.position,
-                    duration: state.duration,
-                    paused: state.paused,
-                    muted: state.muted,
-                    speed: state.speed,
-                    subtitle: state.subtitle,
-                    subtitle_delay: state.subtitle_delay,
-                    audio: state.audio,
-                    loading: !state.started,
-                    jump: state.jump,
-                    skip: state.skip.map(Skip::from),
-                    ..base.clone()
-                }
-            },
-        );
+        let now_playing = self.on_tv.as_ref().map(|OnTv { last, shown: base, .. }| {
+            let state = last.state;
+            NowPlaying {
+                position: state.position,
+                duration: state.duration,
+                paused: state.paused,
+                muted: state.muted,
+                speed: state.speed,
+                subtitle: state.subtitle,
+                subtitle_delay: state.subtitle_delay,
+                audio: state.audio,
+                loading: !state.started,
+                jump: state.jump,
+                skip: state.skip.map(Skip::from),
+                ..base.clone()
+            }
+        });
         self.core.bus.playback(now_playing);
     }
 
@@ -1814,6 +1869,156 @@ mod tests {
         let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware()).await;
         tokio::spawn(actor.run(inbox));
         core
+    }
+
+    const PLAY: &str = "a-play";
+
+    fn quiet() -> Callbacks {
+        Callbacks {
+            report: Box::new(|_| {}),
+            key: Box::new(|_| {}),
+            exit: Box::new(|_| {}),
+        }
+    }
+
+    /// A core whose TV plays the first movie from `start` on a player with no
+    /// mpv behind it, whose own reports go nowhere, so the test says what the
+    /// tv reports. With `held`, something holds that player's lock forever.
+    async fn playing(start: f64, held: bool) -> Core {
+        let (core, inbox) = Core::detached(db::test_library()).await;
+        let mut actor = Actor::new(core.clone(), ProfileId::FIRST, hardware()).await;
+        let file = core.library().movies[0].path.clone();
+        let play = Play {
+            play: PLAY.to_string(),
+            owner: ProfileId::FIRST,
+            file: file.clone(),
+            source: file.clone(),
+            start,
+            paused: false,
+            tracks: progress::Tracks::default(),
+            caption: "Up".to_string(),
+            title: None,
+            subtitles: PlaySubtitles::default(),
+            audio_device: audio::TV_DEVICE.to_string(),
+            dialogue: false,
+            next: false,
+        };
+        let player = Player::without_mpv(PLAY, quiet());
+        if held {
+            player.hold_forever();
+        }
+        actor.on_tv = Some(OnTv {
+            player,
+            shown: actor.now_playing_for(&file),
+            file,
+            owner: ProfileId::FIRST,
+            hold: Hold::default(),
+            last: Report::before(&play),
+            saved: start,
+            play: PLAY.to_string(),
+        });
+        tokio::spawn(actor.run(inbox));
+        core
+    }
+
+    fn reported(play: &str, position: f64, started: bool) -> Signal {
+        Signal::Tv(FromTv::Report(Box::new(Report {
+            play: Some(play.to_string()),
+            state: player::State {
+                position,
+                duration: 9000.0,
+                speed: 1.0,
+                started,
+                ..player::State::default()
+            },
+            place: progress::Place {
+                position,
+                duration: 9000.0,
+                credits: None,
+            },
+            played: position / 2.0,
+            ..Report::default()
+        })))
+    }
+
+    /// Waits until the actor has handled everything sent before.
+    async fn settled(core: &Core) {
+        core.ask(Request::Listen).await.unwrap();
+    }
+
+    async fn saved_at(core: &Core) -> Option<f64> {
+        let up = core.library().movies[0].path.clone();
+        core.progress(ProfileId::FIRST)
+            .await
+            .files
+            .get(&up)
+            .and_then(progress::Watched::stopped_at)
+    }
+
+    fn position(core: &Core) -> Option<f64> {
+        core.now_playing().map(|playing| playing.position)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_report_from_the_tv_moves_what_the_phones_see_and_one_for_another_play_does_not() {
+        let core = playing(0.0, false).await;
+        core.signal(reported("an-old-play", 500.0, true));
+        settled(&core).await;
+        assert_ne!(position(&core), Some(500.0));
+        core.signal(reported(PLAY, 100.0, true));
+        settled(&core).await;
+        assert_eq!(position(&core), Some(100.0));
+        assert_eq!(core.now_playing().map(|playing| playing.loading), Some(false));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_place_is_saved_after_thirty_seconds_of_reported_movement() {
+        let core = playing(0.0, false).await;
+        core.signal(reported(PLAY, 100.0, false));
+        core.signal(reported(PLAY, 10.0, true));
+        core.signal(reported(PLAY, 29.5, true));
+        settled(&core).await;
+        assert_eq!(saved_at(&core).await, None, "not started, then under 30 s");
+        core.signal(reported(PLAY, 31.0, true));
+        settled(&core).await;
+        assert_eq!(saved_at(&core).await, Some(31.0));
+        core.signal(reported(PLAY, 50.0, true));
+        settled(&core).await;
+        assert_eq!(saved_at(&core).await, Some(31.0));
+        core.signal(reported(PLAY, 61.0, true));
+        settled(&core).await;
+        assert_eq!(saved_at(&core).await, Some(61.0));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_finished_playback_saves_the_place_it_ended_at() {
+        let core = playing(0.0, false).await;
+        core.signal(reported(PLAY, 40.0, true));
+        core.signal(Signal::Tv(FromTv::Finished(Ended {
+            play: PLAY.to_string(),
+            finish: Finish::Stopped,
+            place: progress::Place {
+                position: 1234.0,
+                duration: 9000.0,
+                credits: None,
+            },
+            tracks: progress::Tracks::default(),
+            played: 600.0,
+        })));
+        settled(&core).await;
+        assert_eq!(saved_at(&core).await, Some(1234.0));
+        assert_eq!(core.now_playing(), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_held_player_lock_leaves_what_the_phones_see_moving() {
+        let core = playing(0.0, true).await;
+        let answered = tokio::time::timeout(Duration::from_millis(500), async {
+            core.signal(reported(PLAY, 100.0, true));
+            settled(&core).await;
+            position(&core)
+        });
+        assert_eq!(answered.await, Ok(Some(100.0)));
     }
 
     #[tokio::test(flavor = "multi_thread")]

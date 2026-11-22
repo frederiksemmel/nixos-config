@@ -6,6 +6,7 @@ pub mod renderer;
 use crate::audio;
 use crate::command::Command;
 use crate::display::{self, Video};
+use crate::link::messages::{Ended, Play, Report};
 use crate::overlay::{self, View};
 use crate::progress::{self, Place, Tracks};
 use crate::seek::{self, Direction, Order, Scrub};
@@ -21,7 +22,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -37,6 +38,7 @@ const SAVE_EVERY: f64 = 30.0;
 const PLAY_STEP: f64 = 2.0;
 const SHOWN_FOR: Duration = Duration::from_secs(4);
 const TICK: Duration = Duration::from_millis(100);
+pub const REPORT_EVERY: Duration = Duration::from_millis(500);
 const LONG_JUMP: i32 = 60;
 const SAY_FOR: Duration = Duration::from_secs(3);
 const OSD_FONT: &str = "Inter";
@@ -204,7 +206,6 @@ struct Playback {
     position: f64,
     duration: f64,
     played: f64,
-    saved: f64,
     phase: Phase,
     muted: bool,
     speed: f64,
@@ -223,7 +224,6 @@ struct Playback {
     toast_until: Option<Instant>,
     subtitles: Subtitles,
     tracks: Tracks,
-    on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
     health: Health,
     fader: Option<fade::Fader>,
@@ -471,18 +471,55 @@ impl Playback {
         }
     }
 
-    fn save_position(&mut self) {
-        if self.phase != Phase::Ended && save_due(self.saved, self.position) {
-            self.saved = self.position;
-            if let Some(on_save) = &self.on_save {
-                on_save();
-            }
-        }
-    }
-
     fn end(&mut self) {
         self.phase = Phase::Ended;
         self.send(json!(["quit", ENDED_EXIT_CODE]));
+    }
+
+    fn state(&self, now: Instant) -> State {
+        let (subtitle, audio) = self.subtitles.chosen();
+        State {
+            position: self.scrub.target().unwrap_or(self.position),
+            duration: self.duration,
+            paused: self.phase.paused(),
+            muted: self.muted,
+            speed: self.speed,
+            subtitle,
+            subtitle_delay: self.subtitles.delay(),
+            audio,
+            started: self.phase.started(),
+            jump: self.scrub.jump_shown(now),
+            skip: self.prompt,
+        }
+    }
+
+    fn place(&self) -> Place {
+        Place {
+            position: self.position,
+            duration: self.duration,
+            credits: self.chapter_credits.or(self.credits),
+        }
+    }
+
+    fn report(&self, play: &str, now: Instant) -> Report {
+        Report {
+            play: Some(play.to_string()),
+            state: self.state(now),
+            place: self.place(),
+            tracks: self.tracks,
+            played: self.played,
+            subtitles: self.subtitles.playing(),
+        }
+    }
+
+    fn ended(&self, play: &str, finish: Finish) -> Ended {
+        Ended {
+            play: play.to_string(),
+            finish,
+            place: self.place(),
+            tracks: self.tracks,
+            played: self.played,
+        }
     }
 }
 
@@ -520,7 +557,8 @@ fn resume_args(start: f64, tracks: Tracks) -> Vec<String> {
     args
 }
 
-fn save_due(saved: f64, position: f64) -> bool {
+/// Whether the place moved far enough from the one last saved to save it again.
+pub fn save_due(saved: f64, position: f64) -> bool {
     (position - saved).abs() >= SAVE_EVERY
 }
 
@@ -591,7 +629,16 @@ pub struct Player {
 
 enum Backend {
     Mpv(Shared),
-    TvSet { session: renderer::Session, tracks: Tracks },
+    TvSet { session: renderer::Session },
+}
+
+/// Where a player tells what happens to it: a report every `REPORT_EVERY`
+/// while it runs, the keys pressed in mpv's window that the app decides
+/// on, and how it ended.
+pub struct Callbacks {
+    pub report: Box<dyn Fn(Report) + Send>,
+    pub key: Box<dyn Fn(Command) + Send>,
+    pub exit: Box<dyn FnOnce(Ended) + Send>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -609,20 +656,36 @@ pub struct State {
     pub skip: Option<Kind>,
 }
 
+/// Runs `read` every `REPORT_EVERY` on a thread of its own and passes on what
+/// it reads, until it reads nothing. A slow `read` delays the reports and
+/// nothing else.
+fn report_every(read: impl Fn() -> Option<Report> + Send + 'static, report: Box<dyn Fn(Report) + Send>) {
+    thread::spawn(move || {
+        loop {
+            thread::sleep(REPORT_EVERY);
+            match read() {
+                Some(read) => report(read),
+                None => return,
+            }
+        }
+    });
+}
+
+fn report_mpv(playback: &Shared, play: &str, report: Box<dyn Fn(Report) + Send>) {
+    let (reading, play) = (playback.clone(), play.to_string());
+    report_every(
+        move || {
+            let playback = reading.lock().unwrap();
+            (!playback.closed).then(|| playback.report(&play, Instant::now()))
+        },
+        report,
+    );
+}
+
 impl Player {
-    pub fn start(
-        path: &Path,
-        start: f64,
-        tracks: Tracks,
-        name: String,
-        title: Option<Title>,
-        subtitles: Subtitles,
-        audio_device: &str,
-        dialogue: bool,
-        on_save: impl Fn() + Send + 'static,
-        on_key: impl Fn(Command) + Send + 'static,
-        on_exit: impl FnOnce(Finish) + Send + 'static,
-    ) -> io::Result<Self> {
+    pub fn start(play: &Play, subtitles: Subtitles, callbacks: Callbacks) -> io::Result<Self> {
+        let Callbacks { report, key, exit } = callbacks;
+        let path = play.source.as_path();
         let id = PLAYERS.fetch_add(1, Ordering::Relaxed);
         display::play(id, display::FILM);
         let socket_path = socket_path();
@@ -636,15 +699,15 @@ impl Player {
             .arg("--no-save-position-on-quit")
             .arg("--keep-open")
             .args(video_args(env::var("SEMMELTV_DECODER").ok().as_deref()))
-            .arg(format!("--audio-device={audio_device}"))
-            .arg(format!("--af={}", sound_filter(dialogue)))
+            .arg(format!("--audio-device={}", play.audio_device))
+            .arg(format!("--af={}", sound_filter(play.dialogue)))
             .arg("--audio-stream-silence")
             .arg("--no-osc")
             .arg(format!("--osd-font={OSD_FONT}"))
             .arg(format!("--osd-fonts-dir={OSD_FONTS}"))
             .arg(format!("--input-ipc-server={}", socket_path.display()))
             .args(subtitles.mpv_args(path))
-            .args(resume_args(start, tracks))
+            .args(resume_args(play.start, play.tracks))
             .arg("--")
             .arg(path)
             .stdin(Stdio::null())
@@ -653,20 +716,23 @@ impl Player {
         subtitles.started(path, sidecar::find(path));
         let playback = Shared::new(Mutex::new(Playback {
             id,
-            name,
+            name: play.caption.clone(),
             subtitles,
-            tracks,
+            tracks: play.tracks,
             speed: 1.0,
-            on_save: Some(Box::new(on_save)),
-            on_key: Some(Box::new(on_key)),
+            next: play.next,
+            on_key: Some(key),
             ..Playback::default()
         }));
+        report_mpv(&playback, &play.play, report);
         let shared = playback.clone();
+        let (token, title) = (play.play.clone(), play.title);
         thread::spawn(move || {
             connect(&mut child, &socket_path, &shared, title);
             let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
-            {
-                let playback = shared.lock().unwrap();
+            let ended = {
+                let mut playback = shared.lock().unwrap();
+                playback.closed = true;
                 playback.subtitles.stopped();
                 if let Some(total) = playback.health.total() {
                     eprintln!(
@@ -676,10 +742,11 @@ impl Player {
                         total.summary()
                     );
                 }
-            }
+                playback.ended(&token, finish)
+            };
             display::stop(id);
             let _ = std::fs::remove_file(&socket_path);
-            on_exit(finish);
+            exit(ended);
         });
         Ok(Self {
             backend: Backend::Mpv(playback),
@@ -688,16 +755,80 @@ impl Player {
 
     /// Plays on the TV set's own player, which decodes what this Pi can't.
     pub fn hand_off(
+        play: &str,
         start: renderer::Start,
         tracks: Tracks,
         prepare: impl FnOnce() + Send + 'static,
-        on_save: impl Fn() + Send + 'static,
-        on_exit: impl FnOnce(Finish) + Send + 'static,
+        callbacks: Callbacks,
     ) -> io::Result<Self> {
-        let session = renderer::Session::start(start, prepare, on_save, on_exit)?;
+        let Callbacks { report, exit, .. } = callbacks;
+        let done = Arc::new(AtomicBool::new(false));
+        let finished = done.clone();
+        let token = play.to_string();
+        let session = renderer::Session::start(start, prepare, move |finish, seen| {
+            finished.store(true, Ordering::SeqCst);
+            exit(Ended {
+                play: token,
+                finish,
+                place: seen_place(&seen),
+                tracks,
+                played: seen.played,
+            });
+        })?;
+        let seen = session.watched();
+        let token = play.to_string();
+        report_every(
+            move || {
+                if done.load(Ordering::SeqCst) {
+                    return None;
+                }
+                let seen = *seen.lock().unwrap();
+                Some(Report {
+                    play: Some(token.clone()),
+                    state: seen_state(&seen, tracks),
+                    place: seen_place(&seen),
+                    tracks,
+                    played: seen.played,
+                    subtitles: None,
+                })
+            },
+            report,
+        );
         Ok(Self {
-            backend: Backend::TvSet { session, tracks },
+            backend: Backend::TvSet { session },
         })
+    }
+
+    /// A player with no mpv behind it, which reports like a real one.
+    #[cfg(test)]
+    pub fn without_mpv(play: &str, callbacks: Callbacks) -> Self {
+        let playback = Shared::new(Mutex::new(Playback {
+            speed: 1.0,
+            on_key: Some(callbacks.key),
+            ..Playback::default()
+        }));
+        report_mpv(&playback, play, callbacks.report);
+        Self {
+            backend: Backend::Mpv(playback),
+        }
+    }
+
+    /// Takes the playback's lock on a thread of its own and never gives it
+    /// back, as the deadlock of 2026-11-21 did.
+    #[cfg(test)]
+    pub fn hold_forever(&self) {
+        let Some(playback) = self.mpv().cloned() else {
+            return;
+        };
+        let (held, holding) = std::sync::mpsc::channel();
+        thread::spawn(move || {
+            let _guard = playback.lock().unwrap();
+            let _ = held.send(());
+            loop {
+                thread::park();
+            }
+        });
+        let _ = holding.recv();
     }
 
     pub fn handed_off(&self) -> bool {
@@ -711,85 +842,10 @@ impl Player {
         }
     }
 
-    pub fn place(&self) -> Place {
-        let playback = match &self.backend {
-            Backend::Mpv(playback) => playback.lock().unwrap(),
-            Backend::TvSet { session, .. } => {
-                let seen = session.seen();
-                return Place {
-                    position: seen.position,
-                    duration: seen.duration,
-                    credits: None,
-                };
-            }
-        };
-        Place {
-            position: playback.position,
-            duration: playback.duration,
-            credits: playback.chapter_credits.or(playback.credits),
-        }
-    }
-
-    pub fn tracks(&self) -> Tracks {
-        match &self.backend {
-            Backend::Mpv(playback) => playback.lock().unwrap().tracks,
-            Backend::TvSet { tracks, .. } => *tracks,
-        }
-    }
-
-    pub fn played(&self) -> f64 {
-        match &self.backend {
-            Backend::Mpv(playback) => playback.lock().unwrap().played,
-            Backend::TvSet { session, .. } => session.seen().played,
-        }
-    }
-
-    pub fn state(&self) -> State {
-        let playback = match &self.backend {
-            Backend::Mpv(playback) => playback.lock().unwrap(),
-            Backend::TvSet { session, tracks } => {
-                let seen = session.seen();
-                return State {
-                    position: seen.position,
-                    duration: seen.duration,
-                    paused: seen.paused,
-                    muted: seen.muted,
-                    speed: 1.0,
-                    subtitle: None,
-                    subtitle_delay: 0.0,
-                    audio: tracks.audio,
-                    started: seen.started,
-                    jump: seen.jump,
-                    skip: None,
-                };
-            }
-        };
-        let (subtitle, audio) = playback.subtitles.chosen();
-        State {
-            position: playback.scrub.target().unwrap_or(playback.position),
-            duration: playback.duration,
-            paused: playback.phase.paused(),
-            muted: playback.muted,
-            speed: playback.speed,
-            subtitle,
-            subtitle_delay: playback.subtitles.delay(),
-            audio,
-            started: playback.phase.started(),
-            jump: playback.scrub.jump_shown(Instant::now()),
-            skip: playback.prompt,
-        }
-    }
-
     pub fn command(&self, command: Command) {
         match &self.backend {
             Backend::Mpv(playback) => playback.lock().unwrap().command(command, Instant::now()),
-            Backend::TvSet { session, .. } => session.key(command),
-        }
-    }
-
-    pub fn offer_next(&self, next: bool) {
-        if let Backend::Mpv(playback) = &self.backend {
-            playback.lock().unwrap().next = next;
+            Backend::TvSet { session } => session.key(command),
         }
     }
 
@@ -811,7 +867,7 @@ impl Player {
         let now = Instant::now();
         let playback = match &self.backend {
             Backend::Mpv(playback) => playback,
-            Backend::TvSet { session, .. } => return session.seek_to(seconds),
+            Backend::TvSet { session } => return session.seek_to(seconds),
         };
         let mut playback = playback.lock().unwrap();
         if playback.phase.playing() {
@@ -824,28 +880,27 @@ impl Player {
     }
 
     pub fn seek_by(&self, seconds: f64) {
-        let position = self.state().position;
+        let position = match &self.backend {
+            Backend::Mpv(playback) => {
+                let playback = playback.lock().unwrap();
+                playback.scrub.target().unwrap_or(playback.position)
+            }
+            Backend::TvSet { session } => session.seen().position,
+        };
         self.seek_to(position + seconds);
     }
 
     pub fn set_paused(&self, paused: bool) {
         match &self.backend {
             Backend::Mpv(playback) => playback.lock().unwrap().set_paused(paused),
-            Backend::TvSet { session, .. } => session.set_paused(paused),
-        }
-    }
-
-    pub fn muted(&self) -> bool {
-        match &self.backend {
-            Backend::Mpv(playback) => playback.lock().unwrap().muted,
-            Backend::TvSet { session, .. } => session.seen().muted,
+            Backend::TvSet { session } => session.set_paused(paused),
         }
     }
 
     pub fn set_muted(&self, muted: bool) {
         let playback = match &self.backend {
             Backend::Mpv(playback) => playback,
-            Backend::TvSet { session, .. } => return session.set_muted(muted),
+            Backend::TvSet { session } => return session.set_muted(muted),
         };
         let mut playback = playback.lock().unwrap();
         playback.muted = muted;
@@ -903,6 +958,30 @@ impl Player {
         if let Some(playback) = self.mpv() {
             playback.lock().unwrap().toast(heading, message, Instant::now() + time);
         }
+    }
+}
+
+fn seen_place(seen: &renderer::Seen) -> Place {
+    Place {
+        position: seen.position,
+        duration: seen.duration,
+        credits: None,
+    }
+}
+
+fn seen_state(seen: &renderer::Seen, tracks: Tracks) -> State {
+    State {
+        position: seen.position,
+        duration: seen.duration,
+        paused: seen.paused,
+        muted: seen.muted,
+        speed: 1.0,
+        subtitle: None,
+        subtitle_delay: 0.0,
+        audio: tracks.audio,
+        started: seen.started,
+        jump: seen.jump,
+        skip: None,
     }
 }
 
@@ -968,7 +1047,6 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 let mut playback = shared.lock().unwrap();
                 playback.advance(position);
                 playback.update_prompt();
-                playback.save_position();
             }
             Some(Event::Duration(duration)) => {
                 shared.lock().unwrap().duration = duration;
@@ -1208,32 +1286,54 @@ mod tests {
     }
 
     #[test]
-    fn the_position_is_saved_after_thirty_seconds_of_movement() {
+    fn the_place_is_due_for_saving_after_thirty_seconds_of_movement_either_way() {
         let cases = [
             (0.0, 29.9, false),
             (0.0, 30.0, true),
             (100.0, 60.0, true),
             (100.0, 80.0, false),
-            (Playback::default().saved, 1200.0, true),
+            (0.0, 1200.0, true),
         ];
         for (saved, position, due) in cases {
-            let saves = Arc::new(Mutex::new(0));
-            let counter = saves.clone();
-            let mut playback = Playback {
-                saved,
-                position,
-                on_save: Some(Box::new(move || *counter.lock().unwrap() += 1)),
-                ..Playback::default()
-            };
-            playback.save_position();
-            playback.save_position();
-            assert_eq!(*saves.lock().unwrap(), usize::from(due), "from {saved} to {position}");
-            assert_eq!(
-                playback.saved,
-                if due { position } else { saved },
-                "from {saved} to {position}"
-            );
+            assert_eq!(save_due(saved, position), due, "from {saved} to {position}");
         }
+    }
+
+    fn reporting(play: &str) -> (Player, std::sync::mpsc::Receiver<Report>) {
+        let (reports, received) = std::sync::mpsc::channel();
+        let reports = Mutex::new(reports);
+        let player = Player::without_mpv(
+            play,
+            Callbacks {
+                report: Box::new(move |report| {
+                    let _ = reports.lock().unwrap().send(report);
+                }),
+                key: Box::new(|_| {}),
+                exit: Box::new(|_| {}),
+            },
+        );
+        (player, received)
+    }
+
+    #[test]
+    fn a_player_reports_its_state_every_half_second_under_its_play() {
+        let (player, reports) = reporting("a-play");
+        player.set_muted(true);
+        let report = reports.recv_timeout(REPORT_EVERY * 4).unwrap();
+        assert_eq!(report.play.as_deref(), Some("a-play"));
+        assert!(report.state.muted && !report.state.started);
+        assert_eq!(report.state.speed, 1.0);
+        let later = reports.recv_timeout(REPORT_EVERY * 4).unwrap();
+        assert_eq!(later.play.as_deref(), Some("a-play"));
+    }
+
+    #[test]
+    fn a_held_playback_lock_stops_the_reports_and_nothing_else() {
+        let (player, reports) = reporting("a-play");
+        reports.recv_timeout(REPORT_EVERY * 4).unwrap();
+        player.hold_forever();
+        while reports.recv_timeout(REPORT_EVERY / 5).is_ok() {}
+        assert!(reports.recv_timeout(REPORT_EVERY * 3).is_err());
     }
 
     #[test]
@@ -1248,21 +1348,6 @@ mod tests {
             ["--start=1234.500", "--aid=2", "--sid=3", "--sub-visibility=no"]
         );
         assert!(resume_args(0.0, Tracks::default()).is_empty());
-    }
-
-    #[test]
-    fn nothing_is_saved_after_the_end() {
-        let mut playback = Playback {
-            position: 100.0,
-            phase: Phase::Playing { paused: false },
-            ..Playback::default()
-        };
-        playback.save_position();
-        assert_eq!(playback.saved, 100.0);
-        playback.end();
-        playback.position = 200.0;
-        playback.save_position();
-        assert_eq!(playback.saved, 100.0);
     }
 
     #[test]

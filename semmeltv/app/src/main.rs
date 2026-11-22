@@ -565,8 +565,7 @@ fn run_tv_set(rest: &[String]) -> Result<(), String> {
         Session::start(
             start,
             || {},
-            || {},
-            move |finish| {
+            move |finish, _| {
                 let _ = done.send(finish);
             },
         )

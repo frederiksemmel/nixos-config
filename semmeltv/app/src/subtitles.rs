@@ -584,7 +584,7 @@ impl Subtitles {
             .and_then(|remembered| remembered.embedded)
     }
 
-    fn playing(&self) -> Option<Playing> {
+    pub fn playing(&self) -> Option<Playing> {
         self.state.lock().unwrap().playing.clone()
     }
 

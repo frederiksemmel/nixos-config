@@ -13,7 +13,6 @@ use crate::intent::{Control, Pick};
 use crate::led::Led;
 use crate::library::Library;
 use crate::offline::Store;
-use crate::player::Finish;
 use crate::profile::ProfileId;
 use crate::progress::Progress;
 use crate::push::Push;
@@ -129,8 +128,7 @@ impl Outcome {
 
 pub(crate) enum Signal {
     Heard(Heard),
-    Saved,
-    Finished(Finish),
+    Tv(crate::link::messages::FromTv),
     Poll { online: bool },
     Library(Result<Library, String>),
     Downloading(Option<PathBuf>),

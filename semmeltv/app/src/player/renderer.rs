@@ -1,7 +1,7 @@
 //! Playback on the TV set's own player. The TV decodes what the Pi can't: the
 //! Pi serves it the file over HTTP and steers its UPnP AVTransport.
 
-use super::{Finish, save_due};
+use super::Finish;
 use crate::command::Command;
 use crate::seek::{Direction, Scrub};
 use crate::stream::probe::Media;
@@ -519,8 +519,7 @@ impl Session {
     pub fn start(
         start: Start,
         prepare: impl FnOnce() + Send + 'static,
-        on_save: impl Fn() + Send + 'static,
-        on_exit: impl FnOnce(Finish) + Send + 'static,
+        on_exit: impl FnOnce(Finish, Seen) + Send + 'static,
     ) -> io::Result<Self> {
         let Start {
             renderer,
@@ -570,17 +569,22 @@ impl Session {
         let shared = seen.clone();
         thread::spawn(move || {
             prepare();
-            let finish = steer(&steering, &received, &shared, from, &on_save);
+            let finish = steer(&steering, &received, &shared, from);
             drop(server);
-            let played = shared.lock().unwrap().played;
-            eprintln!("tv player: {name} {finish:?} after {} played", clock(played));
-            on_exit(finish);
+            let seen = *shared.lock().unwrap();
+            eprintln!("tv player: {name} {finish:?} after {} played", clock(seen.played));
+            on_exit(finish, seen);
         });
         Ok(Self { seen, orders })
     }
 
     pub fn seen(&self) -> Seen {
         *self.seen.lock().unwrap()
+    }
+
+    /// What the steering thread last saw, kept up to date while it runs.
+    pub fn watched(&self) -> Arc<Mutex<Seen>> {
+        self.seen.clone()
     }
 
     pub fn set_paused(&self, paused: bool) {
@@ -615,13 +619,7 @@ fn load_until_started(steering: &Steering, from: f64, received: &Receiver<Order>
     }
 }
 
-fn steer(
-    steering: &Steering,
-    received: &Receiver<Order>,
-    shared: &Mutex<Seen>,
-    from: f64,
-    on_save: &dyn Fn(),
-) -> Finish {
+fn steer(steering: &Steering, received: &Receiver<Order>, shared: &Mutex<Seen>, from: f64) -> Finish {
     let resume_by_seek = steering.feed == Feed::File && from > 0.0;
     let loaded_from = if resume_by_seek { 0.0 } else { from };
     if let Err(error) = load_until_started(steering, loaded_from, received) {
@@ -631,7 +629,6 @@ fn steer(
     let duration = shared.lock().unwrap().duration;
     let mut watch = Watch::new(Instant::now(), duration, loaded_from);
     let mut scrub = Scrub::default();
-    let mut saved = from;
     let mut resumed = !resume_by_seek;
     let mut next_poll = Instant::now();
     loop {
@@ -717,10 +714,6 @@ fn steer(
             }
             if let Some(finish) = finish {
                 return finish;
-            }
-            if watch.started && save_due(saved, watch.position) {
-                saved = watch.position;
-                on_save();
             }
         }
         let mut seen = shared.lock().unwrap();
@@ -986,8 +979,7 @@ mod tests {
                 name: "Outlander S08E01".to_string(),
             },
             move || preparing.store(true, Ordering::SeqCst),
-            || {},
-            move |finish| exited.send(finish).unwrap(),
+            move |finish, seen: Seen| exited.send((finish, seen.position)).unwrap(),
         )
         .unwrap();
         let player = fake.tv.player.clone();
@@ -1017,7 +1009,10 @@ mod tests {
         session.seek_to(1500.0);
         wait_for("the seek", || player.lock().unwrap().position == 1500);
         session.key(Command::Back);
-        assert_eq!(exit.recv_timeout(Duration::from_secs(10)), Ok(Finish::Stopped));
+        assert_eq!(
+            exit.recv_timeout(Duration::from_secs(10)),
+            Ok((Finish::Stopped, 1500.0))
+        );
         assert_eq!(player.lock().unwrap().state, "STOPPED");
         std::fs::remove_file(path).unwrap();
     }
@@ -1039,8 +1034,7 @@ mod tests {
                 name: "Film".to_string(),
             },
             || {},
-            || {},
-            move |finish| exited.send(finish).unwrap(),
+            move |finish, _| exited.send(finish).unwrap(),
         )
         .unwrap();
         let player = fake.tv.player.clone();
