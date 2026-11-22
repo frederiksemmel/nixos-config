@@ -10,7 +10,9 @@ let
   newer = nixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system};
   tailscale = lib.getExe config.services.tailscale.package;
   api = "http://127.0.0.1:${toString cfg.api.port}";
-  web = "http://127.0.0.1:${toString cfg.web.port}";
+  front = cfg.web.front;
+  frontUrl = "http://127.0.0.1:${toString front.port}";
+  maintenance = lib.getExe' front.package "semmeltv-maintenance";
   serve = if cfg.web.funnel then "funnel" else "serve";
   lan = cfg.web.lan;
   signIn = cfg.web.signIn;
@@ -101,6 +103,31 @@ in
         default = newer.callPackage ../web { inherit crane; };
         defaultText = lib.literalMD "the web app from `semmeltv/web`, built with the flake's nixpkgs for Topcoat's Rust";
         description = "The SemmelTV web app.";
+      };
+
+      front = {
+        port = lib.mkOption {
+          type = lib.types.port;
+          default = 8093;
+          description = ''
+            Port of the front on 127.0.0.1, the proxy that the tailnet and the LAN name reach the web app
+            and the API through. While the core or the web app doesn't answer, or during planned work, it
+            answers with the bakery's closed screen and a guess of when SemmelTV is back.
+          '';
+        };
+
+        controlPort = lib.mkOption {
+          type = lib.types.port;
+          default = 8094;
+          description = "Port on 127.0.0.1 that `semmeltv-maintenance` and the core's stop hook tell the front through.";
+        };
+
+        package = lib.mkOption {
+          type = lib.types.package;
+          default = pkgs.callPackage ../front { inherit crane; };
+          defaultText = lib.literalMD "the front from `semmeltv/front`";
+          description = "The SemmelTV front, with the `semmeltv-maintenance` command.";
+        };
       };
 
       tailscale = lib.mkEnableOption "the web app and the API over HTTPS on the tailnet, with `tailscale serve`";
@@ -252,6 +279,43 @@ in
             NoNewPrivileges = true;
           };
         };
+
+        systemd.services.semmeltv-front = {
+          description = "SemmelTV front: the proxy before the core and the web app, with the bakery's closed screen";
+          wantedBy = [ "multi-user.target" ];
+          after = [ "network.target" ];
+          stopIfChanged = false;
+          environment = {
+            SEMMELTV_FRONT_LISTEN = "127.0.0.1:${toString front.port}";
+            SEMMELTV_FRONT_CONTROL = "127.0.0.1:${toString front.controlPort}";
+            SEMMELTV_CORE = "127.0.0.1:${toString cfg.api.port}";
+            SEMMELTV_WEB = "127.0.0.1:${toString cfg.web.port}";
+          };
+          serviceConfig = {
+            ExecStart = lib.getExe front.package;
+            DynamicUser = true;
+            StateDirectory = "semmeltv-front";
+            Restart = "always";
+            RestartSec = 1;
+            PrivateTmp = true;
+            ProtectSystem = "strict";
+            ProtectHome = true;
+            NoNewPrivileges = true;
+          };
+        };
+
+        environment.systemPackages = [
+          (pkgs.writeShellApplication {
+            name = "semmeltv-maintenance";
+            runtimeEnv.SEMMELTV_FRONT_CONTROL = "127.0.0.1:${toString front.controlPort}";
+            text = ''exec ${maintenance} "$@"'';
+          })
+        ];
+
+        systemd.services.cage-tty1.serviceConfig.ExecStop =
+          "-${pkgs.writeShellScript "semmeltv-announce-restart" ''
+            SEMMELTV_FRONT_CONTROL=127.0.0.1:${toString front.controlPort} exec ${maintenance} restarting
+          ''}";
       })
 
       (lib.mkIf (cfg.web.enable && cfg.web.tailscale) {
@@ -270,8 +334,7 @@ in
             RestartSec = 5;
             ExecStart = [
               "${tailscale} serve reset"
-              "${tailscale} ${serve} --bg --https=443 ${web}"
-              "${tailscale} ${serve} --bg --https=443 --set-path=/api ${api}/api"
+              "${tailscale} ${serve} --bg --https=443 ${frontUrl}"
             ];
             ExecStop = "${tailscale} serve reset";
           };
@@ -361,16 +424,7 @@ in
               real_ip_header proxy_protocol;
             '';
             locations."/" = {
-              proxyPass = web;
-              proxyWebsockets = true;
-              extraConfig = stripUntrusted + ''
-                proxy_read_timeout 1h;
-                proxy_send_timeout 1h;
-                proxy_buffering off;
-              '';
-            };
-            locations."/api" = {
-              proxyPass = api;
+              proxyPass = frontUrl;
               proxyWebsockets = true;
               extraConfig = stripUntrusted + ''
                 proxy_read_timeout 1h;

@@ -36,6 +36,7 @@ let
     "downloads"
     "sign-in"
     "tv-restart"
+    "maintenance"
   ];
   expectedToFail = [ "tv-restart" ];
   proxied = {
@@ -144,10 +145,7 @@ let
               }
             ];
             locations."/" = proxied // {
-              proxyPass = "http://127.0.0.1:8091";
-            };
-            locations."/api" = proxied // {
-              proxyPass = "http://127.0.0.1:8090";
+              proxyPass = "http://127.0.0.1:8093";
             };
           };
         };

@@ -72,6 +72,7 @@ in
       packages = {
         semmeltv = pkgs.callPackage ./app { inherit (inputs) crane; };
         semmeltv-web = pkgs.callPackage ./web { inherit (inputs) crane; };
+        semmeltv-front = pkgs.callPackage ./front { inherit (inputs) crane; };
         deploy-rs = inputs.deploy-rs.packages.${system}.default;
       }
       // lib.concatMapAttrs (name: hailo: {

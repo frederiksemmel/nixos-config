@@ -33,6 +33,7 @@ touches:
 | `downloads` | `semmeltv-vm-downloads` | season downloads, the search box's offers, TMDB and people search, pCloud storage |
 | `sign-in` | `semmeltv-vm-sign-in` | invites, the profile picker with passwords, profiles on one phone and their limits |
 | `tv-restart` | `semmeltv-vm-tv-restart` | **expected to fail** until step 4 of [two processes](../../docs/two-processes.md): a killed or frozen tv process comes back with the film while the API answers |
+| `maintenance` | `semmeltv-vm-maintenance` | the bakery's closed screen from the front: planned work with `semmeltv-maintenance`, a stopped core, the guess growing once it runs over, the page coming back by itself |
 
 One group, on nixbuild:
 

@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0c0c10">
+<title>SemmelTV · {headline}</title>
+<link rel="icon" href="/api/maintenance/roll.svg" type="image/svg+xml">
+<style>
+:root {
+  --bg: #0c0c10;
+  --text: #f3f3f6;
+  --muted: #9a9aa6;
+  --accent: #f5c518;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+html { background: var(--bg); -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right)) env(safe-area-inset-bottom, 0px) max(16px, env(safe-area-inset-left));
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.4 -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  overflow-wrap: anywhere;
+}
+header { padding: 17px 0; }
+header img { display: block; height: 30px; width: auto; }
+main {
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 12px;
+  width: 100%;
+  max-width: 28rem;
+  margin: 0 auto;
+  padding-bottom: 12vh;
+  text-align: center;
+}
+h1 { margin: 0; font-size: 26px; line-height: 1.2; }
+p { margin: 0; color: var(--muted); }
+.late { color: var(--text); }
+.eta { color: var(--accent); font-size: 18px; font-weight: 600; }
+.roll { width: 112px; height: 112px; animation: rock 2.4s ease-in-out infinite; }
+main[data-cause="down"] .roll { filter: brightness(0.45) sepia(0.6) saturate(0.7); transform: rotate(160deg); animation: none; }
+@keyframes rock {
+  0%, 100% { transform: rotate(-12deg); }
+  50% { transform: rotate(8deg); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .roll { animation: none; transform: rotate(-12deg); }
+}
+</style>
+</head>
+<body>
+<header><img src="/api/maintenance/wordmark.svg" width="296" height="132" alt="SemmelTV"></header>
+<main id="closed" data-cause="{cause}" role="status" aria-live="polite">
+  <img class="roll" src="/api/maintenance/roll.svg" width="112" height="112" alt="">
+  <h1 id="headline">{headline}</h1>
+  <p id="note">{note}</p>
+  <p class="late" id="late"{late_hidden}>{late}</p>
+  <p class="eta" id="eta">{eta}</p>
+</main>
+<script>
+const embedded = window.parent !== window;
+
+function show(status) {
+  if (status.state === "open") {
+    if (embedded) window.parent.postMessage({ semmeltv: "open" }, location.origin);
+    else location.reload();
+    return false;
+  }
+  document.getElementById("closed").dataset.cause = status.cause;
+  for (const id of ["headline", "note", "eta"]) document.getElementById(id).textContent = status[id];
+  const late = document.getElementById("late");
+  late.hidden = !status.late;
+  late.textContent = status.late || "";
+  document.title = `SemmelTV · ${status.headline}`;
+  return true;
+}
+
+async function poll() {
+  try {
+    const response = await fetch("/api/maintenance", { cache: "no-store" });
+    if (response.ok && !show(await response.json())) return;
+  } catch {}
+  setTimeout(poll, 2000);
+}
+
+setTimeout(poll, 2000);
+</script>
+</body>
+</html>
