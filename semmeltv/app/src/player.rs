@@ -247,8 +247,8 @@ struct Playback {
 }
 
 impl Playback {
-    fn video_changed(&mut self, video: Video, crop: Option<String>, decoder: Option<&str>) -> Option<u64> {
-        if let Some(crop) = crop.filter(|_| decoder != Some("v4l2m2m")) {
+    fn video_changed(&mut self, video: Video, crop: Option<String>) -> Option<u64> {
+        if let Some(crop) = crop {
             self.send(json!(["set_property", "video-crop", crop]));
         }
         (self.video.replace(video) != Some(video)).then_some(self.id)
@@ -795,7 +795,7 @@ impl Player {
             .arg("--no-resume-playback")
             .arg("--no-save-position-on-quit")
             .arg("--keep-open")
-            .args(video_args(env::var("SEMMELTV_DECODER").ok().as_deref()))
+            .args(VIDEO_ARGS)
             .arg(format!("--audio-device={}", play.audio_device))
             .arg(format!("--af={}", sound_filter(play.dialogue)))
             .arg("--audio-stream-silence")
@@ -1016,17 +1016,12 @@ impl Mpv {
     }
 }
 
-fn video_args(decoder: Option<&str>) -> &'static [&'static str] {
-    match decoder {
-        Some("v4l2m2m") => &["--hwdec=v4l2m2m", "--vo=dmabuf-wayland", "--video-sync=audio"],
-        _ => &[
-            "--hwdec=drm",
-            "--gpu-context=wayland",
-            "--profile=fast",
-            "--video-sync=display-resample",
-        ],
-    }
-}
+const VIDEO_ARGS: [&str; 4] = [
+    "--hwdec=drm",
+    "--gpu-context=wayland",
+    "--profile=fast",
+    "--video-sync=display-resample",
+];
 
 fn socket_path() -> PathBuf {
     env::var_os("XDG_RUNTIME_DIR")
@@ -1088,8 +1083,7 @@ fn listen(events: UnixStream, shared: &Shared) {
                 playback.nudge();
             }
             Some(Event::Video(video, crop)) => {
-                let decoder = env::var("SEMMELTV_DECODER").ok();
-                let changed = shared.lock().unwrap().video_changed(video, crop, decoder.as_deref());
+                let changed = shared.lock().unwrap().video_changed(video, crop);
                 if let Some(id) = changed {
                     display::play(id, video);
                 }
@@ -1316,17 +1310,14 @@ mod tests {
     }
 
     #[test]
-    fn the_crop_reaches_mpv_only_where_the_decoder_paints_the_padding() {
+    fn the_crop_reaches_mpv() {
         let fox = Video {
             width: 1920,
             height: 1038,
             fps: 23.976,
         };
-        let crop = Some("1920x1032+0+0".to_string());
         let mut playback = Playback::default();
-        playback.video_changed(fox, crop.clone(), Some("v4l2m2m"));
-        assert!(playback.waiting.is_empty(), "the Pi 3 keeps its frames");
-        playback.video_changed(fox, crop, None);
+        playback.video_changed(fox, Some("1920x1032+0+0".to_string()));
         assert_eq!(
             playback.waiting,
             [json!(["set_property", "video-crop", "1920x1032+0+0"])]
@@ -1346,13 +1337,13 @@ mod tests {
             ..Playback::default()
         };
         assert_eq!(
-            playback.video_changed(film, None, None),
+            playback.video_changed(film, None),
             Some(7),
             "first seen after playback-restart"
         );
-        assert_eq!(playback.video_changed(film, None, None), None, "the same track again");
+        assert_eq!(playback.video_changed(film, None), None, "the same track again");
         let other = Video { fps: 25.0, ..film };
-        assert_eq!(playback.video_changed(other, None, None), Some(7), "another track");
+        assert_eq!(playback.video_changed(other, None), Some(7), "another track");
     }
 
     #[test]

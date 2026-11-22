@@ -73,13 +73,10 @@ let
         boot.kernelModules = [ "snd-dummy" ];
 
         services.semmeltv = {
-          headphones.enable = true;
           enable = true;
           adminUser = "root";
           package = semmeltv;
-          api.enable = true;
           web = {
-            enable = true;
             signIn = {
               origins = [ "http://localhost:8080" ];
               serviceTokenFile = "${serviceToken}";

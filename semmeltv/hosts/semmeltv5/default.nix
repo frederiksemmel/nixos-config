@@ -21,10 +21,7 @@
       renderer = "http://192.168.1.148:9197/dmr";
       edid = ./samsung-edid.bin;
     };
-    headphones.enable = true;
-    api.enable = true;
     web = {
-      enable = true;
       tailscale = true;
       signIn = {
         tailnet = "cuscus-exponential.ts.net";

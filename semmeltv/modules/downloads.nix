@@ -170,13 +170,6 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       {
-        assertions = [
-          {
-            assertion = semmeltv.api.enable;
-            message = "services.semmeltv.downloads needs services.semmeltv.api.enable";
-          }
-        ];
-
         age.secrets = {
           tmdb_token = {
             file = ../../secrets/tmdb_token.age;
@@ -276,7 +269,7 @@ in
           SEMMELTV_DOWNLOADS = "http://127.0.0.1:${toString cfg.port}";
           SEMMELTV_READY = "${downloadDir}/ready.json";
         };
-        systemd.services.semmeltv-web = lib.mkIf semmeltv.web.enable {
+        systemd.services.semmeltv-web = {
           environment.SEMMELTV_DOWNLOADS_URL = "http://127.0.0.1:${toString cfg.port}";
         };
       }

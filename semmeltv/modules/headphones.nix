@@ -9,10 +9,7 @@ let
   bluealsa = pkgs.callPackage ../app/bluez-alsa.nix { };
 in
 {
-  options.services.semmeltv.headphones.enable =
-    lib.mkEnableOption "Bluetooth headphones the app can send its sound to instead of the TV, through BlueALSA. They are paired from the web app's Settings and kept in /var/lib/bluetooth";
-
-  config = lib.mkIf (cfg.enable && cfg.headphones.enable) {
+  config = lib.mkIf cfg.enable {
     hardware.bluetooth = {
       enable = true;
       powerOnBoot = true;

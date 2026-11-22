@@ -37,15 +37,6 @@ in
 
     mpv = lib.mkPackageOption pkgs "mpv" { };
 
-    decoder = lib.mkOption {
-      type = lib.types.enum [
-        "drm"
-        "v4l2m2m"
-      ];
-      default = "drm";
-      description = "How mpv decodes video. `drm` uses the stateless V4L2 decoders (the Pi 5's HEVC) and draws the frames with the GPU. `v4l2m2m` uses the stateful V4L2 decoder (the Pi 3's H.264) and hands its frames to cage untouched, because the Pi 3's GPU can't draw 1080p video at full frame rate.";
-    };
-
     package = lib.mkOption {
       type = lib.types.package;
       default = pkgs.callPackage ../app {
@@ -172,7 +163,6 @@ in
         }}";
         XCURSOR_THEME = "blank";
         WLR_LIBINPUT_NO_DEVICES = "1";
-        SEMMELTV_DECODER = cfg.decoder;
       };
     };
 

@@ -73,8 +73,6 @@ in
 {
   options.services.semmeltv = {
     api = {
-      enable = lib.mkEnableOption "the app's HTTP API on 127.0.0.1, for the web app and any other client";
-
       port = lib.mkOption {
         type = lib.types.port;
         default = 8090;
@@ -83,8 +81,6 @@ in
     };
 
     web = {
-      enable = lib.mkEnableOption "the SemmelTV web app, a frontend on the API";
-
       port = lib.mkOption {
         type = lib.types.port;
         default = 8091;
@@ -224,16 +220,12 @@ in
 
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
-      (lib.mkIf cfg.api.enable {
+      {
         services.semmeltv.coreEnvironment.SEMMELTV_API = "127.0.0.1:${toString cfg.api.port}";
-      })
+      }
 
-      (lib.mkIf cfg.web.enable {
+      {
         assertions = [
-          {
-            assertion = cfg.api.enable;
-            message = "services.semmeltv.web needs services.semmeltv.api.enable";
-          }
           {
             assertion = signIn.origins != [ ] && signIn.serviceTokenFile != null;
             message = "services.semmeltv.web needs sign-in: set web.signIn.serviceTokenFile and at least one origin";
@@ -305,9 +297,9 @@ in
             SEMMELTV_FRONT_CONTROL=127.0.0.1:${toString front.controlPort} exec ${maintenance} restarting
           ''}"
         ];
-      })
+      }
 
-      (lib.mkIf cfg.web.enable {
+      {
         systemd.services.semmeltv-update-card = {
           description = "Tells SemmelTV before cage-tty1 stops, so the TV shows the update card and plays on after";
           after = [
@@ -329,9 +321,9 @@ in
             ''}";
           };
         };
-      })
+      }
 
-      (lib.mkIf (cfg.web.enable && cfg.web.tailscale) {
+      (lib.mkIf cfg.web.tailscale {
         services.tailscale.enable = true;
 
         systemd.services.semmeltv-web-https = {
@@ -354,7 +346,7 @@ in
         };
       })
 
-      (lib.mkIf (cfg.web.enable && lan.domain != null) {
+      (lib.mkIf (lan.domain != null) {
         assertions = [
           {
             assertion = lib.hasSuffix ".${lan.zone}" lan.domain;
