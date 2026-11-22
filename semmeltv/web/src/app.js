@@ -21,7 +21,7 @@ function pause(ms, signal) {
 }
 
 function waiting(failures) {
-  if (failures < 2) return;
+  if (failures < 2 || document.documentElement.hasAttribute("data-maintenance")) return;
   window.dispatchEvent(new CustomEvent("semmeltv:toast", {
     detail: { id: "unreachable", text: "Wir kriegen es gerade nicht gebacken", detail: "SemmelTV antwortet nicht, wir versuchen es alle paar Sekunden wieder", tone: "pending" },
   }));

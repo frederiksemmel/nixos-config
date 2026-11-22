@@ -1999,6 +1999,19 @@ semmel-shell {
 .trouble-roll { width: 96px; height: 96px; transform: rotate(-12deg); }
 .trouble-roll[data-burnt="true"] { filter: brightness(0.45) sepia(0.6) saturate(0.7); transform: rotate(160deg); }
 
+.maintenance {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  width: 100%;
+  height: 100%;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  border: 0;
+  background: var(--bg);
+}
+
+html[data-maintenance] body { overflow: hidden; }
+
 /* Profiles and sign-in */
 
 .avatar {

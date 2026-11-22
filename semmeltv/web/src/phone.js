@@ -228,6 +228,10 @@ function transient(error) {
   return !error.status || error.status >= 500;
 }
 
+function closedForMaintenance() {
+  return html.hasAttribute("data-maintenance");
+}
+
 function adopt(view) {
   const restarted = boot !== null && view.boot !== undefined && view.boot !== boot;
   if (!restarted && view.seq !== undefined && screen.seq !== undefined && view.seq < screen.seq) return;
@@ -1293,7 +1297,7 @@ class Player {
     note("lost the TV's stream, asking the TV", why);
     let delay = FIRST_RETRY;
     const until = Date.now() + GIVE_UP;
-    while (!this.closed && Date.now() < until) {
+    while (!this.closed && (Date.now() < until || closedForMaintenance())) {
       let view = null;
       try {
         view = await request("GET", "/api/screen");
@@ -1339,7 +1343,7 @@ class Player {
           adopt(await request("GET", "/api/screen"));
           return;
         } catch (error) {
-          if (!transient(error) || Date.now() > until) {
+          if (!transient(error) || (Date.now() > until && !closedForMaintenance())) {
             note("playing on here after the restart was refused", error.message);
             this.resuming = false;
             this.waiting = false;
@@ -1609,6 +1613,17 @@ document.addEventListener("visibilitychange", () => {
 });
 
 window.addEventListener("semmeltv:reconnect", relisten);
+
+window.addEventListener("semmeltv:maintenance", (event) => {
+  if (!player || player.closed) return;
+  if (event.detail.closed) {
+    player.heldForMaintenance = player.playing();
+    if (player.heldForMaintenance) player.pause();
+  } else if (player.heldForMaintenance) {
+    player.heldForMaintenance = false;
+    player.video.play()?.catch(() => {});
+  }
+});
 
 new MutationObserver(render).observe(html, { attributes: true, childList: true });
 new MutationObserver(render).observe(document.body, { childList: true, subtree: true });

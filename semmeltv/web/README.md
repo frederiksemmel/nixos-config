@@ -73,6 +73,13 @@ in the top bar (`src/feedback.js`) sends the trail with what was typed or
 dictated, and an optional screenshot, to the TV's `/api/feedback`. Admins read
 the reports on `/feedback`; see the [app README](../app/README.md#feedback).
 
+`src/maintenance.js` lays the [front](../front/README.md)'s closed screen over
+an open page, as an iframe of `/api/maintenance/screen`, as soon as a fetch
+gets the front's 503 or its 10 s look at `/api/maintenance` finds SemmelTV
+closed, and takes it away when the screen says SemmelTV is back. It tells the
+page with `semmeltv:maintenance`: the phone's player pauses for it and plays
+on after, and keeps waiting for the TV for as long as the screen is up.
+
 `src/drafts.js` keeps what is typed into a `textarea[data-draft]` in
 `localStorage` until it is sent, and brings it back after a reload. It is a
 classic script in the head, so it keeps text typed before Topcoat's runtime has

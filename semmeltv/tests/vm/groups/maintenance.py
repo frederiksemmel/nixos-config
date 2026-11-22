@@ -90,3 +90,30 @@ with scenario("semmeltv-maintenance refuses a duration it cannot read"):
     refused = tv.fail("semmeltv-maintenance on soon 2>&1")
     assert "not a duration" in refused, refused
     assert maintenance()["state"] == "open"
+
+OVERLAY = 'document.querySelector("iframe.maintenance")'
+
+with scenario("an open page shows the closed screen in place when planned work starts, and is back as it was after"):
+    phone.goto("/")
+    at_home(phone)
+    tv.succeed("semmeltv-maintenance on 5m Tests")
+    phone.until(f"!!{OVERLAY}", 15000)
+    headline = phone.page.frame_locator("iframe.maintenance").locator("#headline")
+    eventually("the screen over the page says the bakery is closed", lambda: headline.text_content() == "Die Backstube ist kurz zu")
+    phone.shot("maintenance-over-the-page")
+    tv.succeed("semmeltv-maintenance off")
+    phone.until(f"!{OVERLAY}", 10000)
+    assert phone.js('location.pathname === "/" && !!document.querySelector("main .shelf")'), "the page under the screen changed"
+
+with scenario("a phone playing a film shows the closed screen over the player, and plays on after"):
+    phone_plays_film(phone)
+    at = phone_time(phone)
+    tv.succeed("semmeltv-maintenance on 2m Tests")
+    phone.until(f"!!{OVERLAY}", 15000)
+    phone.until(f"{VIDEO}.paused", 10000)
+    phone.shot("maintenance-over-the-player")
+    tv.succeed("semmeltv-maintenance off")
+    phone.until(f"!{OVERLAY}", 10000)
+    phone.until(PLAYS, 30000)
+    assert phone_time(phone) >= at - 2, f"the phone was at {at}, plays on at {phone_time(phone)}"
+    stop_everything(phone)

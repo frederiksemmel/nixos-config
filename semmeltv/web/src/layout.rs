@@ -16,6 +16,7 @@ const APP: Asset = asset!("./app.js");
 const PHONE: Asset = asset!("./phone.js");
 const TOAST: Asset = asset!("./toast.js");
 const REPORT: Asset = asset!("./report.js");
+const MAINTENANCE: Asset = asset!("./maintenance.js");
 const ACT: Asset = asset!("./act.js");
 const PHONE_STYLE: Asset = asset!("./phone.css");
 const AUTH: Asset = asset!("./auth.js");
@@ -50,6 +51,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <link rel="stylesheet" href=(STYLE)>
                 <link rel="stylesheet" href=(PHONE_STYLE)>
                 <script src=(REPORT)></script>
+                <script src=(MAINTENANCE)></script>
                 <script src=(ACT)></script>
                 if signed_in {
                     <script src=(LIVE)></script>

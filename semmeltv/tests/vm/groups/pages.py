@@ -63,7 +63,7 @@ with scenario("Settings opens Feedback and comes Back, and keeps scrolling"):
     scrolls(small, "Home after Back from Settings")
     small.close()
 
-with scenario("a title tapped while the web app restarts opens once it is back"):
+with scenario("a title tapped while the web app restarts shows the closed screen and opens once it is back"):
     phone.goto("/")
     at_home(phone)
     tv.systemctl("stop semmeltv-web.service")
@@ -71,11 +71,13 @@ with scenario("a title tapped while the web app restarts opens once it is back")
         tile = phone.page.locator(TILE).first
         href = tile.get_attribute("href")
         tile.tap()
-        phone.until('[...document.querySelectorAll(".toast")].some((toast) => toast.textContent.includes("nicht gebacken"))', 10000)
+        phone.until('!!document.querySelector("iframe.maintenance")', 10000)
+        headline = phone.page.frame_locator("iframe.maintenance").locator("#headline")
+        eventually("the screen says the oven is heating up again", lambda: headline.text_content() == "Der Ofen wird neu angeheizt")
         assert phone.js("location.pathname") == "/"
     finally:
         tv.systemctl("start semmeltv-web.service")
-    phone.until(f'location.pathname === {href!r} && !!document.querySelector("main .detail h1") && !document.querySelector(".toast:not([data-leaving])")', 30000)
+    phone.until(f'location.pathname === {href!r} && !!document.querySelector("main .detail h1") && !document.querySelector("iframe.maintenance")', 30000)
     phone.js("history.back()")
     at_home(phone)
 
