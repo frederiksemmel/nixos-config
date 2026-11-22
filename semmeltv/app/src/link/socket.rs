@@ -512,7 +512,7 @@ mod tests {
         let (core_link, hearing) = core(&path);
         let (tv_link, tv_orders) = Link::pair();
         let (said, telling) = channel();
-        client::start(path, tv_link, telling, "this-build".to_string());
+        client::start(path, tv_link, telling, "this-build".to_string(), None);
         let Heard::Said(hello) = heard(&hearing) else {
             panic!("a hello");
         };
@@ -531,7 +531,14 @@ mod tests {
             dialogue: false,
             next: false,
         })));
-        let order = tokio::task::spawn_blocking(move || tv_orders.recv_timeout(Duration::from_secs(5)).ok());
+        let order = tokio::task::spawn_blocking(move || {
+            loop {
+                match tv_orders.recv_timeout(Duration::from_secs(5)).ok() {
+                    Some(ToTv::Panel(_)) => {}
+                    other => break other,
+                }
+            }
+        });
         assert!(matches!(order.await.unwrap(), Some(ToTv::Play(_))));
         said.send(FromTv::Started {
             play: "a-play".to_string(),

@@ -1,6 +1,7 @@
 //! The seam between the core and the tv.
 
 pub mod client;
+pub mod front;
 pub mod local;
 #[allow(dead_code)]
 pub mod messages;

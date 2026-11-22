@@ -4,6 +4,7 @@
 //! say. While the core is away, keys work on what the tv has and the last
 //! ending waits for the next `Hello`.
 
+use super::front;
 use super::messages::{Ended, FromTv, PROTOCOL, Running, ToTv};
 use super::{LINE_LIMIT, Link, line_of};
 use crate::bus::Panel;
@@ -80,6 +81,7 @@ impl Kept {
 
 struct Shared {
     revision: String,
+    front: Option<String>,
     kept: Mutex<Kept>,
     writer: Mutex<Option<UnixStream>>,
     link: Link,
@@ -120,14 +122,29 @@ impl Shared {
     fn alone(&self, said: FromTv) {
         match said {
             FromTv::Key(command) => self.key_alone(command),
-            FromTv::Ask(_) => self.link.send(ToTv::Panel(Panel {
-                heading: String::new(),
-                status: "SemmelTV is restarting…".to_string(),
-                hold: AWAY_FOR,
-            })),
+            FromTv::Ask(_) => self
+                .link
+                .send(ToTv::Panel(front::panel(self.front.as_deref(), AWAY_FOR))),
             FromTv::Finished(ended) => self.kept.lock().unwrap().ended = Some(ended),
             _ => {}
         }
+    }
+
+    /// While the core is away and nothing plays, the menu keeps the bakery's
+    /// panel up until the next try, `until_next` from now.
+    fn away(&self, until_next: Duration) {
+        if self.kept.lock().unwrap().playing.is_none() {
+            let hold = until_next + HEARTBEAT;
+            self.link.send(ToTv::Panel(front::panel(self.front.as_deref(), hold)));
+        }
+    }
+
+    fn back(&self) {
+        self.link.send(ToTv::Panel(Panel {
+            heading: String::new(),
+            status: String::new(),
+            hold: Duration::ZERO,
+        }));
     }
 
     fn key_alone(&self, command: Command) {
@@ -147,10 +164,12 @@ impl Shared {
 
 /// Starts the tv's end of the socket at `path`. `link` reaches the tv end
 /// that owns the player and the menu; `said` is what that end and the menu
-/// tell the core. `revision` names this build to the core.
-pub fn start(path: PathBuf, link: Link, said: Receiver<FromTv>, revision: String) {
+/// tell the core. `revision` names this build to the core. `front` is the
+/// front's control address, asked what to show while the core is away.
+pub fn start(path: PathBuf, link: Link, said: Receiver<FromTv>, revision: String, front: Option<String>) {
     let shared = Arc::new(Shared {
         revision,
+        front,
         kept: Mutex::default(),
         writer: Mutex::default(),
         link,
@@ -193,6 +212,7 @@ fn post(shared: &Shared, said: &Receiver<FromTv>) {
 fn connect(path: &Path, shared: &Shared) {
     let mut wait = FIRST_RETRY;
     let mut told = false;
+    let mut lost = false;
     loop {
         match UnixStream::connect(path) {
             Ok(stream) => {
@@ -202,12 +222,16 @@ fn connect(path: &Path, shared: &Shared) {
                     eprintln!("tv: the core went away: {error}");
                 }
                 *shared.writer.lock().unwrap() = None;
+                lost = true;
             }
             Err(error) if !told => {
                 eprintln!("tv: no core at {}: {error}", path.display());
                 told = true;
             }
             Err(_) => {}
+        }
+        if lost {
+            shared.away(wait);
         }
         thread::sleep(wait);
         wait = (wait * 2).min(LAST_RETRY);
@@ -238,6 +262,7 @@ fn session(stream: UnixStream, shared: &Shared) -> io::Result<()> {
     shared.kept.lock().unwrap().ended = None;
     *shared.writer.lock().unwrap() = Some(writer);
     eprintln!("tv: connected to the core");
+    shared.back();
     while read_line(&mut reader, &mut line)? {
         match serde_json::from_slice::<ToTv>(&line) {
             Ok(order) => {
@@ -303,6 +328,7 @@ mod tests {
         let (link, orders) = Link::pair();
         let shared = Shared {
             revision: "this-build".to_string(),
+            front: None,
             kept: Mutex::default(),
             writer: Mutex::default(),
             link,
@@ -410,6 +436,35 @@ mod tests {
         let Ok(ToTv::Panel(panel)) = orders.try_recv() else {
             panic!("a panel");
         };
-        assert_eq!(panel.status, "SemmelTV is restarting…");
+        assert_eq!(panel.heading, "Der Ofen wird neu angeheizt");
+    }
+
+    #[test]
+    fn the_menu_keeps_the_bakery_panel_up_while_the_core_is_away_but_not_over_a_film() {
+        let (shared, orders) = alone();
+        shared.away(Duration::from_secs(2));
+        let Ok(ToTv::Panel(panel)) = orders.try_recv() else {
+            panic!("a panel");
+        };
+        assert_eq!(
+            (panel.heading.as_str(), panel.hold),
+            ("Der Ofen wird neu angeheizt", Duration::from_secs(3))
+        );
+        shared.kept.lock().unwrap().ordered(&play());
+        shared.kept.lock().unwrap().said(&FromTv::Started {
+            play: "a-play".to_string(),
+        });
+        shared.away(Duration::from_secs(2));
+        assert!(orders.try_recv().is_err(), "a panel over the film");
+    }
+
+    #[test]
+    fn the_panel_goes_when_the_core_is_back() {
+        let (shared, orders) = alone();
+        shared.back();
+        let Ok(ToTv::Panel(panel)) = orders.try_recv() else {
+            panic!("a panel");
+        };
+        assert_eq!(panel.status, "");
     }
 }

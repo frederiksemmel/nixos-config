@@ -69,14 +69,20 @@ with scenario("a stopped core shows the closed screen at once, guesses again onc
     status, _, body = front_answer("/api/library")
     assert status == 503 and json.loads(body)["cause"] == "restarting", f"{status}: {body}"
     phone.shot("maintenance-restarting")
+    tv_shows("Ofen wird neu", timeout=30)
+    tv_shows("Wieder da in", timeout=10)
+    tv.screenshot("tv-maintenance-restarting")
 
     the_guess_moves_past(first["promised"], timeout=100)
     phone.until(LATE, 10000)
     phone.shot("maintenance-restarting-overdue")
+    tv_shows("als gedacht", timeout=20)
+    tv.screenshot("tv-maintenance-restarting-overdue")
 
     tv.systemctl("start semmeltv.service")
     app_restarted()
     phone.until('!!document.querySelector("main button.play[data-play-movie]")', 60000)
+    eventually("the TV's panel goes once the core is back", lambda: "Ofen wird neu" not in tv.get_screen_text(), timeout=60, every=2)
     took = time.monotonic() - stopped
     assert maintenance()["state"] == "open"
 

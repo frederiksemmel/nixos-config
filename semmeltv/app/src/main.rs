@@ -316,7 +316,11 @@ fn run_tv(args: &Args) -> Result<(), String> {
         player::Player::start,
         menu,
     );
-    link::client::start(path, tv, heard, link::revision());
+    let front = std::env::var("SEMMELTV_FRONT_CONTROL")
+        .ok()
+        .filter(|control| !control.is_empty())
+        .unwrap_or_else(|| link::front::CONTROL.to_string());
+    link::client::start(path, tv, heard, link::revision(), Some(front));
     ui::run(
         inbox,
         move |message| {

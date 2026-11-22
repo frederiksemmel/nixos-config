@@ -241,8 +241,10 @@ When the tv says `Hello`:
 While disconnected, the tv:
 
 - keeps playing, applies its own keys locally (the player's `command`, menu
-  navigation on the cached `Home`), and shows `Panel("SemmelTV is restarting…")`
-  for anything only the core can do;
+  navigation on the cached `Home`), and shows the front's bakery panel with
+  its estimate ("Der Ofen wird neu angeheizt", "Wieder da in etwa 40
+  Sekunden", asked on the front's control port) for anything only the core
+  can do, and on the menu for as long as the core is away;
 - reconnects every 0.5 s, backing off to 5 s;
 - keeps at most one `Ended` to report in its next `Hello`.
 
@@ -496,7 +498,8 @@ How 3 came out (3a, the transport):
 - `link::client` is the tv's end: it reconnects every 0.5 s, backing off to
   5 s, and says `Hello` with what plays and the last ending it could not
   tell. While the core is away, keys go to the player or the menu, the
-  menu's asks show "SemmelTV is restarting…", and reports are dropped.
+  menu's asks show the front's bakery panel (`link::front`), the menu keeps
+  it up while nothing plays, and reports are dropped.
 - `semmeltv core` serves `SEMMELTV_TV_SOCKET` (default
   `/run/semmeltv/tv.sock`); `semmeltv tv` runs the menu, the player and the
   client; `semmeltv ui` keeps both in one process. `semmeltv tv --dump`
