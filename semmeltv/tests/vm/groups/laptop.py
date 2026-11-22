@@ -178,7 +178,7 @@ with scenario("a laptop whose seek waits for its new stream keeps the screen, wh
     held: list[Any] = []
     laptop.page.route("**/*.m4s", lambda route: held.append(route))
     laptop.js('(() => { const scrub = document.querySelector(".pp-scrub"); scrub.value = "200"; scrub.dispatchEvent(new Event("change")); })()')
-    eventually("the seek opens the film again at 200 s", lambda: len(opens) == 2)
+    eventually("the seek opens the film again at 200 s", lambda: laptop.page.wait_for_timeout(200) or len(opens) == 2)
     waited_until = time.monotonic() + QUIET_SECONDS + 10
     while time.monotonic() < waited_until:
         view = screen(phone)
