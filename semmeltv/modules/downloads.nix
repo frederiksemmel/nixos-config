@@ -272,7 +272,7 @@ in
           };
         };
 
-        services.cage.environment = {
+        services.semmeltv.coreEnvironment = {
           SEMMELTV_DOWNLOADS = "http://127.0.0.1:${toString cfg.port}";
           SEMMELTV_READY = "${downloadDir}/ready.json";
         };

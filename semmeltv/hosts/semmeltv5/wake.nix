@@ -12,7 +12,7 @@ let
   );
 in
 {
-  services.cage.environment.SEMMELTV_WAKE = config.services.wyoming.openwakeword.uri;
+  services.semmeltv.coreEnvironment.SEMMELTV_WAKE = config.services.wyoming.openwakeword.uri;
 
   services.wyoming.openwakeword = {
     enable = true;

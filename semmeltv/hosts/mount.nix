@@ -76,7 +76,9 @@ in
       owner = "semmeltv";
     };
 
-    services.cage.environment = {
+    services.cage.environment.SEMMELTV_META = meta;
+
+    services.semmeltv.coreEnvironment = {
       SEMMELTV_META = meta;
       SEMMELTV_REMOTE = "${remoteHost}:443";
     }

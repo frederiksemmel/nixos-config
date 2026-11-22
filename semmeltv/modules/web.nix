@@ -205,7 +205,7 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       (lib.mkIf cfg.api.enable {
-        services.cage.environment = {
+        services.semmeltv.coreEnvironment = {
           SEMMELTV_API = "127.0.0.1:${toString cfg.api.port}";
         }
         // lib.optionalAttrs (cfg.api.phoneMicrophone != null) {
@@ -225,7 +225,7 @@ in
           }
         ];
 
-        services.cage.environment = {
+        services.semmeltv.coreEnvironment = {
           SEMMELTV_ORIGINS = lib.concatStringsSep "," signIn.origins;
           SEMMELTV_SERVICE_TOKEN_FILE = signIn.serviceTokenFile;
         };

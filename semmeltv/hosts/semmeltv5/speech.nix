@@ -7,7 +7,7 @@ let
   model = pkgs.callPackage ../../parakeet/model.nix { };
 in
 {
-  services.cage.environment = {
+  services.semmeltv.coreEnvironment = {
     SEMMELTV_SPEECH = "tcp://${address}";
     SEMMELTV_LED = led;
   };

@@ -57,6 +57,15 @@ in
       description = "Home of the `semmeltv` user, holding `library`, `cache`, the database `semmeltv.db` and the feedback reports in `feedback`.";
     };
 
+    coreEnvironment = lib.mkOption {
+      type = lib.types.attrsOf lib.types.str;
+      default = { };
+      example = {
+        SEMMELTV_SPEECH = "tcp://127.0.0.1:10300";
+      };
+      description = "Environment of the SemmelTV core: the API, the database, the library, downloads, voice, headphones and TV control. The app under cage gets it too, on top of `services.cage.environment`.";
+    };
+
     adminUser = lib.mkOption {
       type = lib.types.str;
       example = "frederik";
@@ -143,6 +152,21 @@ in
       });
     '';
 
+    services.semmeltv.coreEnvironment = {
+      SEMMELTV_LIBRARY = "${cfg.stateDir}/library";
+      SEMMELTV_CACHE = "${cfg.stateDir}/cache";
+      SEMMELTV_STREAM_DIR = "${cfg.stateDir}/stream";
+      SEMMELTV_DB = "${cfg.stateDir}/semmeltv.db";
+      SEMMELTV_FEEDBACK = "${cfg.stateDir}/feedback";
+      SEMMELTV_GRIM = lib.getExe pkgs.grim;
+    }
+    // lib.optionalAttrs (cfg.tv.kind != null) { SEMMELTV_TV_KIND = cfg.tv.kind; }
+    // lib.optionalAttrs (cfg.tv.renderer != null) { SEMMELTV_TV_RENDERER = cfg.tv.renderer; }
+    // lib.optionalAttrs (cfg.tv.decodes != [ ]) {
+      SEMMELTV_TV_DECODES = lib.concatStringsSep "," cfg.tv.decodes;
+      SEMMELTV_TV_PORT = toString cfg.tv.port;
+    };
+
     services.cage = {
       enable = true;
       user = "semmeltv";
@@ -150,13 +174,7 @@ in
         wlroots_0_20 = pkgs.wlroots_0_20.override { enableXWayland = false; };
       };
       program = lib.getExe cfg.package;
-      environment = {
-        SEMMELTV_LIBRARY = "${cfg.stateDir}/library";
-        SEMMELTV_CACHE = "${cfg.stateDir}/cache";
-        SEMMELTV_STREAM_DIR = "${cfg.stateDir}/stream";
-        SEMMELTV_DB = "${cfg.stateDir}/semmeltv.db";
-        SEMMELTV_FEEDBACK = "${cfg.stateDir}/feedback";
-        SEMMELTV_GRIM = lib.getExe pkgs.grim;
+      environment = cfg.coreEnvironment // {
         FONTCONFIG_FILE = "${pkgs.makeFontsConf {
           fontDirectories = [
             pkgs.dejavu_fonts
@@ -166,12 +184,6 @@ in
         XCURSOR_THEME = "blank";
         WLR_LIBINPUT_NO_DEVICES = "1";
         SEMMELTV_DECODER = cfg.decoder;
-      }
-      // lib.optionalAttrs (cfg.tv.kind != null) { SEMMELTV_TV_KIND = cfg.tv.kind; }
-      // lib.optionalAttrs (cfg.tv.renderer != null) { SEMMELTV_TV_RENDERER = cfg.tv.renderer; }
-      // lib.optionalAttrs (cfg.tv.decodes != [ ]) {
-        SEMMELTV_TV_DECODES = lib.concatStringsSep "," cfg.tv.decodes;
-        SEMMELTV_TV_PORT = toString cfg.tv.port;
       };
     };
 

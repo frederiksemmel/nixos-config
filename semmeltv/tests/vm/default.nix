@@ -114,8 +114,9 @@ let
           };
         };
 
-        services.cage.environment = {
-          WLR_NO_HARDWARE_CURSORS = "1";
+        services.cage.environment.WLR_NO_HARDWARE_CURSORS = "1";
+
+        services.semmeltv.coreEnvironment = {
           SEMMELTV_INTRODB = "http://127.0.0.1:9198/v4/media";
           SEMMELTV_UP_NEXT_SECONDS = toString timing.upNext;
           SEMMELTV_QUIET_SECONDS = toString timing.quiet;
