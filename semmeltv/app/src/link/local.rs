@@ -14,18 +14,19 @@ use std::time::Duration;
 type Tell = Arc<dyn Fn(FromTv) + Send + Sync>;
 
 /// Starts the tv's end on a thread of its own. `tell` carries what it says
-/// back to the core, and `start` opens a player for each `ToTv::Play`. The
-/// thread ends once every clone of the returned link is dropped, and drops
-/// its player with it.
+/// back to the core, `start` opens a player for each `ToTv::Play`, and
+/// `menu` gets what the menu draws. The thread ends once every clone of the
+/// returned link is dropped, and drops its player with it.
 pub fn spawn(
     tell: impl Fn(FromTv) + Send + Sync + 'static,
     start: impl FnMut(&Play, Callbacks) -> io::Result<Player> + Send + 'static,
+    menu: impl Fn(ToTv) + Send + 'static,
 ) -> Link {
     let (link, orders) = Link::pair();
     let tell: Tell = Arc::new(tell);
     let spawned = thread::Builder::new()
         .name("tv".to_string())
-        .spawn(move || drive(&orders, &tell, start));
+        .spawn(move || drive(&orders, &tell, start, menu));
     if let Err(error) = spawned {
         eprintln!("tv: {error}");
     }
@@ -51,7 +52,12 @@ fn control(player: Option<&Player>, act: impl FnOnce(&Player)) {
     }
 }
 
-fn drive(orders: &Receiver<ToTv>, tell: &Tell, mut start: impl FnMut(&Play, Callbacks) -> io::Result<Player>) {
+fn drive(
+    orders: &Receiver<ToTv>,
+    tell: &Tell,
+    mut start: impl FnMut(&Play, Callbacks) -> io::Result<Player>,
+    menu: impl Fn(ToTv),
+) {
     let mut playing: Option<(String, Player)> = None;
     for order in orders {
         let of = |play: &str| {
@@ -130,14 +136,14 @@ fn drive(orders: &Receiver<ToTv>, tell: &Tell, mut start: impl FnMut(&Play, Call
                 segments,
                 credits,
             } => control(of(&play), |player| player.set_segments(segments, credits)),
-            ToTv::Welcome { .. }
-            | ToTv::Library { .. }
+            ToTv::Library { .. }
             | ToTv::Home(_)
             | ToTv::Key(_)
             | ToTv::Message(_)
             | ToTv::Panel(_)
             | ToTv::Together(_)
-            | ToTv::UpNext(_) => {}
+            | ToTv::UpNext(_) => menu(order),
+            ToTv::Welcome { .. } => {}
         }
     }
 }
@@ -182,6 +188,7 @@ mod tests {
                 }
             },
             start,
+            |_| {},
         );
         (link, heard)
     }
@@ -258,6 +265,7 @@ mod tests {
                 let _ = said.lock().unwrap().send(message);
             },
             |play, callbacks| Ok(Player::without_mpv(play, callbacks)),
+            |_| {},
         );
         link.send(ToTv::Play(play("a-play")));
         while !matches!(next(&heard), FromTv::Started { .. }) {}
@@ -302,6 +310,7 @@ mod tests {
                 let _ = said.lock().unwrap().send(message);
             },
             |play, callbacks| Ok(Player::without_mpv(play, callbacks)),
+            |_| {},
         );
         let intro = |play: &str| ToTv::Segments {
             play: play.to_string(),

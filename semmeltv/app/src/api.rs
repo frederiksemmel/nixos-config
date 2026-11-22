@@ -1727,7 +1727,6 @@ async fn stream_events(mut socket: WebSocket, bus: Bus) {
     loop {
         tokio::select! {
             event = events.recv() => match event {
-                Ok(event) if !event.for_phones() => {}
                 Ok(event) => if send_event(&mut socket, &event).await.is_err() { return },
                 Err(broadcast::error::RecvError::Lagged(_)) => {
                     let now_playing = bus.now_playing();

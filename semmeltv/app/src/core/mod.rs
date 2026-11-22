@@ -4,7 +4,7 @@ pub mod sound;
 mod tending;
 
 use crate::audio::{self, Audio};
-use crate::bus::{Bus, Event, Home, NowPlaying};
+use crate::bus::{Bus, NowPlaying};
 use crate::cache::Cache;
 use crate::command::Command;
 use crate::db::Db;
@@ -30,7 +30,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::thread;
 use std::time::Duration;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{mpsc, oneshot};
 
 const ANSWER_TIME: Duration = Duration::from_secs(5);
 const TV_PROFILE: &str = "tv_profile";
@@ -162,6 +162,7 @@ pub struct Setup {
     pub ready: Option<PathBuf>,
     pub headphones: bool,
     pub push_subject: String,
+    pub menu: Box<dyn Fn(crate::link::messages::ToTv) + Send>,
 }
 
 #[derive(Default)]
@@ -210,6 +211,7 @@ impl Core {
             ready,
             headphones,
             push_subject,
+            menu,
         } = setup;
         let saved = cache.saved_manifest();
         let library = match library::listed(&root, &saved)
@@ -286,7 +288,7 @@ impl Core {
             store,
             storage,
             handoff,
-            tv: actor::local_tv(&core),
+            tv: actor::local_tv(&core, menu),
             segments: crate::segments::finder(),
         };
         let actor = actor::Actor::new(core.clone(), profile, hardware).await;
@@ -358,20 +360,17 @@ impl Core {
         tokio::time::timeout(ANSWER_TIME, answer).await.ok()?.ok()
     }
 
+    /// Passes on what the tv said, as the in-process tv end's menu does.
+    pub fn tv_said(&self, said: crate::link::messages::FromTv) {
+        self.signal(Signal::Tv(said));
+    }
+
     pub(crate) fn signal(&self, signal: Signal) {
         let _ = self.inbox.send(Input::Signal(signal));
     }
 
-    pub fn subscribe(&self) -> broadcast::Receiver<Event> {
-        self.bus.subscribe().1
-    }
-
     pub fn bus(&self) -> &Bus {
         &self.bus
-    }
-
-    pub fn home(&self) -> Arc<Home> {
-        self.bus.home_state()
     }
 
     pub fn now_playing(&self) -> Option<NowPlaying> {

@@ -426,6 +426,23 @@ How 1c came out, where it differs from the table above:
 - The player gets a fourth callback, `remember`, which the local tv end turns
   into `FromTv::Remember`. `PROTOCOL` is 3.
 
+How 2 came out:
+
+- The in-process tv end passes `Library`, `Home`, `Key`, `Message`,
+  `Panel`, `Together` and `UpNext` on to the menu (`ui::inbox`): a channel
+  the Slint thread drains, woken with `invoke_changed`. They travel the
+  same link as the player's orders, so a tv end stuck on a player lock
+  stalls the menu too, as it will in the tv process, where the watchdog
+  deals with it.
+- `ui::run(inbox, tell, meta)` gets no `Core` and no runtime handle. The
+  menu's asks and keys go out as `FromTv::Ask`/`FromTv::Key`; `run_ui`
+  hands them to `Core::tv_said`.
+- The actor sends `Library` only when its revision changes and `Home` only
+  when it differs from the last one sent. The UI's `Home` (with the
+  library in it) moved from `bus.rs` to `ui.rs`; `Core::home()` and
+  `Core::subscribe()` are gone, and the bus carries only the phones'
+  events.
+
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
 its listed files.

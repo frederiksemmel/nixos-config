@@ -220,13 +220,18 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
         .build()
         .map_err(|error| error.to_string())?;
     let meta = args.meta().to_path_buf();
-    let core = runtime.block_on(start_core(args, cache))?;
-    let shown = ui::run(core, &meta, runtime.handle()).map_err(|error| error.to_string());
+    let (menu, inbox) = ui::inbox();
+    let core = runtime.block_on(start_core(args, cache, Box::new(menu)))?;
+    let shown = ui::run(inbox, move |said| core.tv_said(said), &meta).map_err(|error| error.to_string());
     runtime.shutdown_background();
     shown
 }
 
-async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
+async fn start_core(
+    args: Args,
+    cache: Cache,
+    menu: Box<dyn Fn(link::messages::ToTv) + Send>,
+) -> Result<core::Core, String> {
     let db = open_db(&args).await?;
     let capacity: Option<u64> = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
@@ -282,6 +287,7 @@ async fn start_core(args: Args, cache: Cache) -> Result<core::Core, String> {
             })
             .unwrap_or_else(|| "https://semmeltv.ch".to_string()),
         ready: env_path("SEMMELTV_READY"),
+        menu,
     };
     let core = core::Core::start(setup).await;
     if let Some(config) = api {

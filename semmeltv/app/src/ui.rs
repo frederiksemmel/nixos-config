@@ -1,14 +1,16 @@
 use crate::artwork;
-use crate::bus::{Event, Home, Mate, Panel, Together};
+use crate::bus::{Mate, Panel, Together};
 use crate::command::Command;
-use crate::core::{Core, Request};
 use crate::details::{self, Details, Ratings};
 use crate::display;
 use crate::heatmap;
-use crate::library::Item;
+use crate::library::{Item, Library};
+use crate::link::messages::{self, FromTv, ToTv, UiRequest};
 use crate::loader::{self, Art, Job, Pixels};
 use crate::nav::{Cursor, Effect, HomeRow, Nav, Reload, Watch};
 use crate::offline::{self, Presence};
+use crate::profile::ProfileId;
+use crate::progress::Progress;
 use crate::tags::Tags;
 use crate::tmdb::Kind;
 use crate::up_next;
@@ -16,15 +18,14 @@ use crate::watching::{self, Current};
 use crate::{AppWindow, CardData, OfflineState, ShelfData, UpNextData};
 use slint::{Color, ComponentHandle, Image, Model, ModelRc, SharedString, Timer, TimerMode, VecModel};
 use std::cell::RefCell;
-use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::mpsc::{self, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::{Arc, OnceLock};
 use std::time::{Duration, Instant};
-use tokio::sync::broadcast::error::RecvError;
 
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
 const UP_NEXT_TICK: Duration = Duration::from_millis(50);
@@ -45,11 +46,51 @@ struct Target {
     key: SharedString,
 }
 
+/// What the home screen shows: the library with the TV profile's progress,
+/// the people to switch to and how the downloads stand.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Home {
+    pub library: Arc<Library>,
+    pub profile: ProfileId,
+    pub people: Vec<(ProfileId, String)>,
+    pub progress: Arc<Progress>,
+    pub offline: bool,
+    pub downloaded: Arc<HashSet<PathBuf>>,
+    pub downloading: Option<PathBuf>,
+    pub problem: Option<String>,
+}
+
+/// The menu's end of the link: what the tv end passes on for the menu, and
+/// the window to wake when something arrives.
+pub struct Inbox {
+    received: Receiver<ToTv>,
+    window: Arc<OnceLock<slint::Weak<AppWindow>>>,
+}
+
+/// Where the tv end puts what the menu draws, and the inbox the menu reads
+/// it from. What arrives before the window opens waits for it.
+pub fn inbox() -> (impl Fn(ToTv) + Send + 'static, Inbox) {
+    let (sent, received) = mpsc::channel();
+    let window: Arc<OnceLock<slint::Weak<AppWindow>>> = Arc::default();
+    let waking = window.clone();
+    let deliver = move |order| {
+        if sent.send(order).is_ok()
+            && let Some(window) = waking.get()
+        {
+            let _ = window.upgrade_in_event_loop(|ui| ui.invoke_changed());
+        }
+    };
+    (deliver, Inbox { received, window })
+}
+
+type Tell = Rc<dyn Fn(FromTv)>;
+
 struct Screen {
     ui: AppWindow,
-    core: Core,
+    tell: Tell,
     nav: Nav,
     home: Arc<Home>,
+    library: Arc<Library>,
     together: Option<Together>,
     art: PathBuf,
     images: Sender<Job<Target>>,
@@ -58,7 +99,7 @@ struct Screen {
     up_next_timer: Timer,
 }
 
-pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<(), slint::PlatformError> {
+pub fn run(inbox: Inbox, tell: impl Fn(FromTv) + 'static, meta: &Path) -> Result<(), slint::PlatformError> {
     let ui = AppWindow::new()?;
     splash_after_first_frame(&ui);
     let handle = ui.as_weak();
@@ -70,31 +111,14 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
             }
         });
     });
-
-    let (events, received) = mpsc::channel();
-    let mut stream = core.subscribe();
-    let home = core.home();
-    let following = core.clone();
-    let handle = ui.as_weak();
-    runtime.spawn(async move {
-        loop {
-            let event = match stream.recv().await {
-                Ok(event) => event,
-                Err(RecvError::Lagged(_)) => Event::Home(following.home()),
-                Err(RecvError::Closed) => return,
-            };
-            if events.send(event).is_err() {
-                return;
-            }
-            let _ = handle.upgrade_in_event_loop(|ui| ui.invoke_changed());
-        }
-    });
-
+    let tell: Tell = Rc::new(tell);
+    let home = Arc::new(Home::default());
     let screen = Rc::new(RefCell::new(Screen {
         ui: ui.clone_strong(),
         nav: Nav::new((*home.library).clone()),
         together: None,
-        core: core.clone(),
+        tell: tell.clone(),
+        library: home.library.clone(),
         home,
         art: meta.join(artwork::DIR),
         images,
@@ -109,18 +133,21 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
         let Some(command) = Command::from_key(&text) else {
             return false;
         };
-        core.send(Request::Key(command));
+        tell(FromTv::Key(command));
         true
     });
 
     let changed = Rc::downgrade(&screen);
+    let Inbox { received, window } = inbox;
     ui.on_changed(move || {
         if let Some(screen) = changed.upgrade() {
-            for event in received.try_iter() {
-                screen.borrow_mut().follow(event);
+            for order in received.try_iter() {
+                screen.borrow_mut().follow(order);
             }
         }
     });
+    let _ = window.set(ui.as_weak());
+    ui.invoke_changed();
 
     ui.on_resized(display::refresh);
     display::refresh();
@@ -241,16 +268,34 @@ fn update_statuses(shelf: &ShelfData, statuses: impl Iterator<Item = (Presence, 
 }
 
 impl Screen {
-    fn follow(&mut self, event: Event) {
-        match event {
-            Event::Home(home) => self.show_home(home),
-            Event::Key(command) => self.navigate(command),
-            Event::Message(text) => self.show_message(text),
-            Event::Panel(panel) => self.show_panel(panel),
-            Event::UpNext(card) => self.show_up_next(card),
-            Event::Together(together) => self.show_together(together),
-            Event::Playback { .. } | Event::Notice(_) | Event::Audio(_) | Event::Screen { .. } => {}
+    fn follow(&mut self, order: ToTv) {
+        match order {
+            ToTv::Library { library, .. } => self.library = Arc::new(library),
+            ToTv::Home(home) => self.show_home(Arc::new(self.home_of(home))),
+            ToTv::Key(command) => self.navigate(command),
+            ToTv::Message(text) => self.show_message(text),
+            ToTv::Panel(panel) => self.show_panel(panel),
+            ToTv::UpNext(card) => self.show_up_next(card.map(|card| card.card(Instant::now()))),
+            ToTv::Together(together) => self.show_together(together),
+            _ => {}
         }
+    }
+
+    fn home_of(&self, home: messages::Home) -> Home {
+        Home {
+            library: self.library.clone(),
+            profile: home.profile,
+            people: home.people,
+            progress: Arc::new(home.progress),
+            offline: home.offline,
+            downloaded: Arc::new(home.downloaded),
+            downloading: home.downloading,
+            problem: home.problem,
+        }
+    }
+
+    fn ask(&self, request: UiRequest) {
+        (self.tell)(FromTv::Ask(request));
     }
 
     fn navigate(&mut self, command: Command) {
@@ -271,16 +316,16 @@ impl Screen {
                 if let Some(together) = &self.together
                     && let Some(mate) = together.people.get(index)
                 {
-                    self.core.send(Request::WatchWithOnTv {
+                    self.ask(UiRequest::WatchWithOnTv {
                         show: together.show.clone(),
                         with: mate.id,
                     });
                 }
             }
-            Effect::Play(path) => self.core.send(Request::PlayFile(path)),
+            Effect::Play(path) => self.ask(UiRequest::PlayFile(path)),
             Effect::Profile(index) => {
                 if let Some((profile, _)) = self.home.people.get(index) {
-                    self.core.send(Request::TvProfile(*profile));
+                    self.ask(UiRequest::TvProfile(*profile));
                 }
                 self.present_focus();
             }
@@ -440,7 +485,7 @@ impl Screen {
 
     fn ask_together(&self) {
         if let Some((show, _)) = self.nav.open_show() {
-            self.core.send(Request::TogetherOnTv(show.key.clone()));
+            self.ask(UiRequest::TogetherOnTv(show.key.clone()));
         }
     }
 

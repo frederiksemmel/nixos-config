@@ -1,7 +1,7 @@
 use super::tending::{self, Tended};
 use super::{Core, Input, Outcome, Request, ScreenCommand, ScreenKind, Seek, Signal, TV_PROFILE, sound};
 use crate::audio::{self, Audio};
-use crate::bus::{Home, Mate, Notice, NowPlaying, Panel, Playing, Skip, Together};
+use crate::bus::{Mate, Notice, NowPlaying, Panel, Playing, Skip, Together};
 use crate::command::Command;
 use crate::db::{self, Db};
 use crate::downloads::remote::Downloads;
@@ -10,7 +10,7 @@ use crate::fetch;
 use crate::hold::{self, Hold};
 use crate::intent::{self, Action, Control};
 use crate::library::Library;
-use crate::link::messages::{Ended, FromTv, Play, Report, Target, ToTv};
+use crate::link::messages::{self, Ended, FromTv, Play, Report, Target, ToTv, UiRequest, UpNextCard};
 use crate::link::{self, Link};
 use crate::offline::{Source, Store};
 use crate::player::renderer::{self, Handoff};
@@ -188,13 +188,25 @@ pub struct Actor {
     segments: segments::Finder,
     questions: HashMap<u64, oneshot::Sender<Outcome>>,
     asked: u64,
+    library_revision: u64,
+    library_sent: Option<u64>,
+    home_sent: Option<messages::Home>,
 }
 
-/// The in-process tv end for mpv: a thread that owns the player and tells
-/// the core what happens through its inbox.
-pub fn local_tv(core: &Core) -> Link {
+/// The in-process tv end for mpv: a thread that owns the player, tells the
+/// core what happens through its inbox and passes the menu's news to `menu`.
+pub fn local_tv(core: &Core, menu: impl Fn(ToTv) + Send + 'static) -> Link {
     let telling = core.clone();
-    link::local::spawn(move |said| telling.signal(Signal::Tv(said)), Player::start)
+    link::local::spawn(move |said| telling.signal(Signal::Tv(said)), Player::start, menu)
+}
+
+fn asked(request: UiRequest) -> Request {
+    match request {
+        UiRequest::PlayFile(path) => Request::PlayFile(path),
+        UiRequest::WatchWithOnTv { show, with } => Request::WatchWithOnTv { show, with },
+        UiRequest::TvProfile(profile) => Request::TvProfile(profile),
+        UiRequest::TogetherOnTv(show) => Request::TogetherOnTv(show),
+    }
 }
 
 fn resume_point(progress: &Progress, file: &Path) -> f64 {
@@ -266,6 +278,9 @@ impl Actor {
             segments,
             questions: HashMap::new(),
             asked: 0,
+            library_revision: 1,
+            library_sent: None,
+            home_sent: None,
         };
         actor.apply_audio(profile).await;
         actor.refresh_people().await;
@@ -369,7 +384,7 @@ impl Actor {
         if command == Command::Up {
             self.refresh_people().await;
         }
-        self.core.bus.key(command);
+        self.tv.send(ToTv::Key(command));
     }
 
     async fn apply_dialogue(&mut self, by: ProfileId) -> Outcome {
@@ -405,17 +420,31 @@ impl Actor {
             .map(|(_, name)| name.clone())
     }
 
-    fn publish_home(&self) {
-        self.core.bus.home(Home {
-            library: self.library.clone(),
+    /// Sends the menu its home screen when it changed, and the library first
+    /// when that changed since it was last sent.
+    fn publish_home(&mut self) {
+        if self.library_sent != Some(self.library_revision) {
+            self.library_sent = Some(self.library_revision);
+            self.home_sent = None;
+            self.tv.send(ToTv::Library {
+                revision: self.library_revision,
+                library: (*self.library).clone(),
+            });
+        }
+        let home = messages::Home {
+            library_revision: self.library_revision,
             profile: self.profile,
             people: self.people.clone(),
-            progress: self.progress.clone(),
+            progress: (*self.progress).clone(),
             offline: self.store.is_enabled(),
-            downloaded: self.downloaded.clone(),
+            downloaded: (*self.downloaded).clone(),
             downloading: self.downloading.clone(),
             problem: self.problem.clone(),
-        });
+        };
+        if self.home_sent.as_ref() != Some(&home) {
+            self.home_sent = Some(home.clone());
+            self.tv.send(ToTv::Home(home));
+        }
     }
 
     async fn refresh_people(&mut self) {
@@ -511,6 +540,7 @@ impl Actor {
             self.progress = self.core.progress(self.profile).await;
         }
         self.library = library.clone();
+        self.library_revision += 1;
         self.core.set_library(library);
         self.publish_home();
         self.queue_downloads(false);
@@ -716,7 +746,10 @@ impl Actor {
                 }
             }
             FromTv::Remember { file, remembered } => self.subtitles.remember(file, remembered),
-            FromTv::Hello { .. } | FromTv::Ask(_) => {}
+            FromTv::Ask(request) => {
+                self.answer(asked(request)).await;
+            }
+            FromTv::Hello { .. } => {}
         }
     }
 
@@ -920,7 +953,8 @@ impl Actor {
                 self.play_up_next().await;
             } else if let Some(up) = &self.up_next {
                 eprintln!("up next: {} in {:?}", up.file.display(), *crate::up_next::COUNTDOWN);
-                self.core.bus.up_next(Some(up.card.clone()));
+                self.tv
+                    .send(ToTv::UpNext(Some(UpNextCard::of(&up.card, Instant::now()))));
             }
         }
     }
@@ -929,14 +963,14 @@ impl Actor {
         let Some(UpNext { file, owner, .. }) = self.up_next.take() else {
             return;
         };
-        self.core.bus.up_next(None);
+        self.tv.send(ToTv::UpNext(None));
         let start = resume_point(&*self.progress_of(owner).await, &file);
         self.play_from(&file, start, owner).await;
     }
 
     fn cancel_up_next(&mut self) {
         if self.up_next.take().is_some() {
-            self.core.bus.up_next(None);
+            self.tv.send(ToTv::UpNext(None));
         }
     }
 
@@ -1117,7 +1151,7 @@ impl Actor {
 
     async fn publish_together(&self, key: &str) {
         if let Some(together) = self.together_on_tv(key).await {
-            self.core.bus.together(together);
+            self.tv.send(ToTv::Together(together));
         }
     }
 
@@ -1750,11 +1784,11 @@ impl Actor {
         if let Some(tv) = &self.on_tv {
             tv.toast(heading, status, hold);
         }
-        self.core.bus.panel(Panel {
+        self.tv.send(ToTv::Panel(Panel {
             heading: heading.to_string(),
             status: status.to_string(),
             hold,
-        });
+        }));
     }
 
     fn tell(&self, text: &str) {
@@ -1817,14 +1851,13 @@ impl Actor {
     }
 
     fn show_message(&self, message: String) {
-        self.core.bus.message(message);
+        self.tv.send(ToTv::Message(message));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bus::Event;
 
     fn hardware() -> Hardware {
         Hardware {
@@ -1861,10 +1894,10 @@ mod tests {
         let (link, orders) = Link::pair();
         let core = core_with_tv(core, inbox, link).await;
         core.ask(Request::PlayFile(up(&core))).await.unwrap();
-        let play = match orders.recv_timeout(Duration::from_secs(2)) {
-            Ok(ToTv::Play(play)) => play.play,
-            other => panic!("the tv was told {other:?}"),
-        };
+        let play = told(&orders, |order| match order {
+            ToTv::Play(play) => Some(play.play),
+            _ => None,
+        });
         (core, play)
     }
 
@@ -2005,6 +2038,7 @@ mod tests {
                     let _ = started.send(());
                     Ok(player)
                 },
+                |_| {},
             );
             let core = core_with_tv(core, inbox, tv).await;
             assert!(core.ask(Request::PlayFile(up(&core))).await.unwrap().ok);
@@ -2020,6 +2054,7 @@ mod tests {
         let tv = link::local::spawn(
             move |said| telling.signal(Signal::Tv(said)),
             |play, callbacks| Ok(Player::without_mpv(play, callbacks)),
+            |_| {},
         );
         let core = core_with_tv(core, inbox, tv).await;
         core.ask(Request::PlayFile(up(&core))).await.unwrap();
@@ -2058,10 +2093,10 @@ mod tests {
         let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware).await;
         tokio::spawn(actor.run(inbox));
         core.ask(Request::PlayFile(up(&core))).await.unwrap();
-        let play = match orders.recv_timeout(Duration::from_secs(2)) {
-            Ok(ToTv::Play(play)) => play.play,
-            other => panic!("the tv was told {other:?}"),
-        };
+        let play = told(&orders, |order| match order {
+            ToTv::Play(play) => Some(play.play),
+            _ => None,
+        });
         core.signal(Signal::Tv(FromTv::Report(Box::new(Report {
             play: Some(play.clone()),
             ..Report::default()
@@ -2114,6 +2149,7 @@ mod tests {
                 let _ = started.send((play.play.clone(), play.subtitles.clone()));
                 Ok(Player::without_mpv(play, callbacks))
             },
+            |_| {},
         );
         let core = core_with_tv(core, inbox, tv).await;
         core.ask(Request::PlayFile(up(&core))).await.unwrap();
@@ -2186,18 +2222,20 @@ mod tests {
     async fn a_video_that_does_not_start_says_why_and_leaves_nothing_playing() {
         let (core, inbox) = Core::detached(db::test_library()).await;
         let telling = core.clone();
+        let (shown, menu) = std::sync::mpsc::channel();
         let tv = link::local::spawn(
             move |said| telling.signal(Signal::Tv(said)),
             |_, _| Err(std::io::Error::other("mpv is missing")),
+            move |order| {
+                let _ = shown.send(order);
+            },
         );
         let core = core_with_tv(core, inbox, tv).await;
-        let mut events = core.subscribe();
         core.ask(Request::PlayFile(up(&core))).await.unwrap();
-        let message = loop {
-            if let Event::Message(message) = events.recv().await.unwrap() {
-                break message;
-            }
-        };
+        let message = told(&menu, |order| match order {
+            ToTv::Message(message) => Some(message),
+            _ => None,
+        });
         assert_eq!(message, "The video did not start: mpv is missing");
         settled(&core).await;
         assert_eq!(core.now_playing(), None);
@@ -2326,22 +2364,26 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn the_home_the_tv_draws_follows_the_tv_profile() {
-        let core = core().await;
+        let (core, orders) = core_and_tv().await;
         let mami = ProfileId(2);
+        let library = told(&orders, |order| match order {
+            ToTv::Library { revision: 1, library } => Some(library),
+            _ => None,
+        });
+        let first = told(&orders, home);
+        assert_eq!(first.profile, ProfileId::FIRST);
         core.ask(Request::Phone(report(&core, stream::Moment::Paused, 600.0, mami)))
             .await;
-        assert_eq!(core.home().profile, ProfileId::FIRST);
-        assert!(watching::current(&core.home().library, &core.home().progress).is_empty());
-        let mut events = core.subscribe();
+        assert!(watching::current(&library, &first.progress).is_empty());
         let shown = core.ask(Request::TvProfile(mami)).await.unwrap();
         assert_eq!(shown.message, "The TV shows what Mami is watching");
-        let home = loop {
-            if let Event::Home(home) = events.recv().await.unwrap() {
-                break home;
-            }
-        };
-        assert_eq!((home.profile, core.tv_profile()), (mami, mami));
-        assert_eq!(watching::current(&home.library, &home.progress).len(), 1);
+        let home = told(&orders, |order| {
+            assert!(!matches!(order, ToTv::Library { .. }), "the library did not change");
+            home(order).filter(|home| home.profile == mami)
+        });
+        assert_eq!(core.tv_profile(), mami);
+        assert_eq!(home.library_revision, 1);
+        assert_eq!(watching::current(&library, &home.progress).len(), 1);
         assert!(home.people.iter().any(|(id, name)| *id == mami && name == "Mami"));
     }
 
@@ -2415,12 +2457,41 @@ mod tests {
         );
     }
 
-    async fn next_together(events: &mut tokio::sync::broadcast::Receiver<Event>) -> crate::bus::Together {
-        loop {
-            if let Event::Together(together) = events.recv().await.unwrap() {
-                return together;
+    /// A core whose tv end is the test: the menu's news and the player's
+    /// orders arrive on the receiver.
+    async fn core_and_tv() -> (Core, std::sync::mpsc::Receiver<ToTv>) {
+        let (core, inbox) = Core::detached(db::test_library()).await;
+        let (link, orders) = Link::pair();
+        (core_with_tv(core, inbox, link).await, orders)
+    }
+
+    /// Waits for the first thing the tv is told that `pick` takes, passing
+    /// over the rest.
+    fn told<T>(orders: &std::sync::mpsc::Receiver<ToTv>, pick: impl Fn(ToTv) -> Option<T>) -> T {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        block_in_place(|| {
+            loop {
+                let left = deadline.saturating_duration_since(Instant::now());
+                let order = orders.recv_timeout(left).expect("the tv was told in time");
+                if let Some(picked) = pick(order) {
+                    return picked;
+                }
             }
+        })
+    }
+
+    fn home(order: ToTv) -> Option<messages::Home> {
+        match order {
+            ToTv::Home(home) => Some(home),
+            _ => None,
         }
+    }
+
+    fn next_together(orders: &std::sync::mpsc::Receiver<ToTv>) -> crate::bus::Together {
+        told(orders, |order| match order {
+            ToTv::Together(together) => Some(together),
+            _ => None,
+        })
     }
 
     fn people(together: &crate::bus::Together) -> Vec<(&str, &str, bool)> {
@@ -2433,11 +2504,10 @@ mod tests {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn the_tv_lists_who_to_watch_a_series_with_and_ok_pairs_then_moves_to_their_place() {
-        let core = core().await;
+        let (core, orders) = core_and_tv().await;
         let mami = ProfileId(2);
-        let mut events = core.subscribe();
-        core.send(Request::TogetherOnTv("dark".to_string()));
-        let together = next_together(&mut events).await;
+        core.tv_said(FromTv::Ask(UiRequest::TogetherOnTv("dark".to_string())));
+        let together = next_together(&orders);
         assert_eq!(together.show, "dark");
         assert_eq!(
             people(&together),
@@ -2457,7 +2527,7 @@ mod tests {
             Outcome::done("You watch Dark together with Mami")
         );
         assert_eq!(core.db().partners(mami, "dark").await.unwrap(), [ProfileId::FIRST]);
-        let together = next_together(&mut events).await;
+        let together = next_together(&orders);
         assert_eq!(people(&together)[0], ("Mami", "Hasn't started yet", true));
         assert_eq!(people(&together).len(), 3);
         assert_eq!(
@@ -2474,24 +2544,24 @@ mod tests {
             },
         );
         core.publish_progress(mami, theirs);
-        core.send(Request::TogetherOnTv("dark".to_string()));
-        let mut together = next_together(&mut events).await;
+        core.tv_said(FromTv::Ask(UiRequest::TogetherOnTv("dark".to_string())));
+        let mut together = next_together(&orders);
         while together.people[0].line == "Hasn't started yet" {
-            together = next_together(&mut events).await;
+            together = next_together(&orders);
         }
         assert_eq!(people(&together)[0], ("Mami", "Up next S1 E2", true));
         assert_eq!(
             core.ask(with_mami()).await.unwrap(),
             Outcome::done("You're at Mami's place now: Dark · S1 E2")
         );
-        let together = next_together(&mut events).await;
+        let together = next_together(&orders);
         assert_eq!(people(&together)[0], ("Mami", "At your place", true));
     }
 
     #[tokio::test(flavor = "multi_thread")]
-    async fn a_new_library_reaches_both_frontends_at_once() {
-        let core = core().await;
-        let mut events = core.subscribe();
+    async fn a_new_library_reaches_both_frontends_at_once_and_is_sent_once() {
+        let (core, orders) = core_and_tv().await;
+        told(&orders, home);
         let mut library = (*core.library()).clone();
         let mut diaries = library.movies[0].clone();
         diaries.id = 87;
@@ -2499,31 +2569,31 @@ mod tests {
         diaries.title = "The Princess Diaries".to_string();
         diaries.path = PathBuf::from("/lib/Movies/The Princess Diaries (2001)/Diaries.mkv");
         library.movies.push(diaries);
-        core.signal(Signal::Library(Ok(library)));
-        let home = loop {
-            if let Event::Home(home) = events.recv().await.unwrap() {
-                break home;
-            }
-        };
-        assert!(
-            home.library
-                .movies
-                .iter()
-                .any(|movie| movie.title == "The Princess Diaries")
-        );
+        core.signal(Signal::Library(Ok(library.clone())));
+        let sent = told(&orders, |order| match order {
+            ToTv::Library { revision, library } => Some((revision, library)),
+            _ => None,
+        });
+        assert_eq!(sent, (2, library.clone()));
+        assert_eq!(told(&orders, home).library_revision, 2);
         assert!(core.library().movies.iter().any(|movie| movie.id == 87));
+        core.signal(Signal::Library(Ok(library)));
+        core.ask(Request::TvProfile(ProfileId(2))).await.unwrap();
+        let home = told(&orders, |order| {
+            assert!(!matches!(order, ToTv::Library { .. }), "the same library again");
+            home(order).filter(|home| home.profile == ProfileId(2))
+        });
+        assert_eq!(home.library_revision, 2);
     }
 
     #[tokio::test(flavor = "multi_thread")]
     async fn a_remote_key_goes_to_the_screen_while_nothing_plays() {
-        let core = core().await;
-        let mut events = core.subscribe();
-        core.send(Request::Key(Command::Down));
-        let key = loop {
-            if let Event::Key(key) = events.recv().await.unwrap() {
-                break key;
-            }
-        };
+        let (core, orders) = core_and_tv().await;
+        core.tv_said(FromTv::Key(Command::Down));
+        let key = told(&orders, |order| match order {
+            ToTv::Key(key) => Some(key),
+            _ => None,
+        });
         assert_eq!(key, Command::Down);
         let paused = core.ask(Request::Control(Control::Pause)).await.unwrap();
         assert_eq!(paused, Outcome::refused("Pause, but nothing is playing"));

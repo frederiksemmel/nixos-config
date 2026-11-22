@@ -1,14 +1,8 @@
 use crate::audio;
-use crate::command::Command;
-use crate::library::Library;
 use crate::profile::ProfileId;
-use crate::progress::Progress;
 use crate::screen;
 use crate::segments::Kind;
-use crate::up_next;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::broadcast;
@@ -19,46 +13,9 @@ const BACKLOG: usize = 64;
 #[serde(tag = "type", rename_all = "kebab-case")]
 pub enum Event {
     Notice(Notice),
-    Playback {
-        now_playing: Option<NowPlaying>,
-    },
+    Playback { now_playing: Option<NowPlaying> },
     Audio(audio::View),
-    Screen {
-        screen: screen::View,
-    },
-    #[serde(skip)]
-    Home(Arc<Home>),
-    #[serde(skip)]
-    Key(Command),
-    #[serde(skip)]
-    Message(String),
-    #[serde(skip)]
-    Panel(Panel),
-    #[serde(skip)]
-    UpNext(Option<up_next::Card>),
-    #[serde(skip)]
-    Together(Together),
-}
-
-impl Event {
-    pub fn for_phones(&self) -> bool {
-        matches!(
-            self,
-            Self::Notice(_) | Self::Playback { .. } | Self::Audio(_) | Self::Screen { .. }
-        )
-    }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Home {
-    pub library: Arc<Library>,
-    pub profile: ProfileId,
-    pub people: Vec<(ProfileId, String)>,
-    pub progress: Arc<Progress>,
-    pub offline: bool,
-    pub downloaded: Arc<HashSet<PathBuf>>,
-    pub downloading: Option<PathBuf>,
-    pub problem: Option<String>,
+    Screen { screen: screen::View },
 }
 
 /// Who the TV's profile can watch `show` with: partners first, with where
@@ -160,7 +117,6 @@ pub struct Bus {
     now_playing: Arc<Mutex<Option<NowPlaying>>>,
     audio: Arc<Mutex<Option<audio::View>>>,
     screen: Arc<Mutex<screen::View>>,
-    home: Arc<Mutex<Arc<Home>>>,
 }
 
 impl Default for Bus {
@@ -170,7 +126,6 @@ impl Default for Bus {
             now_playing: Arc::default(),
             audio: Arc::default(),
             screen: Arc::default(),
-            home: Arc::default(),
         }
     }
 }
@@ -179,39 +134,6 @@ impl Bus {
     pub fn subscribe(&self) -> (Option<NowPlaying>, broadcast::Receiver<Event>) {
         let now_playing = self.now_playing.lock().unwrap();
         (now_playing.clone(), self.events.subscribe())
-    }
-
-    pub fn home_state(&self) -> Arc<Home> {
-        self.home.lock().unwrap().clone()
-    }
-
-    pub fn home(&self, home: Home) {
-        let mut current = self.home.lock().unwrap();
-        if **current != home {
-            let home = Arc::new(home);
-            *current = home.clone();
-            let _ = self.events.send(Event::Home(home));
-        }
-    }
-
-    pub fn key(&self, command: Command) {
-        let _ = self.events.send(Event::Key(command));
-    }
-
-    pub fn message(&self, text: String) {
-        let _ = self.events.send(Event::Message(text));
-    }
-
-    pub fn together(&self, together: Together) {
-        let _ = self.events.send(Event::Together(together));
-    }
-
-    pub fn panel(&self, panel: Panel) {
-        let _ = self.events.send(Event::Panel(panel));
-    }
-
-    pub fn up_next(&self, card: Option<up_next::Card>) {
-        let _ = self.events.send(Event::UpNext(card));
     }
 
     pub fn now_playing(&self) -> Option<NowPlaying> {
