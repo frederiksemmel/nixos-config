@@ -1,7 +1,7 @@
 //! Pausing and resuming with a short volume fade instead of a hard cut.
 
+use super::commands::Commands;
 use serde_json::{Value, json};
-use std::os::unix::net::UnixStream;
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::Duration;
@@ -17,9 +17,9 @@ pub struct Fader {
 }
 
 impl Fader {
-    pub fn start(stream: UnixStream) -> Self {
+    pub fn start(commands: Commands) -> Self {
         let (wanted, requests) = mpsc::channel();
-        thread::spawn(move || run(stream, &requests));
+        thread::spawn(move || run(&commands, &requests));
         Self { wanted }
     }
 
@@ -28,7 +28,7 @@ impl Fader {
     }
 }
 
-fn run(mut stream: UnixStream, requests: &Receiver<bool>) {
+fn run(commands: &Commands, requests: &Receiver<bool>) {
     let mut fade = Fade::default();
     let Ok(mut paused) = requests.recv() else {
         return;
@@ -36,7 +36,7 @@ fn run(mut stream: UnixStream, requests: &Receiver<bool>) {
     loop {
         let request = match fade.step(paused) {
             Some((command, wait)) => {
-                if super::send(&mut stream, command).is_err() {
+                if !commands.send(command) {
                     return;
                 }
                 requests.recv_timeout(wait)
@@ -102,6 +102,7 @@ fn volume(level: u32) -> Value {
 mod tests {
     use super::*;
     use std::io::Read;
+    use std::os::unix::net::UnixStream;
     use std::time::Instant;
 
     fn plan(level: u32, paused: bool) -> Vec<(Value, Duration)> {
@@ -148,7 +149,7 @@ mod tests {
     #[test]
     fn resuming_halfway_through_a_fade_out_turns_back_up_without_pausing() {
         let (stream, mut mpv) = UnixStream::pair().unwrap();
-        let fader = Fader::start(stream);
+        let fader = Fader::start(Commands::new(stream));
         let started = Instant::now();
         fader.set_paused(true);
         thread::sleep(STEP_EVERY * 3 + STEP_EVERY / 2);

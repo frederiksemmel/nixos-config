@@ -2,7 +2,6 @@ use super::tending::{self, Tended};
 use super::{Core, Input, Outcome, Request, ScreenCommand, ScreenKind, Seek, Signal, TV_PROFILE, sound};
 use crate::audio::{self, Audio};
 use crate::bus::{Home, Mate, NowPlaying, Panel, Playing, Skip, Together, Voice as VoiceEvent};
-use crate::card;
 use crate::command::Command;
 use crate::db::{self, Db};
 use crate::downloads::remote::Downloads;
@@ -13,7 +12,6 @@ use crate::intent::{self, Action, Control};
 use crate::led::Led;
 use crate::library::Library;
 use crate::offline::{Source, Store};
-use crate::overlay;
 use crate::player::renderer::{self, Handoff};
 use crate::player::{self, Finish, Player};
 use crate::profile::ProfileId;
@@ -537,7 +535,6 @@ impl Actor {
                         start,
                         tracks,
                         self.caption(path),
-                        self.billing(path, start),
                         self.title(path),
                         self.subtitles.clone(),
                         &self.audio_device(),
@@ -616,17 +613,6 @@ impl Actor {
         }
         let movie = self.library.movies.iter().find(|movie| movie.path == path);
         movie.map_or_else(|| path.display().to_string(), |movie| movie.title.clone())
-    }
-
-    fn billing(&self, path: &Path, start: f64) -> card::Billing {
-        let (title, mut lines) = match self.library.find_episode(path) {
-            Some((show, episode)) => (show.title.clone(), vec![episode.label()]),
-            None => (self.caption(path), Vec::new()),
-        };
-        if start > 1.0 {
-            lines.push(format!("Picks up at {}", overlay::clock(start)));
-        }
-        card::Billing { title, lines }
     }
 
     fn title(&self, path: &Path) -> Option<Title> {

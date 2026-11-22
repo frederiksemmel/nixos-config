@@ -23,7 +23,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Sender};
-use std::thread;
 use std::time::{Duration, Instant};
 use tokio::sync::broadcast::error::RecvError;
 
@@ -123,10 +122,8 @@ pub fn run(core: Core, meta: &Path, runtime: &tokio::runtime::Handle) -> Result<
         }
     });
 
-    ui.on_resized(|| {
-        thread::spawn(display::refresh);
-    });
-    thread::spawn(display::refresh);
+    ui.on_resized(display::refresh);
+    display::refresh();
     ui.run()
 }
 

@@ -1,11 +1,15 @@
 use serde_json::Value;
 use std::fmt;
+use std::io::Read;
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, PoisonError};
+use std::sync::LazyLock;
+use std::sync::mpsc::{self, Sender};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 const SETTLE: Duration = Duration::from_secs(2);
+const ANSWER_WITHIN: Duration = Duration::from_secs(5);
+const POLL: Duration = Duration::from_millis(20);
 const TOLERANCE: f64 = 0.005;
 const MAX_MULTIPLE: u32 = 5;
 const UI_SIZE: (u64, u64) = (1920, 1080);
@@ -26,17 +30,9 @@ pub struct Mode {
 }
 
 impl Mode {
-    pub fn apply(&self) {
+    fn apply(&self) -> bool {
         let mode = format!("{}x{}@{:.6}Hz", self.width, self.height, self.refresh);
-        let result = Command::new("wlr-randr")
-            .args(["--output", &self.output, "--mode", &mode])
-            .stdin(Stdio::null())
-            .status();
-        match result {
-            Ok(status) if !status.success() => eprintln!("display: wlr-randr --mode {mode}: {status}"),
-            Ok(_) => {}
-            Err(error) => eprintln!("display: wlr-randr: {error}"),
-        }
+        answer("wlr-randr", &["--output", &self.output, "--mode", &mode], ANSWER_WITHIN).is_some()
     }
 }
 
@@ -176,37 +172,97 @@ impl Wanted {
     }
 }
 
-static WANTED: Mutex<Wanted> = Mutex::new(Wanted::MENU);
+type Then = Box<dyn FnOnce() + Send>;
 
-fn outputs() -> Option<Value> {
-    let output = Command::new("wlr-randr")
-        .arg("--json")
-        .stdin(Stdio::null())
-        .output()
-        .ok()?;
-    serde_json::from_slice(&output.stdout).ok()
+enum Change {
+    Play(u64, Video),
+    Stop(u64),
+    Refresh,
 }
 
-fn settle(change: impl FnOnce(&mut Wanted)) {
-    let mut wanted = WANTED.lock().unwrap_or_else(PoisonError::into_inner);
-    change(&mut wanted);
-    if let Some(mode) = outputs().and_then(|outputs| wanted.change(&outputs)) {
-        eprintln!("display: {mode} for {}", wanted.purpose());
-        mode.apply();
-        thread::sleep(SETTLE);
+static SETTLER: LazyLock<Sender<(Change, Option<Then>)>> = LazyLock::new(|| {
+    let (settler, changes) = mpsc::channel::<(Change, Option<Then>)>();
+    thread::spawn(move || {
+        let mut wanted = Wanted::MENU;
+        for (change, then) in changes {
+            match change {
+                Change::Play(player, video) => wanted.play(player, video),
+                Change::Stop(player) => wanted.stop(player),
+                Change::Refresh => {}
+            }
+            settle(&wanted);
+            if let Some(then) = then {
+                then();
+            }
+        }
+    });
+    settler
+});
+
+/// Runs `program` and gives its output, or nothing when it fails or has not finished `within`.
+fn answer(program: &str, args: &[&str], within: Duration) -> Option<Vec<u8>> {
+    let shown = format!("{program} {}", args.join(" "));
+    let mut child = match Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .spawn()
+    {
+        Ok(child) => child,
+        Err(error) => {
+            eprintln!("display: {shown}: {error}");
+            return None;
+        }
+    };
+    let mut stdout = child.stdout.take()?;
+    let output = thread::spawn(move || {
+        let mut output = Vec::new();
+        let _ = stdout.read_to_end(&mut output);
+        output
+    });
+    let deadline = Instant::now() + within;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return output.join().ok(),
+            Ok(Some(status)) => {
+                eprintln!("display: {shown}: {status}");
+                return None;
+            }
+            Ok(None) if Instant::now() < deadline => thread::sleep(POLL),
+            Ok(None) | Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                eprintln!("display: {shown}: no answer within {} s", within.as_secs());
+                return None;
+            }
+        }
     }
 }
 
-pub fn play(player: u64, video: Video) {
-    settle(|wanted| wanted.play(player, video));
+fn outputs() -> Option<Value> {
+    serde_json::from_slice(&answer("wlr-randr", &["--json"], ANSWER_WITHIN)?).ok()
+}
+
+fn settle(wanted: &Wanted) {
+    if let Some(mode) = outputs().and_then(|outputs| wanted.change(&outputs)) {
+        eprintln!("display: {mode} for {}", wanted.purpose());
+        if mode.apply() {
+            thread::sleep(SETTLE);
+        }
+    }
+}
+
+/// Asks for the mode that suits `video`, and calls `then` once the display shows it.
+pub fn play(player: u64, video: Video, then: impl FnOnce() + Send + 'static) {
+    let _ = SETTLER.send((Change::Play(player, video), Some(Box::new(then))));
 }
 
 pub fn stop(player: u64) {
-    settle(|wanted| wanted.stop(player));
+    let _ = SETTLER.send((Change::Stop(player), None));
 }
 
 pub fn refresh() {
-    settle(|_| {});
+    let _ = SETTLER.send((Change::Refresh, None));
 }
 
 #[cfg(test)]
@@ -336,6 +392,15 @@ mod tests {
                 .map(|mode| (mode.width, mode.height, mode.refresh));
             assert_eq!(got, want, "{name}");
         }
+    }
+
+    #[test]
+    fn a_program_that_hangs_is_given_up_on_and_one_that_answers_is_heard() {
+        let started = Instant::now();
+        assert_eq!(answer("sleep", &["10"], Duration::from_millis(200)), None);
+        assert!(started.elapsed() < Duration::from_secs(2), "{:?}", started.elapsed());
+        assert_eq!(answer("echo", &["mode"], ANSWER_WITHIN), Some(b"mode\n".to_vec()));
+        assert_eq!(answer("false", &[], ANSWER_WITHIN), None);
     }
 
     #[test]

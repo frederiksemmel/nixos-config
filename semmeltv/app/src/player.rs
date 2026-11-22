@@ -1,9 +1,9 @@
+mod commands;
 mod fade;
 mod health;
 pub mod renderer;
 
 use crate::audio;
-use crate::card::{self, Billing};
 use crate::command::Command;
 use crate::display::{self, Video};
 use crate::overlay::{self, View};
@@ -12,6 +12,7 @@ use crate::seek::{self, Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment, Title};
 use crate::sidecar;
 use crate::subtitles::{self, Answer, Change, Observed, Subtitles};
+use commands::Commands;
 use health::{Health, Reading};
 use serde_json::{Value, json};
 use std::env;
@@ -50,10 +51,8 @@ const DROPPED_ID: u64 = 8;
 const LATE_ID: u64 = 9;
 const WAITING_ID: u64 = 10;
 const PROMPT_ID: u64 = 1;
-const LOADING_ID: u64 = 2;
 const OVERLAY_ID: u64 = 3;
 const TOAST_ID: u64 = 4;
-const CARD_FADE: Duration = Duration::from_millis(300);
 const KEYBINDS: [(&str, &str); 12] = [
     ("ESC", "script-message semmeltv-back"),
     ("BS", "script-message semmeltv-back"),
@@ -197,22 +196,9 @@ impl Phase {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-enum Card {
-    #[default]
-    Gone,
-    Shown {
-        opened: Instant,
-    },
-    Fading {
-        opened: Instant,
-        since: Instant,
-    },
-}
-
 #[derive(Default)]
 struct Playback {
-    stream: Option<UnixStream>,
+    commands: Option<Commands>,
     name: String,
     position: f64,
     duration: f64,
@@ -236,8 +222,8 @@ struct Playback {
     toast_until: Option<Instant>,
     subtitles: Subtitles,
     tracks: Tracks,
-    billing: Billing,
-    card: Card,
+    settling: bool,
+    restarted: bool,
     on_save: Option<Box<dyn Fn() + Send>>,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
     health: Health,
@@ -247,12 +233,14 @@ struct Playback {
 
 impl Playback {
     fn video_changed(&mut self, video: Video) -> Option<u64> {
-        (self.video.replace(video) != Some(video)).then_some(self.id)
+        let changed = self.video.replace(video) != Some(video);
+        self.settling |= changed;
+        changed.then_some(self.id)
     }
 
     fn send(&mut self, command: Value) {
-        if let Some(stream) = self.stream.as_mut() {
-            let _ = send(stream, command);
+        if let Some(commands) = &self.commands {
+            commands.send(command);
         }
     }
 
@@ -381,6 +369,29 @@ impl Playback {
         self.position = position;
     }
 
+    /// mpv has the first frame; playback starts once the display has its mode too.
+    fn restart(&mut self, now: Instant) {
+        if self.settling {
+            self.restarted = true;
+        } else {
+            self.start(now);
+        }
+    }
+
+    fn settled(&mut self, now: Instant) {
+        self.settling = false;
+        if std::mem::take(&mut self.restarted) {
+            self.start(now);
+        }
+    }
+
+    fn start(&mut self, now: Instant) {
+        if self.phase == Phase::Opening {
+            self.send(json!(["set_property", "pause", false]));
+            self.begin(now);
+        }
+    }
+
     fn begin(&mut self, now: Instant) {
         if self.phase == Phase::Opening {
             self.phase = Phase::Playing { paused: false };
@@ -430,7 +441,6 @@ impl Playback {
     }
 
     fn tick(&mut self, now: Instant) {
-        self.show_card(now);
         if self.toast_until.is_some_and(|until| now >= until) {
             self.hide_toast();
         }
@@ -447,36 +457,6 @@ impl Playback {
                 window.trouble(),
                 health::WINDOW.as_secs()
             );
-        }
-    }
-
-    fn open_card(&mut self, now: Instant) {
-        self.card = Card::Shown { opened: now };
-        self.show_card(now);
-    }
-
-    fn show_card(&mut self, now: Instant) {
-        let (opened, opacity) = match self.card {
-            Card::Gone => return,
-            Card::Shown { opened } => (opened, 1.0),
-            Card::Fading { opened, since } => (
-                opened,
-                1.0 - now.duration_since(since).as_secs_f64() / CARD_FADE.as_secs_f64(),
-            ),
-        };
-        if opacity <= 0.0 {
-            self.card = Card::Gone;
-            self.send(card_command(None));
-            return;
-        }
-        let frame = card::frame(&self.billing, now.duration_since(opened), opacity);
-        self.send(card_command(Some(&frame)));
-    }
-
-    fn close_card(&mut self, now: Instant) {
-        if let Card::Shown { opened } = self.card {
-            self.card = Card::Fading { opened, since: now };
-            self.send(json!(["set_property", "background-color", "#000000"]));
         }
     }
 
@@ -624,21 +604,6 @@ fn prompt_command(prompt: Option<Kind>) -> Value {
     }
 }
 
-fn card_command(frame: Option<&str>) -> Value {
-    let (format, data) = match frame {
-        Some(frame) => ("ass-events", frame),
-        None => ("none", ""),
-    };
-    json!({
-        "name": "osd-overlay",
-        "id": LOADING_ID,
-        "format": format,
-        "data": data,
-        "res_x": overlay::WIDTH,
-        "res_y": overlay::HEIGHT,
-    })
-}
-
 pub struct Player {
     backend: Backend,
 }
@@ -669,7 +634,6 @@ impl Player {
         start: f64,
         tracks: Tracks,
         name: String,
-        billing: Billing,
         title: Option<Title>,
         subtitles: Subtitles,
         audio_device: &str,
@@ -693,7 +657,6 @@ impl Player {
             .arg(format!("--af={}", sound_filter(dialogue)))
             .arg("--audio-stream-silence")
             .arg("--no-osc")
-            .arg(format!("--background-color={}", card::BACKGROUND))
             .arg(format!("--osd-font={OSD_FONT}"))
             .arg(format!("--osd-fonts-dir={OSD_FONTS}"))
             .arg(format!("--input-ipc-server={}", socket_path.display()))
@@ -710,7 +673,6 @@ impl Player {
             name,
             subtitles,
             tracks,
-            billing,
             speed: 1.0,
             on_save: Some(Box::new(on_save)),
             on_key: Some(Box::new(on_key)),
@@ -981,41 +943,35 @@ fn socket_path() -> PathBuf {
 
 fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option<Title>) {
     while let Ok(None) = child.try_wait() {
-        if let Ok(mut stream) = UnixStream::connect(socket_path) {
+        if let Ok(stream) = UnixStream::connect(socket_path) {
+            let Ok(events) = stream.try_clone() else {
+                return;
+            };
+            let commands = Commands::new(stream);
             for (key, action) in KEYBINDS {
-                let _ = send(&mut stream, json!(["keybind", key, action]));
+                commands.send(json!(["keybind", key, action]));
             }
-            let _ = send(&mut stream, json!(["observe_property", POSITION_ID, "time-pos"]));
-            let _ = send(&mut stream, json!(["observe_property", ENDED_ID, "eof-reached"]));
-            let _ = send(
-                &mut stream,
-                json!(["observe_property", VIDEO_ID, "current-tracks/video"]),
-            );
-            let _ = send(&mut stream, json!(["observe_property", DURATION_ID, "duration"]));
-            let _ = send(&mut stream, json!(["observe_property", PAUSE_ID, "pause"]));
-            let _ = send(&mut stream, json!(["observe_property", CHAPTERS_ID, "chapter-list"]));
-            let _ = send(&mut stream, json!(["observe_property", DROPPED_ID, "frame-drop-count"]));
-            let _ = send(
-                &mut stream,
-                json!(["observe_property", LATE_ID, "vo-delayed-frame-count"]),
-            );
-            let _ = send(&mut stream, json!(["observe_property", WAITING_ID, "paused-for-cache"]));
+            commands.send(json!(["observe_property", POSITION_ID, "time-pos"]));
+            commands.send(json!(["observe_property", ENDED_ID, "eof-reached"]));
+            commands.send(json!(["observe_property", VIDEO_ID, "current-tracks/video"]));
+            commands.send(json!(["observe_property", DURATION_ID, "duration"]));
+            commands.send(json!(["observe_property", PAUSE_ID, "pause"]));
+            commands.send(json!(["observe_property", CHAPTERS_ID, "chapter-list"]));
+            commands.send(json!(["observe_property", DROPPED_ID, "frame-drop-count"]));
+            commands.send(json!(["observe_property", LATE_ID, "vo-delayed-frame-count"]));
+            commands.send(json!(["observe_property", WAITING_ID, "paused-for-cache"]));
             for name in subtitles::OBSERVED {
-                let _ = send(&mut stream, json!(["observe_property", SUBTITLES_ID, name]));
+                commands.send(json!(["observe_property", SUBTITLES_ID, name]));
             }
-            let events = stream.try_clone();
             {
                 let mut playback = shared.lock().unwrap();
-                playback.fader = stream.try_clone().ok().map(fade::Fader::start);
-                playback.stream = Some(stream);
-                playback.open_card(Instant::now());
+                playback.fader = Some(fade::Fader::start(commands.clone()));
+                playback.commands = Some(commands);
             }
-            if let Ok(events) = events {
-                let ticking = shared.clone();
-                thread::spawn(move || tick(&ticking));
-                let shared = shared.clone();
-                thread::spawn(move || listen(events, &shared, title));
-            }
+            let ticking = shared.clone();
+            thread::spawn(move || tick(&ticking));
+            let shared = shared.clone();
+            thread::spawn(move || listen(events, &shared, title));
             return;
         }
         thread::sleep(POLL);
@@ -1049,17 +1005,11 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
             Some(Event::Video(video)) => {
                 let changed = shared.lock().unwrap().video_changed(video);
                 if let Some(id) = changed {
-                    display::play(id, video);
+                    let shared = shared.clone();
+                    display::play(id, video, move || shared.lock().unwrap().settled(Instant::now()));
                 }
             }
-            Some(Event::Started) => {
-                let mut playback = shared.lock().unwrap();
-                playback.close_card(Instant::now());
-                if playback.phase == Phase::Opening {
-                    playback.send(json!(["set_property", "pause", false]));
-                    playback.begin(Instant::now());
-                }
-            }
+            Some(Event::Started) => shared.lock().unwrap().restart(Instant::now()),
             Some(Event::Key(command)) => shared.lock().unwrap().key(command, Instant::now()),
             Some(Event::Loaded) => {
                 let mut playback = shared.lock().unwrap();
@@ -1352,32 +1302,43 @@ mod tests {
     }
 
     #[test]
-    fn the_card_fades_only_once_it_was_shown_and_is_gone_after_the_fade() {
-        let now = Instant::now();
-        let mut playback = Playback::default();
-        playback.close_card(now);
-        assert_eq!(playback.card, Card::Gone);
-        playback.open_card(now);
-        assert_eq!(playback.card, Card::Shown { opened: now });
-        let closed = now + Duration::from_secs(5);
-        playback.close_card(closed);
-        assert_eq!(
-            playback.card,
-            Card::Fading {
-                opened: now,
-                since: closed
-            }
+    fn playback_starts_once_both_mpv_and_the_display_are_ready() {
+        let film = Video {
+            width: 1920,
+            height: 1080,
+            fps: 23.976,
+        };
+        let unpaused = |sent: &[Value]| sent.contains(&json!(["set_property", "pause", false]));
+        let sent = sent_by(
+            |playback| {
+                assert!(playback.video_changed(film).is_some());
+                playback.restart(Instant::now());
+                assert_eq!(playback.phase, Phase::Opening);
+            },
+            Playback::default(),
         );
-        playback.close_card(closed + Duration::from_secs(1));
-        assert_eq!(
-            playback.card,
-            Card::Fading {
-                opened: now,
-                since: closed
-            }
+        assert!(!unpaused(&sent), "{sent:?}");
+        let sent = sent_by(
+            |playback| {
+                playback.video_changed(film);
+                playback.restart(Instant::now());
+                playback.settled(Instant::now());
+                assert_eq!(playback.phase, Phase::Playing { paused: false });
+            },
+            Playback::default(),
         );
-        playback.show_card(closed + CARD_FADE);
-        assert_eq!(playback.card, Card::Gone);
+        assert!(unpaused(&sent), "{sent:?}");
+        let sent = sent_by(
+            |playback| {
+                playback.video_changed(film);
+                playback.settled(Instant::now());
+                assert_eq!(playback.phase, Phase::Opening);
+                playback.restart(Instant::now());
+                assert_eq!(playback.phase, Phase::Playing { paused: false });
+            },
+            Playback::default(),
+        );
+        assert!(unpaused(&sent), "{sent:?}");
     }
 
     #[test]
@@ -1414,7 +1375,7 @@ mod tests {
 
     fn sent_by(act: impl FnOnce(&mut Playback), mut playback: Playback) -> Vec<Value> {
         let (stream, mut mpv) = UnixStream::pair().unwrap();
-        playback.stream = Some(stream);
+        playback.commands = Some(Commands::new(stream));
         act(&mut playback);
         drop(playback);
         let mut sent = String::new();

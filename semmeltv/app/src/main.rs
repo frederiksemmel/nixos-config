@@ -4,7 +4,6 @@ mod audio;
 mod auth;
 mod bus;
 mod cache;
-mod card;
 mod cec;
 mod client_log;
 mod command;
@@ -70,7 +69,7 @@ use std::time::{Duration, Instant};
 slint::include_modules!();
 
 const USAGE: &str =
-    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|card SECONDS TITLE LINE…|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    "usage: semmeltv [ui|list|artwork|import|downloads|understand TEXT|hear WAV|invite NAME|stats [DAYS]|toasty tv|library ARGS…|library show|library from-toml FILE|get search|fetch|jobs ARGS…] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
                 [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
                 [--manifest FILE] [--listing FILE]
                 [--refresh] [--speech HOST:PORT] [--wake HOST:PORT] [--wake-word NAME]
@@ -142,7 +141,7 @@ fn parse_args() -> Result<Args, String> {
         let mut value = |name: &str| raw.next().ok_or(format!("{name} needs a value"));
         match argument.as_str() {
             "ui" | "list" | "artwork" | "import" | "downloads" | "progress" => args.mode = argument,
-            "toasty" | "library" | "card" | "get" | "tv-set" | "stats" => {
+            "toasty" | "library" | "get" | "tv-set" | "stats" => {
                 args.toasty = raw.by_ref().collect();
                 args.mode = argument;
             }
@@ -441,25 +440,6 @@ fn run_artwork(args: &Args) -> Result<(), String> {
     Ok(())
 }
 
-/// Prints the opening card's ASS events at a moment, to preview it with libass.
-fn print_card(words: &[String]) -> Result<(), String> {
-    let [seconds, title, lines @ ..] = words else {
-        return Err("card needs SECONDS and a TITLE, then any lines under it".to_string());
-    };
-    let seconds = seconds
-        .parse::<f64>()
-        .map_err(|_| format!("{seconds} is not a number of seconds"))?;
-    let billing = card::Billing {
-        title: title.clone(),
-        lines: lines.to_vec(),
-    };
-    println!(
-        "{}",
-        card::frame(&billing, Duration::from_secs_f64(seconds.max(0.0)), 1.0)
-    );
-    Ok(())
-}
-
 async fn invite(args: &Args) -> Result<(), String> {
     let db = open_db(args).await?;
     let origins =
@@ -751,7 +731,6 @@ fn run() -> Result<(), String> {
         "hear" => hear(&args)?,
         "invite" => waiting(invite(&args))??,
         "stats" => waiting(stats(&args))??,
-        "card" => print_card(&args.toasty)?,
         "tv-set" => run_tv_set(&args.toasty)?,
         _ => run_ui(args, cache)?,
     }
