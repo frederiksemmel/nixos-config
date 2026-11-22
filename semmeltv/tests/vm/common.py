@@ -22,6 +22,7 @@ SERVICE_TOKEN = "vm-test-service-token"
 
 
 FAILED: list[str] = []
+EXPECTED_FAILURE = ""
 CLEANUP: list[Any] = []
 
 

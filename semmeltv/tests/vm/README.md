@@ -32,6 +32,7 @@ touches:
 | `feedback` | `semmeltv-vm-feedback` | reports with screenshots, statuses, threads, drafts, review questions |
 | `downloads` | `semmeltv-vm-downloads` | season downloads, the search box's offers, TMDB and people search, pCloud storage |
 | `sign-in` | `semmeltv-vm-sign-in` | invites, the profile picker with passwords, profiles on one phone and their limits |
+| `tv-restart` | `semmeltv-vm-tv-restart` | **expected to fail** until step 4 of [two processes](../../docs/two-processes.md): a killed or frozen tv process comes back with the film while the API answers |
 
 One group, on nixbuild:
 
@@ -47,6 +48,14 @@ scenario failed. A new scenario goes into the group of its area; a group that
 needs state another group leaves (a film in Continue Watching, a download job)
 sets it up itself, as `pages` and `sign-in` do with `watched_a_while`, which
 puts a title in Continue Watching through a phone stream's report.
+
+A group listed in `expectedToFail` in `default.nix` tests a layout that isn't
+built yet. Its check passes only while at least one scenario fails, and every
+failure names the group's `EXPECTED_FAILURE`; a scenario failing for any other
+reason, or every scenario passing, fails the check. Once the layout lands, take
+the group out of `expectedToFail` and delete its `EXPECTED_FAILURE` line.
+`tv-restart` fails today because `semmeltv.service` and a `semmeltv tv` under
+cage don't exist yet.
 
 The VM shortens the app's fixed waits through its environment, set in
 `default.nix`: `SEMMELTV_UP_NEXT_SECONDS` for the Up next countdown,

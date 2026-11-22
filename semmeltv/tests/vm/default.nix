@@ -35,7 +35,9 @@ let
     "feedback"
     "downloads"
     "sign-in"
+    "tv-restart"
   ];
+  expectedToFail = [ "tv-restart" ];
   proxied = {
     proxyWebsockets = true;
     extraConfig = ''
@@ -173,6 +175,7 @@ let
         UP_NEXT_SECONDS = ${toString timing.upNext}
         QUIET_SECONDS = ${toString timing.quiet}
         WATCHING_SECONDS = ${toString timing.watching}
+        EXPECTED_TO_FAIL = ${if builtins.elem group expectedToFail then "True" else "False"}
       ''
       + pkgs.lib.concatMapStrings builtins.readFile [
         ./common.py
