@@ -72,7 +72,7 @@ with scenario("on the TV, Up from a series' first season picks someone to watch 
     tv.send_key("ret")
     paired = eventually(
         f"OK pairs Frederik with {first['name']}",
-        lambda: phone.api("GET", f"/api/shows/{SHOW}")["body"]["together"]["partners"],
+        lambda: phone.api("GET", f"/api/shows/{SHOW}")["body"]["together"]["partners"] or None,
     )
     assert [partner["name"] for partner in paired] == [first["name"]], paired
     tv_shows("started")
