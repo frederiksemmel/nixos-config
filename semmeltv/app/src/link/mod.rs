@@ -3,7 +3,6 @@
 pub mod client;
 pub mod front;
 pub mod local;
-#[allow(dead_code)]
 pub mod messages;
 pub mod socket;
 

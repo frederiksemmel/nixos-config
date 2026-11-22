@@ -4,7 +4,7 @@ Apple TV style interface for a personal video library. It reads `library.db`
 at the root of a library folder, draws menus with Slint, and plays video in a
 separate mpv window.
 
-    semmeltv [ui|list|artwork|import|understand TEXT] [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
+    semmeltv core|tv|list|artwork|import|understand TEXT [--library DIR] [--meta DIR] [--cache DIR] [--db FILE]
              [--vfs-cache DIR] [--tmdb-token-file FILE] [--mdblist-key-file FILE]
              [--manifest FILE] [--listing FILE] [--refresh]
     semmeltv --manifest library.db library show | library from-toml FILE.toml
@@ -21,18 +21,21 @@ library: import and artwork work on a local copy of `library.db`, which the
 
 ## How it is built
 
-One async core on Tokio owns everything the app knows and drives: the library,
-every profile's progress, the database, mpv, HDMI-CEC and the TV, headphones,
-the offline cache and downloads (`src/core/`). Two frontends use it
-through one interface, the `Core` handle: typed requests in
-(`core.send`, `core.ask`), events and snapshots out (`core.subscribe`,
-`core.home()`, `core.library()` and so on).
+SemmelTV runs as two processes from one binary.
 
-- `src/ui.rs` is the TV's screen in Slint. It keeps only the focus, the open
-  page and loaded artwork, and draws what the core sends.
-- `src/api.rs` is the HTTP and WebSocket API the web app uses.
+- `semmeltv core` (`semmeltv.service`) is one async core on Tokio that owns
+  everything the app knows and decides: the library, every profile's
+  progress, the database, HDMI-CEC and the TV, headphones, the offline cache
+  and downloads (`src/core/`), and the HTTP and WebSocket API the web app
+  uses (`src/api.rs`), through the `Core` handle: typed requests in
+  (`core.send`, `core.ask`), events and snapshots out.
+- `semmeltv tv` (under cage on tty1) is the TV's screen in Slint
+  (`src/ui.rs`) and mpv (`src/player.rs`). It keeps only the focus, the open
+  page, loaded artwork and what plays, draws what the core sends and plays
+  what it says, over a Unix socket (`src/link/`).
 
-[ADR 3](../docs/adr/0003-core.md) has the reasons.
+[ADR 3](../docs/adr/0003-core.md) and
+[two processes](../docs/two-processes.md) have the reasons.
 
 ## library.db
 

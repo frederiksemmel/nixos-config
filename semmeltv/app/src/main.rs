@@ -23,7 +23,6 @@ mod import;
 mod intent;
 mod library;
 mod library_db;
-#[allow(dead_code)]
 mod link;
 mod loader;
 mod manifest;
