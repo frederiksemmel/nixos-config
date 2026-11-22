@@ -128,3 +128,31 @@ with scenario("an HEVC film plays on the TV set's own player, its DTS converted 
     tv.wait_until_fails("ss -ltn | grep -q ':8097 '", timeout=10)
     kept = json.loads(stream_call(cookie, "GET", f"/api/movies/{HEVC_FILM}"))["stopped_at"]
     assert kept and kept >= 40, f"the place on the TV set is kept: {kept}"
+
+
+def mpv_gone_within(seconds):
+    asked = time.monotonic()
+    while tv.execute("pgrep -x mpv")[0] == 0:
+        assert time.monotonic() - asked < seconds, f"mpv still runs {seconds} s after it was asked to quit"
+        time.sleep(0.1)
+    return time.monotonic() - asked
+
+
+with scenario("Back half a second after a film starts on the TV closes the player within a few seconds"):
+    phone.api("POST", "/api/play", {"movie": FILM})
+    time.sleep(0.5)
+    tv.send_key("esc")
+    print(f"the player closed {mpv_gone_within(3):.1f} s after Back")
+    eventually("nothing plays after the early Back", lambda: phone.api("GET", "/api/playback")["body"]["now_playing"] is None)
+
+with scenario("a TV player that hangs still stops when asked, and the place it reported is kept"):
+    phone.api("POST", "/api/play", {"movie": FILM})
+    tv_starts_at()
+    tv_seek(phone, 30)
+    eventually("the TV has reported the seek", lambda: (phone.api("GET", "/api/playback")["body"]["now_playing"] or {}).get("position", 0) >= 29)
+    tv.succeed("pkill -STOP -x mpv")
+    phone.api("POST", "/api/playback/stop", {})
+    print(f"the hung player was gone {mpv_gone_within(3):.1f} s after Stop")
+    eventually("nothing plays after the hung player", lambda: phone.api("GET", "/api/playback")["body"]["now_playing"] is None)
+    kept = phone.api("GET", f"/api/movies/{FILM}")["body"]["stopped_at"]
+    assert kept and kept >= 29, f"the place before it hung is kept: {kept}"

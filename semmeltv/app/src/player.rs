@@ -22,7 +22,7 @@ use std::io::{self, BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command as Process, Stdio};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -35,6 +35,8 @@ const STOPPED_EXIT_CODE: i32 = 10;
 const ENDED_EXIT_CODE: i32 = 11;
 const NEXT_EXIT_CODE: i32 = 12;
 const SIGNALLED_EXIT_CODE: i32 = 4;
+/// How long mpv gets to quit before it is killed.
+const QUIT_WITHIN: Duration = Duration::from_millis(800);
 const SAVE_EVERY: f64 = 30.0;
 const PLAY_STEP: f64 = 2.0;
 const SHOWN_FOR: Duration = Duration::from_secs(4);
@@ -202,6 +204,8 @@ impl Phase {
 struct Playback {
     commands: Option<Commands>,
     waiting: Vec<Value>,
+    mpv: Option<Mpv>,
+    quitting: Option<i32>,
     name: String,
     position: f64,
     duration: f64,
@@ -239,6 +243,12 @@ impl Playback {
     }
 
     fn send(&mut self, command: Value) {
+        if command[0] == "quit" && self.quitting.is_none() {
+            self.quitting = command[1].as_i64().and_then(|code| i32::try_from(code).ok());
+            if let Some(mpv) = &self.mpv {
+                mpv.kill_after(QUIT_WITHIN);
+            }
+        }
         match &self.commands {
             Some(commands) => {
                 commands.send(command);
@@ -775,8 +785,10 @@ impl Player {
             .stdin(Stdio::null())
             .spawn()
             .inspect_err(|_| display::stop(id))?;
+        let mpv = Mpv::of(&child);
         let playback = Shared::new(Mutex::new(Playback {
             id,
+            mpv: Some(mpv.clone()),
             name: play.caption.clone(),
             subtitles,
             tracks: play.tracks,
@@ -792,7 +804,9 @@ impl Player {
         let (token, file, owner) = (play.play.clone(), play.file.clone(), play.owner);
         thread::spawn(move || {
             connect(&mut child, &socket_path, &shared);
-            let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
+            let code = child.wait().ok().and_then(|status| status.code());
+            mpv.exited();
+            let finish = Finish::from_exit_code(code.or(shared.lock().unwrap().quitting));
             let ended = {
                 let mut playback = shared.lock().unwrap();
                 playback.closed = true;
@@ -935,6 +949,40 @@ impl Player {
             .lock()
             .unwrap()
             .toast(heading, message, Instant::now() + time);
+    }
+}
+
+/// An mpv process that can be killed once it was asked to quit and did not.
+#[derive(Clone)]
+struct Mpv {
+    pid: libc::pid_t,
+    gone: Arc<AtomicBool>,
+}
+
+impl Mpv {
+    fn of(child: &Child) -> Self {
+        Self {
+            pid: libc::pid_t::try_from(child.id()).unwrap_or(0),
+            gone: Arc::default(),
+        }
+    }
+
+    /// Kills mpv unless it exits within `grace`.
+    fn kill_after(&self, grace: Duration) {
+        let mpv = self.clone();
+        thread::spawn(move || {
+            thread::sleep(grace);
+            if mpv.pid > 0 && !mpv.gone.load(Ordering::SeqCst) {
+                eprintln!("player: mpv did not quit within {grace:?}, so it is killed");
+                unsafe {
+                    libc::kill(mpv.pid, libc::SIGKILL);
+                }
+            }
+        });
+    }
+
+    fn exited(&self) {
+        self.gone.store(true, Ordering::SeqCst);
     }
 }
 
@@ -1110,6 +1158,27 @@ mod tests {
         for (code, finish) in cases {
             assert_eq!(Finish::from_exit_code(code), finish, "{code:?}");
         }
+    }
+
+    #[test]
+    fn an_mpv_that_does_not_quit_on_back_is_killed_soon_and_still_counts_as_stopped() {
+        let mut stuck = Process::new("sleep").arg("30").spawn().unwrap();
+        let mpv = Mpv::of(&stuck);
+        let mut playback = Playback {
+            mpv: Some(mpv.clone()),
+            ..Playback::default()
+        };
+        let asked = Instant::now();
+        playback.command(Command::Back, asked);
+        let code = stuck.wait().unwrap().code();
+        mpv.exited();
+        let waited = asked.elapsed();
+        assert!(
+            waited >= QUIT_WITHIN && waited < QUIT_WITHIN + Duration::from_secs(1),
+            "{waited:?}"
+        );
+        assert_eq!(code, None);
+        assert_eq!(Finish::from_exit_code(code.or(playback.quitting)), Finish::Stopped);
     }
 
     #[test]
