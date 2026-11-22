@@ -14,7 +14,7 @@ use tokio::sync::Mutex;
 use crate::{
     panel::Panel,
     render::{Scene, canvas_size, render},
-    replies::{Kind, Replies},
+    replies::{Message, Replies},
 };
 
 #[derive(BotCommands, Clone, Debug)]
@@ -30,8 +30,8 @@ pub enum Command {
     Clear,
     #[command(description = "turn the picture: 0, 90, 180 or 270, or nothing for 90° more")]
     Rotate(String),
-    #[command(description = "answer in a style, such as /style office; /style off for the usual")]
-    Style(String),
+    #[command(description = "answer in a mode, such as /mode office; /mode swiss is the usual")]
+    Mode(String),
 }
 
 /// A conversation the bot answers in.
@@ -207,7 +207,7 @@ impl Bot {
                 return Ok(());
             }
             Command::Rotate(arg) => return self.rotate(chat, &arg).await,
-            Command::Style(arg) => return self.style(chat, &arg).await,
+            Command::Mode(arg) => return self.mode(chat, &arg).await,
             Command::Text(text) if text.trim().is_empty() => {
                 chat.send("Use /text <message>").await?;
                 return Ok(());
@@ -222,13 +222,13 @@ impl Bot {
     /// Says a wait line, draws, then tells the outcome.
     pub async fn draw<C: Chat>(&self, chat: &C, scene: Scene) -> Result<()> {
         let done = if scene == Scene::Ring {
-            Kind::Ring
+            Message::Ring
         } else {
-            Kind::Written
+            Message::Written
         };
         let pending = self.start(chat).await?;
-        let kind = outcome(self.display.show(scene).await).map_or_else(|kind| kind, |()| done);
-        self.finish(chat, &pending, kind, str::to_owned).await
+        let message = outcome(self.display.show(scene).await).map_or_else(|message| message, |()| done);
+        self.finish(chat, &pending, message, str::to_owned).await
     }
 
     pub async fn rotate<C: Chat>(&self, chat: &C, arg: &str) -> Result<()> {
@@ -241,80 +241,78 @@ impl Bot {
         match outcome(self.display.rotate(to).await) {
             Ok(rotation) => {
                 let deg = degrees(rotation).to_string();
-                self.finish(chat, &pending, Kind::Rotated, |line| line.replace("{deg}", &deg))
+                self.finish(chat, &pending, Message::Rotated, |line| line.replace("{deg}", &deg))
                     .await
             }
-            Err(kind) => self.finish(chat, &pending, kind, str::to_owned).await,
+            Err(message) => self.finish(chat, &pending, message, str::to_owned).await,
         }
     }
 
-    /// Shows the chat's style and the others, switches to one, or goes back to the usual replies.
-    pub async fn style<C: Chat>(&self, chat: &C, arg: &str) -> Result<()> {
+    /// Names the chat's mode and the others, or switches the chat to one.
+    pub async fn mode<C: Chat>(&self, chat: &C, arg: &str) -> Result<()> {
         let key = chat.key();
         let name = arg.trim().to_lowercase();
         let (text, switched) = {
             let mut replies = self.replies.lock().unwrap();
-            let styles = replies.styles();
-            let list = if styles.is_empty() {
-                "There are no styles yet".to_owned()
-            } else {
-                format!("Styles: {}", styles.join(", "))
-            };
+            let modes = replies.modes();
+            let list = format!("Modes: {}", modes.join(", "));
             match name.as_str() {
                 "" => {
-                    let now = match replies.style_of(&key) {
-                        Some(style) => format!("This chat gets {style} replies."),
-                        None => "This chat gets the usual replies.".to_owned(),
-                    };
+                    let now = replies.mode_of(&key);
                     (
-                        format!("{now} {list}. /style <name> switches, /style off goes back."),
+                        format!("This chat is in {now} mode. {list}. /mode <name> switches."),
                         None,
                     )
                 }
-                "off" | "usual" | "normal" => {
-                    replies.set_style(&key, None);
-                    ("Back to the usual replies".to_owned(), None)
+                mode if modes.iter().any(|m| m == mode) => {
+                    replies.set_mode(&key, mode);
+                    let variant = replies.pick(&key, Message::Switched);
+                    (variant.replace("{mode}", mode), Some(variant))
                 }
-                style if styles.iter().any(|s| s == style) => {
-                    replies.set_style(&key, Some(style));
-                    let line = replies.pick(&key, Kind::Styled);
-                    (line.replace("{style}", style), Some(line))
-                }
-                style => (format!("There is no {style} style. {list}."), None),
+                mode => (format!("There is no {mode} mode. {list}."), None),
             }
         };
-        let message = chat.send(&text).await?;
-        if let Some(line) = switched {
-            self.replies.lock().unwrap().sent(&key, &message, Kind::Styled, &line);
+        let id = chat.send(&text).await?;
+        if let Some(variant) = switched {
+            self.replies
+                .lock()
+                .unwrap()
+                .sent(&key, &id, Message::Switched, &variant);
         }
         Ok(())
     }
 
     async fn start<C: Chat>(&self, chat: &C) -> Result<String> {
-        let line = self.replies.lock().unwrap().pick(&chat.key(), Kind::Wait);
-        let message = chat.send(&line).await?;
+        let variant = self.replies.lock().unwrap().pick(&chat.key(), Message::Wait);
+        let id = chat.send(&variant).await?;
         self.replies
             .lock()
             .unwrap()
-            .sent(&chat.key(), &message, Kind::Wait, &line);
-        Ok(message)
+            .sent(&chat.key(), &id, Message::Wait, &variant);
+        Ok(id)
     }
 
-    async fn finish<C: Chat>(&self, chat: &C, waiting: &str, kind: Kind, fill: impl Fn(&str) -> String) -> Result<()> {
-        let line = self.replies.lock().unwrap().pick(&chat.key(), kind);
-        let message = chat.follow_up(waiting, &fill(&line)).await?;
-        self.replies.lock().unwrap().sent(&chat.key(), &message, kind, &line);
+    async fn finish<C: Chat>(
+        &self,
+        chat: &C,
+        waiting: &str,
+        message: Message,
+        fill: impl Fn(&str) -> String,
+    ) -> Result<()> {
+        let variant = self.replies.lock().unwrap().pick(&chat.key(), message);
+        let id = chat.follow_up(waiting, &fill(&variant)).await?;
+        self.replies.lock().unwrap().sent(&chat.key(), &id, message, &variant);
         Ok(())
     }
 }
 
-fn outcome<T>(shown: Result<Shown<T>>) -> Result<T, Kind> {
+fn outcome<T>(shown: Result<Shown<T>>) -> Result<T, Message> {
     match shown {
         Ok(Shown::Done(done)) => Ok(done),
-        Ok(Shown::Busy) => Err(Kind::Busy),
+        Ok(Shown::Busy) => Err(Message::Busy),
         Err(err) => {
             tracing::error!("display failed: {err:#}");
-            Err(Kind::Failed)
+            Err(Message::Failed)
         }
     }
 }
@@ -518,12 +516,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn style_switches_the_replies_of_the_chat() {
-        let dir = std::env::temp_dir().join(format!("epaper-flow-style-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
+    async fn mode_switches_the_replies_of_the_chat() {
+        let dir = std::env::temp_dir().join(format!("epaper-flow-mode-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("modes")).unwrap();
         std::fs::write(
-            dir.join("replies.txt"),
-            "[written]\nWritten it is\n[office written]\nThat's what she said\n[office styled]\nWelcome to {style}\n",
+            dir.join("modes/swiss.txt"),
+            "[written]\nWritten it is\n[switched]\nBack in {mode}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            dir.join("modes/office.txt"),
+            "[written]\nThat's what she said\n[switched]\nWelcome to {mode}\n",
         )
         .unwrap();
         let bot = Bot {
@@ -531,20 +534,20 @@ mod tests {
             replies: Arc::new(SyncMutex::new(Replies::open(Some(&dir)).unwrap())),
         };
         let chat = Fake::default();
-        bot.message(&chat, "/style").await.unwrap();
-        bot.message(&chat, "/style Office").await.unwrap();
+        bot.message(&chat, "/mode").await.unwrap();
+        bot.message(&chat, "/mode Office").await.unwrap();
         bot.message(&chat, "/clear").await.unwrap();
-        bot.message(&chat, "/style dune").await.unwrap();
-        bot.message(&chat, "/style off").await.unwrap();
+        bot.message(&chat, "/mode dune").await.unwrap();
+        bot.message(&chat, "/mode swiss").await.unwrap();
         bot.message(&chat, "/clear").await.unwrap();
         let messages = chat.messages();
         assert!(
-            messages[0].contains("usual") && messages[0].contains("office"),
+            messages[0].contains("in swiss mode") && messages[0].contains("office, swiss"),
             "{messages:?}"
         );
         assert_eq!(messages[1..3], ["Welcome to office", "That's what she said"]);
-        assert!(messages[3].starts_with("There is no dune style"), "{messages:?}");
-        assert_eq!(messages[4..], ["Back to the usual replies", "Written it is"]);
+        assert!(messages[3].starts_with("There is no dune mode"), "{messages:?}");
+        assert_eq!(messages[4..], ["Back in swiss", "Written it is"]);
         std::fs::remove_dir_all(dir).ok();
     }
 }

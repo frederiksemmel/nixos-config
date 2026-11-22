@@ -11,7 +11,7 @@ A bot on semmeltv3 that draws on the Waveshare 2.7" e-Paper HAT. The panel shows
 | `/clear` | white |
 | `/rotate [0\|90\|180\|270]` | the same picture, turned; with no angle, 90° further |
 | `/help` | nothing; the bot lists the commands |
-| `/style [name\|off]` | nothing; the chat's replies switch to a style, such as `office`, or back with `off`. With no name, the bot names the current style and the others. |
+| `/mode [name]` | nothing; the chat's replies switch to a mode, such as `office`, or back with `swiss`. With no name, the bot names the chat's mode and the others. |
 
 Commands work in any letter case (`/Text` is `/text`). An unknown `/command` gets the help.
 
@@ -41,11 +41,32 @@ Emoji come from Noto Emoji, a black-and-white outline font. Nothing in a message
 
 ## Replies
 
-A drawing command gets two messages: a wait line when the bot starts, and the outcome once the panel is done (written, busy, or failed). On WhatsApp the outcome is a new message; on Telegram it replaces the wait line. While the panel is drawing, other drawing commands get "busy" and are not queued.
+A drawing command gets two replies: a wait reply when the bot starts, and the outcome once the panel is done. On WhatsApp the outcome is a new message; on Telegram it replaces the wait reply. While the panel is drawing, other drawing commands get "busy" and are not queued.
 
-The lines are picked at random from `replies.txt`. That file is data, not code; edit it on the Pi and the bot rereads it. Emoji reactions to the bot's lines are logged in `replies.jsonl`. Liked lines come up more often.
+Three words describe what the bot says:
 
-A style is a set of lines under sections like `[office wait]` next to the usual `[wait]`; every style in the file is one `/style` knows. A chat in a style gets the style's lines, and the usual lines for kinds the style has none of. `[office styled]` is said when a chat switches to `office`; `{style}` in it becomes the name. The chat's style is logged in `replies.jsonl`, so it survives restarts.
+- A **message** is what a reply has to get across, whatever the words.
+- A **variant** is one wording of a message. Each reply is a variant picked at random.
+- A **mode** is a set of variants in one voice. Each chat has one mode; `/mode` switches it.
+
+| Message | Said when | Placeholder |
+|---|---|---|
+| `wait` | a drawing starts |  |
+| `written` | the text is on the panel |  |
+| `ring` | the hand is on the panel |  |
+| `rotated` | the picture is turned | `{deg}`, the new angle |
+| `busy` | the panel is still drawing; the command is dropped |  |
+| `failed` | the panel broke; the journal says why |  |
+| `switched` | the chat just switched to this mode | `{mode}`, its name |
+
+| Mode | Voice |
+|---|---|
+| `swiss` | Swiss German memes, and the default for every chat |
+| `office` | The Office (US), lines as said in the show |
+
+Each mode is a file in `/var/lib/epaper/modes/`, such as `swiss.txt`. In it, `[message]` starts a section, and every following line is one variant until the next section; `#` starts a comment. A new file is a new mode. The files are data, not code: edit them on the Pi, and the bot rereads them when one changes.
+
+A message that a mode has no variants of is said in a `swiss` variant. Emoji reactions to the bot's replies are logged in `replies.jsonl`, and liked variants come up more often. A variant is scored by its exact text, so rewording it starts its score from zero. Each chat's mode is logged there as well, so it survives restarts.
 
 ## Panel
 
@@ -65,8 +86,8 @@ Not in git; they hold chat ids and the WhatsApp session.
 | File | Holds |
 |---|---|
 | `rotation` | the angle from the last `/rotate` |
-| `replies.txt` | reply lines, by `[kind]` |
-| `replies.jsonl` | sent lines and reactions |
+| `modes/<mode>.txt` | the variants of every message in that mode |
+| `replies.jsonl` | the variants sent, reactions to them, and each chat's mode |
 | `whatsapp.db` | the linked-device session |
 | `whatsapp-groups` | chats allowed to draw, one JID per line; `hoi` and `ciao bello guys` edit it |
 | `whatsapp-qr`, `whatsapp-phone` | pairing: the current QR payload, or the number to ask a pair code for |
