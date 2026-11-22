@@ -110,10 +110,10 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                             Ok(view! {
                                 if missing {
                                     (StatusCode::NOT_FOUND)
-                                    trouble(title: "Not on the shelf", note: "Nothing here, or it was taken out of the library.", burnt: false)
+                                    trouble(title: "Nicht in der Auslage", note: "Das gibt es hier nicht, oder es wurde aus dem Sortiment genommen.", burnt: false)
                                 } else {
                                     (StatusCode::SERVICE_UNAVAILABLE)
-                                    trouble(title: "We can't get it baked right now", note: "The TV app didn't answer this time. The oven may be restarting; try again in a moment.", burnt: true)
+                                    trouble(title: "Wir haben es versemmelt", note: "Wir kriegen es gerade nicht gebacken: Die TV-App antwortet nicht. Vielleicht wird der Ofen neu angeheizt, versuch es gleich nochmal.", burnt: true)
                                 }
                             })
                         },

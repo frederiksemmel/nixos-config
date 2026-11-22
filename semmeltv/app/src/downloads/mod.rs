@@ -261,7 +261,7 @@ impl Job {
 
     fn status(&self) -> String {
         if self.parts.iter().any(|part| part.phase == PartPhase::Checking) {
-            return "Checking the dough already kneaded before the restart".to_string();
+            return "Der Teig von vor dem Neustart wird geprüft".to_string();
         }
         let progress: u64 = self.parts.iter().map(|part| part.progress).sum();
         let total: u64 = self
@@ -272,8 +272,8 @@ impl Job {
         let speed: f64 = self.parts.iter().map(|part| part.speed).sum();
         let count = self.count();
         let what = match self.current().and_then(FileState::episode) {
-            Some(episode) if count > 1 => format!("Baking {episode}"),
-            _ => "Baking".to_string(),
+            Some(episode) if count > 1 => format!("{episode} im Ofen"),
+            _ => "Im Ofen".to_string(),
         };
         let line = if total > 0 {
             downloading(&what, progress, total, speed)
@@ -281,7 +281,7 @@ impl Job {
             what
         };
         if count > 1 {
-            format!("{line} · {} of {count} in the library", self.placed.len())
+            format!("{line} · {} von {count} fertig gebacken", self.placed.len())
         } else {
             line
         }
@@ -405,20 +405,24 @@ fn free_bytes(dir: &Path) -> Option<u64> {
 
 fn started(mode: Mode, label: &str) -> String {
     match mode {
-        Mode::Add => format!("The oven is heating up for {label}"),
-        Mode::Replace => format!("The oven is heating up for a fresh {label}"),
+        Mode::Add => format!("Der Ofen wird aufgeheizt für {label}"),
+        Mode::Replace => format!("Der Ofen wird aufgeheizt für ein frisches {label}"),
     }
 }
 
 fn cooling(placed: usize, count: usize) -> String {
     format!(
-        "Cooling on the rack: uploading to pCloud, file {} of {count}",
+        "Kühlt auf dem Gitter ab: Upload zu pCloud, Datei {} von {count}",
         placed + 1
     )
 }
 
 fn baked(uploaded: u64) -> String {
-    format!("Fresh out of the oven and in the library ({uploaded} bytes uploaded to peers)")
+    format!("Frisch aus dem Ofen und in der Bibliothek ({uploaded} Bytes an Peers hochgeladen)")
+}
+
+fn versemmelt(reason: &str) -> String {
+    format!("Versemmelt: {reason}")
 }
 
 fn downloading(what: &str, progress: u64, total: u64, speed: f64) -> String {
@@ -427,13 +431,13 @@ fn downloading(what: &str, progress: u64, total: u64, speed: f64) -> String {
     if speed > 0.0 && left.is_finite() {
         let minutes = (left / 60.0).ceil() as u64;
         let time = if minutes >= 60 {
-            format!("{}h {:02}m", minutes / 60, minutes % 60)
+            format!("{} h {:02} min", minutes / 60, minutes % 60)
         } else {
             format!("{minutes} min")
         };
-        format!("{what}, {percent:.0}%, about {time} left")
+        format!("{what}, {percent:.0} %, noch etwa {time}")
     } else {
-        format!("{what}, {percent:.0}%")
+        format!("{what}, {percent:.0} %")
     }
 }
 
@@ -729,7 +733,7 @@ impl Service {
                     .any(|part| picked.parts.iter().any(|new| new.infohash == part.part.infohash))
         });
         if duplicate {
-            return Outcome::no("That is already in the oven");
+            return Outcome::no("Das ist schon im Ofen");
         }
         let room = self.room();
         if picked.size > room {
@@ -749,7 +753,7 @@ impl Service {
             choice: picked.clone(),
             mode,
             stage: Stage::Checking,
-            message: "Heating up the oven".to_string(),
+            message: "Der Ofen wird aufgeheizt".to_string(),
             parts: picked
                 .parts
                 .iter()
@@ -952,8 +956,8 @@ impl Service {
         }
         self.update(id, |job| {
             job.stage = Stage::Failed;
-            job.note(reason.clone());
-            job.message = reason;
+            job.message = versemmelt(&reason);
+            job.note(reason);
         });
     }
 
@@ -1039,7 +1043,7 @@ impl Service {
             job.parts = parts;
             if done {
                 job.stage = Stage::Uploading;
-                job.message = "Adding the last files to the library".to_string();
+                job.message = "Die letzten Semmeln kommen ins Regal".to_string();
             } else {
                 job.message = job.status();
             }
@@ -1574,14 +1578,14 @@ added = 2025-01-01
     fn the_progress_line_says_how_long_is_left() {
         let mib = 1024 * 1024;
         assert_eq!(
-            downloading("Baking", 10 * 1024 * mib, 20 * 1024 * mib, 8.0),
-            "Baking, 50%, about 22 min left"
+            downloading("Im Ofen", 10 * 1024 * mib, 20 * 1024 * mib, 8.0),
+            "Im Ofen, 50 %, noch etwa 22 min"
         );
         assert_eq!(
-            downloading("Baking S01E02", 0, 40 * 1024 * mib, 8.0),
-            "Baking S01E02, 0%, about 1h 26m left"
+            downloading("S01E02 im Ofen", 0, 40 * 1024 * mib, 8.0),
+            "S01E02 im Ofen, 0 %, noch etwa 1 h 26 min"
         );
-        assert_eq!(downloading("Baking", 5, 10, 0.0), "Baking, 50%");
+        assert_eq!(downloading("Im Ofen", 5, 10, 0.0), "Im Ofen, 50 %");
     }
 
     fn file(index: usize, path: &str, size: u64) -> FileState {
@@ -1785,29 +1789,36 @@ added = 2025-01-01
         job.parts[0].speed = 0.0;
         job.placed
             .push("Series/Dark/Season 01/Dark (2017) - S01E01.mkv".to_string());
-        assert_eq!(job.status(), "Baking S01E02, 33% · 1 of 3 in the library");
+        assert_eq!(job.status(), "S01E02 im Ofen, 33 % · 1 von 3 fertig gebacken");
         job.parts[0].phase = PartPhase::Checking;
-        assert_eq!(job.status(), "Checking the dough already kneaded before the restart");
+        assert_eq!(job.status(), "Der Teig von vor dem Neustart wird geprüft");
         let mut movie = dark(vec![pack(vec![file(0, "Up.2009.mkv", 100)])]);
         movie.parts[0].record(&[25]);
-        assert_eq!(movie.status(), "Baking, 25%");
+        assert_eq!(movie.status(), "Im Ofen, 25 %");
     }
 
     #[test]
     fn a_download_that_starts_heats_the_oven_and_one_that_ends_comes_out_of_it() {
         assert_eq!(
             started(Mode::Add, "Dune (2021)"),
-            "The oven is heating up for Dune (2021)"
+            "Der Ofen wird aufgeheizt für Dune (2021)"
         );
         assert_eq!(
             started(Mode::Replace, "Dune (2021)"),
-            "The oven is heating up for a fresh Dune (2021)"
+            "Der Ofen wird aufgeheizt für ein frisches Dune (2021)"
         );
         assert_eq!(
             baked(1_000),
-            "Fresh out of the oven and in the library (1000 bytes uploaded to peers)"
+            "Frisch aus dem Ofen und in der Bibliothek (1000 Bytes an Peers hochgeladen)"
         );
-        assert_eq!(cooling(0, 3), "Cooling on the rack: uploading to pCloud, file 1 of 3");
+        assert_eq!(
+            cooling(0, 3),
+            "Kühlt auf dem Gitter ab: Upload zu pCloud, Datei 1 von 3"
+        );
+        assert_eq!(
+            versemmelt("No space left on device"),
+            "Versemmelt: No space left on device"
+        );
     }
 
     #[test]
