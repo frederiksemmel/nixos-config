@@ -39,7 +39,6 @@ in
         vpnConfinement = inputs.vpn-confinement.nixosModules.default;
         agenix = inputs.agenix.nixosModules.default;
       };
-      hailo = ./hailo/module.nix;
     };
   };
 
@@ -74,12 +73,6 @@ in
         semmeltv-web = pkgs.callPackage ./web { inherit (inputs) crane; };
         semmeltv-front = pkgs.callPackage ./front { inherit (inputs) crane; };
         deploy-rs = inputs.deploy-rs.packages.${system}.default;
-      }
-      // lib.concatMapAttrs (name: hailo: {
-        "hailort-${name}" = hailo.hailort;
-        "hailo-firmware-${name}" = hailo.firmware;
-        "gst-hailo-${name}" = hailo.gst-hailo;
-        "pyhailort-${name}" = hailo.pyhailort;
-      }) (pkgs.callPackages ./hailo { });
+      };
     };
 }

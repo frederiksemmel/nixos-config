@@ -61,9 +61,9 @@ in
       type = lib.types.attrsOf lib.types.str;
       default = { };
       example = {
-        SEMMELTV_SPEECH = "tcp://127.0.0.1:10300";
+        SEMMELTV_HEADPHONES = "bluetooth";
       };
-      description = "Environment of the SemmelTV core: the API, the database, the library, downloads, voice, headphones and TV control. The app under cage gets it too, on top of `services.cage.environment`.";
+      description = "Environment of the SemmelTV core: the API, the database, the library, downloads, headphones and TV control. The app under cage gets it too, on top of `services.cage.environment`.";
     };
 
     adminUser = lib.mkOption {

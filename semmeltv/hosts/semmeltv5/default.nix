@@ -1,6 +1,5 @@
 {
   config,
-  flake,
   nixos-raspberrypi,
   ...
 }:
@@ -9,10 +8,6 @@
     ../common.nix
     ../mount.nix
     ./adblock.nix
-    ./wake.nix
-    ./phone-mic.nix
-    ./speech.nix
-    flake.self.nixosModules.hailo
     raspberry-pi-5.base
     raspberry-pi-5.display-vc4
   ];
@@ -53,15 +48,5 @@
   age.secrets.semmeltv_service_token = {
     file = ../../../secrets/semmeltv_service_token.age;
     owner = "semmeltv";
-  };
-
-  hardware.hailo = {
-    enable = true;
-    generation = "hailo8";
-  };
-  nixpkgs.config.allowUnfreePackages = [ "hailo8-firmware" ];
-  hardware.raspberry-pi.config.all.base-dt-params.pciex1_gen = {
-    enable = true;
-    value = "3";
   };
 }

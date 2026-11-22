@@ -80,13 +80,6 @@ in
         default = 8090;
         description = "Port of the API on 127.0.0.1.";
       };
-
-      phoneMicrophone = lib.mkOption {
-        type = lib.types.nullOr lib.types.str;
-        default = null;
-        example = "plughw:Loopback,0,0";
-        description = "ALSA device that audio streamed to /api/microphone is played into, or null to refuse it.";
-      };
     };
 
     web = {
@@ -232,12 +225,7 @@ in
   config = lib.mkIf cfg.enable (
     lib.mkMerge [
       (lib.mkIf cfg.api.enable {
-        services.semmeltv.coreEnvironment = {
-          SEMMELTV_API = "127.0.0.1:${toString cfg.api.port}";
-        }
-        // lib.optionalAttrs (cfg.api.phoneMicrophone != null) {
-          SEMMELTV_PHONE_MICROPHONE = cfg.api.phoneMicrophone;
-        };
+        services.semmeltv.coreEnvironment.SEMMELTV_API = "127.0.0.1:${toString cfg.api.port}";
       })
 
       (lib.mkIf cfg.web.enable {
