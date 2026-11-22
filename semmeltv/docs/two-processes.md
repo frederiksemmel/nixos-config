@@ -416,6 +416,24 @@ its listed files.
    above under `systemd-run --uid=semmeltv --pipe --wait` (a transient
    service, which gets the same groups and no session) and expect them to
    behave as they do from cage.
+
+   **Checked on semmeltv5 (2026-11-22)**, under `systemd-run --uid=semmeltv`:
+   - Groups: audio, video, systemd-journal, input, render and rqbit.
+   - `bluetoothctl show` worked, and `devices Bonded` listed the AirPods.
+   - `bluealsa-cli list-pcms` came back empty with no AccessDenied; the
+     headphones weren't connected.
+   - `aplay` into `Loopback,0,0` worked.
+   - `/dev/cec0` and `/dev/cec1` opened, and the LED was writable.
+   - grim captured 1 MB.
+
+   Only `arecord` on `plughw:Loopback,1,0` failed, with "Device or resource
+   busy". That is contention, not permission. The app under cage holds that
+   device all the time: the actor's `voice::spawn` with
+   `Source::Microphone(SEMMELTV_MICROPHONE)` keeps an `arecord` open on it, and
+   `snd-aloop` is loaded with `pcm_substreams=1`, so there is one capture
+   substream. The wake word and speech services get their audio from the app
+   over TCP and open no ALSA device. After step 4 only the core runs that
+   `arecord`, so nothing contends. No `SupplementaryGroups=` is needed.
 6. **Memory on semmeltv3**: two processes, each holding the library. If RSS is
    too high, the tv could keep only what the menu draws. Measure first.
 7. **The renderer stays in the core.** A hung UPnP call is on its own thread
