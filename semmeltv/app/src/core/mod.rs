@@ -149,6 +149,7 @@ pub(crate) enum Signal {
         id: u64,
         prepared: prepare::Prepared,
     },
+    Removed,
 }
 
 pub(crate) enum Input {
@@ -321,6 +322,7 @@ impl Core {
                 }
             },
             segments: crate::segments::finder(),
+            remove: tending::remover(),
         };
         let actor = actor::Actor::new(core.clone(), profile, hardware).await;
         let running = tokio::spawn(actor.run(received));

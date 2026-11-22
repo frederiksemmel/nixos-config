@@ -68,6 +68,7 @@ pub struct Hardware {
     pub tv: Link,
     pub segments: segments::Finder,
     pub files: Files,
+    pub remove: tending::Remove,
 }
 
 pub enum Found {
@@ -202,6 +203,7 @@ pub struct Actor {
     problem: Option<String>,
     queued: Option<PathBuf>,
     choosing: Option<Sender<db::AudioPrefs>>,
+    remove: tending::Remove,
     preparing: Option<Preparing>,
     prepared: u64,
     files: Files,
@@ -264,6 +266,7 @@ impl Actor {
             tv,
             segments,
             files,
+            remove,
         } = hardware;
         let db = core.db().clone();
         let library = core.library();
@@ -311,6 +314,7 @@ impl Actor {
             problem: None,
             queued: None,
             choosing: audio.clone().map(chooser),
+            remove,
             preparing: None,
             prepared: 0,
             files,
@@ -354,6 +358,7 @@ impl Actor {
                     Some(Input::Request(Request::Subtitles(change), reply)) if self.on_tv.is_some() => {
                         self.ask_tv_subtitles(change, reply);
                     }
+                    Some(Input::Request(Request::Storage(change), reply)) => self.change_storage(change, reply),
                     Some(Input::Request(request, reply)) => {
                         let outcome = self.answer(request).await;
                         if let Some(reply) = reply {
@@ -414,6 +419,7 @@ impl Actor {
             Signal::Audio(route) => self.move_audio(&route),
             Signal::Tended(tended) => self.tended(tended),
             Signal::Prepared { id, prepared } => self.prepared(id, prepared).await,
+            Signal::Removed => self.tend(),
         }
     }
 
@@ -1228,6 +1234,10 @@ impl Actor {
 
     async fn answer(&mut self, request: Request) -> Outcome {
         let action = match request {
+            Request::Storage(change) => {
+                self.change_storage(change, None);
+                return Outcome::done("Removing it from pCloud");
+            }
             Request::Understand(text, by) => {
                 let progress = self.progress_of(by).await;
                 let action = intent::understand(&text, &self.library, &progress);
@@ -1258,7 +1268,6 @@ impl Actor {
             Request::HideSkip => return self.hide_skip(),
             Request::Speed(speed) => return self.speed(speed),
             Request::Subtitles(change) => return self.change_subtitles(change),
-            Request::Storage(change) => return self.change_storage(change).await,
             Request::Dismiss(kind, key, by) => return self.dismiss(kind, &key, by).await,
             Request::Mark(kind, key, episode, mark, by) => return self.mark(kind, &key, episode, mark, by).await,
             Request::CatchUp { show, to, by } => return self.catch_up(&show, to, by).await,
@@ -1703,13 +1712,20 @@ impl Actor {
         Outcome::done("Kept the place")
     }
 
-    async fn change_storage(&mut self, change: storage::Change) -> Outcome {
+    /// Removes a title from pCloud on a task of its own, which answers when
+    /// pCloud is done.
+    fn change_storage(&self, change: storage::Change, reply: Option<oneshot::Sender<Outcome>>) {
         let storage::Change::Remove(title) = change;
-        let outcome = tending::remove(self.job(), title).await;
-        if outcome.ok {
-            self.tend();
-        }
-        outcome
+        let (job, core, remove) = (self.job(), self.core.clone(), self.remove.clone());
+        tokio::spawn(async move {
+            let outcome = remove(job, title).await;
+            if outcome.ok {
+                core.signal(Signal::Removed);
+            }
+            if let Some(reply) = reply {
+                let _ = reply.send(outcome);
+            }
+        });
     }
 
     fn change_subtitles(&self, change: subtitles::Change) -> Outcome {
@@ -2149,6 +2165,7 @@ mod tests {
                 find: Arc::new(|path, _| Some((path.to_path_buf(), Vec::new()))),
                 probe: Arc::new(|_| Box::pin(async { Err("no probing in tests".to_string()) })),
             },
+            remove: tending::remover(),
         }
     }
 
@@ -2369,6 +2386,34 @@ mod tests {
             });
             shown(&core).await;
             the_api_answers_while_the_tv_takes_nothing(&core).await;
+        });
+    }
+
+    #[test]
+    fn a_removal_from_pcloud_that_never_ends_leaves_the_api_answering() {
+        on_a_runtime_left_behind(async {
+            let (core, inbox) = Core::detached(db::test_library()).await;
+            let hardware = Hardware {
+                remove: Arc::new(|_, _| Box::pin(std::future::pending())),
+                ..hardware()
+            };
+            let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware).await;
+            tokio::spawn(actor.run(inbox));
+            let removing = {
+                let core = core.clone();
+                tokio::spawn(async move {
+                    let title = storage::Title::Movie("up-2009".to_string());
+                    core.ask(Request::Storage(storage::Change::Remove(title))).await
+                })
+            };
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert!(at_once(&core, Request::PlayFile(up(&core))).await.ok);
+            shown(&core).await;
+            for _ in 0..10 {
+                at_once(&core, Request::Seek(Seek::To(90.0))).await;
+                at_once(&core, Request::Control(Control::Pause)).await;
+            }
+            assert!(!removing.is_finished(), "the removal still waits on pCloud");
         });
     }
 

@@ -167,6 +167,16 @@ pub async fn tend(job: Job) -> Tended {
         })
 }
 
+/// Removes a title from pCloud and the offline cache.
+pub type Remove = std::sync::Arc<
+    dyn Fn(Job, storage::Title) -> std::pin::Pin<Box<dyn std::future::Future<Output = Outcome> + Send>> + Send + Sync,
+>;
+
+/// The removal that asks pCloud.
+pub fn remover() -> Remove {
+    std::sync::Arc::new(|job, title| Box::pin(remove(job, title)))
+}
+
 pub async fn remove(job: Job, title: storage::Title) -> Outcome {
     let everything = match everything(job.cache.as_ref()).await {
         Ok(Some(everything)) => everything,
