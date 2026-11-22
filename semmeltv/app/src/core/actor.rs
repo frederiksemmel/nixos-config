@@ -11,7 +11,7 @@ use crate::hold::{self, Hold};
 use crate::intent::{self, Action, Control};
 use crate::led::Led;
 use crate::library::Library;
-use crate::link::messages::{Ended, FromTv, Play, PlaySubtitles, Report, Target, ToTv};
+use crate::link::messages::{Ended, FromTv, Play, Report, Target, ToTv};
 use crate::link::{self, Link};
 use crate::offline::{Source, Store};
 use crate::player::renderer::{self, Handoff};
@@ -21,10 +21,10 @@ use crate::progress::{self, Position, Progress};
 use crate::screen;
 use crate::seek::Direction;
 use crate::segments::{self, Kind, Title};
+use crate::sidecar;
 use crate::storage;
 use crate::stream;
-use crate::subtitles::Remembered;
-use crate::subtitles::{self, Subtitles};
+use crate::subtitles::{self, SubtitleSettings};
 use crate::together;
 use crate::tv::{self, Television};
 use crate::up_next::{self, Press, UpNext};
@@ -192,7 +192,7 @@ pub struct Actor {
     queued: Option<PathBuf>,
     up_next: Option<UpNext>,
     led: Option<Led>,
-    subtitles: Subtitles,
+    subtitles: SubtitleSettings,
     television: Television,
     downloads: Option<Downloads>,
     audio: Option<Audio>,
@@ -211,11 +211,8 @@ pub struct Actor {
 /// The in-process tv end for mpv: a thread that owns the player and tells
 /// the core what happens through its inbox.
 pub fn local_tv(core: &Core) -> Link {
-    let (telling, subtitles) = (core.clone(), core.subtitles().clone());
-    link::local::spawn(
-        move |said| telling.signal(Signal::Tv(said)),
-        move |play, callbacks| Player::start(play, subtitles.clone(), callbacks),
-    )
+    let telling = core.clone();
+    link::local::spawn(move |said| telling.signal(Signal::Tv(said)), Player::start)
 }
 
 fn resume_point(progress: &Progress, file: &Path) -> f64 {
@@ -582,6 +579,7 @@ impl Actor {
                     return;
                 }
             };
+            let sidecars = block_in_place(|| sidecar::find(&source));
             self.subtitles.set_owner(owner);
             self.apply_audio(owner).await;
             let theirs = self.progress_of(owner).await;
@@ -599,14 +597,7 @@ impl Actor {
                 paused: false,
                 tracks,
                 caption: self.caption(path),
-                subtitles: PlaySubtitles {
-                    settings: self.subtitles.settings_of(owner),
-                    remembered: Remembered {
-                        delay: self.subtitles.file_delay(&source),
-                        embedded: self.subtitles.embedded(&source),
-                    },
-                    sidecars: Vec::new(),
-                },
+                subtitles: self.subtitles.for_play(owner, path, sidecars),
                 audio_device: self.audio_device(),
                 dialogue,
                 next: up_next::follows(&self.library, path),
@@ -724,6 +715,14 @@ impl Actor {
             }
             return;
         }
+        if let subtitles::Change::Add { video, .. } = &change
+            && *video != tv.file
+        {
+            if let Some(reply) = reply {
+                let _ = reply.send(Outcome::refused("That is not what plays now"));
+            }
+            return;
+        }
         self.asked += 1;
         let id = self.asked;
         let (answer, answered) = oneshot::channel();
@@ -757,7 +756,8 @@ impl Actor {
                     let _ = answer.send(Outcome { message, ok });
                 }
             }
-            FromTv::Hello { .. } | FromTv::Ask(_) | FromTv::Remember { .. } => {}
+            FromTv::Remember { file, remembered } => self.subtitles.remember(file, remembered),
+            FromTv::Hello { .. } | FromTv::Ask(_) => {}
         }
     }
 
@@ -1578,7 +1578,7 @@ impl Actor {
 
     fn change_subtitles(&self, change: subtitles::Change) -> Outcome {
         match change {
-            subtitles::Change::Restyle => Outcome::done("Saved"),
+            subtitles::Change::Restyle(_) => Outcome::done("Saved"),
             _ => Outcome::refused(NOTHING_PLAYING),
         }
     }
@@ -1703,6 +1703,8 @@ impl Actor {
             }
         });
         self.core.bus.playback(now_playing);
+        let subtitles = self.on_tv.as_ref().and_then(|tv| tv.last.subtitles.clone());
+        self.subtitles.publish(subtitles);
     }
 
     fn describe(&self, action: &Action) -> String {
@@ -2209,7 +2211,7 @@ mod tests {
             let tv = link::local::spawn(
                 move |said| telling.signal(Signal::Tv(said)),
                 move |play, callbacks| {
-                    let player = Player::without_mpv(&play.play, callbacks);
+                    let player = Player::without_mpv(play, callbacks);
                     player.hold_forever();
                     let _ = started.send(());
                     Ok(player)
@@ -2228,7 +2230,7 @@ mod tests {
         let telling = core.clone();
         let tv = link::local::spawn(
             move |said| telling.signal(Signal::Tv(said)),
-            |play, callbacks| Ok(Player::without_mpv(&play.play, callbacks)),
+            |play, callbacks| Ok(Player::without_mpv(play, callbacks)),
         );
         let core = core_with_tv(core, inbox, tv).await;
         core.ask(Request::PlayFile(up(&core))).await.unwrap();
@@ -2310,6 +2312,85 @@ mod tests {
                 9000.0
             )]
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_subtitle_delay_set_on_the_tv_comes_back_with_the_next_play_of_that_file() {
+        let (core, inbox) = Core::detached(db::test_library()).await;
+        let telling = core.clone();
+        let (started, plays) = std::sync::mpsc::channel();
+        let tv = link::local::spawn(
+            move |said| telling.signal(Signal::Tv(said)),
+            move |play, callbacks| {
+                let _ = started.send((play.play.clone(), play.subtitles.clone()));
+                Ok(Player::without_mpv(play, callbacks))
+            },
+        );
+        let core = core_with_tv(core, inbox, tv).await;
+        core.ask(Request::PlayFile(up(&core))).await.unwrap();
+        let (first, memory) = plays.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(memory.remembered, subtitles::Remembered::default());
+        let answer = core
+            .ask(Request::Subtitles(subtitles::Change::Delay(0.5)))
+            .await
+            .unwrap();
+        assert_eq!(answer, Outcome::done("Subtitle delay +0.5 s"));
+        settled(&core).await;
+        assert_eq!(core.subtitles().remembered(&up(&core)).delay, 0.5);
+        core.signal(Signal::Tv(FromTv::Finished(Ended {
+            play: first,
+            finish: Finish::Stopped,
+            place: progress::Place::default(),
+            tracks: progress::Tracks::default(),
+            played: 0.0,
+        })));
+        core.ask(Request::PlayFile(up(&core))).await.unwrap();
+        let (_, again) = plays.recv_timeout(Duration::from_secs(2)).unwrap();
+        assert_eq!(again.remembered.delay, 0.5);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn fetched_subtitles_for_another_file_are_not_offered_to_the_tv() {
+        let (core, _play) = playing().await;
+        let other = PathBuf::from("/lib/Movies/Cars/Cars.mkv");
+        let answer = core
+            .ask(Request::Subtitles(subtitles::Change::Add {
+                video: other.clone(),
+                sidecar: sidecar::Sidecar {
+                    path: other.with_extension("en.srt"),
+                    language: Some("en".to_string()),
+                    title: "English".to_string(),
+                    forced: false,
+                    hearing_impaired: false,
+                },
+            }))
+            .await
+            .unwrap();
+        assert_eq!(answer, Outcome::refused("That is not what plays now"));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_tracks_the_tv_reports_are_what_the_subtitles_api_shows() {
+        let (core, play) = playing().await;
+        let mut shown = subtitles::Playing::default();
+        shown.visible = true;
+        shown.track = Some(2);
+        core.signal(Signal::Tv(FromTv::Report(Box::new(Report {
+            play: Some(play.clone()),
+            subtitles: Some(shown.clone()),
+            ..Report::default()
+        }))));
+        settled(&core).await;
+        assert_eq!(core.subtitles().playing(), Some(shown));
+        core.signal(Signal::Tv(FromTv::Finished(Ended {
+            play,
+            finish: Finish::Stopped,
+            place: progress::Place::default(),
+            tracks: progress::Tracks::default(),
+            played: 0.0,
+        })));
+        settled(&core).await;
+        assert_eq!(core.subtitles().playing(), None);
     }
 
     #[tokio::test(flavor = "multi_thread")]

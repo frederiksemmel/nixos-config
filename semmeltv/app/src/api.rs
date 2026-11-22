@@ -1560,18 +1560,15 @@ async fn fetch_subtitles(State(api): State<Api>, Who(profile): Who, Json(body): 
             forced: false,
             hearing_impaired: false,
         });
-    let mut shown = false;
-    if api.core.subtitles().plays(&chosen.video) {
-        let add = subtitles::Change::Add {
-            video: chosen.video.clone(),
-            sidecar,
-        };
-        shown = api
-            .core
-            .ask(Request::Subtitles(add))
-            .await
-            .is_some_and(|outcome| outcome.ok);
-    }
+    let add = subtitles::Change::Add {
+        video: chosen.video.clone(),
+        sidecar,
+    };
+    let shown = api
+        .core
+        .ask(Request::Subtitles(add))
+        .await
+        .is_some_and(|outcome| outcome.ok);
     let message = if shown {
         format!("{label} subtitles added")
     } else {

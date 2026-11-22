@@ -618,7 +618,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         Ok(remux) => remux,
         Err(error) => return refused(StatusCode::UNPROCESSABLE_ENTITY, error),
     };
-    let delay = streams.core.subtitles().file_delay(&chosen.file);
+    let delay = streams.core.subtitles().remembered(&chosen.file).delay;
     let video = media.video.as_ref();
     let bitrate = media.bitrate;
     let offset = remux.offset;

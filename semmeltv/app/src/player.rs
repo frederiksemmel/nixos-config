@@ -11,8 +11,7 @@ use crate::overlay::{self, View};
 use crate::progress::{self, Place, Tracks};
 use crate::seek::{self, Direction, Order, Scrub};
 use crate::segments::{self, Kind, Segment};
-use crate::sidecar;
-use crate::subtitles::{self, Answer, Change, Observed, Subtitles};
+use crate::subtitles::{self, Answer, Change, Observed, Remembered, SubtitleTracks};
 use commands::Commands;
 use health::{Health, Reading};
 use serde::{Deserialize, Serialize};
@@ -223,9 +222,10 @@ struct Playback {
     shown_until: Option<Instant>,
     drawn: String,
     toast_until: Option<Instant>,
-    subtitles: Subtitles,
+    subtitles: SubtitleTracks,
     tracks: Tracks,
     on_key: Option<Box<dyn Fn(Command) + Send>>,
+    on_remember: Option<Box<dyn Fn(PathBuf, Remembered) + Send>>,
     health: Health,
     fader: Option<fade::Fader>,
     wanted_paused: Option<bool>,
@@ -413,7 +413,7 @@ impl Playback {
     }
 
     fn change_subtitles(&mut self, change: Change, now: Instant) -> Answer {
-        let told = change != Change::Restyle;
+        let told = !matches!(change, Change::Restyle(_));
         let answer = self.subtitles.change(change);
         for command in &answer.commands {
             self.send(command.clone());
@@ -421,7 +421,14 @@ impl Playback {
         if told {
             self.toast("", &answer.message, now + SAY_FOR);
         }
+        self.tell_memory();
         answer
+    }
+
+    fn tell_memory(&mut self) {
+        if let (Some((file, remembered)), Some(on_remember)) = (self.subtitles.take_remembered(), &self.on_remember) {
+            on_remember(file, remembered);
+        }
     }
 
     fn hide_toast(&mut self) {
@@ -642,10 +649,11 @@ pub struct Player {
 
 /// Where a player tells what happens to it: a report every `REPORT_EVERY`
 /// while it runs, the keys pressed in mpv's window that the app decides
-/// on, and how it ended.
+/// on, what should be remembered about the file, and how it ended.
 pub struct Callbacks {
     pub report: Box<dyn Fn(Report) + Send>,
     pub key: Box<dyn Fn(Command) + Send>,
+    pub remember: Box<dyn Fn(PathBuf, Remembered) + Send>,
     pub exit: Box<dyn FnOnce(Ended) + Send>,
 }
 
@@ -711,8 +719,14 @@ fn report_mpv(playback: &Shared, play: &str, report: Box<dyn Fn(Report) + Send>)
 }
 
 impl Player {
-    pub fn start(play: &Play, subtitles: Subtitles, callbacks: Callbacks) -> io::Result<Self> {
-        let Callbacks { report, key, exit } = callbacks;
+    pub fn start(play: &Play, callbacks: Callbacks) -> io::Result<Self> {
+        let Callbacks {
+            report,
+            key,
+            remember,
+            exit,
+        } = callbacks;
+        let subtitles = SubtitleTracks::new(&play.file, play.subtitles.clone());
         let path = play.source.as_path();
         let id = PLAYERS.fetch_add(1, Ordering::Relaxed);
         display::play(id, display::FILM);
@@ -734,14 +748,13 @@ impl Player {
             .arg(format!("--osd-font={OSD_FONT}"))
             .arg(format!("--osd-fonts-dir={OSD_FONTS}"))
             .arg(format!("--input-ipc-server={}", socket_path.display()))
-            .args(subtitles.mpv_args(path))
+            .args(subtitles.mpv_args())
             .args(resume_args(play.start, play.tracks))
             .arg("--")
             .arg(path)
             .stdin(Stdio::null())
             .spawn()
             .inspect_err(|_| display::stop(id))?;
-        subtitles.started(path, sidecar::find(path));
         let playback = Shared::new(Mutex::new(Playback {
             id,
             name: play.caption.clone(),
@@ -750,6 +763,7 @@ impl Player {
             speed: 1.0,
             next: play.next,
             on_key: Some(key),
+            on_remember: Some(remember),
             ..Playback::default()
         }));
         let nudge = report_mpv(&playback, &play.play, report);
@@ -781,13 +795,15 @@ impl Player {
 
     /// A player with no mpv behind it, which reports like a real one.
     #[cfg(test)]
-    pub fn without_mpv(play: &str, callbacks: Callbacks) -> Self {
+    pub fn without_mpv(play: &Play, callbacks: Callbacks) -> Self {
         let playback = Shared::new(Mutex::new(Playback {
             speed: 1.0,
+            subtitles: SubtitleTracks::new(&play.file, play.subtitles.clone()),
             on_key: Some(callbacks.key),
+            on_remember: Some(callbacks.remember),
             ..Playback::default()
         }));
-        let nudge = report_mpv(&playback, play, callbacks.report);
+        let nudge = report_mpv(&playback, &play.play, callbacks.report);
         Self { playback, nudge }
     }
 
@@ -1001,6 +1017,7 @@ fn listen(events: UnixStream, shared: &Shared) {
                 for command in playback.subtitles.observe(observed) {
                     playback.send(command);
                 }
+                playback.tell_memory();
                 if let Some(tracks) = playback.subtitles.tracks() {
                     playback.tracks = tracks;
                 }
@@ -1207,20 +1224,68 @@ mod tests {
         }
     }
 
+    fn up(token: &str) -> Play {
+        Play {
+            play: token.to_string(),
+            owner: crate::profile::ProfileId::FIRST,
+            file: PathBuf::from("/lib/Movies/Up/Up.mkv"),
+            source: PathBuf::from("/lib/Movies/Up/Up.mkv"),
+            start: 0.0,
+            paused: false,
+            tracks: Tracks::default(),
+            caption: "Up".to_string(),
+            subtitles: crate::link::messages::PlaySubtitles::default(),
+            audio_device: String::new(),
+            dialogue: false,
+            next: false,
+        }
+    }
+
     fn reporting(play: &str) -> (Player, std::sync::mpsc::Receiver<Report>) {
         let (reports, received) = std::sync::mpsc::channel();
         let reports = Mutex::new(reports);
         let player = Player::without_mpv(
-            play,
+            &up(play),
             Callbacks {
                 report: Box::new(move |report| {
                     let _ = reports.lock().unwrap().send(report);
                 }),
                 key: Box::new(|_| {}),
+                remember: Box::new(|_, _| {}),
                 exit: Box::new(|_| {}),
             },
         );
         (player, received)
+    }
+
+    #[test]
+    fn a_subtitle_delay_set_on_the_tv_is_handed_to_the_core_take_remembered() {
+        let (remembered, heard) = std::sync::mpsc::channel();
+        let remembered = Mutex::new(remembered);
+        let player = Player::without_mpv(
+            &up("a-play"),
+            Callbacks {
+                report: Box::new(|_| {}),
+                key: Box::new(|_| {}),
+                remember: Box::new(move |file, memory| {
+                    let _ = remembered.lock().unwrap().send((file, memory));
+                }),
+                exit: Box::new(|_| {}),
+            },
+        );
+        assert_eq!(player.subtitles(Change::Delay(1.5)).message, "Subtitle delay +1.5 s");
+        assert_eq!(
+            heard.try_recv(),
+            Ok((
+                PathBuf::from("/lib/Movies/Up/Up.mkv"),
+                Remembered {
+                    delay: 1.5,
+                    embedded: None
+                }
+            ))
+        );
+        player.subtitles(Change::Toggle);
+        assert!(heard.try_recv().is_err(), "a toggle leaves the file's memory alone");
     }
 
     #[test]
@@ -1493,18 +1558,14 @@ mod tests {
 
     #[test]
     fn the_subtitle_key_toggles_and_says_what_it_did() {
-        let subtitles = Subtitles::default();
-        subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
+        let mut subtitles = SubtitleTracks::new(Path::new("/lib/Movies/Up/Up.mkv"), Default::default());
         let tracks = json!({ "event": "property-change", "id": SUBTITLES_ID, "name": "track-list",
             "data": [{ "id": 1, "type": "sub", "lang": "en" }] });
         let Some(Event::Subtitles(observed)) = Event::parse(&tracks.to_string()) else {
             panic!("a subtitle event");
         };
         subtitles.observe(observed);
-        let playback = Playback {
-            subtitles: subtitles.clone(),
-            ..playing()
-        };
+        let playback = Playback { subtitles, ..playing() };
         let sent = sent_by(
             |playback| playback.command(Command::Subtitles, Instant::now()),
             playback,
@@ -1522,8 +1583,7 @@ mod tests {
 
     #[test]
     fn moving_the_sound_selects_the_last_audio_track_again() {
-        let subtitles = Subtitles::default();
-        subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
+        let mut subtitles = SubtitleTracks::new(Path::new("/lib/Movies/Up/Up.mkv"), Default::default());
         subtitles.observe(Observed::Audio(Some(2)));
         subtitles.observe(Observed::Audio(None));
         let playback = Playback { subtitles, ..playing() };

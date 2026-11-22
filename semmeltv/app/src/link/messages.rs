@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 /// Raised whenever a message changes shape, so a core and a tv from
 /// different builds refuse each other instead of misreading.
-pub const PROTOCOL: u32 = 2;
+pub const PROTOCOL: u32 = 3;
 
 /// The core's orders and news for the tv.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

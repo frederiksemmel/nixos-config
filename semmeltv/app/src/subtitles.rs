@@ -2,8 +2,8 @@ use crate::api;
 use crate::auth::gate::Who;
 use crate::core::{Core, Request};
 use crate::db::{self, Db};
+use crate::link::messages::PlaySubtitles;
 use crate::profile::ProfileId;
-use crate::progress::Tracks;
 use crate::sidecar::Sidecar;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -17,7 +17,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
 
-pub const OBSERVED: [&str; 5] = ["track-list", "sid", "sub-visibility", "aid", "sub-delay"];
+mod tracks;
+pub use tracks::{Answer, OBSERVED, Observed, SubtitleTracks};
+
 const LANGUAGES: &[(&[&str], &str)] = &[
     (&["de", "ger", "deu"], "German"),
     (&["en", "eng"], "English"),
@@ -67,9 +69,6 @@ const ALIASES: &[(&str, &str)] = &[
     ("brazilian", "pt"),
 ];
 const MOST_LANGUAGES: usize = 8;
-const NO_SUBTITLES: &str = "No subtitles in this file";
-const OFF: &str = "Subtitles off";
-const MOST_DELAY: f64 = 60.0;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -236,46 +235,6 @@ fn same_language(code: &str, wanted: &str) -> bool {
     primary(code) == primary(wanted) || language_name(code).is_some_and(|name| language_name(wanted) == Some(name))
 }
 
-impl Track {
-    fn parse(track: &Value, kind: &str) -> Option<Self> {
-        if track["type"] != kind {
-            return None;
-        }
-        let id = track["id"].as_i64()?;
-        let text = |key: &str| {
-            track[key]
-                .as_str()
-                .map(str::trim)
-                .filter(|text| !text.is_empty())
-                .map(str::to_string)
-        };
-        let language = text("lang");
-        let title = text("title");
-        let flag = |key: &str| track[key].as_bool().unwrap_or(false);
-        let titled = |word: &str| {
-            title
-                .as_deref()
-                .is_some_and(|title| title.split_whitespace().any(|part| part.eq_ignore_ascii_case(word)))
-        };
-        let name = language.as_deref().and_then(language_name).map(str::to_string);
-        let label = name
-            .or_else(|| title.clone())
-            .or_else(|| language.clone())
-            .unwrap_or_else(|| format!("Track {id}"));
-        let forced = flag("forced") || titled("forced");
-        let hearing_impaired = flag("hearing-impaired") || titled("SDH");
-        Some(Self {
-            id,
-            language,
-            title,
-            label,
-            forced,
-            hearing_impaired,
-            external: flag("external"),
-        })
-    }
-}
-
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Playing {
     pub visible: bool,
@@ -288,137 +247,9 @@ pub struct Playing {
     last_audio: Option<i64>,
 }
 
-impl Playing {
-    fn label(&self, id: i64) -> String {
-        self.tracks
-            .iter()
-            .find(|track| track.id == id)
-            .map_or_else(|| format!("track {id}"), |track| track.label.clone())
-    }
-
-    fn preferred(&self, languages: &[String]) -> Option<i64> {
-        let full = || self.tracks.iter().filter(|track| !track.forced);
-        languages
-            .iter()
-            .find_map(|wanted| {
-                let speaking = || {
-                    full().filter(|track| {
-                        track
-                            .language
-                            .as_deref()
-                            .is_some_and(|code| same_language(code, wanted))
-                    })
-                };
-                speaking()
-                    .find(|track| !track.hearing_impaired)
-                    .or_else(|| speaking().next())
-            })
-            .or_else(|| full().next())
-            .or_else(|| self.tracks.first())
-            .map(|track| track.id)
-    }
-
-    fn show(&self, id: i64) -> (Vec<Value>, String) {
-        let mut commands = Vec::new();
-        if self.track != Some(id) {
-            commands.push(json!(["set_property", "sid", id]));
-        }
-        commands.push(json!(["set_property", "sub-visibility", true]));
-        (commands, format!("Subtitles: {}", self.label(id)))
-    }
-
-    fn hide() -> (Vec<Value>, String) {
-        (vec![json!(["set_property", "sub-visibility", false])], OFF.to_string())
-    }
-
-    fn toggle(&self, languages: &[String]) -> Answer {
-        match (self.visible, self.track) {
-            _ if self.tracks.is_empty() => Answer::refused(NO_SUBTITLES.to_string()),
-            (true, Some(_)) => Answer::done(Self::hide()),
-            (_, Some(id)) => Answer::done(self.show(id)),
-            (_, None) => Answer::done(self.preferred(languages).map_or_else(Self::hide, |id| self.show(id))),
-        }
-    }
-
-    fn choose_audio(&self, id: i64) -> Result<(Vec<Value>, String), String> {
-        let track = self
-            .audio_tracks
-            .iter()
-            .find(|track| track.id == id)
-            .ok_or_else(|| format!("There is no audio track {id}"))?;
-        Ok((
-            vec![json!(["set_property", "aid", id])],
-            format!("Audio: {}", track.label),
-        ))
-    }
-
-    fn choose(&self, track: Option<i64>) -> Result<(Vec<Value>, String), String> {
-        match track {
-            None => Ok(Self::hide()),
-            Some(id) if self.tracks.iter().any(|track| track.id == id) => Ok(self.show(id)),
-            Some(id) => Err(format!("There is no subtitle track {id}")),
-        }
-    }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub enum Observed {
-    Tracks { subtitles: Vec<Track>, audio: Vec<Track> },
-    Track(Option<i64>),
-    Audio(Option<i64>),
-    Visible(bool),
-    Delay(f64),
-}
-
-impl Observed {
-    pub fn parse(message: &Value) -> Option<Self> {
-        let data = &message["data"];
-        match message["name"].as_str()? {
-            "track-list" => {
-                let list = data.as_array()?;
-                let of = |kind: &str| list.iter().filter_map(|track| Track::parse(track, kind)).collect();
-                Some(Self::Tracks {
-                    subtitles: of("sub"),
-                    audio: of("audio"),
-                })
-            }
-            "sid" => Some(Self::Track(data.as_i64())),
-            "aid" => Some(Self::Audio(data.as_i64())),
-            "sub-visibility" => data.as_bool().map(Self::Visible),
-            "sub-delay" => data.as_f64().map(Self::Delay),
-            _ => None,
-        }
-    }
-}
-
-#[derive(Debug, PartialEq)]
-pub struct Answer {
-    pub commands: Vec<Value>,
-    pub message: String,
-    pub ok: bool,
-}
-
-impl Answer {
-    fn done((commands, message): (Vec<Value>, String)) -> Self {
-        Self {
-            commands,
-            message,
-            ok: true,
-        }
-    }
-
-    fn refused(message: String) -> Self {
-        Self {
-            commands: Vec::new(),
-            message,
-            ok: false,
-        }
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Change {
-    Restyle,
+    Restyle(Settings),
     Toggle,
     Track(Option<i64>),
     Audio(i64),
@@ -440,29 +271,11 @@ impl Remembered {
 }
 
 #[derive(Default)]
-struct Inner {
+struct Kept {
     owner: Option<ProfileId>,
-    settings: Settings,
-    playing: Option<Playing>,
-    file: Option<PathBuf>,
-    sidecars: Vec<Sidecar>,
-    awaited: usize,
-    files: BTreeMap<PathBuf, Remembered>,
     stored: HashMap<ProfileId, Settings>,
-}
-
-impl Inner {
-    fn remember(&mut self, change: impl FnOnce(&mut Remembered)) -> Option<(PathBuf, Remembered)> {
-        let file = self.file.clone()?;
-        let remembered = self.files.entry(file.clone()).or_default();
-        let before = *remembered;
-        change(remembered);
-        let after = *remembered;
-        if after.is_empty() {
-            self.files.remove(&file);
-        }
-        (after != before).then_some((file, after))
-    }
+    files: BTreeMap<PathBuf, Remembered>,
+    playing: Option<Playing>,
 }
 
 async fn stored(db: &Db, profile: ProfileId) -> Option<Settings> {
@@ -475,22 +288,16 @@ async fn stored(db: &Db, profile: ProfileId) -> Option<Settings> {
         .and_then(|settings| settings.checked().ok())
 }
 
-fn delay_label(delay: f64) -> String {
-    if delay == 0.0 {
-        "Subtitle delay off".to_string()
-    } else {
-        format!("Subtitle delay {delay:+.1} s")
-    }
-}
-
+/// The core's side of subtitles: each profile's settings, what is
+/// remembered about each file, and the tracks the tv last reported.
 #[derive(Clone, Default)]
-pub struct Subtitles {
+pub struct SubtitleSettings {
     store: Option<Db>,
     files: Option<mpsc::UnboundedSender<(PathBuf, Remembered)>>,
-    state: Arc<Mutex<Inner>>,
+    kept: Arc<Mutex<Kept>>,
 }
 
-impl Subtitles {
+impl SubtitleSettings {
     pub async fn load(db: &Db, profile: ProfileId) -> Self {
         let mut everyone = HashMap::new();
         let profiles = db.profiles().await.unwrap_or_else(|error| {
@@ -518,243 +325,83 @@ impl Subtitles {
         Self {
             store: Some(db.clone()),
             files: Some(changed),
-            state: Arc::new(Mutex::new(Inner {
+            kept: Arc::new(Mutex::new(Kept {
                 owner: Some(profile),
-                settings: everyone.get(&profile).cloned().unwrap_or_default(),
-                files,
                 stored: everyone,
-                ..Inner::default()
+                files,
+                playing: None,
             })),
         }
     }
 
-    #[cfg(test)]
-    pub fn settings(&self) -> Settings {
-        self.state.lock().unwrap().settings.clone()
-    }
-
     pub fn owner(&self) -> ProfileId {
-        self.state.lock().unwrap().owner.unwrap_or(ProfileId::FIRST)
-    }
-
-    pub fn settings_of(&self, profile: ProfileId) -> Settings {
-        let state = self.state.lock().unwrap();
-        if state.owner.unwrap_or(ProfileId::FIRST) == profile {
-            return state.settings.clone();
-        }
-        state.stored.get(&profile).cloned().unwrap_or_default()
+        self.kept.lock().unwrap().owner.unwrap_or(ProfileId::FIRST)
     }
 
     pub fn set_owner(&self, profile: ProfileId) {
-        let mut state = self.state.lock().unwrap();
-        if state.owner.unwrap_or(ProfileId::FIRST) == profile {
-            return;
-        }
-        state.owner = Some(profile);
-        state.settings = state.stored.get(&profile).cloned().unwrap_or_default();
+        self.kept.lock().unwrap().owner = Some(profile);
     }
 
-    pub fn mpv_args(&self, file: &Path) -> Vec<String> {
-        let state = self.state.lock().unwrap();
-        let mut args = state.settings.mpv_args();
-        let delay = state.files.get(file).map_or(0.0, |remembered| remembered.delay);
-        args.push(format!("--sub-delay={delay}"));
-        args
-    }
-
-    pub fn file_delay(&self, file: &Path) -> f64 {
-        self.state
+    pub fn settings_of(&self, profile: ProfileId) -> Settings {
+        self.kept
             .lock()
             .unwrap()
-            .files
-            .get(file)
-            .map_or(0.0, |remembered| remembered.delay)
+            .stored
+            .get(&profile)
+            .cloned()
+            .unwrap_or_default()
     }
 
-    pub fn plays(&self, file: &Path) -> bool {
-        self.state.lock().unwrap().file.as_deref() == Some(file)
+    pub fn remembered(&self, file: &Path) -> Remembered {
+        self.kept.lock().unwrap().files.get(file).copied().unwrap_or_default()
     }
 
     pub fn embedded(&self, file: &Path) -> Option<usize> {
-        self.state
-            .lock()
-            .unwrap()
-            .files
-            .get(file)
-            .and_then(|remembered| remembered.embedded)
+        self.remembered(file).embedded
+    }
+
+    /// What the tv needs to show `file`'s subtitles the way `owner` likes them.
+    pub fn for_play(&self, owner: ProfileId, file: &Path, sidecars: Vec<Sidecar>) -> PlaySubtitles {
+        PlaySubtitles {
+            settings: self.settings_of(owner),
+            remembered: self.remembered(file),
+            sidecars,
+        }
+    }
+
+    /// Keeps what the tv found out about `file`, in memory and in the database.
+    pub fn remember(&self, file: PathBuf, remembered: Remembered) {
+        {
+            let mut kept = self.kept.lock().unwrap();
+            if kept.files.get(&file).copied().unwrap_or_default() == remembered {
+                return;
+            }
+            if remembered.is_empty() {
+                kept.files.remove(&file);
+            } else {
+                kept.files.insert(file.clone(), remembered);
+            }
+        }
+        if let Some(files) = &self.files {
+            let _ = files.send((file, remembered));
+        }
+    }
+
+    /// The tracks of what plays, as the tv last reported them.
+    pub fn publish(&self, playing: Option<Playing>) {
+        self.kept.lock().unwrap().playing = playing;
     }
 
     pub fn playing(&self) -> Option<Playing> {
-        self.state.lock().unwrap().playing.clone()
-    }
-
-    pub fn chosen(&self) -> (Option<i64>, Option<i64>) {
-        self.playing().map_or((None, None), |playing| {
-            (playing.track.filter(|_| playing.visible), playing.audio)
-        })
-    }
-
-    pub fn audio_to_restore(&self) -> Option<i64> {
-        self.playing().and_then(|playing| {
-            playing
-                .last_audio
-                .or_else(|| playing.audio_tracks.first().map(|track| track.id))
-        })
-    }
-
-    pub fn delay(&self) -> f64 {
-        self.playing().map_or(0.0, |playing| playing.delay)
+        self.kept.lock().unwrap().playing.clone()
     }
 
     async fn save(&self, profile: ProfileId, settings: Settings) -> db::Result<()> {
         if let Some(db) = &self.store {
             db.save_subtitle_settings(profile, &settings).await?;
         }
-        let mut state = self.state.lock().unwrap();
-        if state.owner.unwrap_or(ProfileId::FIRST) == profile {
-            state.settings = settings.clone();
-        }
-        state.stored.insert(profile, settings);
+        self.kept.lock().unwrap().stored.insert(profile, settings);
         Ok(())
-    }
-
-    fn save_file(&self, change: (PathBuf, Remembered)) {
-        if let Some(files) = &self.files {
-            let _ = files.send(change);
-        }
-    }
-
-    pub fn tracks(&self) -> Option<Tracks> {
-        self.playing().map(|playing| Tracks {
-            audio: playing.audio,
-            subtitle: playing.track,
-            subtitles_shown: Some(playing.visible),
-        })
-    }
-
-    pub fn started(&self, file: &Path, sidecars: Vec<Sidecar>) {
-        let mut state = self.state.lock().unwrap();
-        state.playing = Some(Playing::default());
-        state.file = Some(file.to_path_buf());
-        state.awaited = sidecars.len();
-        state.sidecars = sidecars;
-    }
-
-    pub fn stopped(&self) {
-        let mut state = self.state.lock().unwrap();
-        state.playing = None;
-        state.file = None;
-        state.sidecars.clear();
-        state.awaited = 0;
-    }
-
-    pub fn loaded(&self) -> Vec<Value> {
-        self.state
-            .lock()
-            .unwrap()
-            .sidecars
-            .iter()
-            .map(|sidecar| {
-                json!([
-                    "sub-add",
-                    sidecar.path,
-                    "auto",
-                    sidecar.title,
-                    sidecar.language.as_deref().unwrap_or_default()
-                ])
-            })
-            .collect()
-    }
-
-    pub fn observe(&self, observed: Observed) -> Vec<Value> {
-        let mut state = self.state.lock().unwrap();
-        let mut commands = Vec::new();
-        let mut remembered = None;
-        let shown = state.settings.shown;
-        let languages = state.settings.languages.clone();
-        let awaited = state.awaited;
-        let playing = state.playing.get_or_insert_with(Playing::default);
-        match observed {
-            Observed::Tracks { subtitles, audio } => {
-                playing.tracks = subtitles;
-                playing.audio_tracks = audio;
-                let external = playing.tracks.iter().filter(|track| track.external).count();
-                let embedded = playing.tracks.len() - external;
-                let settled = awaited > 0 && external >= awaited;
-                if settled
-                    && shown
-                    && let Some(id) = playing.preferred(&languages)
-                {
-                    commands = playing.show(id).0;
-                }
-                if settled {
-                    state.awaited = 0;
-                }
-                remembered = state.remember(|remembered| remembered.embedded = Some(embedded));
-            }
-            Observed::Track(track) => playing.track = track,
-            Observed::Audio(track) => {
-                playing.audio = track;
-                playing.last_audio = track.or(playing.last_audio);
-            }
-            Observed::Visible(visible) => playing.visible = visible,
-            Observed::Delay(delay) => playing.delay = delay,
-        }
-        drop(state);
-        if let Some(remembered) = remembered {
-            self.save_file(remembered);
-        }
-        commands
-    }
-
-    pub fn change(&self, change: Change) -> Answer {
-        let mut state = self.state.lock().unwrap();
-        let playing = state.playing.clone().unwrap_or_default();
-        match change {
-            Change::Restyle => {
-                let commands = state
-                    .settings
-                    .style()
-                    .into_iter()
-                    .map(|(name, value)| json!(["set_property", name, value]))
-                    .collect();
-                Answer::done((commands, "Subtitle style changed".to_string()))
-            }
-            Change::Toggle => playing.toggle(&state.settings.languages),
-            Change::Track(track) => playing.choose(track).map_or_else(Answer::refused, Answer::done),
-            Change::Audio(track) => playing.choose_audio(track).map_or_else(Answer::refused, Answer::done),
-            Change::Delay(delay) => {
-                if state.file.is_none() {
-                    return Answer::refused("Nothing is playing".to_string());
-                }
-                if !delay.is_finite() {
-                    return Answer::refused("The delay must be a number of seconds".to_string());
-                }
-                let delay = ((delay * 10.0).round() / 10.0).clamp(-MOST_DELAY, MOST_DELAY);
-                if let Some(remembered) = state.remember(|remembered| remembered.delay = delay) {
-                    drop(state);
-                    self.save_file(remembered);
-                }
-                Answer::done((vec![json!(["set_property", "sub-delay", delay])], delay_label(delay)))
-            }
-            Change::Add { video, sidecar } => {
-                if state.file.as_deref() != Some(video.as_path()) {
-                    return Answer::refused("That is not what plays now".to_string());
-                }
-                state.sidecars.push(sidecar.clone());
-                let commands = vec![
-                    json!([
-                        "sub-add",
-                        sidecar.path,
-                        "select",
-                        sidecar.title,
-                        sidecar.language.as_deref().unwrap_or_default()
-                    ]),
-                    json!(["set_property", "sub-visibility", true]),
-                ];
-                Answer::done((commands, format!("Subtitles: {}", sidecar.title)))
-            }
-        }
     }
 }
 
@@ -766,7 +413,7 @@ struct View {
 
 #[derive(Clone)]
 struct Endpoint {
-    subtitles: Subtitles,
+    subtitles: SubtitleSettings,
     core: Core,
 }
 
@@ -781,7 +428,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(core: Core) -> Router<S> {
         .with_state(Endpoint { subtitles, core })
 }
 
-fn view(subtitles: &Subtitles, profile: ProfileId) -> Json<View> {
+fn view(subtitles: &SubtitleSettings, profile: ProfileId) -> Json<View> {
     Json(View {
         settings: subtitles.settings_of(profile),
         playing: subtitles.playing(),
@@ -801,11 +448,11 @@ async fn update(
         Ok(settings) => settings,
         Err(error) => return api::problem(StatusCode::BAD_REQUEST, error),
     };
-    if let Err(error) = endpoint.subtitles.save(profile, settings).await {
+    if let Err(error) = endpoint.subtitles.save(profile, settings.clone()).await {
         return api::problem(StatusCode::INTERNAL_SERVER_ERROR, error.to_string());
     }
     if endpoint.subtitles.owner() == profile {
-        endpoint.core.send(Request::Subtitles(Change::Restyle));
+        endpoint.core.send(Request::Subtitles(Change::Restyle(settings)));
     }
     view(&endpoint.subtitles, profile).into_response()
 }
@@ -852,157 +499,6 @@ mod tests {
     use std::sync::mpsc;
     use std::time::Duration;
     use tokio::net::TcpListener;
-
-    fn sub(id: i64, lang: &str, title: &str) -> Value {
-        json!({ "id": id, "type": "sub", "lang": lang, "title": title, "selected": false })
-    }
-
-    fn endless_summer() -> Value {
-        json!([
-            { "id": 1, "type": "video", "title": "The.Endless.Summer" },
-            { "id": 1, "type": "audio", "lang": "en" },
-            sub(1, "en", "English SRT"),
-            { "id": 2, "type": "sub", "lang": "en", "title": "English SRT-SDH", "hearing-impaired": true },
-            sub(3, "fr", "French SRT"),
-        ])
-    }
-
-    fn playing(tracks: Value, track: Option<i64>, visible: bool) -> Playing {
-        let Some(Observed::Tracks { subtitles, audio }) =
-            Observed::parse(&json!({ "name": "track-list", "data": tracks }))
-        else {
-            panic!("a track list");
-        };
-        Playing {
-            visible,
-            track,
-            tracks: subtitles,
-            audio_tracks: audio,
-            ..Playing::default()
-        }
-    }
-
-    #[test]
-    fn only_subtitle_tracks_are_listed_and_named_after_their_language() {
-        let playing = playing(endless_summer(), Some(1), true);
-        let labels: Vec<_> = playing.tracks.iter().map(|track| track.label.as_str()).collect();
-        assert_eq!(labels, ["English", "English", "French"]);
-        assert!(playing.tracks[1].hearing_impaired);
-        assert_eq!(playing.tracks[2].title.as_deref(), Some("French SRT"));
-        let unnamed = Track::parse(&json!({ "id": 4, "type": "sub" }), "sub").unwrap();
-        assert_eq!(unnamed.label, "Track 4");
-        let titled = Track::parse(
-            &json!({ "id": 5, "type": "sub", "lang": "xx", "title": "Commentary" }),
-            "sub",
-        )
-        .unwrap();
-        assert_eq!(titled.label, "Commentary");
-        assert_eq!(
-            Track::parse(&json!({ "id": 6, "type": "sub", "lang": "ger" }), "sub")
-                .unwrap()
-                .label,
-            "German"
-        );
-    }
-
-    #[test]
-    fn region_tags_name_and_match_their_language() {
-        let maul = json!([
-            { "id": 1, "type": "sub", "lang": "en-US" },
-            { "id": 2, "type": "sub", "lang": "en-US", "title": "SDH", "hearing-impaired": true },
-            { "id": 3, "type": "sub", "lang": "zh-Hant-HK", "title": "Hong Kong" },
-            { "id": 7, "type": "sub", "lang": "de-DE" },
-            { "id": 10, "type": "sub", "lang": "es-419", "title": "Latin America" },
-            { "id": 13, "type": "sub", "lang": "hu-HU" },
-        ]);
-        let playing = playing(maul, None, false);
-        let labels: Vec<_> = playing.tracks.iter().map(|track| track.label.as_str()).collect();
-        assert_eq!(
-            labels,
-            ["English", "English", "Chinese", "German", "Spanish", "Hungarian"]
-        );
-        assert_eq!(playing.preferred(&["de".to_string(), "en".to_string()]), Some(7));
-        assert_eq!(playing.preferred(&["spa".to_string()]), Some(10));
-        assert_eq!(playing.preferred(&["en".to_string()]), Some(1));
-    }
-
-    #[test]
-    fn mpv_reports_the_track_and_whether_it_shows() {
-        let sid = json!({ "event": "property-change", "name": "sid", "data": 2 });
-        let off = json!({ "event": "property-change", "name": "sid", "data": false });
-        let visible = json!({ "event": "property-change", "name": "sub-visibility", "data": false });
-        assert_eq!(Observed::parse(&sid), Some(Observed::Track(Some(2))));
-        assert_eq!(Observed::parse(&off), Some(Observed::Track(None)));
-        assert_eq!(Observed::parse(&visible), Some(Observed::Visible(false)));
-        assert_eq!(Observed::parse(&json!({ "name": "pause", "data": true })), None);
-    }
-
-    #[test]
-    fn the_subtitle_key_hides_or_shows_the_selected_track() {
-        let no_subtitles = json!([{ "id": 1, "type": "video" }, { "id": 1, "type": "audio" }]);
-        let cases = [
-            (
-                "shown",
-                playing(endless_summer(), Some(1), true),
-                vec![],
-                vec![json!(["set_property", "sub-visibility", false])],
-                "Subtitles off",
-                true,
-            ),
-            (
-                "hidden",
-                playing(endless_summer(), Some(3), false),
-                vec!["en".to_string()],
-                vec![json!(["set_property", "sub-visibility", true])],
-                "Subtitles: French",
-                true,
-            ),
-            (
-                "no subtitles",
-                playing(no_subtitles, None, true),
-                vec!["en".to_string()],
-                vec![],
-                "No subtitles in this file",
-                false,
-            ),
-        ];
-        for (name, playing, languages, commands, message, ok) in cases {
-            let answer = playing.toggle(&languages);
-            assert_eq!(answer.commands, commands, "{name}");
-            assert_eq!(answer.message, message, "{name}");
-            assert_eq!(answer.ok, ok, "{name}");
-        }
-    }
-
-    #[test]
-    fn without_a_selected_track_the_key_picks_the_first_preferred_language() {
-        let languages = ["de".to_string(), "fr".to_string(), "en".to_string()];
-        let Answer { commands, message, .. } = playing(endless_summer(), None, false).toggle(&languages);
-        assert_eq!(
-            commands,
-            [
-                json!(["set_property", "sid", 3]),
-                json!(["set_property", "sub-visibility", true])
-            ]
-        );
-        assert_eq!(message, "Subtitles: French");
-        let english = playing(endless_summer(), None, true).preferred(&["eng".to_string()]);
-        assert_eq!(english, Some(1));
-        let forced = playing(
-            json!([{ "id": 1, "type": "sub", "forced": true }, sub(2, "it", "")]),
-            None,
-            false,
-        );
-        assert_eq!(forced.preferred(&["en".to_string()]), Some(2));
-    }
-
-    #[test]
-    fn a_chosen_track_must_exist() {
-        let playing = playing(endless_summer(), Some(1), false);
-        assert_eq!(playing.choose(Some(2)).unwrap().1, "Subtitles: English");
-        assert_eq!(playing.choose(None).unwrap().1, "Subtitles off");
-        assert!(playing.choose(Some(9)).is_err());
-    }
 
     #[test]
     fn settings_become_mpv_options() {
@@ -1055,60 +551,81 @@ mod tests {
     #[tokio::test]
     async fn settings_survive_a_restart_and_belong_to_one_profile() {
         let db = Db::memory().await;
-        let subtitles = Subtitles::load(&db, ProfileId::FIRST).await;
-        assert_eq!(subtitles.settings(), Settings::default());
+        let subtitles = SubtitleSettings::load(&db, ProfileId::FIRST).await;
+        assert_eq!(subtitles.settings_of(ProfileId::FIRST), Settings::default());
         let bigger = Settings {
             size: 1.5,
             ..Settings::default()
         };
         subtitles.save(ProfileId::FIRST, bigger.clone()).await.unwrap();
-        assert_eq!(Subtitles::load(&db, ProfileId::FIRST).await.settings(), bigger);
-        assert_eq!(Subtitles::load(&db, ProfileId(2)).await.settings(), Settings::default());
+        let again = SubtitleSettings::load(&db, ProfileId::FIRST).await;
+        assert_eq!(again.settings_of(ProfileId::FIRST), bigger);
+        assert_eq!(again.settings_of(ProfileId(2)), Settings::default());
     }
 
     #[tokio::test]
-    async fn each_profile_keeps_its_own_style_and_the_video_takes_its_owners() {
+    async fn a_play_carries_its_owners_settings_and_the_files_memory() {
         let db = Db::memory().await;
-        let subtitles = Subtitles::load(&db, ProfileId::FIRST).await;
+        let subtitles = SubtitleSettings::load(&db, ProfileId::FIRST).await;
         let big = Settings {
             size: 2.0,
             ..Settings::default()
         };
         subtitles.save(ProfileId(2), big.clone()).await.unwrap();
+        let film = Path::new("/lib/Movies/Up/Up.mkv");
+        let delayed = Remembered {
+            delay: -1.0,
+            embedded: Some(2),
+        };
+        subtitles.remember(film.to_path_buf(), delayed);
+        let sidecars = vec![Sidecar {
+            path: PathBuf::from("/lib/Movies/Up/Up.en.srt"),
+            language: Some("en".to_string()),
+            title: "English".to_string(),
+            forced: false,
+            hearing_impaired: false,
+        }];
         assert_eq!(
-            subtitles.settings(),
-            Settings::default(),
-            "Mami's change leaves the playing style alone"
+            subtitles.for_play(ProfileId(2), film, sidecars.clone()),
+            PlaySubtitles {
+                settings: big,
+                remembered: delayed,
+                sidecars,
+            }
         );
-        assert_eq!(subtitles.settings_of(ProfileId(2)), big);
-        subtitles.set_owner(ProfileId(2));
-        assert_eq!(subtitles.settings(), big);
-        assert_eq!(subtitles.settings_of(ProfileId::FIRST), Settings::default());
+        assert_eq!(
+            subtitles.for_play(ProfileId::FIRST, Path::new("/lib/other.mkv"), Vec::new()),
+            PlaySubtitles::default()
+        );
     }
 
-    #[test]
-    fn a_restyle_sets_every_style_property() {
-        let subtitles = Subtitles::default();
-        let commands = subtitles.change(Change::Restyle).commands;
-        assert_eq!(commands.len(), Settings::default().style().len());
-        assert!(commands.contains(&json!(["set_property", "sub-scale", 1.0])));
+    async fn kept(db: &Db, film: &Path, wanted: Option<Remembered>) -> bool {
+        for _ in 0..500 {
+            if db.subtitle_files().await.unwrap().get(film).copied() == wanted {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        false
     }
 
-    #[test]
-    fn the_state_follows_what_mpv_reports_until_playback_stops() {
-        let subtitles = Subtitles::default();
-        subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
-        let tracks = Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap();
-        subtitles.observe(tracks);
-        subtitles.observe(Observed::Track(Some(1)));
-        subtitles.observe(Observed::Visible(true));
-        assert_eq!(subtitles.change(Change::Toggle).message, "Subtitles off");
-        assert_eq!(subtitles.chosen(), (Some(1), None));
-        subtitles.observe(Observed::Visible(false));
-        subtitles.observe(Observed::Audio(Some(1)));
-        assert_eq!(subtitles.chosen(), (None, Some(1)));
-        subtitles.stopped();
-        assert_eq!(subtitles.playing(), None);
+    #[tokio::test]
+    async fn what_the_tv_remembers_about_a_file_survives_a_restart_until_it_is_undone() {
+        let db = Db::memory().await;
+        db.set_library(&crate::db::test_library());
+        let film = Path::new("/lib/Movies/Up/Up.mkv");
+        let subtitles = SubtitleSettings::load(&db, ProfileId::FIRST).await;
+        let delayed = Remembered {
+            delay: -1.0,
+            embedded: None,
+        };
+        subtitles.remember(film.to_path_buf(), delayed);
+        assert!(kept(&db, film, Some(delayed)).await);
+        let again = SubtitleSettings::load(&db, ProfileId::FIRST).await;
+        assert_eq!(again.remembered(film), delayed);
+        again.remember(film.to_path_buf(), Remembered::default());
+        assert_eq!(again.remembered(film), Remembered::default());
+        assert!(kept(&db, film, None).await);
     }
 
     struct Server {
@@ -1118,6 +635,19 @@ mod tests {
         db: Db,
     }
 
+    fn endless_summer() -> Playing {
+        let list = json!([
+            { "id": 1, "type": "video", "title": "The.Endless.Summer" },
+            { "id": 1, "type": "audio", "lang": "en" },
+            { "id": 1, "type": "sub", "lang": "en", "title": "English SRT" },
+            { "id": 2, "type": "sub", "lang": "en", "title": "English SRT-SDH", "hearing-impaired": true },
+            { "id": 3, "type": "sub", "lang": "fr", "title": "French SRT" },
+        ]);
+        let mut tracks = SubtitleTracks::new(Path::new("/lib/Movies/Up/Up.mkv"), PlaySubtitles::default());
+        tracks.observe(Observed::parse(&json!({ "name": "track-list", "data": list })).unwrap());
+        tracks.playing().unwrap()
+    }
+
     fn serve() -> Server {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let (core, asked) = runtime.block_on(async {
@@ -1125,9 +655,7 @@ mod tests {
             let asked = Core::answering(inbox, |_| Outcome::done("Subtitles: English"));
             (core, asked)
         });
-        let subtitles = core.subtitles();
-        subtitles.started(Path::new("/lib/Movies/Up/Up.mkv"), Vec::new());
-        subtitles.observe(Observed::parse(&json!({ "name": "track-list", "data": endless_summer() })).unwrap());
+        core.subtitles().publish(Some(endless_summer()));
         let listener = runtime.block_on(TcpListener::bind("127.0.0.1:0")).unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let db = core.db().clone();
@@ -1158,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn the_api_shows_settings_and_the_tracks_of_what_plays() {
+    fn the_api_shows_settings_and_the_tracks_the_tv_last_reported() {
         let server = serve();
         let (status, body) = send(&server, "GET", "/api/subtitles", Value::Null);
         assert_eq!(status, 200);
@@ -1173,14 +701,19 @@ mod tests {
     }
 
     #[test]
-    fn a_put_saves_the_change_and_restyles_what_plays() {
+    fn a_put_saves_the_change_and_restyles_what_plays_with_it() {
         let server = serve();
         let (status, body) = send(&server, "PUT", "/api/subtitles", json!({ "size": 1.4, "shown": true }));
         assert_eq!(status, 200);
         assert_eq!(body["settings"]["size"], 1.4);
         assert_eq!(body["settings"]["shown"], true);
         assert_eq!(body["settings"]["color"], "#FFFFFF");
-        assert_eq!(server.asked.recv().unwrap(), "Subtitles(Restyle)");
+        let asked = server.asked.recv().unwrap();
+        assert!(
+            asked.starts_with("Subtitles(Restyle(Settings { shown: true,"),
+            "{asked}"
+        );
+        assert!(asked.contains("size: 1.4,"), "{asked}");
         let saved = server.runtime.block_on(server.db.subtitle_settings(ProfileId::FIRST));
         let saved = saved.unwrap().unwrap();
         assert_eq!(saved.size, 1.4);
@@ -1205,146 +738,6 @@ mod tests {
         let (status, _) = send(&server, "POST", "/api/audio/track", json!({ "track": 2 }));
         assert_eq!(status, 200);
         assert_eq!(server.asked.recv().unwrap(), "Subtitles(Audio(2))");
-    }
-
-    #[test]
-    fn audio_tracks_are_named_after_their_language_and_chosen_by_id() {
-        let tracks = json!([
-            { "id": 1, "type": "audio", "lang": "eng", "title": "Surround 5.1" },
-            { "id": 2, "type": "audio", "lang": "ger" },
-            sub(1, "en", "English SRT"),
-        ]);
-        let mut playing = playing(tracks, None, false);
-        let labels: Vec<_> = playing.audio_tracks.iter().map(|track| track.label.as_str()).collect();
-        assert_eq!(labels, ["English", "German"]);
-        assert_eq!(playing.tracks.len(), 1);
-        let aid = json!({ "event": "property-change", "name": "aid", "data": 2 });
-        assert_eq!(Observed::parse(&aid), Some(Observed::Audio(Some(2))));
-        playing.audio = Some(1);
-        let (commands, message) = playing.choose_audio(2).unwrap();
-        assert_eq!(commands, [json!(["set_property", "aid", 2])]);
-        assert_eq!(message, "Audio: German");
-        assert_eq!(playing.choose_audio(7), Err("There is no audio track 7".to_string()));
-    }
-
-    fn english(path: &str) -> Sidecar {
-        Sidecar {
-            path: PathBuf::from(path),
-            language: Some("en".to_string()),
-            title: "English".to_string(),
-            forced: false,
-            hearing_impaired: false,
-        }
-    }
-
-    #[tokio::test]
-    async fn library_subtitles_are_added_once_the_file_loads_and_shown_when_wanted() {
-        let subtitles = Subtitles::default();
-        subtitles
-            .save(
-                ProfileId::FIRST,
-                Settings {
-                    shown: true,
-                    ..Settings::default()
-                },
-            )
-            .await
-            .unwrap();
-        let film = Path::new("/lib/Movies/Airplane 1980/Airplane.mp4");
-        subtitles.started(film, vec![english("/lib/Movies/Airplane 1980/Subs/13_English.srt")]);
-        assert!(subtitles.mpv_args(film).contains(&"--sub-auto=no".to_string()));
-        assert_eq!(
-            subtitles.loaded(),
-            [json!([
-                "sub-add",
-                "/lib/Movies/Airplane 1980/Subs/13_English.srt",
-                "auto",
-                "English",
-                "en"
-            ])]
-        );
-        let none = json!([{ "id": 1, "type": "audio", "lang": "en" }]);
-        let tracks = |data: Value| Observed::parse(&json!({ "name": "track-list", "data": data })).unwrap();
-        assert!(subtitles.observe(tracks(none)).is_empty());
-        let added = json!([
-            { "id": 1, "type": "audio", "lang": "en" },
-            { "id": 1, "type": "sub", "lang": "en", "title": "English", "external": true },
-        ]);
-        assert_eq!(
-            subtitles.observe(tracks(added.clone())),
-            [
-                json!(["set_property", "sid", 1]),
-                json!(["set_property", "sub-visibility", true])
-            ]
-        );
-        assert!(subtitles.observe(tracks(added)).is_empty());
-        assert_eq!(subtitles.embedded(film), Some(0));
-    }
-
-    async fn kept(db: &Db, film: &Path, wanted: bool) -> bool {
-        for _ in 0..500 {
-            if db.subtitle_files().await.unwrap().contains_key(film) == wanted {
-                return true;
-            }
-            tokio::time::sleep(Duration::from_millis(10)).await;
-        }
-        false
-    }
-
-    #[tokio::test]
-    async fn the_delay_applies_live_and_is_remembered_for_the_file() {
-        let db = Db::memory().await;
-        db.set_library(&crate::db::test_library());
-        let film = Path::new("/lib/Movies/Up/Up.mkv");
-        let subtitles = Subtitles::load(&db, ProfileId::FIRST).await;
-        assert!(!subtitles.change(Change::Delay(0.5)).ok);
-        subtitles.started(film, Vec::new());
-        let answer = subtitles.change(Change::Delay(-1.04));
-        assert_eq!(answer.commands, [json!(["set_property", "sub-delay", -1.0])]);
-        assert_eq!(answer.message, "Subtitle delay -1.0 s");
-        subtitles.observe(Observed::Delay(-1.0));
-        assert_eq!(subtitles.delay(), -1.0);
-        subtitles.stopped();
-        assert!(kept(&db, film, true).await);
-        let again = Subtitles::load(&db, ProfileId::FIRST).await;
-        assert!(again.mpv_args(film).contains(&"--sub-delay=-1".to_string()));
-        assert!(
-            again
-                .mpv_args(Path::new("/lib/other.mkv"))
-                .contains(&"--sub-delay=0".to_string())
-        );
-        again.started(film, Vec::new());
-        assert_eq!(again.change(Change::Delay(0.0)).message, "Subtitle delay off");
-        assert!(kept(&db, film, false).await);
-        assert_eq!(
-            again.change(Change::Delay(500.0)).commands,
-            [json!(["set_property", "sub-delay", 60.0])]
-        );
-    }
-
-    #[test]
-    fn fetched_subtitles_are_added_only_to_the_file_that_plays() {
-        let subtitles = Subtitles::default();
-        let film = PathBuf::from("/lib/Movies/Up/Up.mkv");
-        subtitles.started(&film, Vec::new());
-        let added = subtitles.change(Change::Add {
-            video: film.clone(),
-            sidecar: english("/lib/Movies/Up/Up.en.srt"),
-        });
-        assert!(added.ok);
-        assert_eq!(
-            added.commands,
-            [
-                json!(["sub-add", "/lib/Movies/Up/Up.en.srt", "select", "English", "en"]),
-                json!(["set_property", "sub-visibility", true]),
-            ]
-        );
-        let elsewhere = subtitles.change(Change::Add {
-            video: PathBuf::from("/lib/Movies/Cars/Cars.mkv"),
-            sidecar: english("/lib/Movies/Cars/Cars.en.srt"),
-        });
-        assert!(!elsewhere.ok);
-        assert!(subtitles.plays(&film));
     }
 
     #[test]

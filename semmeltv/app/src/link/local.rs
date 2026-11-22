@@ -33,10 +33,11 @@ pub fn spawn(
 }
 
 fn callbacks(tell: &Tell) -> Callbacks {
-    let (reporting, keys, finishing) = (tell.clone(), tell.clone(), tell.clone());
+    let (reporting, keys, remembering, finishing) = (tell.clone(), tell.clone(), tell.clone(), tell.clone());
     Callbacks {
         report: Box::new(move |report| reporting(FromTv::Report(Box::new(report)))),
         key: Box::new(move |command| keys(FromTv::Key(command))),
+        remember: Box::new(move |file, remembered| remembering(FromTv::Remember { file, remembered })),
         exit: Box::new(move |ended| finishing(FromTv::Finished(ended))),
     }
 }
@@ -197,7 +198,7 @@ mod tests {
     #[test]
     fn a_play_that_starts_says_so_and_one_that_cannot_says_why() {
         let (link, heard) = tv(|play, callbacks| match play.play.as_str() {
-            "fine" => Ok(Player::without_mpv(&play.play, callbacks)),
+            "fine" => Ok(Player::without_mpv(play, callbacks)),
             _ => Err(io::Error::new(io::ErrorKind::NotFound, "no mpv")),
         });
         link.send(ToTv::Play(play("fine")));
@@ -219,7 +220,7 @@ mod tests {
 
     #[test]
     fn subtitles_are_answered_under_the_id_they_were_asked_with() {
-        let (link, heard) = tv(|play, callbacks| Ok(Player::without_mpv(&play.play, callbacks)));
+        let (link, heard) = tv(|play, callbacks| Ok(Player::without_mpv(play, callbacks)));
         link.send(ToTv::Play(play("a-play")));
         next(&heard);
         link.send(ToTv::Subtitles {
@@ -247,7 +248,7 @@ mod tests {
     fn keys_pressed_in_the_players_window_go_to_the_core() {
         let (link, heard) = tv(|play, callbacks| {
             (callbacks.key)(crate::command::Command::Back);
-            Ok(Player::without_mpv(&play.play, quiet()))
+            Ok(Player::without_mpv(play, quiet()))
         });
         link.send(ToTv::Play(play("a-play")));
         assert_eq!(next(&heard), FromTv::Key(crate::command::Command::Back));
@@ -261,7 +262,7 @@ mod tests {
             move |message| {
                 let _ = said.lock().unwrap().send(message);
             },
-            |play, callbacks| Ok(Player::without_mpv(&play.play, callbacks)),
+            |play, callbacks| Ok(Player::without_mpv(play, callbacks)),
         );
         link.send(ToTv::Play(play("a-play")));
         while !matches!(next(&heard), FromTv::Started { .. }) {}
@@ -305,7 +306,7 @@ mod tests {
             move |message| {
                 let _ = said.lock().unwrap().send(message);
             },
-            |play, callbacks| Ok(Player::without_mpv(&play.play, callbacks)),
+            |play, callbacks| Ok(Player::without_mpv(play, callbacks)),
         );
         let intro = |play: &str| ToTv::Segments {
             play: play.to_string(),
@@ -342,6 +343,7 @@ mod tests {
         Callbacks {
             report: Box::new(|_| {}),
             key: Box::new(|_| {}),
+            remember: Box::new(|_, _| {}),
             exit: Box::new(|_| {}),
         }
     }

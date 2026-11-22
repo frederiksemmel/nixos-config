@@ -21,7 +21,7 @@ use crate::seek::Direction;
 use crate::sidecar;
 use crate::storage;
 use crate::stream;
-use crate::subtitles::{self, Subtitles};
+use crate::subtitles::{self, SubtitleSettings};
 use crate::tv::{self, Television};
 use crate::voice::{self, Heard};
 use crate::watching;
@@ -185,7 +185,7 @@ struct Published {
 
 struct Parts {
     db: Db,
-    subtitles: Subtitles,
+    subtitles: SubtitleSettings,
     television: Television,
     audio: Option<Audio>,
     downloads: Option<Downloads>,
@@ -270,7 +270,7 @@ impl Core {
                 }),
             )
         });
-        let subtitles = Subtitles::load(&db, profile).await;
+        let subtitles = SubtitleSettings::load(&db, profile).await;
         let core = Self {
             inbox,
             bus,
@@ -329,7 +329,7 @@ impl Core {
             published: Arc::default(),
             parts: Arc::new(Parts {
                 push: Push::recorded(db.clone()),
-                subtitles: Subtitles::load(&db, ProfileId::FIRST).await,
+                subtitles: SubtitleSettings::load(&db, ProfileId::FIRST).await,
                 db,
                 television: Television::new(tv::Settings {
                     kind: None,
@@ -439,7 +439,7 @@ impl Core {
         self.published.storage.get()
     }
 
-    pub fn subtitles(&self) -> &Subtitles {
+    pub fn subtitles(&self) -> &SubtitleSettings {
         &self.parts.subtitles
     }
 

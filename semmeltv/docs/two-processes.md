@@ -408,6 +408,27 @@ How 1e came out:
 - Subtitle changes while the TV set plays are refused by the core at once
   ("choose them with the TV's remote") instead of a round trip to the tv end.
 
+How 1c came out, where it differs from the table above:
+
+- The core's `SubtitleSettings` keeps each profile's settings, the owner of
+  what plays, the per-file memory and the tracks from the last report, which
+  `/api/subtitles` shows. The player's `SubtitleTracks` is a plain value
+  inside its `Playback`, built from `Play.subtitles`; nothing about
+  subtitles is shared between the core and the tv any more.
+- The per-file memory is keyed by `Play.file`, the library path, not by the
+  path mpv opens. The database only stores library videos, so a delay set on
+  a cached or ready copy used to fail to save; now it saves, and the phones'
+  streams find it under the same path.
+- The core finds the sidecars of the path mpv opens, next to the source
+  lookup in `play_from`, as the player did before.
+- `Change::Restyle` carries the new `Settings`, because the tv holds no
+  settings except the ones it was sent.
+- `/api/subtitles/fetch` always asks the actor to add the fetched file. The
+  actor refuses an `Add` for a file other than the one that plays without
+  asking the tv, so the TV shows no toast for it.
+- The player gets a fourth callback, `remember`, which the local tv end turns
+  into `FromTv::Remember`. `PROTOCOL` is 3.
+
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
 its listed files.
