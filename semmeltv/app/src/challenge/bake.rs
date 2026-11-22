@@ -6,7 +6,11 @@
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 
+/// The game's name, which every screen shows.
+pub const GAME: &str = "Semmelstechen";
 pub const SEMMELS: usize = 3;
+/// How far the Bäckermeister's presses scatter, a typical player's.
+const MASTER_SPREAD: f64 = 0.07;
 /// Seconds off the golden moment at which the crust is worth nothing.
 pub const WINDOW: f64 = 0.25;
 pub const CRUST: f64 = 100.0;
@@ -43,10 +47,7 @@ impl Dough {
     pub fn unit(&mut self) -> f64 {
         (self.next() >> 11) as f64 / (1u64 << 53) as f64
     }
-}
 
-#[cfg(test)]
-impl Dough {
     pub fn normal(&mut self) -> f64 {
         let first = self.unit().max(f64::MIN_POSITIVE);
         let second = self.unit();
@@ -75,6 +76,14 @@ impl Oven {
             .map(|golden| golden + BURNS_AFTER_MS + REST_MS)
             .sum()
     }
+}
+
+/// The Bäckermeister's presses for a practice bake: a typical player on a
+/// touch screen.
+pub fn master_presses(seed: u64) -> [Option<f64>; SEMMELS] {
+    let mut dough = Dough::new(seed ^ 0xBA4E_0FF5);
+    let late = Input::Touch.measured().0;
+    std::array::from_fn(|_| Some(late + MASTER_SPREAD * dough.normal()))
 }
 
 /// Each player's yeast: how much each of their Semmels rises.
@@ -154,7 +163,7 @@ impl Calibration {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Baked {
     pub crust: [f64; SEMMELS],
     pub rise: [f64; SEMMELS],

@@ -793,7 +793,7 @@ the reasons and measurements are in [streaming](../docs/streaming.md). A
 handoff doesn't count as the TV playing for the phone it moves to. An open past
 a limit gets 429 with `{ error, full: { heading, message, watchers,
 resting_ms } }`: `watchers` are the sessions whose end would make room, each
-`{ seat: { kind: "stream", id }, profile, person, device, title, busy }`, and
+`{ seat: { kind: "stream", id } or { kind: "tv" }, profile, person, device, title, busy }`, and
 `resting_ms` is how long the asker must wait before challenging again, or null.
 Three minutes after its last request a session ends, stopping its
 ffmpeg and deleting its segments; a phone that comes back opens it again.
@@ -835,7 +835,8 @@ bake-off for their place; the rules are in [streaming](../docs/streaming.md).
 
 | Method | Path | Answer |
 | --- | --- | --- |
-| POST | `/api/challenges` | `{ seat, device? }`, the stream id of someone in `full.watchers` → `{ id }`, or 409 with the reason (resting, already in a bake-off) |
+| POST | `/api/challenges` | `{ seat, device? }`: the stream id of someone in `full.watchers`, or `"tv"` → `{ id }`, or 409 with the reason (resting, already in a bake-off) |
+| POST | `/api/challenges/practice` | a practice bake against the Bäckermeister, which bakes at once → `{ id }` |
 | GET | `/api/challenges/{id}` | the challenger's view, see below |
 | DELETE | `/api/challenges/{id}` | the challenger gives up |
 | POST | `/api/challenges/{id}/presses` | `{ input, presses }` → the view |
@@ -848,7 +849,8 @@ The challenger's calls need the challenger's sign-in; the defender's go through
 the stream's id like the stream's other calls. `input` is `touch`, `mouse`,
 `keys` or `remote`. `presses` holds three numbers or nulls: each Semmel's press
 in milliseconds after its golden moment on that device's screen, or null where
-it burnt. A view is `{ side, stage, challenger, defender, … }`, with `stage`
+it burnt. A view is `{ game, side, stage, challenger, defender, … }`, where
+`game` is the game's name (the 429's `full` carries it too), with `stage`
 
 - `asked`: `title`, `answer_within_ms`;
 - `baking`: `starts_in_ms`, `golden_ms` (three), `length_ms`, `bias_ms` (each

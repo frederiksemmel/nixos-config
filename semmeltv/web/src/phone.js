@@ -410,7 +410,7 @@ function crustOf(error) {
 class Bakeoff {
   constructor(player) {
     this.player = player;
-    this.root = element("div", "pp-bake", { role: "dialog", "aria-label": "Bake-off" });
+    this.root = element("div", "pp-bake", { role: "dialog", "aria-label": "Semmeln" });
     this.root.hidden = true;
     this.bellTimer = 0;
     this.pollTimer = 0;
@@ -490,7 +490,7 @@ class Bakeoff {
   async dare(watcher, pick) {
     let made;
     try {
-      made = await request("POST", "/api/challenges", { seat: watcher.seat.id, device });
+      made = await request("POST", "/api/challenges", { seat: watcher.seat.kind === "tv" ? "tv" : watcher.seat.id, device });
     } catch (error) {
       toast(error.message, "error");
       return;
@@ -498,6 +498,21 @@ class Bakeoff {
     this.challenge = { id: made.id, side: "challenger", pick, path: `/api/challenges/${made.id}` };
     this.show(this.heading(`Waiting for ${watcher.person}…`, "They can bake against you or stop watching."),
       this.pill("Give up", false, () => this.giveUp()));
+    this.poll();
+  }
+
+  // A practice bake against the Bäckermeister: the real game, but nobody's
+  // place is at stake and nobody rests after it.
+  async practise() {
+    this.stop();
+    let made;
+    try {
+      made = await request("POST", "/api/challenges/practice");
+    } catch (error) {
+      toast(error.message, "error");
+      return;
+    }
+    this.challenge = { id: made.id, side: "challenger", practice: true, path: `/api/challenges/${made.id}` };
     this.poll();
   }
 
@@ -534,7 +549,7 @@ class Bakeoff {
     const row = element("div", "pp-row");
     row.append(this.pill("Bake", true, () => this.accept()), this.pill("Stop watching", false, () => this.dropOff()));
     this.show(
-      this.heading("Bake-off!", `${seen.challenger} wants your place in the oven. Bake three Semmeln against them: the better baker keeps watching.`),
+      this.heading(`${seen.game}!`, `${seen.challenger} fordert dich zum ${seen.game} heraus. Pull three Semmeln out of the oven when they're golden: the better baker keeps watching.`),
       row,
       element("p", "pp-bake-what", { text: `Answer within ${clock(seen.answer_within_ms / 1000)}` }),
     );
@@ -605,7 +620,7 @@ class Bakeoff {
     const scores = element("div", "pp-bake-scores");
     const stage = element("div", "pp-bake-oven");
     stage.append(count, semmel, bar, scores, element("p", "pp-bake-what", { text: "Tap when the Semmel is golden" }));
-    this.show(this.heading("Bake-off", `${seen.challenger} against ${seen.defender}`), stage);
+    this.show(this.heading(seen.game, `${seen.challenger} against ${seen.defender}`), stage);
     const bias = (input) => (seen.bias_ms && seen.bias_ms[input]) || 0;
     const burnsAt = (slot) => slot.golden + BURNS_AFTER_MS;
     const pull = (time, input) => {
@@ -703,9 +718,17 @@ class Bakeoff {
       title = won ? "You keep the oven" : "You left the bake-off";
       detail = won ? `${other} left the bake-off.` : resting;
     }
+    if (challenge.practice) {
+      title = won ? `You beat the ${other}` : `The ${other} bakes better`;
+      detail = "Just practice: nobody's place was at stake.";
+    }
     const children = [this.heading(title, detail)];
     if (seen.baked && seen.baked[0] && seen.baked[1]) children.push(this.table(seen));
-    if (mine === "defender" && seen.winner !== "challenger") {
+    if (challenge.practice) {
+      const row = element("div", "pp-row");
+      row.append(this.pill("Bake again", true, () => this.practise()), this.pill("Close", false, () => { this.stop(); this.player.close(false); }));
+      children.push(row);
+    } else if (mine === "defender" && seen.winner !== "challenger") {
       children.push(this.pill("Back to the film", true, () => this.resume()));
     } else if (mine === "challenger" && won) {
       children.push(this.pill("Watch", true, () => { this.stop(); this.player.open(challenge.pick); }));
@@ -744,6 +767,35 @@ class Bakeoff {
     if (this.player.session && !this.player.closed) this.watch(this.player.session);
   }
 }
+// A practice bake on its own sheet, opened by the address ending in
+// #semmelstechen; there is no button for it.
+const PRACTICE = "#semmelstechen";
+
+function practiceBake() {
+  if (document.querySelector(".pp-practice")) return;
+  const root = element("div", "pp pp-in pp-practice", { role: "dialog", "aria-modal": "true", "aria-label": "Practice" });
+  const host = {
+    root,
+    closed: false,
+    session: null,
+    video: { paused: true },
+    pause() {},
+    open() {},
+    close() {
+      host.closed = true;
+      bakeoff.stop();
+      root.remove();
+      html.classList.remove("pp-open");
+      if (location.hash === PRACTICE) history.replaceState(null, "", location.pathname + location.search);
+    },
+  };
+  const bakeoff = new Bakeoff(host);
+  root.append(bakeoff.root);
+  document.body.append(root);
+  html.classList.add("pp-open");
+  bakeoff.practise();
+}
+
 // bake-off: end
 
 class Player {
@@ -2000,3 +2052,5 @@ new MutationObserver(render).observe(document.body, { childList: true, subtree: 
 render();
 listen();
 request("GET", "/api/screen").then(adopt).catch(() => {});
+if (location.hash === PRACTICE) practiceBake();
+window.addEventListener("hashchange", () => { if (location.hash === PRACTICE) practiceBake(); });

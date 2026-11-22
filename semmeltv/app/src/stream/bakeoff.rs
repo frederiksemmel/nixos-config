@@ -5,7 +5,7 @@
 use super::{Full as Limit, Streams, short};
 use crate::api::problem;
 use crate::auth::gate::Who;
-use crate::challenge::bake::{Calibration, Input, SEMMELS};
+use crate::challenge::bake::{Calibration, GAME, Input, SEMMELS};
 use crate::challenge::{Challenger, Effect, Refusal, Seat, Side, View, Watcher};
 use crate::profile::ProfileId;
 use crate::screen::Device;
@@ -23,6 +23,7 @@ pub const FULL_HEADING: &str = "Der Ofen ist voll";
 pub fn routes() -> Router<Streams> {
     Router::new()
         .route("/api/challenges", post(challenge))
+        .route("/api/challenges/practice", post(practice))
         .route("/api/challenges/{id}", get(challenger_view).delete(withdraw))
         .route("/api/challenges/{id}/presses", post(challenger_presses))
         .route("/api/stream/{id}/challenge", get(defender_view))
@@ -34,19 +35,21 @@ pub fn routes() -> Router<Streams> {
 pub async fn load_calibration(streams: &Streams) {
     let stored = streams.core.setting(CALIBRATION).await;
     if let Some(calibration) = stored.and_then(|text| serde_json::from_str::<Calibration>(&text).ok()) {
-        streams.arena.lock().unwrap().calibration = calibration;
+        streams.core.arena().calibration = calibration;
     }
 }
 
-async fn save_calibration(streams: &Streams) {
-    let text = serde_json::to_string(&streams.arena.lock().unwrap().calibration);
+/// Keeps what the oven learnt about each input across restarts.
+pub async fn save_calibration(core: &crate::core::Core) {
+    let text = serde_json::to_string(&core.arena().calibration);
     if let Ok(text) = text {
-        streams.core.set_setting(CALIBRATION, &text).await;
+        core.set_setting(CALIBRATION, &text).await;
     }
 }
 
 #[derive(Serialize)]
 pub struct Full {
+    game: &'static str,
     heading: &'static str,
     message: String,
     watchers: Vec<Listed>,
@@ -66,9 +69,10 @@ struct FullAnswer {
     full: Full,
 }
 
-/// Everyone watching, for the challenge sheet; with `from_pcloud`, only
-/// those whose film isn't downloaded.
-async fn watchers(streams: &Streams, except: Option<&Device>, from_pcloud: bool) -> Vec<Watcher> {
+/// Who watches whose end would make room under `limit`, for the challenge
+/// sheet; without a limit, everyone who can be challenged.
+async fn watchers(streams: &Streams, except: Option<&Device>, limit: Option<Limit>) -> Vec<Watcher> {
+    let from_pcloud = limit == Some(Limit::FromPcloud);
     let live: Vec<_> = streams
         .live
         .lock()
@@ -96,16 +100,53 @@ async fn watchers(streams: &Streams, except: Option<&Device>, from_pcloud: bool)
         });
     }
     found.sort_by(|a, b| (&a.person, &a.device).cmp(&(&b.person, &b.device)));
+    let tv = if limit == Some(Limit::Streams) {
+        None
+    } else {
+        tv_watcher(streams, from_pcloud).await
+    };
+    if let Some(tv) = tv {
+        found.insert(0, tv);
+    }
     found
+}
+
+/// The TV, while it plays a film here; with `from_pcloud`, only while that
+/// film isn't downloaded.
+async fn tv_watcher(streams: &Streams, from_pcloud: bool) -> Option<Watcher> {
+    if !streams.core.arena().tv_can_bake {
+        return None;
+    }
+    let playing = streams.core.now_playing()?;
+    if !matches!(streams.core.screen().on, crate::screen::OnScreen::Tv) {
+        return None;
+    }
+    let file = super::tv_file(&streams.core.library(), &playing.playing);
+    if from_pcloud && file.is_none_or(|file| streams.core.is_downloaded(&file)) {
+        return None;
+    }
+    let profile = streams.core.tv_profile();
+    let person = streams
+        .core
+        .profile_name(profile)
+        .await
+        .unwrap_or_else(|| "Someone".to_string());
+    Some(Watcher {
+        seat: Seat::Tv,
+        profile,
+        person,
+        device: "the TV".to_string(),
+        title: playing.title,
+    })
 }
 
 /// The answer to an `open` that finds every place taken.
 pub async fn full(streams: &Streams, profile: ProfileId, device: Option<&Device>, limit: Limit) -> Response {
     let message = limit.message();
-    let watchers = watchers(streams, device, limit == Limit::FromPcloud).await;
+    let watchers = watchers(streams, device, Some(limit)).await;
     let now = Instant::now();
     let (listed, resting) = {
-        let arena = streams.arena.lock().unwrap();
+        let arena = streams.core.arena();
         let listed = watchers
             .into_iter()
             .map(|watcher| Listed {
@@ -118,6 +159,7 @@ pub async fn full(streams: &Streams, profile: ProfileId, device: Option<&Device>
     let answer = FullAnswer {
         error: message.clone(),
         full: Full {
+            game: GAME,
             heading: FULL_HEADING,
             message,
             watchers: listed,
@@ -129,7 +171,7 @@ pub async fn full(streams: &Streams, profile: ProfileId, device: Option<&Device>
 
 /// Ends what ran out of time and carries out what the arena decided.
 pub fn settle(streams: &Streams) {
-    let effects = streams.arena.lock().unwrap().settle(Instant::now());
+    let effects = streams.core.arena().settle(Instant::now());
     apply(streams, effects);
 }
 
@@ -143,6 +185,7 @@ fn apply(streams: &Streams, effects: Vec<Effect>) {
                     live.remux.close();
                 }
             }
+            Effect::Stop(Seat::Tv | Seat::Practice) => {}
         }
     }
 }
@@ -169,10 +212,10 @@ struct Created {
 
 async fn challenge(State(streams): State<Streams>, Who(profile): Who, Json(body): Json<ChallengeBody>) -> Response {
     settle(&streams);
-    let Some(defender) = watchers(&streams, None, false)
+    let Some(defender) = watchers(&streams, None, None)
         .await
         .into_iter()
-        .find(|watcher| watcher.seat == Seat::Stream(body.seat.clone()))
+        .find(|watcher| watcher.seat == seat_named(&body.seat))
     else {
         return refused(&Refusal::NoSuchSeat);
     };
@@ -188,11 +231,7 @@ async fn challenge(State(streams): State<Streams>, Who(profile): Who, Json(body)
     };
     let id = super::new_id();
     let named = (by.person.clone(), defender.person.clone());
-    let made = streams
-        .arena
-        .lock()
-        .unwrap()
-        .challenge(id.clone(), by, defender, Instant::now());
+    let made = streams.core.arena().challenge(id.clone(), by, defender, Instant::now());
     match made {
         Ok(()) => {
             eprintln!("bake-off {}: {} challenges {}", short(&id), named.0, named.1);
@@ -203,21 +242,44 @@ async fn challenge(State(streams): State<Streams>, Who(profile): Who, Json(body)
 }
 
 fn view(streams: &Streams, id: &str, side: Side) -> Response {
-    match streams.arena.lock().unwrap().view(id, side, Instant::now()) {
-        Some(view) => Json(Seen { side, view }).into_response(),
+    match streams.core.arena().view(id, side, Instant::now()) {
+        Some(view) => Json(Seen { game: GAME, side, view }).into_response(),
         None => refused(&Refusal::NoSuchChallenge),
     }
 }
 
 #[derive(Serialize)]
 struct Seen {
+    game: &'static str,
     side: Side,
     #[serde(flatten)]
     view: View,
 }
 
+/// A practice bake against the Bäckermeister, for anyone signed in.
+async fn practice(State(streams): State<Streams>, Who(profile): Who) -> Response {
+    let person = streams
+        .core
+        .profile_name(profile)
+        .await
+        .unwrap_or_else(|| "Someone".to_string());
+    let by = Challenger {
+        profile,
+        person,
+        device: String::new(),
+    };
+    let id = super::new_id();
+    let mut seed = [0u8; 8];
+    rand::fill(&mut seed);
+    streams
+        .core
+        .arena()
+        .practice(id.clone(), by, u64::from_le_bytes(seed), Instant::now());
+    Json(Created { id }).into_response()
+}
+
 fn owned_by(streams: &Streams, id: &str, profile: ProfileId) -> bool {
-    streams.arena.lock().unwrap().challenger_of(id) == Some(profile)
+    streams.core.arena().challenger_of(id) == Some(profile)
 }
 
 async fn challenger_view(State(streams): State<Streams>, Who(profile): Who, Path(id): Path<String>) -> Response {
@@ -232,7 +294,7 @@ async fn withdraw(State(streams): State<Streams>, Who(profile): Who, Path(id): P
     if !owned_by(&streams, &id, profile) {
         return refused(&Refusal::NoSuchChallenge);
     }
-    let effects = streams.arena.lock().unwrap().withdraw(&id, Instant::now());
+    let effects = streams.core.arena().withdraw(&id, Instant::now());
     apply(&streams, effects);
     StatusCode::NO_CONTENT.into_response()
 }
@@ -255,21 +317,19 @@ impl Presses {
 
 async fn pressed(streams: &Streams, id: &str, side: Side, body: &Presses) -> Response {
     let result = streams
-        .arena
-        .lock()
-        .unwrap()
+        .core
+        .arena()
         .press(id, side, body.input, body.seconds(), Instant::now());
     match result {
         Ok(effects) => {
             let finished = streams
-                .arena
-                .lock()
-                .unwrap()
+                .core
+                .arena()
                 .view(id, side, Instant::now())
                 .is_some_and(|view| matches!(view, View::Done { .. }));
             apply(streams, effects);
             if finished {
-                save_calibration(streams).await;
+                save_calibration(&streams.core).await;
             }
             view(streams, id, side)
         }
@@ -289,12 +349,20 @@ async fn challenger_presses(
     pressed(&streams, &id, Side::Challenger, &body).await
 }
 
+/// The seat a challenge names: "tv", or a stream's id.
+fn seat_named(name: &str) -> Seat {
+    if name == "tv" {
+        Seat::Tv
+    } else {
+        Seat::Stream(name.to_string())
+    }
+}
+
 /// The challenge waiting for the stream `seat`, if there is one.
 fn seat_challenge(streams: &Streams, seat: &str) -> Option<String> {
     streams
-        .arena
-        .lock()
-        .unwrap()
+        .core
+        .arena()
         .for_seat(&Seat::Stream(seat.to_string()))
         .map(str::to_string)
 }
@@ -315,9 +383,8 @@ async fn accept(State(streams): State<Streams>, Path(seat): Path<String>) -> Res
     let mut seed = [0u8; 8];
     rand::fill(&mut seed);
     let accepted = streams
-        .arena
-        .lock()
-        .unwrap()
+        .core
+        .arena()
         .accept(&id, u64::from_le_bytes(seed), Instant::now());
     match accepted {
         Ok(()) => {
@@ -332,7 +399,7 @@ async fn drop_off(State(streams): State<Streams>, Path(seat): Path<String>) -> R
     let Some(id) = seat_challenge(&streams, &seat) else {
         return refused(&Refusal::NoSuchChallenge);
     };
-    let dropped = streams.arena.lock().unwrap().drop_off(&id, Instant::now());
+    let dropped = streams.core.arena().drop_off(&id, Instant::now());
     match dropped {
         Ok(effects) => {
             eprintln!("bake-off {}: the person challenged stopped watching", short(&id));
@@ -357,9 +424,8 @@ async fn defender_presses(
 /// Tells the arena that the stream `id` ended on its own.
 pub fn seat_gone(streams: &Streams, id: &str) {
     let effects = streams
-        .arena
-        .lock()
-        .unwrap()
+        .core
+        .arena()
         .seat_gone(&Seat::Stream(id.to_string()), Instant::now());
     apply(streams, effects);
 }
@@ -381,6 +447,7 @@ mod tests {
         let answer = FullAnswer {
             error: "Three phones are already watching".to_string(),
             full: Full {
+                game: GAME,
                 heading: FULL_HEADING,
                 message: "Three phones are already watching".to_string(),
                 watchers: vec![Listed {
@@ -401,6 +468,7 @@ mod tests {
             serde_json::json!({
                 "error": "Three phones are already watching",
                 "full": {
+                    "game": "Semmelstechen",
                     "heading": "Der Ofen ist voll",
                     "message": "Three phones are already watching",
                     "watchers": [{

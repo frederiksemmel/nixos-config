@@ -167,7 +167,11 @@ Before 2026-11-22 the limit was 3 streams, and 1 while the TV played anything.
 
 ## 4. The bake-off
 
-### The game: Semmel-Duell
+### The game: Semmelstechen
+
+The name lives in one place, `GAME` in `src/challenge/bake.rs`. The API
+sends it with every answer (`game`), and the phone and the TV show it from
+there.
 
 A one-button game of about 10 seconds: a tap on a phone, the space bar or a
 click on a laptop, OK on the TV remote.
@@ -259,9 +263,9 @@ games, so it stays as measured.
    in the oven?" and the list. A pick calls `POST /api/challenges {seat,
    device}`. The challenger then waits ("Waiting for Ramu…", with *Give up*).
 3. **Asked.** Every playing phone asks `GET /api/stream/{id}/challenge` every
-   2 s. When it is challenged, the video pauses and it shows "Bake-off! Mami
-   wants your place in the oven…" with *Bake* or *Stop watching*, and the time
-   left to answer. There is no decline.
+   2 s. When it is challenged, the video pauses and it shows "Semmelstechen!
+   Mami fordert dich zum Semmelstechen heraus…" with *Bake* or *Stop
+   watching*, and the time left to answer. There is no decline.
 4. **Bake.** *Bake* (`POST /api/stream/{id}/challenge/accept`) starts the
    oven 3 s later for both. Each device sends its presses
    (`/api/challenges/{id}/presses`, `/api/stream/{id}/challenge/presses`).
@@ -270,6 +274,17 @@ games, so it stays as measured.
    A defender who won gets *Back to the film*, which plays on if it was
    playing. The loser gets *Close*; a defender who lost has their stream
    stopped by the server.
+
+### Practice
+
+Opening any page of the web app with `#semmelstechen` at the end of the
+address (`https://semmeltv5.semmeltv.ch/#semmelstechen`) starts a practice
+bake against the **Bäckermeister**. It is the real game on the real oven,
+with the server's yeast. The Bäckermeister presses like a typical player (70
+ms spread) on a touch screen. Nobody's place is at stake, nobody rests, and
+the Bäckermeister's presses don't teach the oven's calibration. The result
+offers *Bake again*. There is no button for it anywhere
+(`POST /api/challenges/practice`).
 
 ### Edges
 
@@ -286,18 +301,43 @@ games, so it stays as measured.
 | Someone challenges while resting | The sheet lists who watches without the pick buttons, with "Your dough is still resting: you can challenge again in 7 minutes". |
 | Resting | Per person (profile), not per device. Kept in memory: a restart of the core clears it. |
 | The winner doesn't open their stream | Their place is kept for 90 s, then freed. |
-| The TV | Listed as "the TV · Frederik · Dune" once the TV side exists (below), and only when it counts toward the limit hit, i.e. while it plays a film that isn't downloaded and the pCloud limit is the one hit. Whoever holds the remote plays. Losing stops the TV's film and saves its place. |
+| The TV | Listed as "Frederik · the TV · Dune" while it plays a film that isn't downloaded and the pCloud limit is the one hit. Whoever holds the remote plays. Losing stops the TV's film and saves its place. |
 | The TV-set hand-off (Samsung, semmeltv3) | Never listed and never challenged: it isn't a stream and costs the Pi only serving a file. |
 
 ### The TV side
 
-It waits for step 2 of [two processes](two-processes.md) (the menu over the
-link). It will go through `ToTv`/`FromTv` messages: `ToTv::Bakeoff(View)` to
-show the challenge, the oven and the result; `FromTv::Bakeoff(Answer)` for
-*Bake*, *Stop watching* and the presses, timed in the tv process on the
-remote's key events. The arena gets a `Seat::Tv`, `Effect::Stop(Seat::Tv)`
-becomes `Control::Stop`, and the remote measurement above sets the remote's
-numbers.
+The TV is a seat (`Seat::Tv`) like a stream. It is listed while it plays a
+film that isn't downloaded, but only when the pCloud limit is the one hit, and
+never during a TV-set hand-off or while the tv process restarts. The core's
+actor sets `Arena::tv_can_bake` on every 500 ms tick and ends a TV challenge
+as "stopped watching" when the TV's film goes away.
+
+Everything goes over the link, so it works the same with the tv in its own
+process (`semmeltv tv`):
+
+- The actor finds the TV's challenge in the arena on every tick. When one
+  comes, it pauses the film and sends `ToTv::Bakeoff(Some(view))`, and again
+  at each new stage.
+- While the bake-off shows, every remote key goes to the tv as
+  `ToTv::BakeKey`, never to the film or the menu.
+- The tv (`challenge/screen.rs`, `Stand`) draws it as an mpv OSD overlay
+  (`Player::draw_bake`, id 5, above the toast) over the paused film. While the
+  answer countdown or the oven runs, the tv's link thread redraws it every
+  33 ms.
+- *Bake* / *Stop watching* are chosen with ◀ ▶ and OK. In the oven, OK pulls
+  the Semmel out, timed on the tv's clock when the key arrives there. The tv
+  answers with `FromTv::Bakeoff(Accept | DropOff | Presses | Dismiss)`, and
+  the actor plays those into the arena with `Input::Remote`.
+- The result shows until OK or for 10 s. Then the actor sends
+  `ToTv::Bakeoff(None)`, and the film goes on where it paused, or stops
+  (saving its place) when the TV lost.
+
+A key pressed on the tv's own keyboard (only the VM and a laptop have one)
+goes to mpv and doesn't reach the bake-off; the TV's remote comes through
+the core over CEC.
+
+The remote's lateness and wobble are still the estimates above (220 ms, 35
+ms) until the two-minute measurement with Frederik.
 
 ### Code
 
@@ -311,7 +351,7 @@ numbers.
   the phone and laptop UI.
 - VM group `bakeoff`: a full oven over the API with a drop-off, a phone that
   challenges and loses and then rests, a phone that is challenged while
-  playing and loses its place.
+  playing and loses its place, a TV that is challenged pauses, shows the bake-off and plays on when the challenger goes.
 
 ## 5. Next
 

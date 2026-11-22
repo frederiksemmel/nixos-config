@@ -4,12 +4,17 @@
 
 use super::Link;
 use super::messages::{FromTv, Play, Target, ToTv};
+use crate::challenge::View;
+use crate::challenge::screen::Stand;
 use crate::player::{Callbacks, Player};
 use std::io;
 use std::sync::Arc;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Receiver, RecvTimeoutError};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// How often the oven is drawn again while a bake-off bakes.
+const FRAME: Duration = Duration::from_millis(33);
 
 type Tell = Arc<dyn Fn(FromTv) + Send + Sync>;
 
@@ -59,7 +64,21 @@ fn drive(
     menu: impl Fn(ToTv),
 ) {
     let mut playing: Option<(String, Player)> = None;
-    for order in orders {
+    let mut stand: Option<Stand> = None;
+    loop {
+        let waited = if stand.as_ref().is_some_and(Stand::animates) {
+            orders.recv_timeout(FRAME)
+        } else {
+            orders.recv().map_err(|_| RecvTimeoutError::Disconnected)
+        };
+        let order = match waited {
+            Ok(order) => order,
+            Err(RecvTimeoutError::Timeout) => {
+                bake(stand.as_mut(), playing.as_ref().map(|(_, player)| player), tell);
+                continue;
+            }
+            Err(RecvTimeoutError::Disconnected) => return,
+        };
         let of = |play: &str| {
             playing
                 .as_ref()
@@ -144,7 +163,41 @@ fn drive(
             | ToTv::Together(_)
             | ToTv::UpNext(_) => menu(order),
             ToTv::Welcome { .. } => {}
+            ToTv::Bakeoff(Some(view)) => {
+                let now = Instant::now();
+                match stand.as_mut() {
+                    Some(shown) if !matches!(view, View::Asked { .. }) => shown.update(view, now),
+                    _ => stand = Some(Stand::new(view, now)),
+                }
+            }
+            ToTv::Bakeoff(None) => {
+                stand = None;
+                if let Some(player) = player {
+                    player.draw_bake("");
+                }
+            }
+            ToTv::BakeKey(command) => {
+                if let Some(answer) = stand.as_mut().and_then(|shown| shown.key(command, Instant::now())) {
+                    tell(FromTv::Bakeoff(answer));
+                }
+            }
         }
+        bake(stand.as_mut(), playing.as_ref().map(|(_, player)| player), tell);
+    }
+}
+
+/// Draws the bake-off over the film and sends the presses once its oven is
+/// done.
+fn bake(stand: Option<&mut Stand>, player: Option<&Player>, tell: &Tell) {
+    let Some(stand) = stand else {
+        return;
+    };
+    let now = Instant::now();
+    if let Some(answer) = stand.tick(now) {
+        tell(FromTv::Bakeoff(answer));
+    }
+    if let Some(player) = player {
+        player.draw_bake(&stand.frame(now));
     }
 }
 

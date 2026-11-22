@@ -191,6 +191,7 @@ struct Published {
     sidecars: RwLock<HashMap<PathBuf, usize>>,
     scans: AtomicU64,
     dialogue: RwLock<HashMap<ProfileId, Arc<AtomicBool>>>,
+    arena: std::sync::Mutex<crate::challenge::Arena>,
 }
 
 struct Parts {
@@ -461,6 +462,11 @@ impl Core {
             .ok()
             .flatten()
             .map(|found| found.name)
+    }
+
+    /// The bake-offs, which the phones' API and the TV's actor both play.
+    pub fn arena(&self) -> std::sync::MutexGuard<'_, crate::challenge::Arena> {
+        self.published.arena.lock().unwrap()
     }
 
     /// Whether `path` is whole in the offline cache, so it plays without pCloud.

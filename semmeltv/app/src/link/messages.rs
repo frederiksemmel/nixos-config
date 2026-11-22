@@ -1,6 +1,8 @@
 //! What the core and the tv say to each other, one JSON value per line.
 
 use crate::bus::{Panel, Together};
+use crate::challenge::View;
+use crate::challenge::screen::Answer;
 use crate::command::Command;
 use crate::library::Library;
 use crate::player::{Finish, State};
@@ -17,7 +19,7 @@ use std::time::{Duration, Instant};
 
 /// Raised whenever a message changes shape, so a core and a tv from
 /// different builds refuse each other instead of misreading.
-pub const PROTOCOL: u32 = 3;
+pub const PROTOCOL: u32 = 4;
 
 /// The core's orders and news for the tv.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -90,6 +92,10 @@ pub enum ToTv {
     Stop {
         play: String,
     },
+    /// The bake-off the TV is challenged to, or None once it is over.
+    Bakeoff(Option<View>),
+    /// A remote key while the bake-off shows.
+    BakeKey(Command),
 }
 
 impl ToTv {
@@ -118,6 +124,8 @@ impl ToTv {
             Self::Segments { .. } => "segments",
             Self::Subtitles { .. } => "subtitles",
             Self::Stop { .. } => "stop",
+            Self::Bakeoff(_) => "bake-off",
+            Self::BakeKey(_) => "bake-off key",
         }
     }
 }
@@ -152,6 +160,7 @@ pub enum FromTv {
         file: PathBuf,
         remembered: Remembered,
     },
+    Bakeoff(Answer),
 }
 
 /// The menu's home screen without the library, which travels on its own in
@@ -518,6 +527,17 @@ mod tests {
             ToTv::Stop {
                 play: "a-play".to_string(),
             },
+            ToTv::Bakeoff(Some(crate::challenge::View::Baking {
+                challenger: "Mami".to_string(),
+                defender: "Frederik".to_string(),
+                starts_in_ms: 2950,
+                golden_ms: [1700, 2100, 2500],
+                length_ms: 9600,
+                bias_ms: [(crate::challenge::bake::Input::Remote, 220.0)].into_iter().collect(),
+                pressed: false,
+            })),
+            ToTv::Bakeoff(None),
+            ToTv::BakeKey(Command::Select),
         ];
         for order in &orders {
             crosses(order);
@@ -575,6 +595,10 @@ mod tests {
                     embedded: None,
                 },
             },
+            FromTv::Bakeoff(Answer::Accept),
+            FromTv::Bakeoff(Answer::Presses {
+                presses: [Some(212.0), None, Some(-35.0)],
+            }),
         ];
         for message in &said {
             crosses(message);

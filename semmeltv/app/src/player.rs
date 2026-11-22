@@ -59,6 +59,7 @@ const WAITING_ID: u64 = 10;
 const PROMPT_ID: u64 = 1;
 const OVERLAY_ID: u64 = 3;
 const TOAST_ID: u64 = 4;
+const BAKE_ID: u64 = 5;
 const KEYBINDS: [(&str, &str); 11] = [
     ("ESC", "script-message semmeltv-back"),
     ("BS", "script-message semmeltv-back"),
@@ -634,6 +635,19 @@ fn overlay_command(data: &str) -> Value {
     })
 }
 
+fn bake_command(data: &str) -> Value {
+    let format = if data.is_empty() { "none" } else { "ass-events" };
+    json!({
+        "name": "osd-overlay",
+        "id": BAKE_ID,
+        "format": format,
+        "data": data,
+        "res_x": overlay::WIDTH,
+        "res_y": overlay::HEIGHT,
+        "z": 3,
+    })
+}
+
 fn toast_command(data: &str) -> Value {
     let format = if data.is_empty() { "none" } else { "ass-events" };
     json!({
@@ -870,6 +884,11 @@ impl Player {
 
     pub fn stop(&self) {
         self.playback.lock().unwrap().send(json!(["quit", STOPPED_EXIT_CODE]));
+    }
+
+    /// Draws a bake-off over the film, or takes it away when `events` is empty.
+    pub fn draw_bake(&self, events: &str) {
+        self.playback.lock().unwrap().send(bake_command(events));
     }
 
     pub fn skip_segment(&self) -> bool {

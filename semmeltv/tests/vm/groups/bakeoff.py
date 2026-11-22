@@ -88,7 +88,7 @@ with scenario("a phone that is challenged while it plays pauses, bakes and hands
         full = open_stream(ramu, "ramu-phone", expect="")
         seat = next(watcher["seat"]["id"] for watcher in full["full"]["watchers"] if watcher["person"] == "Miriam")
         made = json.loads(stream_call(ramu, "POST", "/api/challenges", {"seat": seat, "device": {"id": "ramu-phone", "name": "Ramus phone"}}))
-        miriam.until(f'{SHEET} === "Bake-off!" && {VIDEO}.paused', 8000)
+        miriam.until(f'{SHEET} === "Semmelstechen!" && {VIDEO}.paused', 8000)
         miriam.shot("challenged")
         miriam.page.locator(".pp-bake .pp-pill", has_text="Bake").tap()
         miriam.until('!!document.querySelector(".pp-bake-oven")', 5000)
@@ -104,3 +104,33 @@ with scenario("a phone that is challenged while it plays pauses, bakes and hands
     finally:
         let_go(held)
         miriam.close()
+
+with scenario("anyone can practise Semmelstechen against the Bäckermeister at #semmelstechen"):
+    phone.goto("/#semmelstechen")
+    phone.until('!!document.querySelector(".pp-practice .pp-bake-oven")', 15000)
+    phone.until(f'({SHEET} || "").includes("Bäckermeister") && !!document.querySelector(".pp-bake-table")', 25000)
+    phone.shot("practice")
+    assert phone.js('[...document.querySelectorAll(".pp-practice .pp-pill")].map((pill) => pill.textContent)') == ["Bake again", "Close"]
+    phone.page.locator(".pp-practice .pp-pill", has_text="Close").tap()
+    phone.until('!document.querySelector(".pp-practice") && location.hash === ""')
+
+with scenario("a TV playing a film can be challenged: it pauses, shows the bake-off and plays on when the challenger goes"):
+    phone.api("POST", "/api/play", {"movie": FILM})
+    tv_plays_past(3)
+    held = hold_places(mami, 2, "mami-tv")
+    try:
+        full = open_stream(ramu, "ramu-phone", expect="")
+        assert {"kind": "tv"} in [watcher["seat"] for watcher in full["full"]["watchers"]], full
+        made = json.loads(stream_call(ramu, "POST", "/api/challenges", {"seat": "tv", "device": {"id": "ramu-phone", "name": "Ramus phone"}}))
+        eventually("the challenge pauses the TV", lambda: mpv("get_property", "pause") is True, timeout=10)
+        tv_shows("Semmelstechen!", timeout=20)
+        tv.screenshot("tv-challenged")
+        stream_call(ramu, "DELETE", f"/api/challenges/{made['id']}")
+        time.sleep(3)
+        tv.screenshot("tv-result")
+        assert mpv("get_property", "pause") is True, "the film went on before the result showed"
+        eventually("the film plays on after the result", lambda: mpv("get_property", "pause") is False, timeout=20)
+        tv_plays_past((tv_position() or 0) + 2)
+    finally:
+        let_go(held)
+        stop_everything(phone)

@@ -3,6 +3,9 @@ use super::tending::{self, Tended};
 use super::{Core, Input, Outcome, Request, ScreenCommand, ScreenKind, Seek, Signal, TV_PROFILE, sound};
 use crate::audio::{self, Audio};
 use crate::bus::{Mate, Notice, NowPlaying, Panel, Playing, Skip, Together};
+use crate::challenge::bake::{Input as Pressed, SEMMELS};
+use crate::challenge::screen::Answer as Baked;
+use crate::challenge::{Seat, Side, View};
 use crate::command::Command;
 use crate::db::{self, Db};
 use crate::downloads::remote::Downloads;
@@ -225,6 +228,21 @@ pub struct Actor {
     library_revision: u64,
     library_sent: Option<u64>,
     home_sent: Option<messages::Home>,
+    bake: Option<Shown>,
+}
+
+/// How long the TV shows a bake-off's result before the film goes on or
+/// ends by itself.
+const RESULT_FOR: Duration = Duration::from_secs(10);
+
+/// A bake-off the TV is challenged to, while it shows over the film.
+struct Shown {
+    id: String,
+    stage: &'static str,
+    /// Whether the film played when the challenge paused it.
+    resume: bool,
+    /// When the result showed, and whether the TV lost.
+    result: Option<(Instant, bool)>,
 }
 
 /// The in-process tv end for mpv: a thread that owns the player, tells the
@@ -333,6 +351,7 @@ impl Actor {
             library_revision: 1,
             library_sent: None,
             home_sent: None,
+            bake: None,
         };
         actor.apply_audio(profile).await;
         actor.refresh_people().await;
@@ -369,6 +388,7 @@ impl Actor {
                     None => return,
                 },
                 _ = playback.tick() => {
+                    self.tend_bakeoff();
                     self.publish_playback();
                     if self.on_tv.is_none() {
                         self.hear_sound();
@@ -424,6 +444,10 @@ impl Actor {
     }
 
     async fn key(&mut self, command: Command) {
+        if self.bake.as_ref().is_some_and(|shown| shown.stage != "over") {
+            self.tv.send(ToTv::BakeKey(command));
+            return;
+        }
         if command == Command::Dialogue {
             self.toggle_dialogue().await;
             return;
@@ -811,6 +835,7 @@ impl Actor {
         self.record_start(&file, owner).await;
         self.lead = Some(file);
         self.queue_downloads(true);
+        self.tend_bakeoff();
     }
 
     fn failed(&mut self, play: &str, error: &str) {
@@ -878,7 +903,136 @@ impl Actor {
                 self.answer(asked(request)).await;
             }
             FromTv::Hello { playing, ended, .. } => self.tv_came(playing, ended).await,
+            FromTv::Bakeoff(answer) => self.bake_answer(answer).await,
         }
+    }
+
+    /// Shows the bake-off the TV is challenged to as it goes: the film pauses
+    /// when the challenge comes, the TV gets each new stage, and a while after
+    /// the result the film goes on, or ends if the TV lost.
+    fn tend_bakeoff(&mut self) {
+        let now = Instant::now();
+        let can_bake = self
+            .on_tv
+            .as_ref()
+            .is_some_and(|tv| !tv.handed_off() && tv.lost.is_none());
+        let found = {
+            let mut arena = self.core.arena();
+            arena.tv_can_bake = can_bake;
+            if !can_bake {
+                arena.seat_gone(&Seat::Tv, now);
+            }
+            arena
+                .for_seat(&Seat::Tv)
+                .map(str::to_string)
+                .and_then(|id| arena.view(&id, Side::Defender, now).map(|view| (id, view)))
+        };
+        let Some((id, view)) = found else {
+            if self.bake.take().is_some_and(|shown| shown.stage != "over") {
+                self.tv.send(ToTv::Bakeoff(None));
+            }
+            return;
+        };
+        let stage = match &view {
+            View::Asked { .. } => "asked",
+            View::Baking { .. } => "baking",
+            View::Done { .. } => "done",
+        };
+        let lost = matches!(
+            view,
+            View::Done {
+                winner: Some(Side::Challenger),
+                ..
+            }
+        );
+        match &mut self.bake {
+            Some(shown) if shown.id == id => {
+                if shown.stage == "over" {
+                    return;
+                }
+                if shown.stage != stage {
+                    shown.stage = stage;
+                    if stage == "done" {
+                        shown.result = Some((now, lost));
+                    }
+                    self.tv.send(ToTv::Bakeoff(Some(view)));
+                }
+                if shown.result.is_some_and(|(at, _)| now >= at + RESULT_FOR) {
+                    self.finish_bakeoff();
+                }
+            }
+            _ if stage == "done" => {}
+            _ => {
+                let resume = self.on_tv.as_ref().is_some_and(OnTv::playing);
+                if let Some(tv) = &self.on_tv {
+                    tv.pause(true);
+                }
+                eprintln!("bake-off {}: the TV is challenged", id.get(..8).unwrap_or(&id));
+                self.bake = Some(Shown {
+                    id,
+                    stage,
+                    resume,
+                    result: None,
+                });
+                self.tv.send(ToTv::Bakeoff(Some(view)));
+            }
+        }
+    }
+
+    /// Takes the bake-off off the TV: the film goes on where it paused, or
+    /// ends when the TV lost.
+    fn finish_bakeoff(&mut self) {
+        let Some(shown) = self.bake.as_mut().filter(|shown| shown.stage == "done") else {
+            return;
+        };
+        shown.stage = "over";
+        self.tv.send(ToTv::Bakeoff(None));
+        let (lost, resume) = (shown.result.is_some_and(|(_, lost)| lost), shown.resume);
+        if let Some(tv) = &self.on_tv {
+            if lost {
+                tv.stop();
+            } else if resume {
+                tv.pause(false);
+            }
+        }
+    }
+
+    async fn bake_answer(&mut self, answer: Baked) {
+        let Some(id) = self
+            .bake
+            .as_ref()
+            .filter(|shown| shown.stage != "over")
+            .map(|shown| shown.id.clone())
+        else {
+            return;
+        };
+        let now = Instant::now();
+        match answer {
+            Baked::Accept => {
+                let mut seed = [0u8; 8];
+                rand::fill(&mut seed);
+                let _ = self.core.arena().accept(&id, u64::from_le_bytes(seed), now);
+            }
+            Baked::DropOff => {
+                let _ = self.core.arena().drop_off(&id, now);
+            }
+            Baked::Presses { presses } => {
+                let seconds: [Option<f64>; SEMMELS] =
+                    presses.map(|press| press.filter(|ms| ms.is_finite()).map(|ms| ms / 1000.0));
+                let pressed = self
+                    .core
+                    .arena()
+                    .press(&id, Side::Defender, Pressed::Remote, seconds, now);
+                if pressed.is_ok() {
+                    stream::save_calibration(&self.core).await;
+                }
+            }
+            Baked::Dismiss => {
+                self.finish_bakeoff();
+                return;
+            }
+        }
+        self.tend_bakeoff();
     }
 
     fn tv_lost(&self) -> bool {
@@ -2458,6 +2612,121 @@ mod tests {
             .unwrap();
         assert!(asked.elapsed() < Duration::from_secs(1), "{:?}", asked.elapsed());
         assert_ne!(answer, Outcome::refused(TV_SILENT));
+    }
+
+    async fn tv_challenged(core: &Core, orders: &std::sync::mpsc::Receiver<ToTv>) -> String {
+        core.ask(Request::PlayFile(up(core))).await.unwrap();
+        let play = told(orders, |order| match order {
+            ToTv::Play(play) => Some(play.play),
+            _ => None,
+        });
+        core.signal(Signal::Tv(FromTv::Started { play: play.clone() }));
+        core.signal(reported(&play, 30.0, true));
+        settled(core).await;
+        let challenger = crate::challenge::Challenger {
+            profile: ProfileId(2),
+            person: "Mami".to_string(),
+            device: "iPad".to_string(),
+        };
+        let watcher = crate::challenge::Watcher {
+            seat: Seat::Tv,
+            profile: ProfileId::FIRST,
+            person: "Frederik".to_string(),
+            device: "the TV".to_string(),
+            title: "Up".to_string(),
+        };
+        assert!(core.arena().tv_can_bake, "a TV that plays can be challenged");
+        core.arena()
+            .challenge("bake".to_string(), challenger, watcher, Instant::now())
+            .unwrap();
+        told(orders, |order| match order {
+            ToTv::Pause { paused: true, .. } => Some(()),
+            _ => None,
+        });
+        told(orders, |order| match order {
+            ToTv::Bakeoff(Some(View::Asked { challenger, .. })) => {
+                assert_eq!(challenger, "Mami");
+                Some(())
+            }
+            _ => None,
+        });
+        play
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tv_challenged_to_a_bake_off_pauses_bakes_with_the_remote_and_stops_its_film_when_it_loses() {
+        let (core, inbox) = Core::detached(db::test_library()).await;
+        let (link, orders) = Link::pair();
+        let actor = Actor::new(core.clone(), ProfileId::FIRST, Hardware { tv: link, ..hardware() }).await;
+        tokio::spawn(actor.run(inbox));
+        let play = tv_challenged(&core, &orders).await;
+        core.send(Request::Key(Command::Select));
+        told(&orders, |order| match order {
+            ToTv::BakeKey(Command::Select) => Some(()),
+            ToTv::Command { .. } => panic!("the remote reached the film during the bake-off"),
+            _ => None,
+        });
+        core.signal(Signal::Tv(FromTv::Bakeoff(Baked::Accept)));
+        told(&orders, |order| match order {
+            ToTv::Bakeoff(Some(View::Baking { golden_ms, .. })) => {
+                assert_eq!(golden_ms.len(), 3);
+                Some(())
+            }
+            _ => None,
+        });
+        core.arena()
+            .press(
+                "bake",
+                Side::Challenger,
+                Pressed::Touch,
+                [Some(0.05); 3],
+                Instant::now(),
+            )
+            .unwrap();
+        core.signal(Signal::Tv(FromTv::Bakeoff(Baked::Presses { presses: [None; 3] })));
+        told(&orders, |order| match order {
+            ToTv::Bakeoff(Some(View::Done { winner, .. })) => {
+                assert_eq!(winner, Some(Side::Challenger));
+                Some(())
+            }
+            _ => None,
+        });
+        core.signal(Signal::Tv(FromTv::Bakeoff(Baked::Dismiss)));
+        told(&orders, |order| match order {
+            ToTv::Bakeoff(None) => Some(()),
+            _ => None,
+        });
+        told(&orders, |order| match order {
+            ToTv::Stop { play: stopped } => {
+                assert_eq!(stopped, play);
+                Some(())
+            }
+            ToTv::Pause { paused: false, .. } => panic!("the film went on after the TV lost"),
+            _ => None,
+        });
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_tv_whose_challenger_goes_away_plays_on_after_the_result() {
+        let (core, inbox) = Core::detached(db::test_library()).await;
+        let (link, orders) = Link::pair();
+        let actor = Actor::new(core.clone(), ProfileId::FIRST, Hardware { tv: link, ..hardware() }).await;
+        tokio::spawn(actor.run(inbox));
+        tv_challenged(&core, &orders).await;
+        core.arena().withdraw("bake", Instant::now());
+        told(&orders, |order| match order {
+            ToTv::Bakeoff(Some(View::Done { winner, .. })) => {
+                assert_eq!(winner, None);
+                Some(())
+            }
+            _ => None,
+        });
+        core.signal(Signal::Tv(FromTv::Bakeoff(Baked::Dismiss)));
+        told(&orders, |order| match order {
+            ToTv::Pause { paused: false, .. } => Some(()),
+            ToTv::Stop { .. } => panic!("the film stopped though nobody won"),
+            _ => None,
+        });
     }
 
     #[tokio::test(flavor = "multi_thread")]

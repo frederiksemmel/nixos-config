@@ -4,10 +4,11 @@
 //! Times come in as arguments, so the whole arena is a plain state machine.
 
 pub mod bake;
+pub mod screen;
 
 use crate::profile::ProfileId;
 use bake::{Baked, Calibration, Input, Oven, SEMMELS};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 
@@ -29,6 +30,9 @@ const REMEMBERED: Duration = Duration::from_secs(120);
 #[serde(tag = "kind", content = "id", rename_all = "lowercase")]
 pub enum Seat {
     Stream(String),
+    Tv,
+    /// The Bäckermeister, who bakes against anyone who practises.
+    Practice,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -47,7 +51,7 @@ pub struct Challenger {
     pub device: String,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Side {
     Challenger,
@@ -64,7 +68,7 @@ impl Side {
 }
 
 /// How a bake-off ended.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Ending {
     Baked,
@@ -102,7 +106,11 @@ struct Entry {
     stage: Stage,
     presses: [Option<(Input, [Option<f64>; SEMMELS])>; 2],
     baked: [Option<Baked>; 2],
+    practice: bool,
 }
+
+/// The one a practice bake is against.
+pub const MASTER: &str = "Bäckermeister";
 
 /// What the arena asks the streams to do.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -147,7 +155,7 @@ pub fn minutes(left: Duration) -> String {
 }
 
 /// What a player's screen shows of a challenge.
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "stage", rename_all = "lowercase")]
 pub enum View {
     Asked {
@@ -181,6 +189,8 @@ pub struct Arena {
     resting: HashMap<ProfileId, Instant>,
     kept: HashMap<ProfileId, Instant>,
     pub calibration: Calibration,
+    /// Whether the TV plays something it can show a bake-off over.
+    pub tv_can_bake: bool,
 }
 
 impl Arena {
@@ -237,9 +247,37 @@ impl Arena {
                 stage: Stage::Asked { since: now },
                 presses: [None, None],
                 baked: [None, None],
+                practice: false,
             },
         );
         Ok(())
+    }
+
+    /// A bake against the Bäckermeister for practice: it bakes at once,
+    /// takes nobody's place and rests nobody.
+    pub fn practice(&mut self, id: String, by: Challenger, seed: u64, now: Instant) {
+        let master = Watcher {
+            seat: Seat::Practice,
+            profile: ProfileId(0),
+            person: MASTER.to_string(),
+            device: String::new(),
+            title: String::new(),
+        };
+        self.challenges.insert(
+            id,
+            Entry {
+                challenger: by,
+                defender: master,
+                stage: Stage::Baking {
+                    starts: now + COUNTDOWN,
+                    oven: Oven::from_seed(seed),
+                    seed,
+                },
+                presses: [None, Some((Input::Touch, bake::master_presses(seed)))],
+                baked: [None, None],
+                practice: true,
+            },
+        );
     }
 
     /// The challenge waiting for `seat`, if any.
@@ -370,7 +408,7 @@ impl Arena {
             let rise = bake::rises(seed.wrapping_add(side.index() as u64 + 1));
             let bias = self.calibration.bias(input);
             entry.baked[side.index()] = Some(bake::bake(&presses, input, bias, rise));
-            if entry.presses[side.index()].is_some() {
+            if entry.presses[side.index()].is_some() && !(entry.practice && side == Side::Defender) {
                 self.calibration.learn(input, &presses);
             }
         }
@@ -392,6 +430,9 @@ impl Arena {
             ending,
             at: now,
         };
+        if entry.practice {
+            return Vec::new();
+        }
         let mut effects = Vec::new();
         match winner {
             Some(Side::Challenger) => {
@@ -622,6 +663,24 @@ mod tests {
         assert_eq!(winner(&arena, "c", now), (Some(Side::Challenger), Ending::SeatGone));
         assert!(arena.keeps_a_place_for(ProfileId(2), now));
         assert!(arena.resting(ProfileId(3), now).is_none());
+    }
+
+    #[test]
+    fn a_practice_bake_against_the_baeckermeister_takes_no_place_and_rests_nobody() {
+        let now = Instant::now();
+        let mut arena = Arena::default();
+        arena.practice("p".into(), challenger(2, "Mami"), 5, now);
+        let Some(View::Baking { defender, .. }) = arena.view("p", Side::Challenger, now) else {
+            panic!("a practice bakes at once");
+        };
+        assert_eq!(defender, MASTER);
+        let effects = arena
+            .press("p", Side::Challenger, Input::Touch, [None; 3], now + COUNTDOWN)
+            .unwrap();
+        assert_eq!(effects, vec![]);
+        assert_eq!(winner(&arena, "p", now).0, Some(Side::Defender));
+        assert!(arena.resting(ProfileId(2), now).is_none());
+        assert_eq!(arena.places_kept(now), 0);
     }
 
     #[test]

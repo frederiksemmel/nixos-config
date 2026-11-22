@@ -1,4 +1,6 @@
 mod bakeoff;
+
+pub use bakeoff::save_calibration;
 mod codecs;
 pub mod probe;
 mod remux;
@@ -6,7 +8,6 @@ mod vtt;
 
 use crate::api::{self, problem};
 use crate::auth::gate::Who;
-use crate::challenge::Arena;
 use crate::core::{Core, Request};
 use crate::profile::ProfileId;
 use crate::progress::Watched;
@@ -150,7 +151,6 @@ struct Streams {
     live: Arc<Mutex<HashMap<String, Arc<Live>>>>,
     probes: Arc<Mutex<HashMap<PathBuf, Media>>>,
     captions: Arc<Mutex<Captions>>,
-    arena: Arc<Mutex<Arena>>,
 }
 
 pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Router<S> {
@@ -161,7 +161,6 @@ pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Ro
         live: Arc::default(),
         probes: Arc::default(),
         captions: Arc::default(),
-        arena: Arc::default(),
     };
     tokio::spawn(reap(streams.clone()));
     let loading = streams.clone();
@@ -597,7 +596,7 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
                 }
             }
         }
-        let mut arena = streams.arena.lock().unwrap();
+        let mut arena = streams.core.arena();
         let now = std::time::Instant::now();
         let full = if arena.keeps_a_place_for(profile, now) {
             arena.took_place(profile);
@@ -747,7 +746,7 @@ fn room(streams: usize, from_pcloud: usize, downloaded: bool) -> Option<Full> {
     }
 }
 
-fn tv_file(library: &crate::library::Library, playing: &crate::bus::Playing) -> Option<PathBuf> {
+pub(crate) fn tv_file(library: &crate::library::Library, playing: &crate::bus::Playing) -> Option<PathBuf> {
     match playing {
         crate::bus::Playing::Movie { movie } => library
             .movies
