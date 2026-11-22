@@ -10,7 +10,7 @@ let
 in
 {
   options.services.beachparty = {
-    enable = lib.mkEnableOption "the website of Semmels Beachparty 2023, served by nginx";
+    enable = lib.mkEnableOption "the page for Silvester 2026 in Sant Andreu de Llavaneres, served by nginx";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -97,10 +97,6 @@ in
         extraConfig = ''
           set_real_ip_from ${cfg.relayedFrom};
           real_ip_header proxy_protocol;
-        '';
-        locations."= /api/events".extraConfig = ''
-          default_type application/json;
-          return 200 '{"info":[],"events":[]}';
         '';
         locations."/_app/immutable/".extraConfig = ''
           expires max;

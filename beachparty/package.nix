@@ -2,7 +2,7 @@
 
 buildNpmPackage {
   pname = "beachparty";
-  version = "2023";
+  version = "2026";
 
   src = lib.fileset.toSource {
     root = ./site;
@@ -28,5 +28,5 @@ buildNpmPackage {
     runHook postInstall
   '';
 
-  meta.description = "Semmels Beachparty, 15-17 September 2023 in Sant Andreu de Llavaneres";
+  meta.description = "Silvester 2026 zu siebt in Sant Andreu de Llavaneres";
 }
