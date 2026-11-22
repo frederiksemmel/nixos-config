@@ -26,13 +26,18 @@ pub enum Scene {
     Clear,
     /// A picture, fitted into the panel and centred on white.
     Picture(Arc<RgbaImage>),
+    /// A sticker in the first half of the panel's long side, its text in the second.
+    Sticker {
+        picture: Arc<RgbaImage>,
+        text: String,
+    },
 }
 
 impl Scene {
     pub fn refresh(&self) -> Refresh {
         match self {
             Scene::Clear => Refresh::Clean,
-            Scene::Ring | Scene::Text { .. } | Scene::Picture(_) => Refresh::Gray,
+            Scene::Ring | Scene::Text { .. } | Scene::Picture(_) | Scene::Sticker { .. } => Refresh::Gray,
         }
     }
 }
@@ -84,8 +89,35 @@ pub fn render(scene: &Scene, size: Size) -> Result<Canvas> {
         Scene::Ring => draw_ring(&mut canvas),
         Scene::Text { text } => draw_text(&mut canvas, text)?,
         Scene::Picture(image) => canvas.pixels = picture::shades(image, size),
+        Scene::Sticker { picture, text } => draw_sticker(&mut canvas, picture, text)?,
     }
     Ok(canvas)
+}
+
+fn draw_sticker(canvas: &mut Canvas, image: &RgbaImage, text: &str) -> Result<()> {
+    let Size { width, height } = canvas.size;
+    let (first, second, offset) = if width >= height {
+        let half = width / 2;
+        (
+            Size::new(half, height),
+            Size::new(width - half, height),
+            Point::new(half as i32, 0),
+        )
+    } else {
+        let half = height / 2;
+        (
+            Size::new(width, half),
+            Size::new(width, height - half),
+            Point::new(0, half as i32),
+        )
+    };
+    let mut sticker = Canvas::new(first);
+    sticker.pixels = picture::shades(image, first);
+    let mut words = Canvas::new(second);
+    draw_text(&mut words, text)?;
+    canvas.paste(&sticker, Point::zero());
+    canvas.paste(&words, offset);
+    Ok(())
 }
 
 fn draw_ring(canvas: &mut Canvas) {
@@ -141,6 +173,12 @@ impl Canvas {
     pub fn set(&mut self, point: Point, color: Shade) {
         if let Some(i) = self.index(point) {
             self.pixels[i] = color;
+        }
+    }
+
+    fn paste(&mut self, other: &Canvas, offset: Point) {
+        for (point, color) in other.points() {
+            self.set(offset + point, color);
         }
     }
 
@@ -330,6 +368,53 @@ mod tests {
         let canvas = render(&Scene::Picture(Arc::new(black)), LANDSCAPE).unwrap();
         assert_eq!(count(&canvas, Shade::Black), 176 * 176);
         assert_eq!(Scene::Picture(Arc::new(RgbaImage::new(1, 1))).refresh(), Refresh::Gray);
+    }
+
+    fn sticker(text: &str) -> Scene {
+        let black = RgbaImage::from_pixel(100, 100, image::Rgba([0, 0, 0, 255]));
+        Scene::Sticker {
+            picture: Arc::new(black),
+            text: text.into(),
+        }
+    }
+
+    #[test]
+    fn a_sticker_and_its_text_share_the_panel_side_by_side() {
+        let canvas = render(&sticker("Hoi"), LANDSCAPE).unwrap();
+        let (half, height) = (LANDSCAPE.width / 2, LANDSCAPE.height);
+        let in_first = canvas
+            .points()
+            .filter(|&(p, c)| c == Shade::Black && p.x < half as i32)
+            .count();
+        assert_eq!(in_first, (half * half) as usize);
+        let words = canvas
+            .points()
+            .filter(|&(p, c)| c != Shade::White && p.x >= half as i32)
+            .map(|(p, _)| p);
+        let (lo, hi) = words.fold((Point::new(i32::MAX, i32::MAX), Point::zero()), |(lo, hi), p| {
+            (
+                Point::new(lo.x.min(p.x), lo.y.min(p.y)),
+                Point::new(hi.x.max(p.x), hi.y.max(p.y)),
+            )
+        });
+        assert!(lo.x >= half as i32 + 3 && hi.x - lo.x > 80, "text inks {lo:?}..{hi:?}");
+        assert!(hi.y < height as i32 - 3, "text inks {lo:?}..{hi:?}");
+    }
+
+    #[test]
+    fn a_sticker_goes_above_its_text_in_portrait() {
+        let canvas = render(&sticker("Hoi"), PORTRAIT).unwrap();
+        let half = PORTRAIT.height as i32 / 2;
+        let below = canvas
+            .points()
+            .filter(|&(p, c)| c == Shade::Black && p.y >= half)
+            .count();
+        let above = canvas
+            .points()
+            .filter(|&(p, c)| c == Shade::Black && p.y < half)
+            .count();
+        assert_eq!(above, 132 * 132);
+        assert!(below > 0 && below < above, "above {above}, below {below}");
     }
 
     #[test]

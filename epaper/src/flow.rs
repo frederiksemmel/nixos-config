@@ -4,10 +4,12 @@ use std::{
     future::Future,
     path::{Path, PathBuf},
     sync::{Arc, Mutex as SyncMutex},
+    time::{Duration, Instant},
 };
 
 use anyhow::Result;
 use epd_waveshare::graphics::DisplayRotation;
+use image::RgbaImage;
 use teloxide::utils::command::BotCommands;
 use tokio::sync::Mutex;
 
@@ -44,6 +46,11 @@ pub trait Chat: Send + Sync {
     /// Identifies the chat in the reply log, such as `tg:<id>` or `wa:<jid>`.
     fn key(&self) -> String;
 
+    /// Identifies who wrote the message being answered; in a private chat, the chat itself.
+    fn author(&self) -> String {
+        self.key()
+    }
+
     /// Posts `text` and returns the new message's id.
     fn send(&self, text: &str) -> impl Future<Output = Result<String>> + Send;
 
@@ -55,6 +62,52 @@ pub trait Chat: Send + Sync {
 pub const STILL_STICKERS_ONLY: &str = "I can only draw still stickers.";
 
 pub type SharedReplies = Arc<SyncMutex<Replies>>;
+
+/// How long after a sticker its text may follow, or after a text its sticker, to share the panel.
+pub const PAIRING: Duration = Duration::from_secs(10);
+
+/// Half of what a sticker scene is made of.
+#[derive(Clone, Debug)]
+pub enum Part {
+    Text(String),
+    Sticker(Arc<RgbaImage>),
+}
+
+impl Part {
+    fn scene(self) -> Scene {
+        match self {
+            Part::Text(text) => Scene::Text { text },
+            Part::Sticker(picture) => Scene::Picture(picture),
+        }
+    }
+
+    /// The scene of both parts, when one is a sticker and the other a text.
+    fn with(self, other: Part) -> Option<Scene> {
+        match (self, other) {
+            (Part::Text(text), Part::Sticker(picture)) | (Part::Sticker(picture), Part::Text(text)) => {
+                Some(Scene::Sticker { picture, text })
+            }
+            _ => None,
+        }
+    }
+
+    fn is_text(&self) -> bool {
+        matches!(self, Part::Text(_))
+    }
+}
+
+/// The last sticker or text someone drew, which their next text or sticker joins.
+struct Unpaired {
+    author: String,
+    at: Instant,
+    part: Part,
+}
+
+impl Unpaired {
+    fn joins(&self, author: &str, text: bool) -> bool {
+        self.author == author && self.at.elapsed() < PAIRING && self.part.is_text() != text
+    }
+}
 
 pub struct Screen {
     panel: Box<dyn Panel>,
@@ -83,7 +136,12 @@ impl Screen {
 }
 
 #[derive(Clone)]
-pub struct Display(Arc<Mutex<Screen>>);
+pub struct Display {
+    screen: Arc<Mutex<Screen>>,
+    unpaired: Arc<SyncMutex<Option<Unpaired>>>,
+    /// Who last asked for a sticker or a text, when, and whether it was a text; a sticker counts before it is fetched.
+    heard: Arc<SyncMutex<Option<(String, Instant, bool)>>>,
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Shown<T> {
@@ -95,12 +153,60 @@ impl Display {
     /// Starts with the rotation saved in `rotation_file`, or `default` while none is saved.
     pub fn new(panel: Box<dyn Panel>, default: DisplayRotation, rotation_file: Option<PathBuf>) -> Self {
         let rotation = rotation_file.as_deref().and_then(read_rotation).unwrap_or(default);
-        Display(Arc::new(Mutex::new(Screen {
-            panel,
-            rotation,
-            rotation_file,
-            shown: None,
-        })))
+        Display {
+            screen: Arc::new(Mutex::new(Screen {
+                panel,
+                rotation,
+                rotation_file,
+                shown: None,
+            })),
+            unpaired: Arc::default(),
+            heard: Arc::default(),
+        }
+    }
+
+    /// Whether `author` asked for the other kind of part than `text` says within [`PAIRING`], so the two share the panel.
+    pub fn pairs(&self, author: &str, text: bool) -> bool {
+        self.heard
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|(who, at, was_text)| who == author && at.elapsed() < PAIRING && *was_text != text)
+    }
+
+    fn hear(&self, author: &str, text: bool) {
+        *self.heard.lock().unwrap() = Some((author.to_owned(), Instant::now(), text));
+    }
+
+    /// Draws `part`, together with the other kind of part `author` drew within [`PAIRING`]. That drawing
+    /// may still be running, so a pair waits for the panel instead of being busy.
+    pub async fn show_part(&self, author: &str, part: Part) -> Result<Shown<()>> {
+        let paired = {
+            let mut unpaired = self.unpaired.lock().unwrap();
+            match unpaired.take() {
+                Some(last) if last.joins(author, part.is_text()) => last.part.with(part.clone()),
+                _ => {
+                    *unpaired = Some(Unpaired {
+                        author: author.to_owned(),
+                        at: Instant::now(),
+                        part: part.clone(),
+                    });
+                    None
+                }
+            }
+        };
+        match paired {
+            Some(scene) => {
+                let mut screen = self.screen.clone().lock_owned().await;
+                tokio::task::spawn_blocking(move || {
+                    screen.shown = Some(scene);
+                    screen.draw()
+                })
+                .await??;
+                Ok(Shown::Done(()))
+            }
+            None => self.show(part.scene()).await,
+        }
     }
 
     /// Does `work` on the screen, unless a drawing is already running.
@@ -108,7 +214,7 @@ impl Display {
         &self,
         work: impl FnOnce(&mut Screen) -> Result<T> + Send + 'static,
     ) -> Result<Shown<T>> {
-        let Ok(mut screen) = self.0.clone().try_lock_owned() else {
+        let Ok(mut screen) = self.screen.clone().try_lock_owned() else {
             return Ok(Shown::Busy);
         };
         let done = tokio::task::spawn_blocking(move || work(&mut screen)).await??;
@@ -257,17 +363,29 @@ impl Bot {
         } else {
             Message::Written
         };
+        if matches!(scene, Scene::Text { .. }) {
+            self.display.hear(&chat.author(), true);
+        }
         let pending = self.start(chat).await?;
-        let message = outcome(self.display.show(scene).await).map_or_else(|message| message, |()| done);
+        let shown = match scene {
+            Scene::Text { text } => self.display.show_part(&chat.author(), Part::Text(text)).await,
+            scene => self.display.show(scene).await,
+        };
+        let message = outcome(shown).map_or_else(|message| message, |()| done);
         self.finish(chat, &pending, message, str::to_owned).await
     }
 
-    /// Says a wait line, fetches a picture and draws it, then tells the outcome.
+    /// Says a wait line, fetches a sticker and draws it, beside a text its author sent just before or after; then tells the outcome.
     pub async fn draw_picture<C: Chat>(&self, chat: &C, fetch: impl Future<Output = Result<Vec<u8>>>) -> Result<()> {
+        self.display.hear(&chat.author(), false);
         let pending = self.start(chat).await?;
         let message = match fetch.await.and_then(|bytes| picture::decode(&bytes)) {
-            Ok(image) => outcome(self.display.show(Scene::Picture(Arc::new(image))).await)
-                .map_or_else(|message| message, |()| Message::Written),
+            Ok(image) => outcome(
+                self.display
+                    .show_part(&chat.author(), Part::Sticker(Arc::new(image)))
+                    .await,
+            )
+            .map_or_else(|message| message, |()| Message::Written),
             Err(err) => {
                 tracing::warn!("no picture to draw: {err:#}");
                 Message::Failed
@@ -554,7 +672,7 @@ mod tests {
             let display = display.clone();
             async move { display.play(two_pictures()).await.unwrap() }
         });
-        while display.0.try_lock().is_ok() {
+        while display.screen.try_lock().is_ok() {
             tokio::task::yield_now().await;
         }
         assert_eq!(display.show(Scene::Ring).await.unwrap(), Shown::Busy);
@@ -738,13 +856,84 @@ mod tests {
             let display = display.clone();
             async move { display.show(Scene::Clear).await.unwrap() }
         });
-        while display.0.try_lock().is_ok() {
+        while display.screen.try_lock().is_ok() {
             tokio::task::yield_now().await;
         }
         assert_eq!(display.show(Scene::Ring).await.unwrap(), Shown::Busy);
         drop(release);
         assert_eq!(first.await.unwrap(), Shown::Done(()));
         assert_eq!(display.show(Scene::Clear).await.unwrap(), Shown::Done(()));
+    }
+
+    fn black() -> Arc<RgbaImage> {
+        Arc::new(RgbaImage::from_pixel(8, 8, image::Rgba([0, 0, 0, 255])))
+    }
+
+    async fn shown(display: &Display) -> Option<Scene> {
+        display.screen.lock().await.shown.clone()
+    }
+
+    #[tokio::test]
+    async fn a_text_right_after_a_sticker_waits_and_joins_it() {
+        let (release, wait) = mpsc::channel();
+        let display = Display::new(Box::new(Slow(wait)), DisplayRotation::Rotate90, None);
+        let sticker = tokio::spawn({
+            let display = display.clone();
+            async move { display.show_part("wa:anna", Part::Sticker(black())).await.unwrap() }
+        });
+        while display.screen.try_lock().is_ok() {
+            tokio::task::yield_now().await;
+        }
+        assert_eq!(display.show(Scene::Ring).await.unwrap(), Shown::Busy);
+        let text = tokio::spawn({
+            let display = display.clone();
+            async move { display.show_part("wa:anna", Part::Text("Hoi".into())).await.unwrap() }
+        });
+        drop(release);
+        assert_eq!(sticker.await.unwrap(), Shown::Done(()));
+        assert_eq!(text.await.unwrap(), Shown::Done(()));
+        assert_eq!(
+            shown(&display).await,
+            Some(Scene::Sticker {
+                picture: black(),
+                text: "Hoi".into()
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sticker_after_a_text_joins_it() {
+        let display = Display::new(Box::new(Instant), DisplayRotation::Rotate90, None);
+        display.show_part("tg:1", Part::Text("Hoi".into())).await.unwrap();
+        display.show_part("tg:1", Part::Sticker(black())).await.unwrap();
+        assert!(matches!(shown(&display).await, Some(Scene::Sticker { .. })));
+        display.show_part("tg:1", Part::Text("Ciao".into())).await.unwrap();
+        assert_eq!(shown(&display).await, Some(Scene::Text { text: "Ciao".into() }));
+    }
+
+    #[tokio::test]
+    async fn only_a_sticker_and_a_text_by_the_same_author_pair() {
+        let display = Display::new(Box::new(Instant), DisplayRotation::Rotate90, None);
+        display.show_part("wa:anna", Part::Sticker(black())).await.unwrap();
+        display.show_part("wa:beat", Part::Text("Hoi".into())).await.unwrap();
+        assert_eq!(shown(&display).await, Some(Scene::Text { text: "Hoi".into() }));
+        display.show_part("wa:beat", Part::Text("Ciao".into())).await.unwrap();
+        assert_eq!(shown(&display).await, Some(Scene::Text { text: "Ciao".into() }));
+        display.show_part("wa:beat", Part::Sticker(black())).await.unwrap();
+        assert!(matches!(shown(&display).await, Some(Scene::Sticker { .. })));
+    }
+
+    #[tokio::test]
+    async fn a_sticker_counts_for_pairing_before_it_is_fetched() {
+        let bot = bot(Box::new(Instant));
+        let chat = Fake::default();
+        assert!(!bot.display.pairs("fake:1", true));
+        bot.draw_picture(&chat, async { anyhow::bail!("no network") })
+            .await
+            .unwrap();
+        assert!(bot.display.pairs("fake:1", true));
+        assert!(!bot.display.pairs("fake:1", false));
+        assert!(!bot.display.pairs("fake:2", true));
     }
 
     #[tokio::test]
@@ -771,7 +960,7 @@ mod tests {
         display.rotate(Some(DisplayRotation::Rotate270)).await.unwrap();
 
         let restarted = Display::new(Box::new(Instant), DisplayRotation::Rotate90, Some(file.clone()));
-        let rotation = restarted.0.lock().await.rotation;
+        let rotation = restarted.screen.lock().await.rotation;
         std::fs::remove_file(&file).ok();
         assert_eq!(degrees(rotation), 270);
     }

@@ -129,11 +129,16 @@ type SharedGroups = Arc<Mutex<Groups>>;
 struct Conversation {
     client: Arc<Client>,
     chat: Jid,
+    sender: Jid,
 }
 
 impl Chat for Conversation {
     fn key(&self) -> String {
         format!("wa:{}", self.chat)
+    }
+
+    fn author(&self) -> String {
+        format!("wa:{}", self.sender)
     }
 
     async fn send(&self, text: &str) -> Result<String> {
@@ -310,6 +315,7 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
     let chat = Conversation {
         client: ctx.client.clone(),
         chat: info.source.chat.clone(),
+        sender: info.source.sender.clone(),
     };
     let jid = info.source.chat.to_string();
     let is_group = info.source.is_group;
@@ -353,7 +359,10 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         return Ok(());
     }
     if let Some(sticker) = base.sticker_message.as_option() {
-        if is_group && !quotes_the_bot(&bot, &chat, sticker.context_info.as_option()) {
+        if is_group
+            && !quotes_the_bot(&bot, &chat, sticker.context_info.as_option())
+            && !bot.display.pairs(&chat.author(), false)
+        {
             return Ok(());
         }
         tracing::info!(chat = %info.source.chat, "whatsapp sticker");
@@ -393,6 +402,9 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
     );
     match addressed(&text, replying) {
         Some(text) => bot.message(&chat, &text).await,
+        None if flow::parse_command(&text).is_none() && bot.display.pairs(&chat.author(), true) => {
+            bot.draw(&chat, flow::text_scene(text)).await
+        }
         None => bot.command_message(&chat, &text).await,
     }
 }
