@@ -15,7 +15,7 @@
   networking.hostName = "semmeltv5";
 
   services.semmeltv = {
-    split = false;
+    split = true;
     offlineCacheGiB = 60;
     tv = {
       kind = "samsung";
