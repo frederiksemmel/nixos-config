@@ -184,3 +184,5 @@ document.addEventListener("click", async (event) => {
     toast("Couldn't copy", "error", String(error && error.message || error));
   }
 });
+
+document.documentElement.dataset.feedbackReady = "";

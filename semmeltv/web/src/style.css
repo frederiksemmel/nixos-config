@@ -2110,7 +2110,8 @@ html[data-live="stale"] :is(.bar-toggle, .sheet-playback button) { pointer-event
 
 /* Feedback */
 
-.feedback-open { color: var(--text); }
+.feedback-open { color: var(--text); visibility: hidden; }
+html[data-feedback-ready] .feedback-open { visibility: visible; }
 html[data-feedback] .feedback-open { background: var(--text); color: var(--bg); border-color: var(--text); }
 
 .feedback-dim {
