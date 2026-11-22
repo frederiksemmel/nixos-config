@@ -530,7 +530,7 @@ fn env_text(name: &str) -> Option<String> {
 /// Plays one file on the TV set's own player, steered from stdin: `p` pauses,
 /// `r` resumes, a number seeks to that second, `q` stops.
 fn run_tv_set(rest: &[String]) -> Result<(), String> {
-    use player::renderer::{self, Session, Start};
+    use player::renderer::{self, Session, Start, Told};
     let (file, rest) = rest
         .split_first()
         .ok_or("tv-set needs a file, then where to start in seconds and the audio track (from 1)")?;
@@ -551,7 +551,7 @@ fn run_tv_set(rest: &[String]) -> Result<(), String> {
     let media = waiting(stream::probe::probe(&path))??;
     let feed = renderer::feed(&media, audio);
     println!("{:?} as {feed:?}", media.video);
-    let (done, finished) = std::sync::mpsc::channel();
+    let (telling, told) = std::sync::mpsc::channel();
     let start = Start {
         renderer: tv::upnp::Renderer::new(renderer),
         port,
@@ -561,16 +561,13 @@ fn run_tv_set(rest: &[String]) -> Result<(), String> {
         feed,
         from,
     };
-    let session = std::sync::Arc::new(
-        Session::start(
-            start,
-            || {},
-            move |finish, _| {
-                let _ = done.send(finish);
-            },
-        )
-        .map_err(|error| error.to_string())?,
-    );
+    let session = std::sync::Arc::new(Session::start(
+        start,
+        || {},
+        move |said| {
+            let _ = telling.send(said);
+        },
+    ));
     let steering = session.clone();
     std::thread::spawn(move || {
         for line in std::io::stdin().lines().map_while(Result::ok) {
@@ -585,14 +582,13 @@ fn run_tv_set(rest: &[String]) -> Result<(), String> {
             }
         }
     });
-    loop {
-        match finished.recv_timeout(std::time::Duration::from_secs(2)) {
-            Ok(finish) => {
-                println!("{finish:?}");
-                return Ok(());
-            }
-            Err(_) => {
-                let seen = session.seen();
+    let mut shown = std::time::Instant::now();
+    for said in told {
+        match said {
+            Told::Started => println!("serving"),
+            Told::Failed(error) => return Err(error),
+            Told::Seen(seen) if shown.elapsed() >= std::time::Duration::from_secs(2) => {
+                shown = std::time::Instant::now();
                 println!(
                     "{:>7.1} / {:.1} {}{}",
                     seen.position,
@@ -601,8 +597,14 @@ fn run_tv_set(rest: &[String]) -> Result<(), String> {
                     if seen.paused { " paused" } else { "" }
                 );
             }
+            Told::Seen(_) => {}
+            Told::Ended { finish, .. } => {
+                println!("{finish:?}");
+                return Ok(());
+            }
         }
     }
+    Ok(())
 }
 
 fn handoff() -> Result<Option<player::renderer::Handoff>, String> {

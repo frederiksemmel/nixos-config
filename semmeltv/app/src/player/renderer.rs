@@ -1,8 +1,11 @@
 //! Playback on the TV set's own player. The TV decodes what the Pi can't: the
 //! Pi serves it the file over HTTP and steers its UPnP AVTransport.
 
-use super::Finish;
+use super::{Finish, REPORT_EVERY, State};
 use crate::command::Command;
+use crate::link::QUEUE;
+use crate::link::messages::{Ended, Report, Target, ToTv};
+use crate::progress::{Place, Tracks};
 use crate::seek::{Direction, Scrub};
 use crate::stream::probe::Media;
 use crate::tv::upnp::{Renderer, element};
@@ -11,9 +14,9 @@ use std::io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{IpAddr, SocketAddr, TcpListener, TcpStream, UdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command as Process, Stdio};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
-use std::sync::{Arc, Mutex};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -428,6 +431,7 @@ impl Watch {
     }
 }
 
+/// What the steering thread last saw of the TV set's player.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Seen {
     pub position: f64,
@@ -439,9 +443,66 @@ pub struct Seen {
     pub jump: Option<i32>,
 }
 
+impl Seen {
+    fn place(&self) -> Place {
+        Place {
+            position: self.position,
+            duration: self.duration,
+            credits: None,
+        }
+    }
+
+    /// The report a tv would send for `play` if it had seen this.
+    pub fn report(&self, play: &str, tracks: Tracks) -> Report {
+        Report {
+            play: Some(play.to_string()),
+            state: State {
+                position: self.position,
+                duration: self.duration,
+                paused: self.paused,
+                muted: self.muted,
+                speed: 1.0,
+                subtitle: None,
+                subtitle_delay: 0.0,
+                audio: tracks.audio,
+                started: self.started,
+                jump: self.jump,
+                skip: None,
+            },
+            place: self.place(),
+            tracks,
+            played: self.played,
+            subtitles: None,
+        }
+    }
+
+    /// How `play` ended if this was the last thing seen of it.
+    pub fn ended(&self, play: &str, finish: Finish, tracks: Tracks) -> Ended {
+        Ended {
+            play: play.to_string(),
+            finish,
+            place: self.place(),
+            tracks,
+            played: self.played,
+        }
+    }
+}
+
+/// What a session tells the core, in the order it happens: that the file is
+/// served or why it can't be, what it sees every `REPORT_EVERY` while the
+/// TV set plays, and how it ended.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Told {
+    Started,
+    Failed(String),
+    Seen(Seen),
+    Ended { finish: Finish, seen: Seen },
+}
+
 enum Order {
     Pause(bool),
     Seek(f64),
+    SeekBy(f64),
     Key(Command),
     Mute(bool),
 }
@@ -456,9 +517,10 @@ pub struct Start {
     pub name: String,
 }
 
+/// The core's end of one hand-off. Its orders never wait, and dropping it
+/// stops the TV set.
 pub struct Session {
-    seen: Arc<Mutex<Seen>>,
-    orders: Sender<Order>,
+    orders: SyncSender<Order>,
 }
 
 struct Steering {
@@ -515,94 +577,118 @@ impl Steering {
     }
 }
 
-impl Session {
-    pub fn start(
-        start: Start,
-        prepare: impl FnOnce() + Send + 'static,
-        on_exit: impl FnOnce(Finish, Seen) + Send + 'static,
-    ) -> io::Result<Self> {
-        let Start {
-            renderer,
-            port,
-            path,
-            media,
-            feed,
-            from,
-            name,
-        } = start;
-        let ip = local_address(renderer.host())?;
-        let token = crate::auth::token();
-        let mime = mime(&path, feed);
-        let served_name = match feed {
-            Feed::File => format!(
-                "video.{}",
-                path.extension()
-                    .and_then(|extension| extension.to_str())
-                    .unwrap_or("mkv")
-            ),
-            Feed::Remux { .. } => "video.ts".to_string(),
-        };
-        let server = Server::start(
-            ip,
-            port,
-            Served {
-                path: path.clone(),
-                token: token.clone(),
-                feed,
-                mime,
-            },
-        )?;
-        let steering = Steering {
-            url: server.url(&served_name, &token),
-            renderer,
-            name: name.clone(),
+/// Serves the file where the TV set can reach it, and what steers the TV set
+/// to it.
+fn serve(start: &Start) -> io::Result<(Server, Steering)> {
+    let ip = local_address(start.renderer.host())?;
+    let token = crate::auth::token();
+    let mime = mime(&start.path, start.feed);
+    let served_name = match start.feed {
+        Feed::File => format!(
+            "video.{}",
+            start
+                .path
+                .extension()
+                .and_then(|extension| extension.to_str())
+                .unwrap_or("mkv")
+        ),
+        Feed::Remux { .. } => "video.ts".to_string(),
+    };
+    let server = Server::start(
+        ip,
+        start.port,
+        Served {
+            path: start.path.clone(),
+            token: token.clone(),
+            feed: start.feed,
             mime,
-            feed,
-            duration: media.duration,
+        },
+    )?;
+    let steering = Steering {
+        url: server.url(&served_name, &token),
+        renderer: start.renderer.clone(),
+        name: start.name.clone(),
+        mime,
+        feed: start.feed,
+        duration: start.media.duration,
+    };
+    Ok((server, steering))
+}
+
+impl Session {
+    /// Hands the file to the TV set from a thread of its own, which serves
+    /// it, runs `prepare`, then steers the TV set until it ends or the
+    /// session is dropped. Everything it learns goes to `tell`.
+    pub fn start(start: Start, prepare: impl FnOnce() + Send + 'static, tell: impl Fn(Told) + Send + 'static) -> Self {
+        let (orders, received) = mpsc::sync_channel(QUEUE);
+        thread::spawn(move || hand_off(&start, prepare, &tell, &received));
+        Self { orders }
+    }
+
+    /// Carries out the core's order for this play, as a tv would. Orders a
+    /// TV set has no use for are ignored.
+    pub fn take(&self, order: ToTv) {
+        let order = match order {
+            ToTv::Command { command, .. } => Order::Key(command),
+            ToTv::Stop { .. } => Order::Key(Command::Back),
+            ToTv::Pause { paused, .. } => Order::Pause(paused),
+            ToTv::Mute { muted, .. } => Order::Mute(muted),
+            ToTv::Seek {
+                target: Target::To(seconds),
+                ..
+            } => Order::Seek(seconds),
+            ToTv::Seek {
+                target: Target::By(seconds),
+                ..
+            } => Order::SeekBy(seconds),
+            _ => return,
         };
-        let seen = Arc::new(Mutex::new(Seen {
-            position: from,
-            duration: media.duration.unwrap_or(0.0),
-            ..Seen::default()
-        }));
-        let (orders, received) = mpsc::channel();
-        let shared = seen.clone();
-        thread::spawn(move || {
-            prepare();
-            let finish = steer(&steering, &received, &shared, from);
-            drop(server);
-            let seen = *shared.lock().unwrap();
-            eprintln!("tv player: {name} {finish:?} after {} played", clock(seen.played));
-            on_exit(finish, seen);
-        });
-        Ok(Self { seen, orders })
-    }
-
-    pub fn seen(&self) -> Seen {
-        *self.seen.lock().unwrap()
-    }
-
-    /// What the steering thread last saw, kept up to date while it runs.
-    pub fn watched(&self) -> Arc<Mutex<Seen>> {
-        self.seen.clone()
+        self.order(order);
     }
 
     pub fn set_paused(&self, paused: bool) {
-        let _ = self.orders.send(Order::Pause(paused));
+        self.order(Order::Pause(paused));
     }
 
     pub fn seek_to(&self, seconds: f64) {
-        let _ = self.orders.send(Order::Seek(seconds));
+        self.order(Order::Seek(seconds));
     }
 
     pub fn key(&self, command: Command) {
-        let _ = self.orders.send(Order::Key(command));
+        self.order(Order::Key(command));
     }
 
-    pub fn set_muted(&self, muted: bool) {
-        self.seen.lock().unwrap().muted = muted;
-        let _ = self.orders.send(Order::Mute(muted));
+    fn order(&self, order: Order) {
+        if let Err(TrySendError::Full(_)) = self.orders.try_send(order) {
+            eprintln!("tv player: the TV set is not keeping up, dropped an order");
+        }
     }
+}
+
+fn hand_off(start: &Start, prepare: impl FnOnce(), tell: &dyn Fn(Told), received: &Receiver<Order>) {
+    let (server, steering) = match serve(start) {
+        Ok(served) => served,
+        Err(error) => {
+            eprintln!("tv player: serving {}: {error}", start.path.display());
+            tell(Told::Failed(error.to_string()));
+            return;
+        }
+    };
+    tell(Told::Started);
+    prepare();
+    let seen = Seen {
+        position: start.from,
+        duration: start.media.duration.unwrap_or(0.0),
+        ..Seen::default()
+    };
+    let (finish, seen) = steer(&steering, received, seen, start.from, tell);
+    drop(server);
+    eprintln!(
+        "tv player: {} {finish:?} after {} played",
+        start.name,
+        clock(seen.played)
+    );
+    tell(Told::Ended { finish, seen });
 }
 
 fn load_until_started(steering: &Steering, from: f64, received: &Receiver<Order>) -> Result<(), String> {
@@ -619,18 +705,24 @@ fn load_until_started(steering: &Steering, from: f64, received: &Receiver<Order>
     }
 }
 
-fn steer(steering: &Steering, received: &Receiver<Order>, shared: &Mutex<Seen>, from: f64) -> Finish {
+fn steer(
+    steering: &Steering,
+    received: &Receiver<Order>,
+    mut seen: Seen,
+    from: f64,
+    tell: &dyn Fn(Told),
+) -> (Finish, Seen) {
     let resume_by_seek = steering.feed == Feed::File && from > 0.0;
     let loaded_from = if resume_by_seek { 0.0 } else { from };
     if let Err(error) = load_until_started(steering, loaded_from, received) {
         eprintln!("tv player: the TV did not take {}: {error}", steering.name);
-        return Finish::Failed;
+        return (Finish::Failed, seen);
     }
-    let duration = shared.lock().unwrap().duration;
-    let mut watch = Watch::new(Instant::now(), duration, loaded_from);
+    let mut watch = Watch::new(Instant::now(), seen.duration, loaded_from);
     let mut scrub = Scrub::default();
     let mut resumed = !resume_by_seek;
     let mut next_poll = Instant::now();
+    let mut next_report = Instant::now() + REPORT_EVERY;
     loop {
         let now = Instant::now();
         let order = match received.recv_timeout(TICK) {
@@ -638,9 +730,10 @@ fn steer(steering: &Steering, received: &Receiver<Order>, shared: &Mutex<Seen>, 
             Err(RecvTimeoutError::Timeout) => None,
             Err(RecvTimeoutError::Disconnected) => {
                 let _ = steering.renderer.transport("Stop", "");
-                return Finish::Stopped;
+                return (Finish::Stopped, seen);
             }
         };
+        let ordered = order.is_some();
         let mut seek_to = None;
         match order {
             Some(Order::Pause(true)) => {
@@ -653,7 +746,12 @@ fn steer(steering: &Steering, received: &Receiver<Order>, shared: &Mutex<Seen>, 
                 scrub.cancel();
                 seek_to = Some(to);
             }
+            Some(Order::SeekBy(by)) => {
+                seek_to = Some(scrub.target().unwrap_or(watch.position) + by);
+                scrub.cancel();
+            }
             Some(Order::Mute(muted)) => {
+                seen.muted = muted;
                 if let Err(failure) = steering.renderer.set_mute(muted) {
                     eprintln!("tv player: mute: {failure:?}");
                 }
@@ -661,7 +759,7 @@ fn steer(steering: &Steering, received: &Receiver<Order>, shared: &Mutex<Seen>, 
             Some(Order::Key(command)) => match command {
                 Command::Back => {
                     let _ = steering.renderer.transport("Stop", "");
-                    return Finish::Stopped;
+                    return (Finish::Stopped, seen);
                 }
                 Command::Select | Command::PlayPause => {
                     let action = if watch.paused { "Play" } else { "Pause" };
@@ -713,16 +811,19 @@ fn steer(steering: &Steering, received: &Receiver<Order>, shared: &Mutex<Seen>, 
                 }
             }
             if let Some(finish) = finish {
-                return finish;
+                return (finish, seen);
             }
         }
-        let mut seen = shared.lock().unwrap();
         seen.position = scrub.target().unwrap_or(watch.position);
         seen.duration = watch.duration;
         seen.paused = watch.paused || !watch.started;
         seen.started = watch.started;
         seen.played = watch.played;
         seen.jump = scrub.jump_shown(now);
+        if ordered || now >= next_report {
+            next_report = now + REPORT_EVERY;
+            tell(Told::Seen(seen));
+        }
     }
 }
 
@@ -958,6 +1059,57 @@ mod tests {
         }
     }
 
+    fn film(renderer: Renderer, path: PathBuf, from: f64) -> Start {
+        Start {
+            renderer,
+            port: 0,
+            path,
+            media: hevc(vec![audio(0, "eac3", true)]),
+            feed: Feed::File,
+            from,
+            name: "Outlander S08E01".to_string(),
+        }
+    }
+
+    /// Starts a session and returns it with what it tells the core.
+    fn started(start: Start, prepare: impl FnOnce() + Send + 'static) -> (Session, Receiver<Told>) {
+        let (telling, told) = mpsc::channel();
+        let session = Session::start(start, prepare, move |said| {
+            let _ = telling.send(said);
+        });
+        (session, told)
+    }
+
+    /// Waits until the session tells what `wanted` looks for, and returns it.
+    fn told_until<T>(told: &Receiver<Told>, what: &str, wanted: impl Fn(Told) -> Option<T>) -> T {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            match told.recv_timeout(left) {
+                Ok(said) => {
+                    if let Some(found) = wanted(said) {
+                        return found;
+                    }
+                }
+                Err(_) => panic!("waited for {what}"),
+            }
+        }
+    }
+
+    fn seen_until(told: &Receiver<Told>, what: &str, wanted: impl Fn(&Seen) -> bool) -> Seen {
+        told_until(told, what, |said| match said {
+            Told::Seen(seen) if wanted(&seen) => Some(seen),
+            _ => None,
+        })
+    }
+
+    fn ended(told: &Receiver<Told>) -> (Finish, Seen) {
+        told_until(told, "the end", |said| match said {
+            Told::Ended { finish, seen } => Some((finish, seen)),
+            _ => None,
+        })
+    }
+
     #[test]
     fn a_session_hands_the_file_to_the_tv_resumes_steers_and_ends_with_it() {
         let path = std::env::temp_dir().join(format!("semmeltv-session-{}.mkv", std::process::id()));
@@ -965,23 +1117,12 @@ mod tests {
         let tv = Tv::default();
         tv.player.lock().unwrap().duration = 3000;
         let fake = fake(tv);
-        let (exited, exit) = mpsc::channel();
         let prepared = Arc::new(AtomicBool::new(false));
         let preparing = prepared.clone();
-        let session = Session::start(
-            Start {
-                renderer: fake.renderer(),
-                port: 0,
-                path: path.clone(),
-                media: hevc(vec![audio(0, "eac3", true)]),
-                feed: Feed::File,
-                from: 600.0,
-                name: "Outlander S08E01".to_string(),
-            },
-            move || preparing.store(true, Ordering::SeqCst),
-            move |finish, seen: Seen| exited.send((finish, seen.position)).unwrap(),
-        )
-        .unwrap();
+        let (session, told) = started(film(fake.renderer(), path.clone(), 600.0), move || {
+            preparing.store(true, Ordering::SeqCst);
+        });
+        assert_eq!(told.recv_timeout(Duration::from_secs(10)), Ok(Told::Started));
         let player = fake.tv.player.clone();
         wait_for("the resume seek", || player.lock().unwrap().position == 600);
         assert!(prepared.load(Ordering::SeqCst));
@@ -1001,18 +1142,34 @@ mod tests {
             .unwrap();
         let (_, body) = get(address, &format!("/{token_path}"), None);
         assert_eq!(body, b"film");
-        wait_for("the position", || {
-            session.seen().position == 600.0 && session.seen().started
+        seen_until(&told, "the position", |seen| seen.position == 600.0 && seen.started);
+        let play = "a-play".to_string();
+        session.take(ToTv::Pause {
+            play: play.clone(),
+            paused: true,
         });
-        session.set_paused(true);
-        wait_for("the pause", || session.seen().paused);
-        session.seek_to(1500.0);
+        seen_until(&told, "the pause", |seen| seen.paused);
+        let muting = Instant::now();
+        session.take(ToTv::Mute {
+            play: play.clone(),
+            muted: true,
+        });
+        seen_until(&told, "the mute", |seen| seen.muted);
+        assert!(muting.elapsed() < REPORT_EVERY, "told only on the next report");
+        assert!(*fake.tv.muted.lock().unwrap());
+        session.take(ToTv::Seek {
+            play: play.clone(),
+            target: Target::To(1500.0),
+        });
         wait_for("the seek", || player.lock().unwrap().position == 1500);
-        session.key(Command::Back);
-        assert_eq!(
-            exit.recv_timeout(Duration::from_secs(10)),
-            Ok((Finish::Stopped, 1500.0))
-        );
+        session.take(ToTv::Seek {
+            play: play.clone(),
+            target: Target::By(-100.0),
+        });
+        wait_for("the step back", || player.lock().unwrap().position == 1400);
+        session.take(ToTv::Stop { play });
+        let (finish, seen) = ended(&told);
+        assert_eq!((finish, seen.position), (Finish::Stopped, 1400.0));
         assert_eq!(player.lock().unwrap().state, "STOPPED");
         std::fs::remove_file(path).unwrap();
     }
@@ -1022,27 +1179,70 @@ mod tests {
         let tv = Tv::default();
         tv.player.lock().unwrap().duration = 3000;
         let fake = fake(tv);
-        let (exited, exit) = mpsc::channel();
-        let _session = Session::start(
-            Start {
-                renderer: fake.renderer(),
-                port: 0,
-                path: PathBuf::from("/nonexistent.mkv"),
-                media: hevc(Vec::new()),
-                feed: Feed::File,
-                from: 0.0,
-                name: "Film".to_string(),
-            },
-            || {},
-            move |finish, _| exited.send(finish).unwrap(),
-        )
-        .unwrap();
+        let (_session, told) = started(film(fake.renderer(), PathBuf::from("/nonexistent.mkv"), 0.0), || {});
         let player = fake.tv.player.clone();
         wait_for("playing", || player.lock().unwrap().state == "PLAYING");
         thread::sleep(Duration::from_millis(1200));
         player.lock().unwrap().position = 2990;
         thread::sleep(Duration::from_millis(1200));
         player.lock().unwrap().state = "STOPPED".to_string();
-        assert_eq!(exit.recv_timeout(Duration::from_secs(10)), Ok(Finish::Ended));
+        assert_eq!(ended(&told).0, Finish::Ended);
+    }
+
+    #[test]
+    fn dropping_the_session_stops_the_tv_set() {
+        let tv = Tv::default();
+        tv.player.lock().unwrap().duration = 3000;
+        let fake = fake(tv);
+        let (session, told) = started(film(fake.renderer(), PathBuf::from("/nonexistent.mkv"), 0.0), || {});
+        seen_until(&told, "the start", |seen| seen.started);
+        drop(session);
+        assert_eq!(ended(&told).0, Finish::Stopped);
+        assert_eq!(fake.tv.player.lock().unwrap().state, "STOPPED");
+    }
+
+    #[test]
+    fn a_tv_set_that_stops_answering_costs_the_core_nothing() {
+        let tv = Tv::default();
+        tv.player.lock().unwrap().duration = 3000;
+        let fake = fake(tv);
+        let (session, told) = started(film(fake.renderer(), PathBuf::from("/nonexistent.mkv"), 0.0), || {});
+        seen_until(&told, "the start", |seen| seen.started);
+        let stuck = fake.tv.player.lock().unwrap();
+        thread::sleep(POLL + TICK);
+        let ordering = Instant::now();
+        for _ in 0..QUEUE * 4 {
+            session.take(ToTv::Command {
+                play: "a-play".to_string(),
+                command: Command::Left,
+            });
+        }
+        assert!(
+            ordering.elapsed() < Duration::from_millis(100),
+            "{:?}",
+            ordering.elapsed()
+        );
+        drop(stuck);
+        drop(session);
+        assert_eq!(ended(&told).0, Finish::Stopped);
+    }
+
+    #[test]
+    fn a_file_the_pi_cannot_serve_fails_the_hand_off_and_says_why() {
+        let taken = TcpListener::bind("127.0.0.1:0").unwrap();
+        let start = Start {
+            port: taken.local_addr().unwrap().port(),
+            ..film(
+                Renderer::new("http://127.0.0.1:9/description.xml".to_string()),
+                PathBuf::from("/nonexistent.mkv"),
+                0.0,
+            )
+        };
+        let (_session, told) = started(start, || panic!("prepared a hand-off that failed"));
+        match told.recv_timeout(Duration::from_secs(10)) {
+            Ok(Told::Failed(error)) => assert!(error.contains("in use"), "{error}"),
+            other => panic!("the session told {other:?}"),
+        }
+        assert!(told.recv_timeout(Duration::from_millis(200)).is_err());
     }
 }

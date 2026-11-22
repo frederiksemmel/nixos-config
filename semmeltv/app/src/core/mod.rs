@@ -129,7 +129,13 @@ impl Outcome {
 pub(crate) enum Signal {
     Heard(Heard),
     Tv(crate::link::messages::FromTv),
-    Poll { online: bool },
+    TvSet {
+        play: String,
+        told: crate::player::renderer::Told,
+    },
+    Poll {
+        online: bool,
+    },
     Library(Result<Library, String>),
     Downloading(Option<PathBuf>),
     Download(actor::Found),

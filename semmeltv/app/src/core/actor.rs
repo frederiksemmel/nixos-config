@@ -53,6 +53,7 @@ const TV_WAKE_WAIT: Duration = Duration::from_secs(20);
 const TV_PICTURE_SETTLE: Duration = Duration::from_secs(2);
 const TV_ANSWER_TIME: Duration = Duration::from_secs(2);
 const TV_SILENT: &str = "The TV did not answer";
+const TV_SET_SUBTITLES: &str = "The TV's own player shows the subtitles: choose them with the TV's remote";
 
 type Boxed<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 
@@ -80,12 +81,17 @@ struct Offer {
     until: Instant,
 }
 
-/// What the TV plays: the link its orders go down, what it shows, the file,
-/// whose progress it moves and the last report about it. One value, so the
-/// TV never plays without the rest or the rest without a playback.
+/// Where the orders for a playback go: the tv, or the TV set's own player.
+enum Backend {
+    Tv(Link),
+    TvSet(renderer::Session),
+}
+
+/// What the TV plays: where its orders go, what it shows, the file, whose
+/// progress it moves and the last report about it. One value, so the TV
+/// never plays without the rest or the rest without a playback.
 struct OnTv {
-    link: Link,
-    handed_off: bool,
+    backend: Backend,
     shown: NowPlaying,
     file: PathBuf,
     owner: ProfileId,
@@ -97,6 +103,17 @@ struct OnTv {
 }
 
 impl OnTv {
+    fn send(&self, order: ToTv) {
+        match &self.backend {
+            Backend::Tv(link) => link.send(order),
+            Backend::TvSet(session) => session.take(order),
+        }
+    }
+
+    fn handed_off(&self) -> bool {
+        matches!(self.backend, Backend::TvSet(_))
+    }
+
     fn act(&mut self, (hold, act): (Hold, hold::Act)) {
         self.hold = hold;
         match act {
@@ -107,28 +124,28 @@ impl OnTv {
     }
 
     fn pause(&self, paused: bool) {
-        self.link.send(ToTv::Pause {
+        self.send(ToTv::Pause {
             play: self.play.clone(),
             paused,
         });
     }
 
     fn mute(&self, muted: bool) {
-        self.link.send(ToTv::Mute {
+        self.send(ToTv::Mute {
             play: self.play.clone(),
             muted,
         });
     }
 
     fn command(&self, command: Command) {
-        self.link.send(ToTv::Command {
+        self.send(ToTv::Command {
             play: self.play.clone(),
             command,
         });
     }
 
     fn stop(&self) {
-        self.link.send(ToTv::Stop {
+        self.send(ToTv::Stop {
             play: self.play.clone(),
         });
     }
@@ -138,7 +155,7 @@ impl OnTv {
     }
 
     fn toast(&self, heading: &str, status: &str, hold: Duration) {
-        self.link.send(ToTv::Toast {
+        self.send(ToTv::Toast {
             heading: heading.to_string(),
             status: status.to_string(),
             hold_ms: u64::try_from(hold.as_millis()).unwrap_or(u64::MAX),
@@ -335,6 +352,7 @@ impl Actor {
         match signal {
             Signal::Heard(heard) => self.hear(heard).await,
             Signal::Tv(said) => self.tv_said(said).await,
+            Signal::TvSet { play, told } => self.tv_set_told(&play, told).await,
             Signal::Poll { online } => {
                 let reconnected = online && !self.online;
                 self.online = online;
@@ -402,7 +420,7 @@ impl Actor {
         let on = self.core.dialogue(by).await.load(Ordering::SeqCst);
         let said = sound::dialogue_said(on);
         if let Some(tv) = self.on_tv.as_ref().filter(|tv| tv.owner == by) {
-            tv.link.send(ToTv::Dialogue {
+            tv.send(ToTv::Dialogue {
                 on,
                 said: said.to_string(),
             });
@@ -593,7 +611,7 @@ impl Actor {
                 dialogue,
                 next: up_next::follows(&self.library, path),
             };
-            let (link, handed_off) = match self.tv_set_takes(&source).await {
+            let backend = match self.tv_set_takes(&source).await {
                 Some((handoff, renderer, media)) => {
                     let feed = renderer::feed(&media, tracks.audio);
                     eprintln!("tv player: {} goes to the TV's own player as {feed:?}", path.display());
@@ -606,14 +624,16 @@ impl Actor {
                         from: start,
                         name: self.caption(path),
                     };
-                    (self.tv_set(start, tracks), true)
+                    Backend::TvSet(self.tv_set(&play.play, start))
                 }
-                None => (self.tv.clone(), false),
+                None => {
+                    self.tv.send(ToTv::Play(Box::new(play.clone())));
+                    Backend::Tv(self.tv.clone())
+                }
             };
-            link.send(ToTv::Play(Box::new(play.clone())));
+            let handed_off = matches!(backend, Backend::TvSet(_));
             self.on_tv = Some(OnTv {
-                link,
-                handed_off,
+                backend,
                 shown: self.now_playing_for(path),
                 file: path.to_path_buf(),
                 owner,
@@ -627,48 +647,56 @@ impl Actor {
         })
     }
 
-    /// A tv end of its own for one hand-off to the TV set's player. It ends,
-    /// and stops the TV set, once the core lets go of its link.
-    fn tv_set(&self, start: renderer::Start, tracks: progress::Tracks) -> Link {
+    /// Hands `play` to the TV set's own player, which tells the core what it
+    /// sees as `Signal::TvSet`. Dropping the session stops the TV set.
+    fn tv_set(&self, play: &str, start: renderer::Start) -> renderer::Session {
         let telling = self.core.clone();
-        let television = self.television.clone();
-        let returning = self.television.clone();
-        let mut once = Some((start, television));
-        link::local::spawn(
-            move |said| telling.signal(Signal::Tv(said)),
-            move |play, callbacks| {
-                let (start, television) = once
-                    .take()
-                    .ok_or_else(|| std::io::Error::other("this hand-off already played"))?;
-                let prepare = move || {
-                    if let Ok(tv::Woken::TurnedOn) = television.wake() {
-                        television.wait_until_showing(TV_WAKE_WAIT);
-                    }
-                };
-                let returning = returning.clone();
-                let player::Callbacks { report, key, exit } = callbacks;
-                let exit = Box::new(move |ended: Ended| {
-                    if let Err(failure) = returning.show_semmeltv() {
-                        eprintln!("TV: could not switch back to SemmelTV: {failure:?}");
-                    }
-                    exit(ended);
+        let (waking, returning) = (self.television.clone(), self.television.clone());
+        let play = play.to_string();
+        renderer::Session::start(
+            start,
+            move || {
+                if let Ok(tv::Woken::TurnedOn) = waking.wake() {
+                    waking.wait_until_showing(TV_WAKE_WAIT);
+                }
+            },
+            move |told| {
+                if let renderer::Told::Ended { .. } = told
+                    && let Err(failure) = returning.show_semmeltv()
+                {
+                    eprintln!("TV: could not switch back to SemmelTV: {failure:?}");
+                }
+                telling.signal(Signal::TvSet {
+                    play: play.clone(),
+                    told,
                 });
-                Player::hand_off(
-                    &play.play,
-                    start,
-                    tracks,
-                    prepare,
-                    player::Callbacks { report, key, exit },
-                )
             },
         )
+    }
+
+    /// What the TV set's player told about `play`, taken as a tv's report.
+    async fn tv_set_told(&mut self, play: &str, told: renderer::Told) {
+        let Some(tracks) = self
+            .on_tv
+            .as_ref()
+            .filter(|tv| tv.play == play)
+            .map(|tv| tv.last.tracks)
+        else {
+            return;
+        };
+        match told {
+            renderer::Told::Started => self.started(play).await,
+            renderer::Told::Failed(error) => self.failed(play, &error),
+            renderer::Told::Seen(seen) => self.reported(seen.report(play, tracks)).await,
+            renderer::Told::Ended { finish, seen } => self.ended(seen.ended(play, finish, tracks)).await,
+        }
     }
 
     async fn started(&mut self, play: &str) {
         let Some(tv) = self.on_tv.as_ref().filter(|tv| tv.play == play) else {
             return;
         };
-        let (file, owner, handed_off) = (tv.file.clone(), tv.owner, tv.handed_off);
+        let (file, owner, handed_off) = (tv.file.clone(), tv.owner, tv.handed_off());
         if !handed_off {
             self.wake_tv();
         }
@@ -690,12 +718,18 @@ impl Actor {
         let Some(tv) = &self.on_tv else {
             return;
         };
+        if tv.handed_off() {
+            if let Some(reply) = reply {
+                let _ = reply.send(Outcome::refused(TV_SET_SUBTITLES));
+            }
+            return;
+        }
         self.asked += 1;
         let id = self.asked;
         let (answer, answered) = oneshot::channel();
         self.questions.retain(|_, waiting| !waiting.is_closed());
         self.questions.insert(id, answer);
-        tv.link.send(ToTv::Subtitles {
+        tv.send(ToTv::Subtitles {
             id,
             play: tv.play.clone(),
             change,
@@ -742,8 +776,8 @@ impl Actor {
         let duration = report.place.duration;
         let unsegmented = tv.unsegmented.take_if(|_| duration > 0.0);
         tv.last = report;
-        if let Some(title) = unsegmented {
-            let (find, link, play) = (self.segments.clone(), tv.link.clone(), tv.play.clone());
+        if let (Some(title), Backend::Tv(link)) = (unsegmented, &tv.backend) {
+            let (find, link, play) = (self.segments.clone(), link.clone(), tv.play.clone());
             tokio::spawn(async move {
                 match spawn_blocking(move || find(title, duration)).await {
                     Ok(Ok(found)) => link.send(ToTv::Segments {
@@ -794,7 +828,7 @@ impl Actor {
 
     fn move_audio(&self, route: &audio::Route) {
         if let Some(tv) = &self.on_tv {
-            tv.link.send(ToTv::AudioDevice {
+            tv.send(ToTv::AudioDevice {
                 device: route.device.clone(),
                 said: route.said.clone(),
             });
@@ -1043,7 +1077,7 @@ impl Actor {
         self.core.bus.voice(VoiceEvent::Cancelled);
         self.core.bus.panel(None);
         if let Some(tv) = &self.on_tv {
-            tv.link.send(ToTv::HideToast);
+            tv.send(ToTv::HideToast);
         }
     }
 
@@ -1553,12 +1587,12 @@ impl Actor {
         let Some(tv) = &self.on_tv else {
             return Outcome::refused(NOTHING_PLAYING);
         };
-        let speed = if tv.handed_off {
+        let speed = if tv.handed_off() {
             1.0
         } else {
             player::speed_within(speed)
         };
-        tv.link.send(ToTv::Speed {
+        tv.send(ToTv::Speed {
             play: tv.play.clone(),
             speed,
         });
@@ -1572,7 +1606,7 @@ impl Actor {
             return Outcome::refused(NOTHING_PLAYING);
         };
         let seek_to = |target| {
-            tv.link.send(ToTv::Seek {
+            tv.send(ToTv::Seek {
                 play: tv.play.clone(),
                 target,
             });
@@ -1591,7 +1625,7 @@ impl Actor {
         let Some((tv, kind)) = self.on_tv.as_ref().and_then(|tv| Some((tv, tv.last.state.skip?))) else {
             return Outcome::refused("The TV shows nothing to skip right now");
         };
-        tv.link.send(ToTv::SkipSegment { play: tv.play.clone() });
+        tv.send(ToTv::SkipSegment { play: tv.play.clone() });
         Outcome::done(match kind {
             Kind::Intro => "Skipped the intro",
             Kind::Recap => "Skipped the recap",
@@ -1603,7 +1637,7 @@ impl Actor {
         let Some(tv) = self.on_tv.as_ref().filter(|tv| tv.last.state.skip.is_some()) else {
             return Outcome::refused("The TV shows nothing to skip right now");
         };
-        tv.link.send(ToTv::HideSkip { play: tv.play.clone() });
+        tv.send(ToTv::HideSkip { play: tv.play.clone() });
         Outcome::done("")
     }
 
@@ -2346,6 +2380,35 @@ mod tests {
             tracks: progress::Tracks::default(),
             played: 600.0,
         })));
+        settled(&core).await;
+        assert_eq!(saved_at(&core).await, Some(1234.0));
+        assert_eq!(core.now_playing(), None);
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn what_the_tv_set_sees_is_kept_like_a_report_and_its_end_saves_the_place() {
+        let (core, play) = playing().await;
+        let seen = |position| renderer::Seen {
+            position,
+            duration: 9000.0,
+            started: true,
+            ..renderer::Seen::default()
+        };
+        let told = |play: &str, told| Signal::TvSet {
+            play: play.to_string(),
+            told,
+        };
+        core.signal(told("an-old-play", renderer::Told::Seen(seen(500.0))));
+        core.signal(told(&play, renderer::Told::Seen(seen(100.0))));
+        settled(&core).await;
+        assert_eq!(position(&core), Some(100.0));
+        core.signal(told(
+            &play,
+            renderer::Told::Ended {
+                finish: Finish::Stopped,
+                seen: seen(1234.0),
+            },
+        ));
         settled(&core).await;
         assert_eq!(saved_at(&core).await, Some(1234.0));
         assert_eq!(core.now_playing(), None);

@@ -390,6 +390,24 @@ How 1d came out:
 - Nothing is looked up for a hand-off to the TV set, which shows no skip pill.
 - `Play.title` is gone and `PROTOCOL` is 2.
 
+How 1e came out:
+
+- `Player` is mpv only. The TV set's `renderer::Session` is the other
+  backend of `OnTv`, beside the tv's `Link`. It takes the same `ToTv`
+  orders (`Session::take`) through a `try_send` into a queue of 256, and
+  ignores the ones a TV set has no use for. Dropping it stops the TV set.
+- The steering thread tells the core `Signal::TvSet { play, told }`:
+  `Started` once the file is served, `Failed` if it can't be, `Seen` every
+  500 ms while the TV set plays and right after each order it carries out,
+  and `Ended`. The actor turns `Seen` into a
+  `Report` and `Ended` into an `Ended`, so both backends share `reported`
+  and `ended`. Nothing shares the `Seen`: it is only ever copied.
+- Serving the file (the local address, the HTTP listener) moved onto the
+  steering thread, so starting a hand-off costs the actor nothing; a port in
+  use comes back as `Failed`.
+- Subtitle changes while the TV set plays are refused by the core at once
+  ("choose them with the TV's remote") instead of a round trip to the tv end.
+
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
 its listed files.
