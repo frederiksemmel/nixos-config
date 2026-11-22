@@ -2,11 +2,21 @@
 	import { onMount } from 'svelte';
 
 	import sea from '$lib/assets/beach.webp';
+	import golf from '$lib/assets/golf.webp';
+	import tennis from '$lib/assets/tennis.webp';
+	import sailing from '$lib/assets/sailing.webp';
+	import sunbathing from '$lib/assets/sunbathing.webp';
+	import modernismo from '$lib/assets/modernismo.webp';
+	import caleta from '$lib/assets/caleta.webp';
+	import beachclub from '$lib/assets/beachclub_1.webp';
+	import beachgym from '$lib/assets/beach_gym_1.webp';
 	import croissant from '$lib/assets/croissant.webp';
+	import Meme from '$lib/meme.svelte';
 
 	const midnight = Date.parse('2027-01-01T00:00:00+01:00');
 
 	let left: number | null = null;
+	let meme: HTMLDialogElement;
 
 	onMount(() => {
 		const tick = () => (left = Math.max(0, midnight - Date.now()));
@@ -23,45 +33,27 @@
 
 	const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-	const days_ = [
-		{
-			date: 'Donnerstag, 31. Dezember',
-			items: [
-				{ time: '12:00', what: 'Vermut auf der Terrasse', where: 'Can Markus' },
-				{ time: '14:00', what: 'Mittagessen am Meer', where: 'La Caleta' },
-				{
-					time: '16:30',
-					what: 'Spaziergang am Strand bis Caldes d’Estrac, rechtzeitig zum Sonnenuntergang zurück',
-					where: null
-				},
-				{ time: '21:00', what: 'Silvesterdinner zu siebt', where: 'Can Markus' },
-				{
-					time: '23:59',
-					what: 'Zwölf Trauben, eine pro Glockenschlag. Wer alle schafft, hat ein gutes Jahr.',
-					where: null
-				},
-				{ time: '0:00', what: 'Cava am Strand', where: 'Platja de Llavaneres' }
-			]
-		},
-		{
-			date: 'Freitag, 1. Januar',
-			items: [
-				{
-					time: '12:00',
-					what: 'Neujahrsbad im Meer, für alle, die sich trauen. Das Wasser hat um die 13 Grad.',
-					where: null
-				},
-				{ time: '13:00', what: 'Café und Croissants', where: 'Can Markus' },
-				{ time: 'danach', what: 'Lange Siesta', where: null }
-			]
-		}
-	];
+	const maps = (query: string) =>
+		`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(query)}`;
 
-	const phones = [
-		{ name: 'Markus', number: '+34 629 129 636' },
-		{ name: 'Nata', number: '+34 619 818 829' },
-		{ name: 'Miriam', number: '+34 638 089 540' },
-		{ name: 'Frederik', number: '+41 78 854 42 71' }
+	const activities = [
+		{ title: 'Golf', place: 'Club de Golf de Llavaneres', photo: golf },
+		{ title: 'Tennis und Padel', place: 'Tenis Mora, Sant Andreu de Llavaneres', photo: tennis },
+		{ title: 'Segeln', place: 'Club Nàutic El Balís', photo: sailing },
+		{ title: 'Am Strand liegen', place: 'Ohnades, Sant Vicenç de Montalt', photo: sunbathing },
+		{ title: 'Modernisme in Canet de Mar', place: 'Canet de Mar', photo: modernismo },
+		{ title: 'Wein am Meer', place: 'La Caleta, Sant Vicenç de Montalt', photo: caleta },
+		{
+			title: 'Strandgymnastik',
+			place: 'Platja de la Caleta, Sant Vicenç de Montalt',
+			photo: beachgym
+		},
+		{ title: 'Drinks im Club', place: 'GAS Quiet Club, Port del Balís', photo: beachclub },
+		{
+			title: 'Café und Croissant',
+			place: 'Love Platja Xiringuito, Sant Vicenç de Montalt',
+			photo: croissant
+		}
 	];
 </script>
 
@@ -71,7 +63,7 @@
 
 <header class="hero" style="--sea: url({sea})">
 	<div class="hero-inner">
-		<p class="where">Silvester in Sant Andreu de Llavaneres</p>
+		<p class="where">Silvester zu siebt in Sant Andreu de Llavaneres</p>
 
 		<h1 class="year" aria-label={turned ? '2027' : '2026'}>
 			<span aria-hidden="true">202</span><span class="slot" aria-hidden="true"
@@ -79,7 +71,7 @@
 			>
 		</h1>
 
-		<p class="countdown" aria-live="off">
+		<p class="countdown">
 			{#if left === null}
 				&nbsp;
 			{:else if turned}
@@ -94,87 +86,44 @@
 			{/if}
 		</p>
 
-		<p class="who">Wir sieben in Can Markus, und um Mitternacht am Strand.</p>
+		<button class="in" type="button" on:click={() => meme.showModal()}>
+			Son of a bitch, I’m in
+		</button>
 	</div>
 </header>
 
 <main>
-	<section class="programme" aria-labelledby="programm">
-		<div>
-			<h2 id="programm">Programm</h2>
-			<p class="lede">Ein Vorschlag. Alles kann, nichts muss.</p>
+	<h2>Was wir machen können</h2>
 
-			{#each days_ as day}
-				<div class="day">
-					<h3>{day.date}</h3>
-					<ol>
-						{#each day.items as item}
-							<li>
-								<span class="time">{item.time}</span>
-								<span class="what">
-									{item.what}
-									{#if item.where}<span class="at">{item.where}</span>{/if}
-								</span>
-							</li>
-						{/each}
-					</ol>
-				</div>
-			{/each}
-		</div>
-		<img
-			class="photo"
-			src={croissant}
-			alt="Croissants und Café zum Neujahrsfrühstück"
-			loading="lazy"
-		/>
-	</section>
-
-	<section class="info" aria-labelledby="wo">
-		<div>
-			<h2 id="wo">Wo</h2>
-			<p>
-				Can Markus<br />
-				Avinguda Turó d’en Llull 64<br />
-				08392 Sant Andreu de Llavaneres
-			</p>
-			<p>
-				<a
-					href="https://www.google.com/maps/search/?api=1&query=Avinguda+Tur%C3%B3+d%27en+Llull+64%2C+08392+Sant+Andreu+de+Llavaneres"
-					>In Google Maps öffnen</a
-				>
-			</p>
-			<p class="note">
-				Vom Flughafen Barcelona eine knappe Stunde mit dem Auto, oder mit der R1 bis Sant Andreu de
-				Llavaneres.
-			</p>
-		</div>
-
-		<div>
-			<h2 id="mitbringen">Mitbringen</h2>
-			<ul class="bring">
-				<li>Eine warme Jacke für Mitternacht am Strand</li>
-				<li>Badesachen, falls ihr beim Neujahrsbad dabei seid</li>
-				<li>Etwas Schönes zum Anziehen für das Dinner</li>
-			</ul>
-		</div>
-
-		<div>
-			<h2 id="telefon">Telefon</h2>
-			<dl class="phones">
-				{#each phones as p}
-					<dt>{p.name}</dt>
-					<dd><a href="tel:{p.number.replaceAll(' ', '')}">{p.number}</a></dd>
-				{/each}
-			</dl>
-		</div>
-	</section>
+	{#each activities as a, i}
+		<section class="activity" class:right={i % 2 === 1} style="--photo: url({a.photo})">
+			<div class="activity-inner">
+				<h3>{a.title}</h3>
+				<a href={maps(a.place)} target="_blank" rel="noreferrer">{a.place}</a>
+			</div>
+		</section>
+	{/each}
 </main>
 
 <footer>Bis bald am Meer.</footer>
 
+<!-- svelte-ignore a11y-click-events-have-key-events a11y-no-noninteractive-element-interactions -->
+<dialog
+	bind:this={meme}
+	on:click={(e) => {
+		if (e.target === meme) meme.close();
+	}}
+	aria-label="Son of a bitch, I’m in"
+>
+	<Meme />
+	<form method="dialog">
+		<button class="close" type="submit">Schliessen</button>
+	</form>
+</dialog>
+
 <style>
 	:global(html) {
-		background: var(--night);
+		background: #10284a;
 	}
 	:global(body) {
 		--night: #10284a;
@@ -189,11 +138,8 @@
 		font-size: 1.125rem;
 		line-height: 1.6;
 	}
-	:global(a) {
-		color: var(--gold);
-		text-underline-offset: 0.2em;
-	}
-	:global(a:focus-visible) {
+	:global(a:focus-visible),
+	:global(button:focus-visible) {
 		outline: 2px solid var(--gold);
 		outline-offset: 3px;
 	}
@@ -229,7 +175,6 @@
 	}
 	.where {
 		margin: 0;
-		font-size: 1.125rem;
 		color: var(--glass);
 	}
 	.year {
@@ -269,130 +214,80 @@
 	.clock {
 		font-variant-numeric: tabular-nums;
 	}
-	.who {
-		margin: 0.5rem 0 0;
-		max-width: 34rem;
-		opacity: 0.8;
+	.in {
+		margin-top: 2rem;
+		padding: 0.9rem 1.6rem;
+		border: none;
+		border-radius: 999px;
+		background: var(--gold);
+		color: var(--night);
+		font: inherit;
+		font-weight: 700;
+		font-size: 1.125rem;
+		cursor: pointer;
+		transition: transform 0.15s ease;
+	}
+	.in:hover {
+		transform: rotate(-2deg) scale(1.04);
+	}
+	.in:active {
+		transform: scale(0.97);
 	}
 
-	main {
+	main > h2 {
 		max-width: 72rem;
 		margin: 0 auto;
-		padding: 0 1.5rem;
-	}
-	h2 {
+		padding: 5rem 1.5rem 2.5rem;
 		font-family: 'Oswald', sans-serif;
 		font-weight: 500;
 		font-size: 2.5rem;
 		line-height: 1.1;
-		margin: 0;
 		color: var(--gold);
 	}
-	.programme {
-		padding: 6rem 0 2rem;
+
+	.activity {
+		min-height: clamp(18rem, 55vh, 32rem);
+		display: flex;
+		align-items: flex-end;
+		background: linear-gradient(
+				to top,
+				rgb(16 40 74 / 0.95) 0%,
+				rgb(16 40 74 / 0.2) 55%,
+				rgb(16 40 74 / 0) 100%
+			),
+			var(--photo) center / cover no-repeat;
 	}
-	.lede {
-		margin: 0.5rem 0 0;
-		opacity: 0.8;
+	.activity-inner {
+		width: 100%;
+		max-width: 72rem;
+		margin: 0 auto;
+		padding: 2.5rem 1.5rem;
+		display: flex;
+		flex-direction: column;
+		align-items: flex-start;
 	}
-	.day {
-		margin-top: 3.5rem;
+	.activity.right .activity-inner {
+		align-items: flex-end;
+		text-align: right;
 	}
 	h3 {
-		font-size: 1.25rem;
-		font-weight: 600;
-		margin: 0 0 1rem;
-	}
-	ol {
-		list-style: none;
 		margin: 0;
-		padding: 0;
-		border-left: 1px solid rgb(127 196 184 / 0.4);
+		font-family: 'Oswald', sans-serif;
+		font-weight: 500;
+		font-size: clamp(2rem, 6vw, 3.75rem);
+		line-height: 1.1;
+		letter-spacing: 0.2em;
+		text-transform: uppercase;
+		color: #fff;
 	}
-	li {
-		display: grid;
-		grid-template-columns: 5.5rem 1fr;
-		gap: 1rem;
-		padding: 0.75rem 0 0.75rem 1.25rem;
-		position: relative;
-		max-width: 46rem;
-	}
-	li::before {
-		content: '';
-		position: absolute;
-		left: -4px;
-		top: 1.35rem;
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--glass);
-	}
-	.time {
-		color: var(--glass);
-		font-variant-numeric: tabular-nums;
-		font-weight: 600;
-	}
-	.at {
-		display: block;
-		font-size: 0.95rem;
-		opacity: 0.7;
-	}
-
-	.photo {
-		display: none;
-	}
-	@media (min-width: 64rem) {
-		.programme {
-			display: grid;
-			grid-template-columns: 1fr 20rem;
-			gap: 4rem;
-			align-items: end;
-		}
-		.photo {
-			display: block;
-			width: 100%;
-			aspect-ratio: 3 / 4;
-			object-fit: cover;
-		}
-	}
-
-	.info {
-		display: grid;
-		grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr));
-		gap: 3rem;
-		padding: 5rem 0 6rem;
-	}
-	.info p {
-		margin: 1rem 0 0;
-	}
-	.note {
-		font-size: 1rem;
-		opacity: 0.8;
-	}
-	.bring {
-		margin: 1rem 0 0;
-		padding-left: 1.1rem;
-	}
-	.bring li {
-		display: list-item;
-		padding: 0 0 0.5rem;
-	}
-	.bring li::before {
-		content: none;
-	}
-	.phones {
-		margin: 1rem 0 0;
-		display: grid;
-		grid-template-columns: auto 1fr;
-		gap: 0.25rem 1rem;
-	}
-	.phones dd {
-		margin: 0;
-		font-variant-numeric: tabular-nums;
+	.activity a {
+		margin-top: 0.5rem;
+		color: var(--gold);
+		text-underline-offset: 0.2em;
 	}
 
 	footer {
-		padding: 3rem 1.5rem 4rem;
+		padding: 4rem 1.5rem;
 		text-align: center;
 		font-family: 'Oswald', sans-serif;
 		font-size: 1.5rem;
@@ -400,16 +295,44 @@
 		background: var(--deep);
 	}
 
-	@media (max-width: 40rem) {
-		li {
-			grid-template-columns: 4rem 1fr;
-			gap: 0.75rem;
+	dialog {
+		padding: 0;
+		border: none;
+		background: transparent;
+		max-width: min(36rem, 92vw);
+		width: 100%;
+	}
+	dialog::backdrop {
+		background: rgb(11 29 55 / 0.85);
+	}
+	dialog[open] {
+		animation: pop 0.35s cubic-bezier(0.2, 1.4, 0.4, 1);
+	}
+	.close {
+		display: block;
+		margin: 1rem auto 0;
+		padding: 0.5rem 1.25rem;
+		border: 1px solid var(--cava);
+		border-radius: 999px;
+		background: transparent;
+		color: var(--cava);
+		font: inherit;
+		cursor: pointer;
+	}
+	@keyframes pop {
+		from {
+			transform: scale(0.6) rotate(-6deg);
+			opacity: 0;
 		}
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.reel {
+		.reel,
+		.in {
 			transition: none;
+		}
+		dialog[open] {
+			animation: none;
 		}
 	}
 </style>
