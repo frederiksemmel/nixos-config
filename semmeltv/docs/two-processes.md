@@ -12,7 +12,7 @@ snapshots) stays.
 > stable and have a high uptime rate. (Frederik, 2026-11-22)
 
 - **`semmeltv core`**: the API and website backend, the database, the library,
-  downloads, push, sessions and sign-in, TV control (CEC, UPnP, Samsung), voice,
+  downloads, push, sessions and sign-in, TV control (CEC, UPnP, Samsung),
   headphones, and the decision of what plays for whom from where. Its own
   systemd service, outside cage.
 - **`semmeltv tv`**: the Slint screen, mpv, display modes, the OSD, mpv's
@@ -50,7 +50,7 @@ Slint bug, a GPU driver hang or an mpv freeze.
    `try_send`. A full queue or a silent tv closes the connection. Nothing in
    the core waits for the tv without a timeout.
 4. Everything that decides something stays in the core: the up-next countdown,
-   voice, watching together, segments, position saving, handover, and where
+   watching together, segments, position saving, handover, and where
    the sound goes. The tv draws and plays. It also owns the low-latency
    playback logic that has to react to a key press at once: scrubbing, the
    skip pill and toasts.
@@ -75,7 +75,7 @@ Slint bug, a GPU driver hang or an mpv freeze.
 | renderer `Arc<Mutex<Seen>>`, read by `Player::state/place/played` | `player/renderer.rs` | Stays in the core, but the steering thread sends `Seen` as a `Signal`, so the actor never locks it. |
 | `display::SETTLER`, a process-global thread | `display.rs` | tv only |
 | `ui::run` runs on the core's Tokio runtime handle and subscribes to `core.subscribe()` (the `Bus`) | `ui.rs`, `main.rs` | The tv has its own runtime and gets menu messages over the socket. |
-| `Bus` events marked `#[serde(skip)]`, which only the TV gets: `Home`, `Key`, `Message`, `Panel`, `UpNext`, `Together` | `bus.rs` | Become `ToTv` messages. The bus keeps only the phones' events (`Voice`, `Playback`, `Audio`, `Screen`). |
+| `Bus` events marked `#[serde(skip)]`, which only the TV gets: `Home`, `Key`, `Message`, `Panel`, `UpNext`, `Together` | `bus.rs` | Become `ToTv` messages. The bus keeps only the phones' events (`Notice`, `Playback`, `Audio`, `Screen`). |
 
 ### Calls from the actor into `Player` (`core/actor.rs`)
 
@@ -84,11 +84,10 @@ Slint bug, a GPU driver hang or an mpv freeze.
 | `Player::start` (1), `Player::hand_off` (1) | `play_from` | The core sends `ToTv::Play` (mpv) or starts a renderer session (TV set). The answer comes back asynchronously as `Started` or `Failed`. |
 | `state()` (5) | `publish_playback` every 500 ms, `hear_sound` every 500 ms, `PlayPause`, `skip_segment`, `OnTv::playing` | Last `Report.state` |
 | `place()` (2), `tracks()` (1), `played()` (2) | `record_place`, `note_tv_play`, `tv_place` (handover) | Last `Report` |
-| `muted()` (1) | `hear` (mute while listening) | `Report.state.muted` |
 | `command(Command)` (5) | `key`, `act` (Back before a queued play), `control(Stop)`, `seek` steps | `ToTv::Command` |
 | `set_paused` (4) | hold (TV waking, handover), Pause and Resume | `ToTv::Pause` |
-| `set_muted` (6) | voice listening, offer answers, Mute and Unmute | `ToTv::Mute` |
-| `say` (4), `toast` (1), `hide_toast` (1) | dialogue, audio route, speed, `tell`, voice panel | `ToTv::Toast` / `HideToast` |
+| `set_muted` | Mute and Unmute | `ToTv::Mute` |
+| `say` (4), `toast` (1) | dialogue, audio route, speed, `tell`, download notices | `ToTv::Toast` |
 | `seek_to`, `seek_by` | `/api/playback/seek` | `ToTv::Seek` |
 | `skip_segment`, `hide_skip` | `/api/playback/skip`, `hide-skip` | `ToTv::SkipSegment` / `HideSkip`. The core answers from `Report.state.skip` and does not wait for the tv. |
 | `set_speed` | `/api/playback/speed` | The core clamps with `player::speed_within`, which is pure, and sends `ToTv::Speed`. |
@@ -106,9 +105,8 @@ Slint bug, a GPU driver hang or an mpv freeze.
 | **Display modes** (`display.rs`, `wlr-randr`; `ui.on_resized → display::refresh`) | Driven from the player's listener | **tv** | Needs cage's Wayland and the player's video track. |
 | **Slint menu** (`ui.rs`, `nav.rs`, `details.rs`, `heatmap.rs`, `loader.rs`, artwork files in `meta/Artwork`) | Events from the `Bus` | **tv** | Pure drawing. It reads artwork files read-only, the same as today. |
 | **Menu requests** from `ui.rs`: `PlayFile`, `WatchWithOnTv`, `TvProfile`, `TogetherOnTv` | `core.send` | **core**, reached by `FromTv::Ask` | They change progress, the profile or pairs. |
-| **Remote keys** | CEC thread (`cec.rs`) → `Request::Key` → `actor.key` → the player, voice, up next, or `Bus::key` → menu. mpv's keybinds send Back, Listen and Dialogue to `on_key`. Slint `on_key` → `Request::Key`. | Routing stays in the **core**, CEC stays in the **core** | One path, as in ADR 3. The core knows about voice, up next and offers. Keys pressed in the tv (keyboard, mpv window) go to the core as `FromTv::Key`. While the tv is disconnected it handles its own keys locally (see §2.6). |
-| **Voice** (`voice.rs`: `arecord`, wake word over Wyoming, parakeet, `intent.rs`, the LED, `/api/listen`, the download offer) | Actor, with `player.set_muted` and `toast`, plus `Bus::panel` for the menu | **core** | It must work while the tv is gone ("turn the TV off", "play X"). The tv only mutes and shows the panel or toast when told. |
-| **Phone microphone** (`/api/microphone` → ALSA loopback) | API | **core** | Unrelated to mpv |
+| **Remote keys** | CEC thread (`cec.rs`) → `Request::Key` → `actor.key` → the player, up next, or `Bus::key` → menu. mpv's keybinds send Back and Dialogue to `on_key`. Slint `on_key` → `Request::Key`. | Routing stays in the **core**, CEC stays in the **core** | One path, as in ADR 3. The core knows about up next. Keys pressed in the tv (keyboard, mpv window) go to the core as `FromTv::Key`. While the tv is disconnected it handles its own keys locally (see §2.6). |
+| **Telling the TV** (`/api/command` → `intent.rs`, and the downloads it asks for) | Actor, with `toast`, plus `Bus::panel` for the menu | **core** | It must work while the tv is gone ("turn the TV off", "play X"). The tv only shows the panel or toast when told. |
 | **Headphones** (`audio.rs`, `core/sound.rs`, `/api/audio*`, `/api/volume`): bluetoothctl, bluealsa-cli, pairing, ownership | `Audio` threads in the core; `Route` → `player.set_audio_device` + `say`. `hear_sound` feeds `Pace` from `player.state()` every 500 ms. | **core**. The tv only sets mpv's `audio-device`. | Profile-owned and DB-backed. `Pace` runs on `Report` position and speed, which arrive at the same 500 ms rate. |
 | **Dialogue mode** | DB flag in the core → `player.set_dialogue` | Flag in the **core**, filter in the **tv** | |
 | **Up next** (`up_next.rs`) | The actor sets `UpNext` on `Finished`, checks `due()` in the 500 ms tick, plays. The card goes over `Bus::up_next` to Slint, which runs a 50 ms timer. | **core** decides and times it; **tv** draws the card | Choosing the next episode needs the library and progress. `up_next::Card` holds `Instant`s, so the message carries the remaining milliseconds instead. |
@@ -176,7 +174,7 @@ shows the JSON lines, and `semmeltv tv --dump` (stage 3) prints them.
 | `Command { play, command }` | A player key | |
 | `Pause { play, paused }`, `Mute { play, muted }`, `Speed { play, speed }`, `Seek { play, to \| by }`, `SkipSegment { play }`, `HideSkip { play }` | Controls | Fire and forget. The next `Report` shows the result. |
 | `AudioDevice { device, said }`, `Dialogue { on, said }` | Route and filter changes | Apply to the running mpv and to the next start. |
-| `Toast { heading, status, hold_ms }`, `HideToast` | `say`, `tell`, voice | Toasts show over the video while something plays; the menu uses `Panel`/`Message`. |
+| `Toast { heading, status, hold_ms }` | `say`, `tell`, download notices | Toasts show over the video while something plays; the menu uses `Panel`/`Message`. |
 | `Segments { play, segments, credits }` | Once the core has fetched them | |
 | `Subtitles { id, play, change }` | `/api/subtitles/*` | Expects `Answered { id }` |
 | `Stop { play }` | Stop, handover, a queued play | |
@@ -189,7 +187,7 @@ shows the JSON lines, and `semmeltv tv --dump` (stage 3) prints them.
 | `Report { play: Option<…>, state, place, tracks, played, subtitles }` | Every 500 ms while playing, every 1 s while idle (a heartbeat) | `state` is today's `player::State`. This one message replaces every `state()`, `place()`, `tracks()`, `played()` and `muted()` call. No `at`: the core stamps a report with its own clock when it arrives, so the two clocks never need to agree. |
 | `Started { play }`, `Failed { play, error }` | After `Play` | Replaces the `io::Result` that `Player::start` returns today. |
 | `Finished { play, finish, place, tracks, played }` | mpv exited | Carries the final place, so the core needs no last read of the player. |
-| `Key(Command)` | Keyboard in Slint, or Back/Listen/Dialogue in mpv's window | |
+| `Key(Command)` | Keyboard in Slint, or Back/Dialogue in mpv's window | |
 | `Ask(UiRequest)` | `PlayFile`, `WatchWithOnTv`, `TvProfile`, `TogetherOnTv` from the menu | Fire and forget, as `core.send` is today. |
 | `Answered { id, message, ok }` | Reply to `Subtitles` | |
 | `Remember { file, remembered }` | A subtitle or audio choice that should persist | Today this is the `files` channel inside `Subtitles`. |
@@ -202,7 +200,7 @@ shows the JSON lines, and `semmeltv tv --dump` (stage 3) prints them.
    `tv: not reading, dropped`. The actor never awaits the tv.
 2. **Reading.** A reader task parses lines (at most 16 MB each, otherwise the
    connection is closed) and passes them to the actor as
-   `Signal::Tv(FromTv)`, the same way CEC and voice signal today.
+   `Signal::Tv(FromTv)`, the same way CEC and downloads signal today.
 3. **Answers.** Only `Subtitles` waits for a reply. It waits on a `oneshot`
    with a 2 s timeout and otherwise returns `Outcome::refused("The TV did not answer")`,
    as `api::ask` already does for the actor's own 5 s.
@@ -222,7 +220,7 @@ The core keeps `OnTv` as today, with `player: Player` replaced by
 |---|---|
 | `Playing { last: Report }` | As today, from `last`. |
 | `Stale { last, since }` | Same, but `NowPlaying.loading = true`. Orders are still queued. |
-| `Lost { last, since, resumes }` | Saves the place from `last` at once. Controls answer `refused("The TV app is restarting")`. Phones see `loading`. Voice still works: "play X" queues X for when the tv returns. |
+| `Lost { last, since, resumes }` | Saves the place from `last` at once. Controls answer `refused("The TV app is restarting")`. Phones see `loading`. `/api/command` still works: "play X" queues X for when the tv returns. |
 
 When the tv says `Hello`:
 
@@ -256,7 +254,7 @@ While disconnected, the tv:
                        ▼                                ▼
  nginx ──HTTP──▶ semmeltv.service  "semmeltv core"   (User=semmeltv, Type=notify,
  :443/LAN        API :8090, DB, library, downloads,   WatchdogSec=30, Restart=always)
- phones          CEC, UPnP, voice, BlueALSA, LED,
+ phones          CEC, UPnP, BlueALSA,
                  TV-set renderer :tv.port
                        │  /run/semmeltv/tv.sock  (NDJSON, uid-checked)
                        ▼
@@ -274,7 +272,7 @@ While disconnected, the tv:
   `After/Wants=semmeltv-mount.service` (moved from `cage-tty1` in
   `hosts/mount.nix`), `wantedBy = multi-user.target`. It gets the
   supplementary groups of the `semmeltv` user (video, render, input, audio,
-  systemd-journal) for `/dev/cec*`, the LED, ALSA and the journal.
+  systemd-journal) for `/dev/cec*`, BlueALSA and the journal.
   `READY=1` is sent once the API listens and the actor runs. `WATCHDOG=1` is
   sent from the actor's 500 ms playback tick, so an actor stuck in an `await`
   or a `block_in_place` gets restarted within 30 s.
@@ -295,12 +293,11 @@ While disconnected, the tv:
 | Core (`semmeltv.service`) | tv (`services.cage.environment`) |
 |---|---|
 | `SEMMELTV_LIBRARY`, `_META`, `_CACHE`, `_DB`, `_FEEDBACK`, `_STREAM_DIR`, `_VFS_CACHE*`, `_REMOTE`, `_READY` | `SEMMELTV_META` (artwork), `SEMMELTV_DECODER` |
-| `SEMMELTV_API`, `_ORIGINS`, `_SERVICE_TOKEN_FILE`, `_PHONE_MICROPHONE` | `FONTCONFIG_FILE`, `XCURSOR_THEME`, `WLR_LIBINPUT_NO_DEVICES` |
-| `SEMMELTV_SPEECH`, `_WAKE`, `_WAKE_WORD`, `_MICROPHONE`, `_LED` | `SEMMELTV_TV_SOCKET=/run/semmeltv/tv.sock` |
-| `SEMMELTV_TV_KIND`, `_TV_RENDERER`, `_TV_DECODES`, `_TV_PORT` | |
+| `SEMMELTV_API`, `_ORIGINS`, `_SERVICE_TOKEN_FILE` | `FONTCONFIG_FILE`, `XCURSOR_THEME`, `WLR_LIBINPUT_NO_DEVICES` |
+| `SEMMELTV_TV_KIND`, `_TV_RENDERER`, `_TV_DECODES`, `_TV_PORT` | `SEMMELTV_TV_SOCKET=/run/semmeltv/tv.sock` |
 | `SEMMELTV_HEADPHONES`, `_DOWNLOADS`, `_GRIM` + `WAYLAND_DISPLAY=/run/user/<uid>/wayland-0` | |
 
-`speech.nix`, `wake.nix`, `phone-mic.nix`, `headphones.nix` and `web.nix` set
+`headphones.nix` and `web.nix` set
 `services.cage.environment` today. They move to a new
 `services.semmeltv.coreEnvironment` option that feeds the core's unit.
 
@@ -320,8 +317,8 @@ shows the splash and reconnects until it gets `Welcome`.
 
 ### 3.4 Per host
 
-- **semmeltv5** (Pi 5, 8 GB): everything above, with voice, Hailo/parakeet,
-  headphones, downloads and the phone microphone on the core's side.
+- **semmeltv5** (Pi 5, 8 GB): everything above, with headphones and downloads
+  on the core's side.
 - **semmeltv3** (Pi 3, 1 GB, zram): the TV-set renderer is the main way HEVC
   plays here, and it stays in the core, so a tv restart doesn't interrupt a
   hand-off. Memory: two Tokio runtimes and two copies of `Library`. Measure
@@ -337,7 +334,7 @@ deployed. Steps 1–3 change no process layout, so they deploy as today.
 **Conflict note.** Steps 1a, 1b and 1d all edit `core/actor.rs` and
 `player.rs`, as do most feedback-triage sessions. Run them one after another,
 in one session, and ask other sessions to stay out of `actor.rs`'s playback
-functions (`play_from`, `record_place`, `publish_playback`, `hear`, `key`,
+functions (`play_from`, `record_place`, `publish_playback`, `key`,
 `control`) until 1b lands.
 
 | Step | Change | Tests added | Parallel? |
@@ -462,9 +459,7 @@ its listed files.
    |---|---|---|
    | `bluetoothctl` (`info`, `devices`, `connect`, `scan bredr`) → `org.bluez` | bluez's `bluetooth.conf`: `<policy context="default"><allow send_destination="org.bluez"/>`; its callbacks into bluetoothctl's agent are allowed by the `user="root"` policy. bluez asks no polkit. | No |
    | `bluealsa-cli` (`list-pcms`, `monitor`, `volume`, `delay-adjustment`) → `org.bluealsa` | bluez-alsa's D-Bus policy: `<policy group="audio">`. dbus-broker takes the peer's groups from `SO_PEERGROUPS`, so the unit's supplementary groups count. | No |
-   | `arecord -D plughw:…` (voice mic, `SEMMELTV_MICROPHONE`), `aplay` into `plughw:Loopback,0,0` (phone mic) | `/dev/snd/*` is `GROUP="audio"` (udev `50-udev-default.rules`). `uaccess` adds an ACL on top for the seat's user, which the core no longer gets and does not need. | No |
    | `/dev/cec*` (`cec_linux`) | `SUBSYSTEM=="cec", GROUP="video"`; not tagged `uaccess` at all | No |
-   | The ACT LED (`SEMMELTV_LED`) | `semmeltv-led.service` chgrps `brightness` to video | No |
    | `/sys/class/drm/*/status`, thermal, `get_throttled` | world-readable (`status` writable by video through kiosk.nix's udev rule) | No |
    | `grim` (feedback screenshot) | cage's socket `/run/user/<uid>/wayland-0`, a 0700 directory owned by semmeltv | Exists only while cage's session is open, so a screenshot fails while the tv is restarting and works while it hangs. The core's unit must not set `ProtectHome`, which hides `/run/user`. |
    | `semmeltv-downloads` and `semmeltv-mount` | already run as `User=semmeltv` outside any session | — |
@@ -485,8 +480,7 @@ its listed files.
    `KillUserProcesses`/`KillOnlyUsers=semmeltv` kills only the session's
    scope, not `semmeltv.service`.
 
-   `semmeltv hear` is not a check of any of this: it reads a WAV file and
-   talks TCP to the speech server. The TV-side check is to run each command
+   The TV-side check is to run each command
    above under `systemd-run --uid=semmeltv --pipe --wait` (a transient
    service, which gets the same groups and no session) and expect them to
    behave as they do from cage.
@@ -496,18 +490,10 @@ its listed files.
    - `bluetoothctl show` worked, and `devices Bonded` listed the AirPods.
    - `bluealsa-cli list-pcms` came back empty with no AccessDenied; the
      headphones weren't connected.
-   - `aplay` into `Loopback,0,0` worked.
-   - `/dev/cec0` and `/dev/cec1` opened, and the LED was writable.
+   - `/dev/cec0` and `/dev/cec1` opened.
    - grim captured 1 MB.
 
-   Only `arecord` on `plughw:Loopback,1,0` failed, with "Device or resource
-   busy". That is contention, not permission. The app under cage holds that
-   device all the time: the actor's `voice::spawn` with
-   `Source::Microphone(SEMMELTV_MICROPHONE)` keeps an `arecord` open on it, and
-   `snd-aloop` is loaded with `pcm_substreams=1`, so there is one capture
-   substream. The wake word and speech services get their audio from the app
-   over TCP and open no ALSA device. After step 4 only the core runs that
-   `arecord`, so nothing contends. No `SupplementaryGroups=` is needed.
+   No `SupplementaryGroups=` is needed.
 6. **Memory on semmeltv3**: two processes, each holding the library. If RSS is
    too high, the tv could keep only what the menu draws. Measure first.
 7. **The renderer stays in the core.** A hung UPnP call is on its own thread
