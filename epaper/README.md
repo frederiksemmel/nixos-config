@@ -38,7 +38,7 @@ A sticker sent to the bot goes on the panel, with the same wait and outcome repl
 - **WhatsApp:** in a private chat, every sticker. In a group, a sticker that replies to one of the bot's messages; any other sticker stays chat. An animated sticker draws its first frame.
 - **Telegram:** a still sticker draws as it is. An animated or video sticker draws its still thumbnail; without one, the bot answers that it can only draw still stickers.
 
-A sticker and a text from the same person, sent within 10 s of each other in either order, share the panel: the sticker in the first half of the long side, the text fitted into the other half. The second one doesn't get "busy" while the first is still drawing; it waits and then draws both. In a WhatsApp group the second one counts as meant for the bot even if it doesn't reply to it, so a sticker that replies to the bot can be followed by plain text.
+A sticker and a text from the same person, sent within 30 s of each other in either order, share the panel: the sticker in the first half of the long side, the text fitted into the other half. The second one doesn't get "busy" while the first is still drawing; it waits and then draws both. In a WhatsApp group the second one counts as meant for the bot even if it doesn't reply to it, so a sticker that replies to the bot can be followed by plain text.
 
 A picture is fitted into the panel at its current rotation, keeping its shape, and centred on white; transparent parts are white. How it is turned into four shades depends on the picture:
 

@@ -64,7 +64,7 @@ pub const STILL_STICKERS_ONLY: &str = "I can only draw still stickers.";
 pub type SharedReplies = Arc<SyncMutex<Replies>>;
 
 /// How long after a sticker its text may follow, or after a text its sticker, to share the panel.
-pub const PAIRING: Duration = Duration::from_secs(10);
+pub const PAIRING: Duration = Duration::from_secs(30);
 
 /// Half of what a sticker scene is made of.
 #[derive(Clone, Debug)]
