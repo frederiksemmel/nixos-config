@@ -96,19 +96,6 @@ in
         description = "The TV's UPnP MediaRenderer description, whose RenderingControl sets the TV's volume, or null for no volume control. Power and input go over HDMI-CEC either way.";
       };
 
-      decodes = lib.mkOption {
-        type = lib.types.listOf lib.types.str;
-        default = [ ];
-        example = [ "hevc" ];
-        description = "Video codecs, as ffprobe names them, that the TV set plays on its own player instead of this Pi. When set, H.264 beyond the Pis' decoders (10-bit, or above 1080p) goes to the TV too. The Pi serves such a title over HTTP and steers the renderer's AVTransport; audio the TV can't play (DTS, TrueHD) is converted to AC-3 on the way. Needs `tv.renderer`.";
-      };
-
-      port = lib.mkOption {
-        type = lib.types.port;
-        default = 8097;
-        description = "The TCP port this Pi serves titles to the TV set on, opened in the firewall when `tv.decodes` is set.";
-      };
-
       edid = lib.mkOption {
         type = lib.types.nullOr lib.types.path;
         default = null;
@@ -166,11 +153,7 @@ in
       SEMMELTV_GRIM = lib.getExe pkgs.grim;
     }
     // lib.optionalAttrs (cfg.tv.kind != null) { SEMMELTV_TV_KIND = cfg.tv.kind; }
-    // lib.optionalAttrs (cfg.tv.renderer != null) { SEMMELTV_TV_RENDERER = cfg.tv.renderer; }
-    // lib.optionalAttrs (cfg.tv.decodes != [ ]) {
-      SEMMELTV_TV_DECODES = lib.concatStringsSep "," cfg.tv.decodes;
-      SEMMELTV_TV_PORT = toString cfg.tv.port;
-    };
+    // lib.optionalAttrs (cfg.tv.renderer != null) { SEMMELTV_TV_RENDERER = cfg.tv.renderer; };
 
     services.cage = {
       enable = true;
@@ -192,15 +175,6 @@ in
         SEMMELTV_DECODER = cfg.decoder;
       };
     };
-
-    assertions = [
-      {
-        assertion = cfg.tv.decodes == [ ] || cfg.tv.renderer != null;
-        message = "services.semmeltv.tv.decodes needs services.semmeltv.tv.renderer, the TV that plays them.";
-      }
-    ];
-
-    networking.firewall.allowedTCPPorts = lib.mkIf (cfg.tv.decodes != [ ]) [ cfg.tv.port ];
 
     environment.systemPackages = [
       pkgs.sqlite

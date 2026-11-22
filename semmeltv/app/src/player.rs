@@ -1,7 +1,6 @@
 mod commands;
 mod fade;
 mod health;
-pub mod renderer;
 
 use crate::audio;
 use crate::command::Command;

@@ -17,7 +17,7 @@ touches:
 
 | Group | Check | What it covers |
 | --- | --- | --- |
-| `tv-playback` | `semmeltv-vm-tv-playback` | the TV boots into the library, no pointer, Continue Watching, the TV's profile picker, the HEVC hand-off to the TV set |
+| `tv-playback` | `semmeltv-vm-tv-playback` | the TV boots into the library, no pointer, Continue Watching, the TV's profile picker |
 | `tv-remote` | `semmeltv-vm-tv-remote` | the phone's remote steering the TV: skips keep the sound running, subtitle delay, the fade on pause, an iPhone back from the background |
 | `up-next` | `semmeltv-vm-up-next` | an episode that ends on the TV: the countdown, OK, nothing after the last |
 | `resume` | `semmeltv-vm-resume` | where the TV resumes: a film after the app restarts, a finished episode starting over, Back cancelling the countdown |

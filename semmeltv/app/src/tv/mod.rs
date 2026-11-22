@@ -236,10 +236,6 @@ impl Television {
         self.inner.token.get().is_some()
     }
 
-    pub fn renderer(&self) -> Option<upnp::Renderer> {
-        self.inner.renderer.clone()
-    }
-
     pub fn show_semmeltv(&self) -> Result<(), Failure> {
         self.inner.power.show_semmeltv()
     }

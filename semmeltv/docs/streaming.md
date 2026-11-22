@@ -170,8 +170,7 @@ Hard limits in `src/stream/mod.rs`, checked by `room()` on every open:
 
 A place won in a bake-off counts as taken until its winner opens their stream
 (at most 90 s). A device that opens a new stream replaces its own old one
-first. The TV-set hand-off (the Samsung's own player, or semmeltv3) is not a
-phone stream and never counts.
+first.
 
 Before 2026-11-22 the limit was 3 streams, and 1 while the TV played anything.
 
@@ -290,15 +289,14 @@ offers *Bake again*. There is no button for it anywhere
 | Resting | Per person (profile), not per device. Kept in memory: a restart of the core clears it. |
 | The winner doesn't open their stream | Their place is kept for 90 s, then freed. |
 | The TV | Listed as "Frederik · the TV · Dune" while it plays a film that isn't downloaded and the pCloud limit is the one hit. Whoever holds the remote plays. Losing stops the TV's film and saves its place. |
-| The TV-set hand-off (Samsung, semmeltv3) | Never listed and never challenged: it isn't a stream and costs the Pi only serving a file. |
 
 ### The TV side
 
 The TV is a seat (`Seat::Tv`) like a stream. It is listed while it plays a
 film that isn't downloaded, but only when the pCloud limit is the one hit, and
-never during a TV-set hand-off or while the tv process restarts. The core's
-actor sets `Arena::tv_can_bake` on every 500 ms tick and ends a TV challenge
-as "stopped watching" when the TV's film goes away.
+never while the tv process restarts. The core's actor sets
+`Arena::tv_can_bake` on every 500 ms tick and ends a TV challenge as "stopped
+watching" when the TV's film goes away.
 
 Everything goes over the link, so it works the same with the tv in its own
 process (`semmeltv tv`):

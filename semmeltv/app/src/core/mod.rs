@@ -142,10 +142,6 @@ pub(crate) enum Signal {
     TvGone {
         at: std::time::Instant,
     },
-    TvSet {
-        play: String,
-        told: crate::player::renderer::Told,
-    },
     Poll {
         online: bool,
     },
@@ -201,7 +197,6 @@ pub struct Setup {
     pub db: Db,
     pub tv_kind: Option<tv::Kind>,
     pub tv_renderer: Option<String>,
-    pub handoff: Option<crate::player::renderer::Handoff>,
     pub downloads: Option<Downloads>,
     pub ready: Option<PathBuf>,
     pub headphones: bool,
@@ -253,7 +248,6 @@ impl Core {
             db,
             tv_kind,
             tv_renderer,
-            handoff,
             downloads,
             ready,
             headphones,
@@ -343,7 +337,6 @@ impl Core {
             files: prepare::Files::of(store.clone(), move |path| playable.playable(path)),
             store,
             storage,
-            handoff,
             tv: {
                 let hearing = core.clone();
                 tv.serve(move |heard| match heard {

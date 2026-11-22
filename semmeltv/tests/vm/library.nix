@@ -53,17 +53,9 @@ runCommand "semmeltv-test-library"
       srt 60 "Episode $episode line" > Series/Testserie/S01/Testserie.S01E0$episode.en.srt
     done
 
-    for number in 01 02 03 04 05 06 07 08 09; do
+    for number in 01 02 03 04 05 06 07 08 09 10; do
       clip Movies/Archiv$number/Archiv.$number.mkv 10
     done
-
-    mkdir -p Movies/Archiv10
-    ffmpeg -loglevel error \
-      -f lavfi -i "testsrc2=size=640x360:rate=25:duration=120" \
-      -f lavfi -i "sine=frequency=440:sample_rate=48000:duration=120" \
-      -map 0:v -map 1:a -c:v libx265 -preset ultrafast -crf 35 -x265-params log-level=error \
-      -c:a dca -strict -2 -ac 2 -b:a 768k \
-      Movies/Archiv10/Archiv.10.mkv
 
     semmeltv --manifest library.db library from-toml ${./library.toml}
   ''
