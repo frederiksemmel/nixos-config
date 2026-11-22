@@ -100,7 +100,7 @@ enum Event {
     Position(f64),
     Duration(f64),
     Ended,
-    Video(Video),
+    Video(Video, Option<String>),
     Paused(bool),
     Key(Command),
     Started,
@@ -117,7 +117,7 @@ impl Event {
             "property-change" => match message["id"].as_u64()? {
                 POSITION_ID => Some(Self::Position(message["data"].as_f64()?)),
                 DURATION_ID => Some(Self::Duration(message["data"].as_f64()?)),
-                VIDEO_ID => video(&message["data"]).map(Self::Video),
+                VIDEO_ID => video(&message["data"]).map(|video| Self::Video(video, crop(&message["data"]))),
                 ENDED_ID => message["data"].as_bool()?.then_some(Self::Ended),
                 PAUSE_ID => Some(Self::Paused(message["data"].as_bool()?)),
                 SUBTITLES_ID => Observed::parse(&message).map(Self::Subtitles),
@@ -156,6 +156,15 @@ fn video(track: &Value) -> Option<Video> {
         height: height.round() as u64,
         fps: track["demux-fps"].as_f64()?,
     })
+}
+
+/// The frame without its last rows when its height is off the 8-pixel grid
+/// HEVC codes in: the Pi 5's decoder paints the padding rows green.
+fn crop(track: &Value) -> Option<String> {
+    let width = track["demux-w"].as_u64()?;
+    let height = track["demux-h"].as_u64()?;
+    let kept = height / 8 * 8;
+    (kept != height && kept > 0).then(|| format!("{width}x{kept}+0+0"))
 }
 
 fn key_command(message: &str) -> Option<Command> {
@@ -239,7 +248,10 @@ struct Playback {
 }
 
 impl Playback {
-    fn video_changed(&mut self, video: Video) -> Option<u64> {
+    fn video_changed(&mut self, video: Video, crop: Option<String>, decoder: Option<&str>) -> Option<u64> {
+        if let Some(crop) = crop.filter(|_| decoder != Some("v4l2m2m")) {
+            self.send(json!(["set_property", "video-crop", crop]));
+        }
         (self.video.replace(video) != Some(video)).then_some(self.id)
     }
 
@@ -1076,8 +1088,9 @@ fn listen(events: UnixStream, shared: &Shared) {
                 playback.present(now);
                 playback.nudge();
             }
-            Some(Event::Video(video)) => {
-                let changed = shared.lock().unwrap().video_changed(video);
+            Some(Event::Video(video, crop)) => {
+                let decoder = env::var("SEMMELTV_DECODER").ok();
+                let changed = shared.lock().unwrap().video_changed(video, crop, decoder.as_deref());
                 if let Some(id) = changed {
                     display::play(id, video);
                 }
@@ -1282,15 +1295,43 @@ mod tests {
             height: 800,
             fps: 23.976,
         };
-        assert_eq!(Event::parse(&film.to_string()), Some(Event::Video(expected)));
+        assert_eq!(Event::parse(&film.to_string()), Some(Event::Video(expected, None)));
         let anamorphic = json!({ "event": "property-change", "id": VIDEO_ID, "name": "current-tracks/video",
             "data": { "demux-w": 720, "demux-h": 576, "demux-par": 1.4222, "demux-fps": 25.0 } });
-        let Some(Event::Video(dvd)) = Event::parse(&anamorphic.to_string()) else {
+        let Some(Event::Video(dvd, None)) = Event::parse(&anamorphic.to_string()) else {
             panic!("a video event");
         };
         assert_eq!((dvd.width, dvd.height), (1024, 576));
         let none = r#"{"event":"property-change","id":4,"name":"current-tracks/video"}"#;
         assert_eq!(Event::parse(none), None);
+    }
+
+    #[test]
+    fn a_frame_height_off_the_hevc_block_grid_is_cropped_to_it() {
+        let fox = json!({ "event": "property-change", "id": VIDEO_ID, "name": "current-tracks/video",
+            "data": { "demux-w": 1920, "demux-h": 1038, "demux-fps": 23.976 } });
+        let Some(Event::Video(_, crop)) = Event::parse(&fox.to_string()) else {
+            panic!("a video event");
+        };
+        assert_eq!(crop.as_deref(), Some("1920x1032+0+0"));
+    }
+
+    #[test]
+    fn the_crop_reaches_mpv_only_where_the_decoder_paints_the_padding() {
+        let fox = Video {
+            width: 1920,
+            height: 1038,
+            fps: 23.976,
+        };
+        let crop = Some("1920x1032+0+0".to_string());
+        let mut playback = Playback::default();
+        playback.video_changed(fox, crop.clone(), Some("v4l2m2m"));
+        assert!(playback.waiting.is_empty(), "the Pi 3 keeps its frames");
+        playback.video_changed(fox, crop, None);
+        assert_eq!(
+            playback.waiting,
+            [json!(["set_property", "video-crop", "1920x1032+0+0"])]
+        );
     }
 
     #[test]
@@ -1306,13 +1347,13 @@ mod tests {
             ..Playback::default()
         };
         assert_eq!(
-            playback.video_changed(film),
+            playback.video_changed(film, None, None),
             Some(7),
             "first seen after playback-restart"
         );
-        assert_eq!(playback.video_changed(film), None, "the same track again");
+        assert_eq!(playback.video_changed(film, None, None), None, "the same track again");
         let other = Video { fps: 25.0, ..film };
-        assert_eq!(playback.video_changed(other), Some(7), "another track");
+        assert_eq!(playback.video_changed(other, None, None), Some(7), "another track");
     }
 
     #[test]
