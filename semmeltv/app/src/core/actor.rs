@@ -1,3 +1,4 @@
+use super::prepare::{self, Files, Prepared};
 use super::tending::{self, Tended};
 use super::{Core, Input, Outcome, Request, ScreenCommand, ScreenKind, Seek, Signal, TV_PROFILE, sound};
 use crate::audio::{self, Audio};
@@ -12,7 +13,7 @@ use crate::intent::{self, Action, Control};
 use crate::library::Library;
 use crate::link::messages::{self, Ended, FromTv, Play, Report, Running, Target, ToTv, UiRequest, UpNextCard};
 use crate::link::{self, Link};
-use crate::offline::{Source, Store};
+use crate::offline::Store;
 use crate::player::renderer::{self, Handoff};
 use crate::player::{self, Finish, Player};
 use crate::profile::ProfileId;
@@ -20,7 +21,6 @@ use crate::progress::{self, Position, Progress};
 use crate::screen;
 use crate::seek::Direction;
 use crate::segments::{self, Kind, Title};
-use crate::sidecar;
 use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, SubtitleSettings};
@@ -42,6 +42,7 @@ use tokio::time::MissedTickBehavior;
 
 const NOTICE_TIME: Duration = Duration::from_secs(6);
 const OUT_OF_REACH: &str = "Not downloaded, and pCloud can't be reached right now";
+const MOUNT_SILENT: &str = "Wir kriegen es gerade nicht gebacken: pCloud antwortet nicht";
 const NOTHING_PLAYING: &str = "Nothing is playing";
 const PLAYBACK_EVERY: Duration = Duration::from_millis(500);
 const SCREEN_EVERY: Duration = Duration::from_secs(2);
@@ -66,6 +67,7 @@ pub struct Hardware {
     pub handoff: Option<Handoff>,
     pub tv: Link,
     pub segments: segments::Finder,
+    pub files: Files,
 }
 
 pub enum Found {
@@ -98,6 +100,15 @@ struct OnTv {
 
 /// A playback started again on a tv that came back: its token, whether it
 /// was paused, and when it was picked up before.
+/// A play waiting for what its files say, as `Signal::Prepared` with its `id`.
+struct Preparing {
+    id: u64,
+    file: PathBuf,
+    start: f64,
+    owner: ProfileId,
+    again: Option<Again>,
+}
+
 struct Again {
     play: String,
     paused: bool,
@@ -190,6 +201,9 @@ pub struct Actor {
     online: bool,
     problem: Option<String>,
     queued: Option<PathBuf>,
+    preparing: Option<Preparing>,
+    prepared: u64,
+    files: Files,
     up_next: Option<UpNext>,
     subtitles: SubtitleSettings,
     television: Television,
@@ -248,6 +262,7 @@ impl Actor {
             handoff,
             tv,
             segments,
+            files,
         } = hardware;
         let db = core.db().clone();
         let library = core.library();
@@ -294,6 +309,9 @@ impl Actor {
             online: true,
             problem: None,
             queued: None,
+            preparing: None,
+            prepared: 0,
+            files,
             up_next: None,
             audio,
             waking_tv: Arc::new(AtomicBool::new(false)),
@@ -393,12 +411,17 @@ impl Actor {
             Signal::TvSilent => self.tell("The TV did not answer"),
             Signal::Audio(route) => self.move_audio(&route),
             Signal::Tended(tended) => self.tended(tended),
+            Signal::Prepared { id, prepared } => self.prepared(id, prepared).await,
         }
     }
 
     async fn key(&mut self, command: Command) {
         if command == Command::Dialogue {
             self.toggle_dialogue().await;
+            return;
+        }
+        if command == Command::Back && self.preparing.take().is_some() {
+            eprintln!("tv player: Back before the file was found, so nothing plays");
             return;
         }
         if self.up_next.is_some() {
@@ -598,86 +621,128 @@ impl Actor {
     }
 
     /// Plays `path` from `start` for `owner`, as a new playback or as one
-    /// picked up `again`.
+    /// picked up `again`, once its files are found away from the actor.
     fn play_as<'a>(&'a mut self, path: &'a Path, start: f64, owner: ProfileId, again: Option<Again>) -> Boxed<'a> {
         Box::pin(async move {
             self.cancel_up_next();
             if self.screen != screen::Screen::Tv {
                 self.screen_step(screen::Event::TvPlays, owner).await;
             }
-            let here = self.core.playable(path);
-            let source = match block_in_place(|| self.store.source(path, self.online)) {
-                _ if here != path => here,
-                Source::Stream => path.to_path_buf(),
-                Source::Cached(file) => file,
-                Source::Unavailable => {
-                    self.show_message(OUT_OF_REACH.to_string());
-                    return;
-                }
-            };
-            let sidecars = block_in_place(|| sidecar::find(&source));
-            self.subtitles.set_owner(owner);
-            self.apply_audio(owner).await;
-            let theirs = self.progress_of(owner).await;
-            let tracks = match theirs.files.get(path) {
-                Some(watched) if start > 0.0 => watched.tracks(),
-                _ => progress::Tracks::default(),
-            };
-            let dialogue = self.core.dialogue(owner).await.load(Ordering::SeqCst);
-            let (token, paused, resumes) = match again {
-                Some(Again { play, paused, resumes }) => (play, paused, resumes),
-                None => (crate::auth::token(), false, Vec::new()),
-            };
-            let play = Play {
-                play: token,
-                owner,
+            self.prepared += 1;
+            let id = self.prepared;
+            self.preparing = Some(Preparing {
+                id,
                 file: path.to_path_buf(),
-                source: source.clone(),
                 start,
-                paused,
-                tracks,
-                caption: self.caption(path),
-                subtitles: self.subtitles.for_play(owner, path, sidecars),
-                audio_device: self.audio_device(),
-                dialogue,
-                next: up_next::follows(&self.library, path),
-            };
-            let backend = match self.tv_set_takes(&source).await {
-                Some((handoff, renderer, media)) => {
-                    let feed = renderer::feed(&media, tracks.audio);
-                    eprintln!("tv player: {} goes to the TV's own player as {feed:?}", path.display());
-                    let start = renderer::Start {
-                        renderer,
-                        port: handoff.port,
-                        path: source.clone(),
-                        media,
-                        feed,
-                        from: start,
-                        name: self.caption(path),
-                    };
-                    Backend::TvSet(self.tv_set(&play.play, start))
-                }
-                None => {
-                    self.tv.send(ToTv::Play(Box::new(play.clone())));
-                    Backend::Tv(self.tv.clone())
-                }
-            };
-            let handed_off = matches!(backend, Backend::TvSet(_));
-            self.on_tv = Some(OnTv {
-                backend,
-                shown: self.now_playing_for(path),
-                file: path.to_path_buf(),
                 owner,
-                hold: Hold::default(),
-                last: Report::before(&play),
-                saved: play.start,
-                unsegmented: if handed_off { None } else { self.title(path) },
-                lost: None,
-                resumes,
-                play: play.play,
+                again,
             });
-            self.publish_playback();
+            let probing = self.handoff.is_some() && self.television.renderer().is_some();
+            let (files, file, online, core) = (self.files.clone(), path.to_path_buf(), self.online, self.core.clone());
+            tokio::spawn(async move {
+                let within = (prepare::FIND_WITHIN, prepare::PROBE_WITHIN);
+                let prepared = prepare::prepare(files, file, online, probing, within).await;
+                core.signal(Signal::Prepared { id, prepared });
+            });
         })
+    }
+
+    /// Plays what `play_as` prepared, unless another play or a stop came since.
+    async fn prepared(&mut self, id: u64, prepared: Prepared) {
+        let Some(Preparing {
+            file,
+            start,
+            owner,
+            again,
+            ..
+        }) = self.preparing.take_if(|preparing| preparing.id == id)
+        else {
+            return;
+        };
+        let path = file.as_path();
+        let picked_up = again.is_some();
+        let (source, sidecars, media) = match prepared {
+            Prepared::Ready(ready) => {
+                let prepare::Ready {
+                    source,
+                    sidecars,
+                    media,
+                } = *ready;
+                (source, sidecars, media)
+            }
+            Prepared::OutOfReach => {
+                self.show_message(OUT_OF_REACH.to_string());
+                return;
+            }
+            Prepared::Silent => {
+                self.show_message(MOUNT_SILENT.to_string());
+                return;
+            }
+        };
+        self.subtitles.set_owner(owner);
+        self.apply_audio(owner).await;
+        let theirs = self.progress_of(owner).await;
+        let tracks = match theirs.files.get(path) {
+            Some(watched) if start > 0.0 => watched.tracks(),
+            _ => progress::Tracks::default(),
+        };
+        let dialogue = self.core.dialogue(owner).await.load(Ordering::SeqCst);
+        let (token, paused, resumes) = match again {
+            Some(Again { play, paused, resumes }) => (play, paused, resumes),
+            None => (crate::auth::token(), false, Vec::new()),
+        };
+        let play = Play {
+            play: token,
+            owner,
+            file: path.to_path_buf(),
+            source: source.clone(),
+            start,
+            paused,
+            tracks,
+            caption: self.caption(path),
+            subtitles: self.subtitles.for_play(owner, path, sidecars),
+            audio_device: self.audio_device(),
+            dialogue,
+            next: up_next::follows(&self.library, path),
+        };
+        let backend = match self.tv_set_takes(media) {
+            Some((handoff, renderer, media)) => {
+                let feed = renderer::feed(&media, tracks.audio);
+                eprintln!("tv player: {} goes to the TV's own player as {feed:?}", path.display());
+                let start = renderer::Start {
+                    renderer,
+                    port: handoff.port,
+                    path: source.clone(),
+                    media,
+                    feed,
+                    from: start,
+                    name: self.caption(path),
+                };
+                Backend::TvSet(self.tv_set(&play.play, start))
+            }
+            None => {
+                self.tv.send(ToTv::Play(Box::new(play.clone())));
+                Backend::Tv(self.tv.clone())
+            }
+        };
+        let handed_off = matches!(backend, Backend::TvSet(_));
+        self.on_tv = Some(OnTv {
+            backend,
+            shown: self.now_playing_for(path),
+            file: path.to_path_buf(),
+            owner,
+            hold: Hold::default(),
+            last: Report::before(&play),
+            saved: play.start,
+            unsegmented: if handed_off { None } else { self.title(path) },
+            lost: None,
+            resumes,
+            play: play.play,
+        });
+        self.publish_playback();
+        if let Some(tv) = self.on_tv.as_ref().filter(|_| picked_up) {
+            tv.say("Picked up where it stopped");
+        }
     }
 
     /// Hands `play` to the TV set's own player, which tells the core what it
@@ -938,9 +1003,6 @@ impl Actor {
         let from = (tv.last.place.position - PICKED_UP_BEFORE).max(0.0);
         eprintln!("tv: back; picking up {} at {from:.0} s", file.display());
         self.play_as(&file, from, owner, Some(again)).await;
-        if let Some(tv) = &self.on_tv {
-            tv.say("Picked up where it stopped");
-        }
     }
 
     async fn reported(&mut self, report: Report) {
@@ -989,17 +1051,15 @@ impl Actor {
         self.finish_playback(ended.finish).await;
     }
 
-    async fn tv_set_takes(&self, source: &Path) -> Option<(Handoff, tv::upnp::Renderer, stream::probe::Media)> {
+    fn tv_set_takes(
+        &self,
+        media: Option<stream::probe::Media>,
+    ) -> Option<(Handoff, tv::upnp::Renderer, stream::probe::Media)> {
         let handoff = self.handoff.clone()?;
         let renderer = self.television.renderer()?;
-        match stream::probe::probe(source).await {
-            Ok(media) if handoff.takes(&media) => Some((handoff, renderer, media)),
-            Ok(_) => None,
-            Err(error) => {
-                eprintln!("tv player: {}: {error}", source.display());
-                None
-            }
-        }
+        media
+            .filter(|media| handoff.takes(media))
+            .map(|media| (handoff, renderer, media))
     }
 
     fn audio_device(&self) -> String {
@@ -1846,6 +1906,9 @@ impl Actor {
     }
 
     fn control(&mut self, control: Control) {
+        if control == Control::Stop {
+            self.preparing = None;
+        }
         if let (Control::Pause | Control::Resume, Some(tv)) = (control, &mut self.on_tv) {
             tv.hold = tv.hold.viewer_chose();
         }
@@ -2058,6 +2121,10 @@ mod tests {
             handoff: None,
             tv: Link::pair().0,
             segments: Arc::new(|_, _| Err("no segments in tests".to_string())),
+            files: Files {
+                find: Arc::new(|path, _| Some((path.to_path_buf(), Vec::new()))),
+                probe: Arc::new(|_| Box::pin(async { Err("no probing in tests".to_string()) })),
+            },
         }
     }
 
@@ -2111,6 +2178,15 @@ mod tests {
             played: position / 2.0,
             ..Report::default()
         })))
+    }
+
+    /// Waits until the phones are shown what the TV plays.
+    async fn shown(core: &Core) {
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while core.now_playing().is_none() {
+            assert!(Instant::now() < deadline, "nothing is shown as playing");
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
     }
 
     /// Waits until the actor has handled everything sent before.
@@ -2212,7 +2288,45 @@ mod tests {
             let (link, _never_read) = Link::pair();
             let core = core_with_tv(core, inbox, link).await;
             assert!(core.ask(Request::PlayFile(up(&core))).await.unwrap().ok);
+            shown(&core).await;
             the_api_answers_while_the_tv_takes_nothing(&core).await;
+        });
+    }
+
+    #[test]
+    fn a_mount_that_never_answers_leaves_the_api_answering_and_back_cancels_the_play() {
+        on_a_runtime_left_behind(async {
+            let (core, inbox) = Core::detached(db::test_library()).await;
+            let (link, orders) = Link::pair();
+            let hardware = Hardware {
+                tv: link,
+                files: Files {
+                    find: Arc::new(|_, _| {
+                        loop {
+                            std::thread::park();
+                        }
+                    }),
+                    probe: Arc::new(|_| Box::pin(std::future::pending())),
+                },
+                ..hardware()
+            };
+            let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware).await;
+            tokio::spawn(actor.run(inbox));
+            assert!(at_once(&core, Request::PlayFile(up(&core))).await.ok);
+            for _ in 0..20 {
+                at_once(&core, Request::Seek(Seek::To(90.0))).await;
+                at_once(&core, Request::Speed(1.5)).await;
+                at_once(&core, Request::Control(Control::Mute)).await;
+                at_once(&core, Request::HideSkip).await;
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            assert_eq!(core.now_playing(), None);
+            at_once(&core, Request::Key(Command::Back)).await;
+            at_once(&core, Request::Key(Command::Back)).await;
+            assert!(
+                orders.try_iter().all(|order| !matches!(order, ToTv::Play(_))),
+                "nothing plays while its file is not found"
+            );
         });
     }
 
@@ -2375,7 +2489,7 @@ mod tests {
         let answer = core
             .ask(Request::Subtitles(subtitles::Change::Add {
                 video: other.clone(),
-                sidecar: sidecar::Sidecar {
+                sidecar: crate::sidecar::Sidecar {
                     path: other.with_extension("en.srt"),
                     language: Some("en".to_string()),
                     title: "English".to_string(),

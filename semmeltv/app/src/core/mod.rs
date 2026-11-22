@@ -1,5 +1,6 @@
 mod actor;
 mod library;
+mod prepare;
 pub mod sound;
 mod tending;
 
@@ -144,6 +145,10 @@ pub(crate) enum Signal {
     TvSilent,
     Audio(audio::Route),
     Tended(tending::Tended),
+    Prepared {
+        id: u64,
+        prepared: prepare::Prepared,
+    },
 }
 
 pub(crate) enum Input {
@@ -297,7 +302,9 @@ impl Core {
             remote,
             ready,
         };
+        let playable = core.clone();
         let hardware = actor::Hardware {
+            files: prepare::Files::of(store.clone(), move |path| playable.playable(path)),
             store,
             storage,
             handoff,
