@@ -21,6 +21,12 @@ const POLL: Duration = Duration::from_millis(100);
 const NICENESS: i32 = 10;
 pub const PLAYLIST: &str = "video.m3u8";
 const INIT: &str = "init.mp4";
+/// How much of the film a stream keeps behind the newest segment its viewer
+/// fetched, and how far ffmpeg may run ahead of it before it waits.
+const BEHIND: f64 = 90.0;
+const AHEAD: f64 = 180.0;
+const SLACK: f64 = 30.0;
+const KEEPING: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Spec {
@@ -43,6 +49,69 @@ pub struct Remux {
     exit: Arc<Mutex<Option<bool>>>,
     stop: Arc<Notify>,
     used: Mutex<Instant>,
+    window: Arc<Mutex<Window>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
+}
+
+/// Which segments a stream keeps: those from `BEHIND` seconds before the
+/// newest one its viewer fetched, and ffmpeg waits while it is more than
+/// `AHEAD` seconds past it. Segments are numbered from 0 in playlist order.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Window {
+    fetched: usize,
+    dropped: usize,
+    dropped_seconds: f64,
+    held: bool,
+}
+
+/// What a stream's keeper does next: delete these segments, and stop or
+/// let go of ffmpeg.
+#[derive(Debug, PartialEq)]
+pub struct Plan {
+    pub drop: std::ops::Range<usize>,
+    pub hold: Option<bool>,
+}
+
+impl Window {
+    pub fn fetched(&mut self, index: usize) {
+        self.fetched = self.fetched.max(index);
+    }
+
+    /// The stream time from which segments are still there.
+    pub fn kept_from(&self) -> f64 {
+        self.dropped_seconds
+    }
+
+    /// The plan for a playlist whose segments last `lengths` seconds.
+    pub fn plan(&mut self, lengths: &[f64], running: bool) -> Plan {
+        let fetched = self.fetched.min(lengths.len().saturating_sub(1));
+        let start = |index: usize| lengths[..index].iter().sum::<f64>();
+        let ahead: f64 = lengths.get(fetched + 1..).map_or(0.0, |rest| rest.iter().sum());
+        let hold = match (self.held, running) {
+            (false, true) if ahead > AHEAD => Some(true),
+            (true, _) if ahead < AHEAD - SLACK || !running => Some(false),
+            _ => None,
+        };
+        if let Some(held) = hold {
+            self.held = held;
+        }
+        let keep_from = (self.dropped..fetched)
+            .find(|&index| start(fetched) - start(index + 1) < BEHIND)
+            .unwrap_or(fetched);
+        let drop = self.dropped..keep_from.max(self.dropped);
+        self.dropped_seconds += lengths[drop.clone()].iter().sum::<f64>();
+        self.dropped = drop.end;
+        Plan { drop, hold }
+    }
+}
+
+/// How long each segment of `playlist` lasts, in order.
+pub fn lengths(playlist: &str) -> Vec<f64> {
+    playlist
+        .lines()
+        .filter_map(|line| line.strip_prefix("#EXTINF:"))
+        .filter_map(|rest| rest.split(',').next()?.parse().ok())
+        .collect()
 }
 
 /// ffmpeg's arguments for a stream of `spec` from file time `at` into `dir`:
@@ -170,6 +239,7 @@ impl Remux {
             });
         }
         let mut child = command.spawn().map_err(|error| format!("ffmpeg: {error}"))?;
+        let pid = child.id();
         let exit = Arc::new(Mutex::new(None));
         let stop = Arc::new(Notify::new());
         {
@@ -212,6 +282,9 @@ impl Remux {
         }
         let init = tokio::fs::read(dir.join(INIT)).await.unwrap_or_default();
         let offset = first_time(&dir).await.unwrap_or(at);
+        let window = Arc::new(Mutex::new(Window::default()));
+        let closed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        tokio::spawn(keep(dir.clone(), pid, window.clone(), exit.clone(), closed.clone()));
         Ok(Self {
             codecs: codecs::codecs(&init),
             offset,
@@ -220,7 +293,14 @@ impl Remux {
             exit,
             stop,
             used: Mutex::new(Instant::now()),
+            window,
+            closed,
         })
+    }
+
+    /// The file time from which this stream still has its segments.
+    pub fn kept_from(&self) -> f64 {
+        self.offset + self.window.lock().unwrap().kept_from()
     }
 
     fn exited(&self) -> Option<bool> {
@@ -247,6 +327,9 @@ impl Remux {
         if !servable(name) {
             return None;
         }
+        if let Some(index) = name.strip_suffix(".m4s").and_then(|number| number.parse().ok()) {
+            self.window.lock().unwrap().fetched(index);
+        }
         tokio::fs::read(self.dir.join(name)).await.ok()
     }
 
@@ -267,6 +350,7 @@ impl Remux {
     }
 
     pub fn close(&self) {
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
         self.stop.notify_one();
         let _ = std::fs::remove_dir_all(&self.dir);
     }
@@ -274,7 +358,36 @@ impl Remux {
 
 impl Drop for Remux {
     fn drop(&mut self) {
+        self.closed.store(true, std::sync::atomic::Ordering::SeqCst);
         self.stop.notify_one();
+    }
+}
+
+/// Keeps a stream's segments to its window until the stream closes: deletes
+/// what its viewer left behind, and stops ffmpeg while it runs too far ahead.
+async fn keep(
+    dir: PathBuf,
+    pid: Option<u32>,
+    window: Arc<Mutex<Window>>,
+    exit: Arc<Mutex<Option<bool>>>,
+    closed: Arc<std::sync::atomic::AtomicBool>,
+) {
+    while !closed.load(std::sync::atomic::Ordering::SeqCst) {
+        tokio::time::sleep(KEEPING).await;
+        let Ok(listed) = tokio::fs::read_to_string(dir.join(PLAYLIST)).await else {
+            continue;
+        };
+        let running = exit.lock().unwrap().is_none();
+        let plan = window.lock().unwrap().plan(&lengths(&listed), running);
+        for index in plan.drop {
+            let _ = tokio::fs::remove_file(dir.join(format!("{index}.m4s"))).await;
+        }
+        if let (Some(hold), Some(pid)) = (plan.hold, pid.and_then(|pid| i32::try_from(pid).ok())) {
+            let signal = if hold { libc::SIGSTOP } else { libc::SIGCONT };
+            unsafe {
+                libc::kill(pid, signal);
+            }
+        }
     }
 }
 
@@ -347,6 +460,49 @@ mod tests {
         assert!(args.ends_with("-map 0:s:0 -c:s webvtt -flush_packets 1 -f webvtt /run/s/abc/sub0.vtt -map 0:s:2 -c:s webvtt -flush_packets 1 -f webvtt /run/s/abc/sub2.vtt"), "{args}");
         let from_start = words(&arguments(&spec(), Path::new("/run/s/abc"), 0.0));
         assert!(!from_start.contains("-ss"), "{from_start}");
+    }
+
+    #[test]
+    fn a_stream_keeps_ninety_seconds_behind_its_viewer_and_waits_three_minutes_ahead() {
+        let mut window = Window::default();
+        let six = |count: usize| vec![6.0; count];
+        assert_eq!(window.plan(&six(10), true), Plan { drop: 0..0, hold: None });
+        assert_eq!(
+            window.plan(&six(32), true),
+            Plan {
+                drop: 0..0,
+                hold: Some(true)
+            }
+        );
+        assert_eq!(window.plan(&six(32), true), Plan { drop: 0..0, hold: None });
+        window.fetched(20);
+        assert_eq!(
+            window.plan(&six(32), true),
+            Plan {
+                drop: 0..5,
+                hold: Some(false)
+            }
+        );
+        assert_eq!(window.kept_from(), 30.0);
+        window.fetched(22);
+        assert_eq!(window.plan(&six(40), true), Plan { drop: 5..7, hold: None });
+        assert_eq!(window.kept_from(), 42.0);
+        window.fetched(3);
+        assert_eq!(window.plan(&six(40), true), Plan { drop: 7..7, hold: None });
+    }
+
+    #[test]
+    fn a_held_ffmpeg_is_let_go_when_it_ends_or_its_viewer_catches_up() {
+        let mut window = Window::default();
+        assert_eq!(window.plan(&[6.0; 40], true).hold, Some(true));
+        assert_eq!(window.plan(&[6.0; 40], false).hold, Some(false));
+        assert_eq!(window.plan(&[6.0; 40], false).hold, None);
+    }
+
+    #[test]
+    fn segment_lengths_come_from_the_playlist() {
+        let playlist = "#EXTM3U\n#EXT-X-TARGETDURATION:7\n#EXTINF:6.006000,\n0.m4s\n#EXTINF:4.170833,\n1.m4s\n";
+        assert_eq!(lengths(playlist), vec![6.006, 4.170833]);
     }
 
     #[test]

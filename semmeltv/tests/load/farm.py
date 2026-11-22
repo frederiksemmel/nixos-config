@@ -22,9 +22,42 @@ from pathlib import Path
 STEREO = "aformat=channel_layouts=stereo,alimiter=limit=-1dB:level=false"
 SURROUND = "aformat=channel_layouts=5.1,alimiter=limit=-1dB:level=false"
 READY_SEGMENTS = 3
+BEHIND = 90.0
+AHEAD = 180.0
+SLACK = 30.0
 
 streams = {}
+fetched = {}
 lock = threading.Lock()
+
+
+def keep(id, out, process, window):
+    """The app's keep window (stream/remux.rs): segments from BEHIND seconds
+    before the newest one fetched, and ffmpeg stopped while it is more than
+    AHEAD seconds past it."""
+    dropped, held = 0, False
+    while id in streams:
+        time.sleep(1)
+        try:
+            lengths = [float(line[8:].split(",")[0]) for line in (out / "video.m3u8").read_text().splitlines() if line.startswith("#EXTINF:")]
+        except OSError:
+            continue
+        if not lengths:
+            continue
+        newest = min(fetched.get(id, 0), len(lengths) - 1)
+        ahead = sum(lengths[newest + 1 :])
+        running = process.poll() is None
+        if not held and running and ahead > AHEAD:
+            process.send_signal(19)
+            held = True
+        elif held and (ahead < AHEAD - SLACK or not running):
+            process.send_signal(18)
+            held = False
+        start = lambda index: sum(lengths[:index])
+        keep_from = next((index for index in range(dropped, newest) if start(newest) - start(index + 1) < window), newest)
+        for index in range(dropped, max(keep_from, dropped)):
+            (out / f"{index}.m4s").unlink(missing_ok=True)
+        dropped = max(keep_from, dropped)
 
 
 def probe(path):
@@ -86,6 +119,7 @@ def segments(text):
 class Handler(BaseHTTPRequestHandler):
     protocol_version = "HTTP/1.1"
     root: Path
+    windowed = False
 
     def log_message(self, *_):
         pass
@@ -113,6 +147,8 @@ class Handler(BaseHTTPRequestHandler):
         )
         with lock:
             streams[id] = process
+        if self.windowed:
+            threading.Thread(target=keep, args=(id, out, process, BEHIND), daemon=True).start()
         began = time.monotonic()
         while time.monotonic() - began < 45:
             listed = (out / "video.m3u8").read_text() if (out / "video.m3u8").exists() else ""
@@ -128,6 +164,8 @@ class Handler(BaseHTTPRequestHandler):
         parts = self.path.strip("/").split("/")
         if len(parts) != 3 or parts[0] != "s" or "/" in parts[2] or parts[2].startswith("."):
             return self.reply(404, b"{}")
+        if parts[2].endswith(".m4s") and parts[2][:-4].isdigit():
+            fetched[parts[1]] = max(fetched.get(parts[1], 0), int(parts[2][:-4]))
         file = self.root / parts[1] / parts[2]
         try:
             body = file.read_bytes()
@@ -151,11 +189,13 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--listen", action="append", required=True)
     parser.add_argument("--dir", required=True)
+    parser.add_argument("--window", action="store_true", help="keep only the app's window of segments")
     args = parser.parse_args()
     root = Path(args.dir)
     shutil.rmtree(root, ignore_errors=True)
     root.mkdir(parents=True)
     Handler.root = root
+    Handler.windowed = args.window
     servers = []
     for address in args.listen:
         host, port = address.rsplit(":", 1)

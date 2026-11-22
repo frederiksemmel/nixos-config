@@ -757,7 +757,7 @@ segments, instead of playing it on the TV.
 | GET | `/api/stream/{id}/main.m3u8` | the master playlist, to give the `<video>` or hls.js |
 | GET | `/api/stream/{id}/subtitles/{n}` | `{ cues: [{ start, end, text }], complete }` for subtitle `n` |
 | GET | `/api/stream/{id}/marks` | `{ segments, credits }`: TheIntroDB's recap and intro, and where the credits start |
-| POST | `/api/stream/{id}/progress` | `{ position, played, state }` → `{ message, ok }`, or `{ ok, reopen }` |
+| POST | `/api/stream/{id}/progress` | `{ position, played, state }` → `{ ok, kept_from }`, or `{ ok, reopen, kept_from }` |
 | DELETE | `/api/stream/{id}` | ends the session |
 
 `client` says what the browser decodes: `{ hevc, eac3, ac3 }`, all booleans.
@@ -782,7 +782,10 @@ segment once it is written and ends with `#EXT-X-ENDLIST`. The open answers
 once the first segment is there. The segments carry the file's own times, and
 the stream's clock starts at `offset`, the file time of its first frame, so a
 player's position in the file is `offset` plus how far it has played. A seek
-the playlist doesn't reach yet, or before `offset`, opens a new session there.
+the playlist doesn't reach yet, or before `kept_from`, opens a new session there.
+A session keeps its segments from 90 s before the newest one fetched, and
+ffmpeg waits while it is more than three minutes past it; `kept_from` is the
+file time from which the segments are still there.
 When the profile switches dialogue mode while its sound is converted, the next
 progress report answers `reopen`, and the phone opens the stream again where it
 is.

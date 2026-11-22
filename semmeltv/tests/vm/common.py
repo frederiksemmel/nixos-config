@@ -521,7 +521,7 @@ def password_sign_in(someone, name, password):
 
 STREAM_API = "http://127.0.0.1:8090"
 STREAM_ORIGIN = "http://localhost:8080"
-STREAM_DIR = "/var/lib/semmeltv/stream"
+STREAM_DIR = "/dev/shm/semmeltv-stream"
 NO_DOLBY = {"hevc": False, "eac3": False, "ac3": False}
 
 

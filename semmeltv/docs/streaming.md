@@ -37,9 +37,19 @@ init segment and three media segments are on disk. ffmpeg:
   it (AAC always; E-AC-3 and AC-3 on Safari) and otherwise encodes it to AAC;
 - reads the first 60 s of film as fast as it can (`-readrate_initial_burst
   60`), then at twice the playing speed (`-readrate 2`);
-- writes fMP4 HLS segments of ~6 s into `SEMMELTV_STREAM_DIR`, which is
-  `/var/lib/semmeltv/stream` on the SD card, and keeps every segment until the
-  stream closes.
+- writes fMP4 HLS segments of ~6 s into `SEMMELTV_STREAM_DIR`,
+  `/dev/shm/semmeltv-stream` (RAM).
+
+Each stream keeps a window of segments (`remux::Window`, a keeper task per
+stream every second). It deletes segments that end more than 90 s before the
+newest one its viewer fetched. ffmpeg gets SIGSTOP while it is more than 180 s
+past that segment and SIGCONT below 150 s, so a stream holds about 4–5
+minutes of film: ~300 MB at 10 Mbit/s, ~100 MB at 3. Every progress answer
+carries `kept_from`, the file time from which the segments are still there.
+The phone reopens the stream for a seek before it, as it already did for one
+before the stream's start. Until 2026-11-22 the segments went to
+`/var/lib/semmeltv/stream` on the SD card and stayed until the stream closed;
+the measurements below are from that layout.
 
 The phone plays with hls.js (or Safari's own HLS) and keeps 30 s ahead.
 Viewers outside the house come in over the home's upload: the public address
@@ -355,9 +365,10 @@ ms) until the two-minute measurement with Frederik.
 
 ## 5. Next
 
-1. Segments in `/dev/shm`, keeping only a window behind the playhead, so the
-   card no longer carries them. Measured: segments in RAM carried 6 streams of
-   films not downloaded cleanly, against ~3 on the card.
+1. Done (see §1): segments in `/dev/shm`, kept to a window around the
+   viewer. Measured before the window: segments in RAM carried 6 streams of
+   films not downloaded cleanly, against ~3 on the card. Not re-measured with
+   the window on semmeltv5 yet.
 2. A smaller rclone `--vfs-read-ahead` (256 MB today), so a stream opening
    doesn't write a quarter gigabyte to the card at once.
 3. Re-measure with both, and raise `MOST_FROM_PCLOUD` if the data allows.

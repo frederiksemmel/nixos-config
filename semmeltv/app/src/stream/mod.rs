@@ -1026,7 +1026,11 @@ async fn progress(
             short(&id),
             device_name(live.device.as_ref())
         );
-        return Json(serde_json::json!({ "ok": true, "reopen": "sound" })).into_response();
+        return Json(serde_json::json!({ "ok": true, "reopen": "sound", "kept_from": live.remux.kept_from() }))
+            .into_response();
+    }
+    if answer.status().is_success() {
+        return Json(serde_json::json!({ "ok": true, "kept_from": live.remux.kept_from() })).into_response();
     }
     answer
 }

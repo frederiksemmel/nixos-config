@@ -155,7 +155,7 @@ in
     services.semmeltv.coreEnvironment = {
       SEMMELTV_LIBRARY = "${cfg.stateDir}/library";
       SEMMELTV_CACHE = "${cfg.stateDir}/cache";
-      SEMMELTV_STREAM_DIR = "${cfg.stateDir}/stream";
+      SEMMELTV_STREAM_DIR = "/dev/shm/semmeltv-stream";
       SEMMELTV_DB = "${cfg.stateDir}/semmeltv.db";
       SEMMELTV_FEEDBACK = "${cfg.stateDir}/feedback";
       SEMMELTV_GRIM = lib.getExe pkgs.grim;

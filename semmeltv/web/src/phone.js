@@ -1264,7 +1264,7 @@ class Player {
     const time = this.mediaTime(target);
     const seekable = this.video.seekable;
     const end = seekable.length ? seekable.end(seekable.length - 1) : 0;
-    if (this.ready && time >= this.base && time <= end - 1) {
+    if (this.ready && time >= this.base && target >= (this.keptFrom ?? 0) && time <= end - 1) {
       this.video.currentTime = time;
       return;
     }
@@ -1389,6 +1389,7 @@ class Player {
     }
     this.opening = null;
     this.session = session;
+    this.keptFrom = session.offset;
     this.bakeoff.watch(session);
     this.ready = false;
     this.played = 0;
@@ -1690,6 +1691,7 @@ class Player {
     const body = { position: this.position(session), played: this.played, state };
     try {
       const answer = await request("POST", `/api/stream/${session.id}/progress`, body, { keepalive });
+      if (answer && Number.isFinite(answer.kept_from) && session === this.session) this.keptFrom = answer.kept_from;
       if (answer && answer.reopen && session === this.session && !this.closed && ["playing", "paused"].includes(state)) {
         note(`the sound setting changed; the stream opens again at ${clock(this.now())}`, answer.reopen);
         this.open(this.pickOf(session), { start: this.now(), audio: session.audio_index ?? undefined });
