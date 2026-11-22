@@ -355,6 +355,30 @@ functions (`play_from`, `record_place`, `publish_playback`, `hear`, `key`,
 | **4** | **Two units.** `semmeltv.service` + `cage-tty1` running `semmeltv tv`, env from 0b, sd_notify (`READY`, `WATCHDOG`) in both, polkit, `hosts/mount.nix` ordering. Deploy to semmeltv5 first; semmeltv3 after a day and an RSS check. | VM `tv-restart` (0c) now passes; all VM groups pass with the split; a VM case that stops `semmeltv.service` mid-film and checks the film keeps playing and is adopted. | After 3 |
 | **5** | Clean-up: drop `Core::bus()` uses by `ui.rs`, the leftovers of `block_in_place` around playback, and the README/ADR text. Write ADR 4 from this doc. | — | After 4 |
 
+How 1b came out, where it differs from the table above:
+
+- The in-process tv end is `link::local`: a thread per link that owns the
+  player and turns each `ToTv` into a `Player` call. Only it ever waits on
+  the `Playback` lock. `Link::send` is a `try_send` into a queue of 256; a
+  full queue drops the order and logs `tv: not reading, dropped <kind>`.
+  There is no connection to close in-process, so closing it waits for the
+  socket in step 3, as do *stale* and *lost*.
+- The TV-set hand-off gets a `link::local` of its own for each play until
+  1e, so the actor holds no `Player` for it either. Dropping that link
+  stops the TV set, as dropping the player did.
+- What `play_from` did after a successful start (waking the TV, recording
+  the start, the download lead) now happens on `Started`. `Failed` clears
+  the playback and shows "The video did not start: …".
+- `Stop` quits the player. Before, Stop sent Back, which only hid the skip
+  pill when one showed.
+- Orders apply only to the play they name, so a late order can't reach the
+  next video. `AudioDevice`, `Dialogue` and toasts go to whatever plays.
+- `Play.subtitles` carries the owner's settings and the file's remembered
+  delay; `sidecars` stays empty and the tv still reads the shared
+  `Subtitles` until 1c.
+- The skip pill and hide-skip answer from the last report, and speed is
+  clamped in the core (1× while the TV set plays).
+
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
 its listed files.

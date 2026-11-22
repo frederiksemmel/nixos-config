@@ -40,7 +40,7 @@ const SHOWN_FOR: Duration = Duration::from_secs(4);
 const TICK: Duration = Duration::from_millis(100);
 pub const REPORT_EVERY: Duration = Duration::from_millis(500);
 const LONG_JUMP: i32 = 60;
-const SAY_FOR: Duration = Duration::from_secs(3);
+pub const SAY_FOR: Duration = Duration::from_secs(3);
 const OSD_FONT: &str = "Inter";
 const OSD_FONTS: &str = env!("SEMMELTV_FONT_DIR");
 const POSITION_ID: u64 = 1;
@@ -831,10 +831,6 @@ impl Player {
         let _ = holding.recv();
     }
 
-    pub fn handed_off(&self) -> bool {
-        matches!(self.backend, Backend::TvSet { .. })
-    }
-
     fn mpv(&self) -> Option<&Shared> {
         match &self.backend {
             Backend::Mpv(playback) => Some(playback),
@@ -846,6 +842,13 @@ impl Player {
         match &self.backend {
             Backend::Mpv(playback) => playback.lock().unwrap().command(command, Instant::now()),
             Backend::TvSet { session } => session.key(command),
+        }
+    }
+
+    pub fn stop(&self) {
+        match &self.backend {
+            Backend::Mpv(playback) => playback.lock().unwrap().send(json!(["quit", STOPPED_EXIT_CODE])),
+            Backend::TvSet { session } => session.key(Command::Back),
         }
     }
 

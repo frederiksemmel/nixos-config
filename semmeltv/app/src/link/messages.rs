@@ -93,6 +93,37 @@ pub enum ToTv {
     },
 }
 
+impl ToTv {
+    /// The order's kind, for logs.
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Welcome { .. } => "welcome",
+            Self::Library { .. } => "library",
+            Self::Home(_) => "home",
+            Self::Key(_) => "key",
+            Self::Message(_) => "message",
+            Self::Panel(_) => "panel",
+            Self::Together(_) => "together",
+            Self::UpNext(_) => "up next",
+            Self::Play(_) => "play",
+            Self::Command { .. } => "command",
+            Self::Pause { .. } => "pause",
+            Self::Mute { .. } => "mute",
+            Self::Speed { .. } => "speed",
+            Self::Seek { .. } => "seek",
+            Self::SkipSegment { .. } => "skip segment",
+            Self::HideSkip { .. } => "hide skip",
+            Self::AudioDevice { .. } => "audio device",
+            Self::Dialogue { .. } => "dialogue",
+            Self::Toast { .. } => "toast",
+            Self::HideToast => "hide toast",
+            Self::Segments { .. } => "segments",
+            Self::Subtitles { .. } => "subtitles",
+            Self::Stop { .. } => "stop",
+        }
+    }
+}
+
 /// What the tv tells the core.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

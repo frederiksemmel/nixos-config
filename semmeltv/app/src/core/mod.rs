@@ -296,6 +296,7 @@ impl Core {
             microphone,
             led,
             handoff,
+            tv: actor::local_tv(&core),
         };
         let actor = actor::Actor::new(core.clone(), profile, hardware).await;
         let running = tokio::spawn(actor.run(received));
