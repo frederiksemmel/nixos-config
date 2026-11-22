@@ -1,6 +1,7 @@
 mod flow;
 mod markdown;
 mod panel;
+mod picture;
 mod render;
 mod replies;
 mod telegram;
@@ -54,6 +55,8 @@ enum Command {
     },
     /// Wipe the display to white.
     Clear,
+    /// Draw a PNG, JPEG, GIF or WebP picture, fitted and in four shades.
+    Picture { path: PathBuf },
     /// Run the Telegram bot, and the WhatsApp one with --whatsapp.
     Bot {
         #[arg(long, env = "EPAPER_TOKEN_FILE")]
@@ -108,6 +111,10 @@ fn main() -> Result<()> {
     let scene = match cli.command {
         Command::Ring => Scene::Ring,
         Command::Clear => Scene::Clear,
+        Command::Picture { path } => {
+            let bytes = std::fs::read(&path).with_context(|| path.display().to_string())?;
+            Scene::Picture(Arc::new(picture::decode(&bytes)?))
+        }
         Command::Text { words } => Scene::Text { text: words.join(" ") },
         Command::Bot {
             token_file,

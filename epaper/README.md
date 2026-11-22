@@ -100,4 +100,5 @@ The bot holds the panel's pins, so stop it first (`sudo systemctl stop epaper`).
 epaper --rotation 270 text "Hoi"
 epaper --refresh clean clear
 epaper --preview out.ppm text "Hoi"   # writes an image, leaves the panel alone
+epaper --preview out.ppm picture comic.png
 ```

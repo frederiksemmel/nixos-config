@@ -1094,6 +1094,7 @@ dependencies = [
  "embedded-graphics",
  "embedded-hal",
  "epd-waveshare",
+ "image",
  "linux-embedded-hal",
  "pulldown-cmark",
  "rand 0.10.4",

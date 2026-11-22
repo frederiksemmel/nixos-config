@@ -10,6 +10,7 @@ clap = { version = "4.6", features = ["derive", "env"] }
 embedded-graphics = "0.8.2"
 embedded-hal = "1.0"
 epd-waveshare = "0.6"
+image = { version = "0.25", default-features = false, features = ["gif", "jpeg", "png", "webp"] }
 linux-embedded-hal = { version = "0.5", default-features = false, features = ["gpio_cdev", "spi"] }
 rand = "0.10"
 serde = { version = "1", features = ["derive"] }

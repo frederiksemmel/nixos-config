@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use anyhow::Result;
 use embedded_graphics::prelude::*;
 use epd_waveshare::{
@@ -6,7 +8,9 @@ use epd_waveshare::{
     graphics::DisplayRotation,
 };
 
-use crate::{markdown, panel::Refresh, typeset::typeset};
+use image::RgbaImage;
+
+use crate::{markdown, panel::Refresh, picture, typeset::typeset};
 
 const RING: &[u8] = include_bytes!("../assets/ring.raw");
 const RING_WIDTH: u32 = 176;
@@ -16,15 +20,19 @@ const MAX_CHARS: usize = 1000;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Scene {
     Ring,
-    Text { text: String },
+    Text {
+        text: String,
+    },
     Clear,
+    /// A picture, fitted into the panel and centred on white.
+    Picture(Arc<RgbaImage>),
 }
 
 impl Scene {
     pub fn refresh(&self) -> Refresh {
         match self {
             Scene::Clear => Refresh::Clean,
-            Scene::Ring | Scene::Text { .. } => Refresh::Gray,
+            Scene::Ring | Scene::Text { .. } | Scene::Picture(_) => Refresh::Gray,
         }
     }
 }
@@ -75,6 +83,7 @@ pub fn render(scene: &Scene, size: Size) -> Result<Canvas> {
         Scene::Clear => {}
         Scene::Ring => draw_ring(&mut canvas),
         Scene::Text { text } => draw_text(&mut canvas, text)?,
+        Scene::Picture(image) => canvas.pixels = picture::shades(image, size),
     }
     Ok(canvas)
 }
@@ -313,6 +322,14 @@ mod tests {
     fn ring_is_centred_in_landscape() {
         let canvas = render(&Scene::Ring, LANDSCAPE).unwrap();
         assert!(count(&canvas, Shade::White) > 0);
+    }
+
+    #[test]
+    fn a_picture_is_drawn_in_grey() {
+        let black = RgbaImage::from_pixel(100, 100, image::Rgba([0, 0, 0, 255]));
+        let canvas = render(&Scene::Picture(Arc::new(black)), LANDSCAPE).unwrap();
+        assert_eq!(count(&canvas, Shade::Black), 176 * 176);
+        assert_eq!(Scene::Picture(Arc::new(RgbaImage::new(1, 1))).refresh(), Refresh::Gray);
     }
 
     #[test]
