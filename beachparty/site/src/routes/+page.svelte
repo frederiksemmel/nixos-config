@@ -237,14 +237,15 @@
 		font-family: 'Oswald', sans-serif;
 		font-weight: 600;
 		font-size: clamp(6rem, 44vw, 26rem);
-		line-height: 0.85;
+		line-height: 1;
 		letter-spacing: -0.01em;
 		color: var(--gold);
 		display: flex;
+		align-items: flex-start;
 	}
 	.slot {
-		display: inline-block;
-		height: 0.85em;
+		display: block;
+		height: 1em;
 		overflow: hidden;
 	}
 	.reel {
@@ -253,10 +254,11 @@
 		transition: transform 1.6s cubic-bezier(0.7, 0, 0.2, 1);
 	}
 	.reel > span {
-		height: 0.85em;
+		display: block;
+		height: 1em;
 	}
 	.reel.turned {
-		transform: translateY(-0.85em);
+		transform: translateY(-1em);
 	}
 	.countdown {
 		margin: 1.5rem 0 0;
