@@ -7,6 +7,7 @@ mod replies;
 mod telegram;
 mod typeset;
 mod whatsapp;
+mod xkcd;
 
 use std::{
     path::PathBuf,

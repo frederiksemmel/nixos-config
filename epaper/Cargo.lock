@@ -1098,6 +1098,7 @@ dependencies = [
  "linux-embedded-hal",
  "pulldown-cmark",
  "rand 0.10.4",
+ "reqwest",
  "serde",
  "serde_json",
  "teloxide",
