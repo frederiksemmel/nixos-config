@@ -147,7 +147,8 @@ impl Api {
     }
 }
 
-pub fn spawn(config: Config, core: Core) {
+/// Binds the API's address, then serves it on a task of its own.
+pub async fn spawn(config: Config, core: Core) -> std::io::Result<()> {
     let feedback = crate::feedback::Feedback::new(config.feedback, core.bus().clone(), config.grim);
     let deploy = crate::deploy::Deploy::new(feedback.clone(), PathBuf::from(crate::feedback::REVISION));
     let api = Api {
@@ -160,16 +161,16 @@ pub fn spawn(config: Config, core: Core) {
         deploy,
     };
     let address = config.address;
+    let listener = TcpListener::bind(&address)
+        .await
+        .map_err(|error| std::io::Error::new(error.kind(), format!("{address}: {error}")))?;
+    eprintln!("api on http://{address}/api");
     tokio::spawn(async move {
-        let listener = match TcpListener::bind(&address).await {
-            Ok(listener) => listener,
-            Err(error) => return eprintln!("api {address}: {error}"),
-        };
-        eprintln!("api on http://{address}/api");
         if let Err(error) = axum::serve(listener, router(api)).await {
             eprintln!("api: {error}");
         }
     });
+    Ok(())
 }
 
 fn router(api: Api) -> Router {

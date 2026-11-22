@@ -42,6 +42,7 @@ mod screen;
 mod seek;
 mod segments;
 mod sidecar;
+mod startup;
 mod storage;
 mod stream;
 mod subfetch;
@@ -332,7 +333,9 @@ fn run_tv(args: &Args) -> Result<(), String> {
 }
 
 async fn start_core(args: Args, cache: Cache, tv: core::TvEnd) -> Result<core::Core, String> {
-    let db = open_db(&args).await?;
+    let started = std::time::Instant::now();
+    let needs_api = matches!(tv, core::TvEnd::Socket(_));
+    let db = startup::step("the database", open_db(&args)).await?;
     let capacity: Option<u64> = env::var("SEMMELTV_VFS_CACHE_BYTES")
         .ok()
         .and_then(|bytes| bytes.parse().ok());
@@ -391,8 +394,13 @@ async fn start_core(args: Args, cache: Cache, tv: core::TvEnd) -> Result<core::C
     };
     let core = core::Core::start(setup).await;
     if let Some(config) = api {
-        api::spawn(config, core.clone());
+        match startup::step("the API's address", api::spawn(config, core.clone())).await {
+            Ok(()) => {}
+            Err(error) if needs_api => return Err(format!("start: the API can't listen: {error}")),
+            Err(error) => eprintln!("api: {error}"),
+        }
     }
+    eprintln!("start: serving after {:.1?}", started.elapsed());
     Ok(core)
 }
 

@@ -24,6 +24,7 @@ use crate::progress::{self, Position, Progress};
 use crate::screen;
 use crate::seek::Direction;
 use crate::segments::{self, Kind, Title};
+use crate::startup::step;
 use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, SubtitleSettings};
@@ -262,6 +263,14 @@ fn steers_the_tv(request: &Request) -> bool {
     }
 }
 
+/// Runs `work` on the headphones on a blocking thread, since it may wait
+/// for their lock.
+async fn audio_lock<T: Send + 'static>(audio: Audio, work: impl FnOnce(&Audio) -> T + Send + 'static) -> T {
+    spawn_blocking(move || work(&audio))
+        .await
+        .expect("the headphones' work panicked")
+}
+
 fn asked(request: UiRequest) -> Request {
     match request {
         UiRequest::PlayFile(path) => Request::PlayFile(path),
@@ -288,25 +297,39 @@ impl Actor {
         } = hardware;
         let db = core.db().clone();
         let library = core.library();
-        let progress = core.progress(profile).await;
+        let progress = step("the TV profile's progress", core.progress(profile)).await;
         let downloading = core.clone();
         let fetcher = fetch::spawn(store.clone(), move |path| downloading.signal(Signal::Downloading(path)));
         let audio = core.audio().cloned();
         if let Some(audio) = &audio {
-            if sound::claimed(&db).await.is_empty()
-                && let Some(headphones) = audio.headphones()
+            if step("whose headphones", sound::claimed(&db)).await.is_empty()
+                && let Some(headphones) =
+                    step("the paired headphones", audio_lock(audio.clone(), Audio::headphones)).await
             {
                 let prefs = db::AudioPrefs::Unpaired.pairing(headphones.address.clone());
-                if let Err(error) = db.save_audio_prefs(ProfileId::FIRST, &prefs).await {
+                let saved = step(
+                    "the headphones' first owner",
+                    db.save_audio_prefs(ProfileId::FIRST, &prefs),
+                )
+                .await;
+                if let Err(error) = saved {
                     eprintln!("headphones: {error}");
                 }
             }
-            audio.set_kept(sound::claimed(&db).await);
+            let claimed = step("whose headphones", sound::claimed(&db)).await;
+            step(
+                "the headphones' owners",
+                audio_lock(audio.clone(), move |audio| audio.set_kept(claimed)),
+            )
+            .await;
         }
         let scanning = (store.clone(), library.clone());
-        let downloaded = spawn_blocking(move || scanning.0.downloaded(scanning.1.paths()))
-            .await
-            .unwrap_or_default();
+        let downloaded = step(
+            "what is downloaded",
+            spawn_blocking(move || scanning.0.downloaded(scanning.1.paths())),
+        )
+        .await
+        .unwrap_or_default();
         let mut actor = Self {
             subtitles: core.subtitles().clone(),
             television: core.television().clone(),
@@ -354,7 +377,7 @@ impl Actor {
             bake: None,
         };
         actor.apply_audio(profile);
-        actor.people = people(&actor.db, &actor.core).await;
+        actor.people = step("the people", people(&actor.db, &actor.core)).await;
         actor.publish_home();
         actor.queue_downloads(false);
         actor.tend();

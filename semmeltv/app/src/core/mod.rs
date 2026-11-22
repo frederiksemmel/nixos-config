@@ -21,6 +21,7 @@ use crate::push::Push;
 use crate::screen;
 use crate::seek::Direction;
 use crate::sidecar;
+use crate::startup::{self, step};
 use crate::storage;
 use crate::stream;
 use crate::subtitles::{self, SubtitleSettings};
@@ -250,18 +251,20 @@ impl Core {
             tv,
         } = setup;
         let saved = cache.saved_manifest();
-        let library = match library::listed(&root, &saved)
+        let library = match step("the saved library", library::listed(&root, &saved))
             .await
             .filter(|library| !library.is_empty())
         {
             Some(library) => library,
-            None => library::listed(&root, &meta.join(crate::manifest::FILE_NAME))
-                .await
-                .unwrap_or_default(),
+            None => step(
+                "the library's manifest",
+                library::listed(&root, &meta.join(crate::manifest::FILE_NAME)),
+            )
+            .await
+            .unwrap_or_default(),
         };
         db.set_library(&library);
-        let profile = db
-            .setting(TV_PROFILE)
+        let profile = step("the TV's profile", db.setting(TV_PROFILE))
             .await
             .unwrap_or_else(|error| {
                 eprintln!("tv profile: {error}");
@@ -270,10 +273,12 @@ impl Core {
             .and_then(|stored| stored.parse().ok())
             .map(ProfileId)
             .unwrap_or(ProfileId::FIRST);
-        let token = db.setting(TV_TOKEN).await.unwrap_or_else(|error| {
-            eprintln!("database: {TV_TOKEN}: {error}");
-            None
-        });
+        let token = step("the TV's token", db.setting(TV_TOKEN))
+            .await
+            .unwrap_or_else(|error| {
+                eprintln!("database: {TV_TOKEN}: {error}");
+                None
+            });
         let runtime = tokio::runtime::Handle::current();
         let keeping = db.clone();
         let television = Television::new(tv::Settings {
@@ -287,16 +292,24 @@ impl Core {
         });
         let bus = Bus::default();
         let (inbox, received) = mpsc::unbounded_channel();
-        let audio = headphones.then(|| {
-            let inbox = inbox.clone();
-            Audio::spawn(
-                bus.clone(),
-                Box::new(move |route| {
-                    let _ = inbox.send(Input::Signal(Signal::Audio(route)));
-                }),
-            )
-        });
-        let subtitles = SubtitleSettings::load(&db, profile).await;
+        let audio = match headphones {
+            true => {
+                let (inbox, bus) = (inbox.clone(), bus.clone());
+                Some(
+                    startup::blocking("the headphones", move || {
+                        Audio::spawn(
+                            bus,
+                            Box::new(move |route| {
+                                let _ = inbox.send(Input::Signal(Signal::Audio(route)));
+                            }),
+                        )
+                    })
+                    .await,
+                )
+            }
+            false => None,
+        };
+        let subtitles = step("the subtitle settings", SubtitleSettings::load(&db, profile)).await;
         let core = Self {
             inbox,
             bus,
@@ -343,7 +356,7 @@ impl Core {
             segments: crate::segments::finder(),
             remove: tending::remover(),
         };
-        let actor = actor::Actor::new(core.clone(), profile, hardware).await;
+        let actor = step("the actor", actor::Actor::new(core.clone(), profile, hardware)).await;
         let running = tokio::spawn(actor.run(received));
         tokio::spawn(async move {
             if let Err(error) = running.await {
