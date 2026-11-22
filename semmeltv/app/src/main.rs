@@ -23,6 +23,8 @@ mod intent;
 mod led;
 mod library;
 mod library_db;
+#[allow(dead_code)]
+mod link;
 mod loader;
 mod manifest;
 mod mdblist;

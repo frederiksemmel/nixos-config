@@ -1,4 +1,5 @@
 use crate::subtitles::{language_code, language_name};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,7 +8,7 @@ const VIDEO_EXTENSIONS: [&str; 7] = ["mkv", "mp4", "avi", "m4v", "mov", "webm", 
 const FOLDERS: [&str; 3] = ["subs", "subtitles", "sub"];
 const FORCED_SHARE: u64 = 5;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Sidecar {
     pub path: PathBuf,
     pub language: Option<String>,

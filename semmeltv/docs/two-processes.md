@@ -171,8 +171,8 @@ shows the JSON lines, and `semmeltv tv --dump` (stage 3) prints them.
 | `Library { revision, library }` | After `Welcome`, and when the library changes | `Library` needs `Serialize`/`Deserialize`. It is a few MB of JSON at most, and only sent when it changes. |
 | `Home { library_revision, profile, people, progress, offline, downloaded, downloading, problem }` | Wherever `publish_home` runs today | `Home` without the library. Progress is the TV profile's only. |
 | `Key(Command)` | A key the menu handles (today `Bus::key`) | `Command` gets serde. |
-| `Message(String)`, `Panel(Option<Panel>)`, `Together(Together)`, `UpNext(Option<UpNextCard { …, remaining_ms }>)` | As today on the bus | |
-| `Play { play, owner, file, source, start, paused, tracks, caption, subtitles: { settings, remembered, sidecars }, audio_device, dialogue, next }` | `play_from` | `play` is the token `OnTv.play` already holds, used to match every later message. `source` is the path mpv opens (cache, ready copy or mount). |
+| `Message(String)`, `Panel(Option<Panel>)`, `Together(Together)`, `UpNext(Option<UpNextCard { …, remaining_ms, total_ms }>)` | As today on the bus | `total_ms` lets the tv draw how much of the countdown is left. |
+| `Play { play, owner, file, source, start, paused, tracks, caption, title, subtitles: { settings, remembered, sidecars }, audio_device, dialogue, next }` | `play_from` | `play` is the token `OnTv.play` already holds, used to match every later message. `source` is the path mpv opens (cache, ready copy or mount). `title` (TMDB id and episode) lets the player fetch segments until 1d moves that to the core, which then drops it. |
 | `Command { play, command }` | A player key | |
 | `Pause { play, paused }`, `Mute { play, muted }`, `Speed { play, speed }`, `Seek { play, to \| by }`, `SkipSegment { play }`, `HideSkip { play }` | Controls | Fire and forget. The next `Report` shows the result. |
 | `AudioDevice { device, said }`, `Dialogue { on, said }` | Route and filter changes | Apply to the running mpv and to the next start. |
@@ -186,7 +186,7 @@ shows the JSON lines, and `semmeltv tv --dump` (stage 3) prints them.
 | Message | When | Notes |
 |---|---|---|
 | `Hello { protocol, revision, playing: Option<Running>, ended: Option<Ended> }` | On every connect | `Running { play, owner, file, position, paused }` lets a restarted core adopt the playback. `ended` carries a `Finished` that happened while the core was away, so its progress isn't lost. |
-| `Report { play: Option<…>, state, place, tracks, played, subtitles, at }` | Every 500 ms while playing, every 1 s while idle (a heartbeat) | `state` is today's `player::State`. This one message replaces every `state()`, `place()`, `tracks()`, `played()` and `muted()` call. |
+| `Report { play: Option<…>, state, place, tracks, played, subtitles }` | Every 500 ms while playing, every 1 s while idle (a heartbeat) | `state` is today's `player::State`. This one message replaces every `state()`, `place()`, `tracks()`, `played()` and `muted()` call. No `at`: the core stamps a report with its own clock when it arrives, so the two clocks never need to agree. |
 | `Started { play }`, `Failed { play, error }` | After `Play` | Replaces the `io::Result` that `Player::start` returns today. |
 | `Finished { play, finish, place, tracks, played }` | mpv exited | Carries the final place, so the core needs no last read of the player. |
 | `Key(Command)` | Keyboard in Slint, or Back/Listen/Dialogue in mpv's window | |

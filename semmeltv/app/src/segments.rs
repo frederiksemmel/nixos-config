@@ -6,13 +6,13 @@ const API: &str = "https://api.theintrodb.org/v4/media";
 const TIMEOUT: Duration = Duration::from_secs(8);
 const LONGEST_OPENING_INTRO: f64 = 95.0;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Title {
     pub tmdb: u64,
     pub episode: Option<(u32, u32)>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Kind {
     Recap,
@@ -30,7 +30,7 @@ impl Kind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Segment {
     pub kind: Kind,
     pub start: f64,

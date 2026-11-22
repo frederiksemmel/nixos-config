@@ -190,7 +190,7 @@ impl Settings {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Track {
     pub id: i64,
     pub language: Option<String>,
@@ -276,7 +276,7 @@ impl Track {
     }
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Playing {
     pub visible: bool,
     pub delay: f64,
@@ -416,7 +416,7 @@ impl Answer {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum Change {
     Restyle,
     Toggle,

@@ -1,6 +1,7 @@
+use serde::{Deserialize, Serialize};
 use slint::platform::Key;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Command {
     Up,
     Down,

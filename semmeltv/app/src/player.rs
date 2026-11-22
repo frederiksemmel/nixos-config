@@ -14,6 +14,7 @@ use crate::sidecar;
 use crate::subtitles::{self, Answer, Change, Observed, Subtitles};
 use commands::Commands;
 use health::{Health, Reading};
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::env;
 use std::io::{self, BufRead, BufReader, Write};
@@ -70,7 +71,7 @@ const KEYBINDS: [(&str, &str); 12] = [
 
 type Shared = Arc<Mutex<Playback>>;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Finish {
     Ended,
     Next,
@@ -593,7 +594,7 @@ enum Backend {
     TvSet { session: renderer::Session, tracks: Tracks },
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct State {
     pub position: f64,
     pub duration: f64,

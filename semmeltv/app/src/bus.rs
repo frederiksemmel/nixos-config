@@ -6,7 +6,7 @@ use crate::progress::Progress;
 use crate::screen;
 use crate::segments::Kind;
 use crate::up_next;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -63,13 +63,13 @@ pub struct Home {
 
 /// Who the TV's profile can watch `show` with: partners first, with where
 /// they are, then everyone else.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Together {
     pub show: String,
     pub people: Vec<Mate>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mate {
     pub id: ProfileId,
     pub name: String,
@@ -77,7 +77,7 @@ pub struct Mate {
     pub paired: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Panel {
     pub heading: String,
     pub status: String,

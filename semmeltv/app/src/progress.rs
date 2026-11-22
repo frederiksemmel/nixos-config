@@ -90,7 +90,7 @@ impl Watched {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Place {
     pub position: f64,
     pub duration: f64,

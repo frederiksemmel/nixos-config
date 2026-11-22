@@ -138,6 +138,12 @@ impl Display for Tenths {
     }
 }
 
+impl Serialize for Tenths {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_f64(f64::from(self.0) / 10.0)
+    }
+}
+
 impl<'de> Deserialize<'de> for Tenths {
     fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let value = match toml::Value::deserialize(deserializer)? {
@@ -149,7 +155,7 @@ impl<'de> Deserialize<'de> for Tenths {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Scores {
     pub imdb: Option<Tenths>,

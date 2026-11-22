@@ -1,4 +1,5 @@
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use std::iter;
 use std::path::Path;
 use std::sync::LazyLock;
@@ -49,7 +50,7 @@ fn words(patterns: &[(&str, &'static str)]) -> Vec<(Regex, &'static str)> {
         .collect()
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tags {
     pub video: Option<String>,
     pub resolution: Option<String>,

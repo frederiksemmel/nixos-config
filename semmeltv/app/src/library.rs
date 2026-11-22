@@ -3,6 +3,7 @@ pub use crate::manifest::Scores;
 use crate::manifest::{self, About, Date, EpisodeEntry, Manifest, MovieEntry, ReadError, ShowEntry};
 use crate::tags::Tags;
 use crate::tmdb::Kind;
+use serde::{Deserialize, Serialize};
 use std::cmp::Reverse;
 use std::collections::BTreeMap;
 use std::fs;
@@ -15,13 +16,13 @@ pub enum Item {
     Movie(usize),
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Library {
     pub shows: Vec<Show>,
     pub movies: Vec<Movie>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Show {
     pub id: i64,
     pub key: String,
@@ -36,13 +37,13 @@ pub struct Show {
     pub about: About,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Season {
     pub number: u32,
     pub episodes: Vec<Episode>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Episode {
     pub id: i64,
     pub season: u32,
@@ -56,7 +57,7 @@ pub struct Episode {
     pub downloaded_by: Option<String>,
 }
 
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Movie {
     pub id: i64,
     pub key: String,
