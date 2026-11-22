@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use std::env;
+use std::sync::Arc;
 use std::time::Duration;
 
 const API: &str = "https://api.theintrodb.org/v4/media";
@@ -95,6 +96,14 @@ fn found(media: &Media, duration: f64) -> Found {
         segments: segments(media, duration),
         credits: credits(media, duration),
     }
+}
+
+/// Looks up a title's segments for a video of the given duration.
+pub type Finder = Arc<dyn Fn(Title, f64) -> Result<Found, String> + Send + Sync>;
+
+/// The finder that asks theintrodb.org.
+pub fn finder() -> Finder {
+    Arc::new(|title, duration| fetch(title, duration).map_err(|error| error.to_string()))
 }
 
 pub fn fetch(title: Title, duration: f64) -> Result<Found, ureq::Error> {

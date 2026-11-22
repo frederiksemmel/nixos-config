@@ -10,7 +10,7 @@ use crate::link::messages::{Ended, Play, Report};
 use crate::overlay::{self, View};
 use crate::progress::{self, Place, Tracks};
 use crate::seek::{self, Direction, Order, Scrub};
-use crate::segments::{self, Kind, Segment, Title};
+use crate::segments::{self, Kind, Segment};
 use crate::sidecar;
 use crate::subtitles::{self, Answer, Change, Observed, Subtitles};
 use commands::Commands;
@@ -759,9 +759,9 @@ impl Player {
         }));
         let nudge = report_mpv(&playback, &play.play, report);
         let shared = playback.clone();
-        let (token, title) = (play.play.clone(), play.title);
+        let token = play.play.clone();
         thread::spawn(move || {
-            connect(&mut child, &socket_path, &shared, title);
+            connect(&mut child, &socket_path, &shared);
             let finish = Finish::from_exit_code(child.wait().ok().and_then(|status| status.code()));
             let ended = {
                 let mut playback = shared.lock().unwrap();
@@ -898,6 +898,15 @@ impl Player {
         match &self.backend {
             Backend::Mpv(playback) => playback.lock().unwrap().skip_segment(Instant::now()),
             Backend::TvSet { .. } => false,
+        }
+    }
+
+    pub fn set_segments(&self, segments: Vec<Segment>, credits: Option<f64>) {
+        if let Backend::Mpv(playback) = &self.backend {
+            let mut playback = playback.lock().unwrap();
+            playback.segments = segments;
+            playback.credits = credits;
+            playback.update_prompt();
         }
     }
 
@@ -1048,7 +1057,7 @@ fn socket_path() -> PathBuf {
         .join("semmeltv-mpv.sock")
 }
 
-fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option<Title>) {
+fn connect(child: &mut Child, socket_path: &Path, shared: &Shared) {
     while let Ok(None) = child.try_wait() {
         if let Ok(stream) = UnixStream::connect(socket_path) {
             let Ok(events) = stream.try_clone() else {
@@ -1078,14 +1087,14 @@ fn connect(child: &mut Child, socket_path: &Path, shared: &Shared, title: Option
             let ticking = shared.clone();
             thread::spawn(move || tick(&ticking));
             let shared = shared.clone();
-            thread::spawn(move || listen(events, &shared, title));
+            thread::spawn(move || listen(events, &shared));
             return;
         }
         thread::sleep(POLL);
     }
 }
 
-fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
+fn listen(events: UnixStream, shared: &Shared) {
     for line in BufReader::new(events).lines().map_while(Result::ok) {
         match Event::parse(&line) {
             Some(Event::Position(position)) => {
@@ -1093,13 +1102,7 @@ fn listen(events: UnixStream, shared: &Shared, mut title: Option<Title>) {
                 playback.advance(position);
                 playback.update_prompt();
             }
-            Some(Event::Duration(duration)) => {
-                shared.lock().unwrap().duration = duration;
-                if let Some(title) = title.take() {
-                    let shared = shared.clone();
-                    thread::spawn(move || find_segments(title, duration, &shared));
-                }
-            }
+            Some(Event::Duration(duration)) => shared.lock().unwrap().duration = duration,
             Some(Event::Ended) => shared.lock().unwrap().end(),
             Some(Event::Paused(paused)) => {
                 let now = Instant::now();
@@ -1155,18 +1158,6 @@ fn tick(shared: &Shared) {
             playback.tick(Instant::now());
         }
         thread::sleep(TICK);
-    }
-}
-
-fn find_segments(title: Title, duration: f64, shared: &Shared) {
-    match segments::fetch(title, duration) {
-        Ok(found) => {
-            let mut playback = shared.lock().unwrap();
-            playback.segments = found.segments;
-            playback.credits = found.credits;
-            playback.update_prompt();
-        }
-        Err(error) => eprintln!("segments: {error}"),
     }
 }
 

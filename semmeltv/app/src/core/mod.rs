@@ -297,6 +297,7 @@ impl Core {
             led,
             handoff,
             tv: actor::local_tv(&core),
+            segments: crate::segments::finder(),
         };
         let actor = actor::Actor::new(core.clone(), profile, hardware).await;
         let running = tokio::spawn(actor.run(received));

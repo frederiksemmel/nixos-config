@@ -6,7 +6,7 @@ use crate::library::Library;
 use crate::player::{Finish, State};
 use crate::profile::ProfileId;
 use crate::progress::{Place, Progress, Tracks};
-use crate::segments::{Segment, Title};
+use crate::segments::Segment;
 use crate::sidecar::Sidecar;
 use crate::subtitles::{self, Remembered, Settings};
 use crate::up_next::Card;
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 
 /// Raised whenever a message changes shape, so a core and a tv from
 /// different builds refuse each other instead of misreading.
-pub const PROTOCOL: u32 = 1;
+pub const PROTOCOL: u32 = 2;
 
 /// The core's orders and news for the tv.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -182,7 +182,6 @@ pub struct Play {
     pub paused: bool,
     pub tracks: Tracks,
     pub caption: String,
-    pub title: Option<Title>,
     pub subtitles: PlaySubtitles,
     pub audio_device: String,
     pub dialogue: bool,
@@ -344,10 +343,6 @@ mod tests {
                 subtitles_shown: Some(true),
             },
             caption: "Dark · S1 E2".to_string(),
-            title: Some(Title {
-                tmdb: 70523,
-                episode: Some((1, 2)),
-            }),
             subtitles: PlaySubtitles {
                 settings: Settings::default(),
                 remembered: Remembered {

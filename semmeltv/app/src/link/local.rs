@@ -129,8 +129,12 @@ fn drive(orders: &Receiver<ToTv>, tell: &Tell, mut start: impl FnMut(&Play, Call
                 };
                 tell(FromTv::Answered { id, message, ok });
             }
-            ToTv::Segments { .. }
-            | ToTv::Welcome { .. }
+            ToTv::Segments {
+                play,
+                segments,
+                credits,
+            } => control(of(&play), |player| player.set_segments(segments, credits)),
+            ToTv::Welcome { .. }
             | ToTv::Library { .. }
             | ToTv::Home(_)
             | ToTv::Key(_)
@@ -148,10 +152,12 @@ mod tests {
     use crate::link::messages::PlaySubtitles;
     use crate::profile::ProfileId;
     use crate::progress::Tracks;
+    use crate::segments::{Kind, Segment};
     use crate::subtitles::Change;
     use std::path::PathBuf;
     use std::sync::Mutex;
     use std::sync::mpsc::{self, Sender};
+    use std::time::Instant;
 
     fn play(token: &str) -> Box<Play> {
         Box::new(Play {
@@ -163,7 +169,6 @@ mod tests {
             paused: false,
             tracks: Tracks::default(),
             caption: "Up".to_string(),
-            title: None,
             subtitles: PlaySubtitles::default(),
             audio_device: String::new(),
             dialogue: false,
@@ -290,6 +295,47 @@ mod tests {
             ordered.elapsed()
         );
         assert!(muted.state.muted);
+    }
+
+    #[test]
+    fn segments_reach_only_the_play_they_name() {
+        let (said, heard) = mpsc::channel();
+        let said = Mutex::new(said);
+        let link = spawn(
+            move |message| {
+                let _ = said.lock().unwrap().send(message);
+            },
+            |play, callbacks| Ok(Player::without_mpv(&play.play, callbacks)),
+        );
+        let intro = |play: &str| ToTv::Segments {
+            play: play.to_string(),
+            segments: vec![Segment {
+                kind: Kind::Intro,
+                start: 0.0,
+                end: 40.0,
+            }],
+            credits: None,
+        };
+        let skip = || loop {
+            if let FromTv::Report(report) = next(&heard) {
+                break report.state.skip;
+            }
+        };
+        link.send(ToTv::Play(play("a-play")));
+        link.send(intro("an-old-play"));
+        link.send(ToTv::Subtitles {
+            id: 1,
+            play: "a-play".to_string(),
+            change: Change::Toggle,
+        });
+        while !matches!(next(&heard), FromTv::Answered { id: 1, .. }) {}
+        skip();
+        assert_eq!(skip(), None);
+        link.send(intro("a-play"));
+        let shown = Instant::now();
+        while skip() != Some(Kind::Intro) {
+            assert!(shown.elapsed() < Duration::from_secs(3), "no Skip intro");
+        }
     }
 
     fn quiet() -> Callbacks {

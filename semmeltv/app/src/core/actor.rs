@@ -20,7 +20,7 @@ use crate::profile::ProfileId;
 use crate::progress::{self, Position, Progress};
 use crate::screen;
 use crate::seek::Direction;
-use crate::segments::{Kind, Title};
+use crate::segments::{self, Kind, Title};
 use crate::storage;
 use crate::stream;
 use crate::subtitles::Remembered;
@@ -65,6 +65,7 @@ pub struct Hardware {
     pub led: Option<Led>,
     pub handoff: Option<Handoff>,
     pub tv: Link,
+    pub segments: segments::Finder,
 }
 
 pub enum Found {
@@ -92,6 +93,7 @@ struct OnTv {
     play: String,
     last: Report,
     saved: f64,
+    unsegmented: Option<Title>,
 }
 
 impl OnTv {
@@ -184,6 +186,7 @@ pub struct Actor {
     pace: audio::Pace,
     handoff: Option<Handoff>,
     tv: Link,
+    segments: segments::Finder,
     questions: HashMap<u64, oneshot::Sender<Outcome>>,
     asked: u64,
 }
@@ -213,6 +216,7 @@ impl Actor {
             led,
             handoff,
             tv,
+            segments,
         } = hardware;
         let db = core.db().clone();
         let library = core.library();
@@ -277,6 +281,7 @@ impl Actor {
             pace: audio::Pace::default(),
             handoff,
             tv,
+            segments,
             questions: HashMap::new(),
             asked: 0,
         };
@@ -576,7 +581,6 @@ impl Actor {
                 paused: false,
                 tracks,
                 caption: self.caption(path),
-                title: self.title(path),
                 subtitles: PlaySubtitles {
                     settings: self.subtitles.settings_of(owner),
                     remembered: Remembered {
@@ -616,6 +620,7 @@ impl Actor {
                 hold: Hold::default(),
                 last: Report::before(&play),
                 saved: play.start,
+                unsegmented: if handed_off { None } else { self.title(path) },
                 play: play.play,
             });
             self.publish_playback();
@@ -734,7 +739,23 @@ impl Actor {
         if due {
             tv.saved = report.place.position;
         }
+        let duration = report.place.duration;
+        let unsegmented = tv.unsegmented.take_if(|_| duration > 0.0);
         tv.last = report;
+        if let Some(title) = unsegmented {
+            let (find, link, play) = (self.segments.clone(), tv.link.clone(), tv.play.clone());
+            tokio::spawn(async move {
+                match spawn_blocking(move || find(title, duration)).await {
+                    Ok(Ok(found)) => link.send(ToTv::Segments {
+                        play,
+                        segments: found.segments,
+                        credits: found.credits,
+                    }),
+                    Ok(Err(error)) => eprintln!("segments: {error}"),
+                    Err(error) => eprintln!("segments: {error}"),
+                }
+            });
+        }
         self.publish_playback();
         self.hear_sound();
         if due {
@@ -1986,6 +2007,7 @@ mod tests {
             led: None,
             handoff: None,
             tv: Link::pair().0,
+            segments: Arc::new(|_, _| Err("no segments in tests".to_string())),
         }
     }
 
@@ -2183,6 +2205,77 @@ mod tests {
             .unwrap();
         assert!(asked.elapsed() < Duration::from_secs(1), "{:?}", asked.elapsed());
         assert_ne!(answer, Outcome::refused(TV_SILENT));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn segments_are_looked_up_once_per_play_and_sent_with_its_token() {
+        let mut library = db::test_library();
+        library.movies[0].tmdb = Some(14160);
+        let (core, inbox) = Core::detached(library).await;
+        let (link, orders) = Link::pair();
+        let asked = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let asking = asked.clone();
+        let hardware = Hardware {
+            tv: link,
+            segments: Arc::new(move |title, duration| {
+                asking.lock().unwrap().push((title, duration));
+                Ok(segments::Found {
+                    segments: vec![segments::Segment {
+                        kind: Kind::Intro,
+                        start: 60.0,
+                        end: 120.0,
+                    }],
+                    credits: Some(8700.0),
+                })
+            }),
+            ..hardware()
+        };
+        let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware).await;
+        tokio::spawn(actor.run(inbox));
+        core.ask(Request::PlayFile(up(&core))).await.unwrap();
+        let play = match orders.recv_timeout(Duration::from_secs(2)) {
+            Ok(ToTv::Play(play)) => play.play,
+            other => panic!("the tv was told {other:?}"),
+        };
+        core.signal(Signal::Tv(FromTv::Report(Box::new(Report {
+            play: Some(play.clone()),
+            ..Report::default()
+        }))));
+        settled(&core).await;
+        assert!(
+            asked.lock().unwrap().is_empty(),
+            "nothing is looked up before the duration is known"
+        );
+        core.signal(reported(&play, 1.0, true));
+        core.signal(reported(&play, 2.0, true));
+        let segments = |orders: &std::sync::mpsc::Receiver<ToTv>| loop {
+            match orders.recv_timeout(Duration::from_secs(2)) {
+                Ok(ToTv::Segments {
+                    play,
+                    segments,
+                    credits,
+                }) => break Some((play, segments, credits)),
+                Ok(_) => {}
+                Err(_) => break None,
+            }
+        };
+        let (told, intro, credits) = segments(&orders).expect("the tv is told the segments");
+        assert_eq!(told, play);
+        assert_eq!(intro[0].kind, Kind::Intro);
+        assert_eq!(credits, Some(8700.0));
+        core.signal(reported(&play, 3.0, true));
+        settled(&core).await;
+        assert_eq!(segments(&orders), None, "the segments are sent once");
+        assert_eq!(
+            *asked.lock().unwrap(),
+            vec![(
+                Title {
+                    tmdb: 14160,
+                    episode: None
+                },
+                9000.0
+            )]
+        );
     }
 
     #[tokio::test(flavor = "multi_thread")]

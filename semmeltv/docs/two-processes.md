@@ -172,7 +172,7 @@ shows the JSON lines, and `semmeltv tv --dump` (stage 3) prints them.
 | `Home { library_revision, profile, people, progress, offline, downloaded, downloading, problem }` | Wherever `publish_home` runs today | `Home` without the library. Progress is the TV profile's only. |
 | `Key(Command)` | A key the menu handles (today `Bus::key`) | `Command` gets serde. |
 | `Message(String)`, `Panel(Option<Panel>)`, `Together(Together)`, `UpNext(Option<UpNextCard { …, remaining_ms, total_ms }>)` | As today on the bus | `total_ms` lets the tv draw how much of the countdown is left. |
-| `Play { play, owner, file, source, start, paused, tracks, caption, title, subtitles: { settings, remembered, sidecars }, audio_device, dialogue, next }` | `play_from` | `play` is the token `OnTv.play` already holds, used to match every later message. `source` is the path mpv opens (cache, ready copy or mount). `title` (TMDB id and episode) lets the player fetch segments until 1d moves that to the core, which then drops it. |
+| `Play { play, owner, file, source, start, paused, tracks, caption, subtitles: { settings, remembered, sidecars }, audio_device, dialogue, next }` | `play_from` | `play` is the token `OnTv.play` already holds, used to match every later message. `source` is the path mpv opens (cache, ready copy or mount). |
 | `Command { play, command }` | A player key | |
 | `Pause { play, paused }`, `Mute { play, muted }`, `Speed { play, speed }`, `Seek { play, to \| by }`, `SkipSegment { play }`, `HideSkip { play }` | Controls | Fire and forget. The next `Report` shows the result. |
 | `AudioDevice { device, said }`, `Dialogue { on, said }` | Route and filter changes | Apply to the running mpv and to the next start. |
@@ -378,6 +378,17 @@ How 1b came out, where it differs from the table above:
   `Subtitles` until 1c.
 - The skip pill and hide-skip answer from the last report, and speed is
   clamped in the core (1× while the TV set plays).
+
+How 1d came out:
+
+- The core looks segments up through `Hardware::segments`, a
+  `segments::Finder` (theintrodb.org in `semmeltv ui`, a fake in tests), on a
+  blocking task, so the actor never waits on the internet. The answer goes
+  straight down the play's link as `ToTv::Segments`; the actor keeps no copy,
+  so when step 3 resumes a play on a new tv, it sets `OnTv.unsegmented`
+  again and the next report looks them up anew.
+- Nothing is looked up for a hand-off to the TV set, which shows no skip pill.
+- `Play.title` is gone and `PROTOCOL` is 2.
 
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
