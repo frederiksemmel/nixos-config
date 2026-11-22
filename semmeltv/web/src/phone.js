@@ -112,6 +112,7 @@ async function request(method, path, body, options = {}) {
   if (!response.ok) {
     const error = new Error((data && (data.error || data.message)) || `The TV box answered ${response.status}`);
     error.status = response.status;
+    error.data = data;
     throw error;
   }
   return data;
@@ -263,7 +264,7 @@ function reconcile() {
   }
   const wanted = ours(view) && play && ["moving", "starting", "playing"].includes(play.state);
   if (!wanted) {
-    if (player && !player.closed && !player.fresh() && !player.resuming && !player.awaiting) {
+    if (player && !player.closed && !player.fresh() && !player.resuming && !player.awaiting && !player.bakeoff.shown()) {
       const why = `screen is ${view.kind}${view.device ? ` on ${view.device.name}` : ""}${play ? `, ${play.state}` : ", nothing playing"}${view.notice ? `; last notice: ${view.notice.text}` : ""}`;
       if (ours(view) && view.kind === "phone" && !play) {
         if (player.playing()) {
@@ -384,6 +385,367 @@ function playHere(pick) {
   command({ action: "play", ...pick });
 }
 
+// bake-off: begin
+const BELL_EVERY = 2000;
+const BAKE_POLL = 1000;
+const WINDOW_MS = 250;
+const BURNS_AFTER_MS = 600;
+const REST_MS = 500;
+const DOUGH = [243, 227, 192];
+const GOLDEN = [217, 154, 58];
+const BURNT = [59, 36, 18];
+
+function mix(from, to, share) {
+  const amount = Math.min(1, Math.max(0, share));
+  return `rgb(${from.map((value, index) => Math.round(value + (to[index] - value) * amount)).join(",")})`;
+}
+
+function crustOf(error) {
+  return Math.max(0, Math.round(100 * (1 - (error / WINDOW_MS) ** 2)));
+}
+
+// The challenge for a place to watch, on this phone: the full oven's sheet,
+// a challenge to answer, the bake itself and how it came out. The rules are
+// in docs/streaming.md; the TV decides, the phone only shows and presses.
+class Bakeoff {
+  constructor(player) {
+    this.player = player;
+    this.root = element("div", "pp-bake", { role: "dialog", "aria-label": "Bake-off" });
+    this.root.hidden = true;
+    this.bellTimer = 0;
+    this.pollTimer = 0;
+    this.frame = 0;
+    this.challenge = null;
+    this.handled = new Set();
+    this.held = false;
+    this.onKey = () => {};
+  }
+
+  show(...children) {
+    this.root.replaceChildren(...children);
+    this.root.hidden = false;
+  }
+
+  hide() {
+    this.root.hidden = true;
+    this.root.replaceChildren();
+  }
+
+  shown() {
+    return !this.root.hidden;
+  }
+
+  stop() {
+    clearInterval(this.bellTimer);
+    clearTimeout(this.pollTimer);
+    cancelAnimationFrame(this.frame);
+    window.removeEventListener("keydown", this.onKey, true);
+    this.challenge = null;
+    this.hide();
+  }
+
+  heading(text, detail) {
+    const box = element("div", "pp-bake-head");
+    box.append(element("h2", "", { text }));
+    if (detail) box.append(element("p", "", { text: detail }));
+    return box;
+  }
+
+  pill(text, strong, action) {
+    const node = element("button", strong ? "pp-pill pp-strong" : "pp-pill", { type: "button", text });
+    node.addEventListener("click", action);
+    return node;
+  }
+
+  // The oven is full: who to challenge, or how long the dough still rests.
+  full(full, pick) {
+    this.stop();
+    this.player.root.classList.remove("pp-loading");
+    const list = element("ul", "pp-bake-list");
+    const resting = full.resting_ms ? Math.ceil(full.resting_ms / 60000) : 0;
+    for (const watcher of full.watchers) {
+      const item = element("li");
+      const who = element("span", "pp-bake-who", { text: watcher.person });
+      const what = element("span", "pp-bake-what", { text: `${watcher.device} · ${watcher.title}` });
+      if (resting || watcher.busy) {
+        const row = element("div", "pp-bake-row");
+        row.append(who, what);
+        if (watcher.busy) row.append(element("span", "pp-bake-what", { text: "already in a bake-off" }));
+        item.append(row);
+      } else {
+        const choose = element("button", "pp-bake-row", { type: "button" });
+        choose.append(who, what);
+        choose.addEventListener("click", () => this.dare(watcher, pick));
+        item.append(choose);
+      }
+      list.append(item);
+    }
+    const question = resting
+      ? `Your dough is still resting: you can challenge again in ${resting === 1 ? "1 minute" : `${resting} minutes`}.`
+      : "Who do you want to challenge for a place in the oven?";
+    this.show(this.heading(full.heading, full.message), element("p", "pp-bake-ask", { text: question }), list,
+      this.pill("Close", false, () => this.player.close(false)));
+  }
+
+  async dare(watcher, pick) {
+    let made;
+    try {
+      made = await request("POST", "/api/challenges", { seat: watcher.seat.id, device });
+    } catch (error) {
+      toast(error.message, "error");
+      return;
+    }
+    this.challenge = { id: made.id, side: "challenger", pick, path: `/api/challenges/${made.id}` };
+    this.show(this.heading(`Waiting for ${watcher.person}…`, "They can bake against you or stop watching."),
+      this.pill("Give up", false, () => this.giveUp()));
+    this.poll();
+  }
+
+  giveUp() {
+    const challenge = this.challenge;
+    this.stop();
+    if (challenge) request("DELETE", challenge.path).catch(() => {});
+    this.player.close(false);
+  }
+
+  // While a stream plays: asks every few seconds whether someone challenges it.
+  watch(session) {
+    clearInterval(this.bellTimer);
+    this.bellTimer = setInterval(() => this.ring(session), BELL_EVERY);
+  }
+
+  async ring(session) {
+    if (this.challenge || this.player.session !== session || this.player.closed) return;
+    let seen;
+    try {
+      seen = await request("GET", `/api/stream/${session.id}/challenge`);
+    } catch {
+      return;
+    }
+    if (!seen || seen.stage !== "asked" || this.challenge) return;
+    this.challenge = { side: "defender", path: `/api/stream/${session.id}/challenge`, session };
+    this.held = !this.player.video.paused;
+    this.player.pause();
+    this.asked(seen);
+    this.poll();
+  }
+
+  asked(seen) {
+    const row = element("div", "pp-row");
+    row.append(this.pill("Bake", true, () => this.accept()), this.pill("Stop watching", false, () => this.dropOff()));
+    this.show(
+      this.heading("Bake-off!", `${seen.challenger} wants your place in the oven. Bake three Semmeln against them: the better baker keeps watching.`),
+      row,
+      element("p", "pp-bake-what", { text: `Answer within ${clock(seen.answer_within_ms / 1000)}` }),
+    );
+  }
+
+  async accept() {
+    try {
+      this.see(await request("POST", `${this.challenge.path}/accept`));
+    } catch (error) {
+      toast(error.message, "error");
+    }
+  }
+
+  async dropOff() {
+    const challenge = this.challenge;
+    this.stop();
+    if (challenge) await request("POST", `${challenge.path}/drop-off`).catch(() => {});
+    this.player.close(false);
+  }
+
+  poll() {
+    clearTimeout(this.pollTimer);
+    this.pollTimer = setTimeout(async () => {
+      const challenge = this.challenge;
+      if (!challenge) return;
+      try {
+        const seen = await request("GET", challenge.path);
+        if (this.challenge === challenge && seen) this.see(seen);
+      } catch (error) {
+        if (error.status === 404 && this.challenge === challenge) this.stop();
+      }
+      if (this.challenge === challenge) this.poll();
+    }, BAKE_POLL);
+  }
+
+  see(seen) {
+    const challenge = this.challenge;
+    if (!challenge) return;
+    if (seen.stage === "asked") {
+      if (challenge.side === "defender") this.asked(seen);
+    } else if (seen.stage === "baking") {
+      if (!challenge.oven) this.bake(seen);
+    } else if (seen.stage === "done" && !this.handled.has(challenge.path)) {
+      this.handled.add(challenge.path);
+      this.done(seen);
+    }
+  }
+
+  // The bake: three Semmeln on this phone's own clock. A press counts in
+  // milliseconds after the moment its Semmel turned golden on this screen.
+  bake(seen) {
+    const challenge = this.challenge;
+    const begins = performance.now() + Math.max(0, seen.starts_in_ms);
+    const slots = [];
+    let at = 0;
+    for (const golden of seen.golden_ms) {
+      slots.push({ start: at, golden });
+      at += golden + BURNS_AFTER_MS + REST_MS;
+    }
+    const oven = { presses: [null, null, null], input: null, sent: false };
+    challenge.oven = oven;
+    const count = element("div", "pp-bake-count");
+    const semmel = element("div", "pp-bake-semmel");
+    const bar = element("div", "pp-bake-bar");
+    const band = element("div", "pp-bake-band");
+    const mark = element("div", "pp-bake-mark");
+    bar.append(band, mark);
+    const scores = element("div", "pp-bake-scores");
+    const stage = element("div", "pp-bake-oven");
+    stage.append(count, semmel, bar, scores, element("p", "pp-bake-what", { text: "Tap when the Semmel is golden" }));
+    this.show(this.heading("Bake-off", `${seen.challenger} against ${seen.defender}`), stage);
+    const bias = (input) => (seen.bias_ms && seen.bias_ms[input]) || 0;
+    const burnsAt = (slot) => slot.golden + BURNS_AFTER_MS;
+    const pull = (time, input) => {
+      const elapsed = time - begins;
+      const index = slots.findIndex((slot) => elapsed >= slot.start && elapsed < slot.start + burnsAt(slot));
+      if (index < 0 || oven.presses[index] !== null) return;
+      oven.input = oven.input || input;
+      const error = elapsed - slots[index].start - slots[index].golden;
+      oven.presses[index] = Math.round(error);
+      scores.append(element("span", "", { text: `+${crustOf(error - bias(oven.input))}` }));
+    };
+    stage.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      pull(event.timeStamp, event.pointerType === "mouse" ? "mouse" : "touch");
+    });
+    this.onKey = (event) => {
+      if (event.key !== " " && event.key !== "Enter") return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      if (!event.repeat) pull(event.timeStamp, "keys");
+    };
+    window.addEventListener("keydown", this.onKey, true);
+    const burnt = new Set();
+    const paint = () => {
+      if (this.challenge !== challenge) return;
+      const elapsed = performance.now() - begins;
+      if (elapsed < 0) {
+        count.textContent = String(Math.ceil(-elapsed / 1000));
+        semmel.style.background = mix(DOUGH, GOLDEN, 0);
+      } else {
+        count.textContent = "";
+        const index = slots.findLastIndex((slot) => elapsed >= slot.start);
+        const slot = slots[index];
+        const into = elapsed - slot.start;
+        const pressed = oven.presses[index];
+        const stopped = pressed === null ? burnsAt(slot) : slot.golden + pressed;
+        const shown = Math.min(into, stopped);
+        semmel.style.background = shown <= slot.golden
+          ? mix(DOUGH, GOLDEN, shown / slot.golden)
+          : mix(GOLDEN, BURNT, (shown - slot.golden) / BURNS_AFTER_MS);
+        semmel.classList.toggle("pp-bake-out", into >= stopped);
+        mark.style.left = `${Math.min(100, (into / burnsAt(slot)) * 100)}%`;
+        band.style.left = `${((slot.golden - WINDOW_MS / 2) / burnsAt(slot)) * 100}%`;
+        band.style.width = `${(WINDOW_MS / burnsAt(slot)) * 100}%`;
+        if (into >= burnsAt(slot) && pressed === null && !burnt.has(index)) {
+          burnt.add(index);
+          scores.append(element("span", "", { text: "burnt" }));
+        }
+      }
+      if (elapsed >= at) {
+        this.send(challenge);
+        return;
+      }
+      this.frame = requestAnimationFrame(paint);
+    };
+    this.frame = requestAnimationFrame(paint);
+  }
+
+  async send(challenge) {
+    window.removeEventListener("keydown", this.onKey, true);
+    const oven = challenge.oven;
+    if (oven.sent) return;
+    oven.sent = true;
+    this.show(this.heading("Out of the oven", "Waiting for the other baker…"));
+    try {
+      const seen = await request("POST", `${challenge.path}/presses`, { input: oven.input || "touch", presses: oven.presses });
+      if (this.challenge === challenge && seen) this.see(seen);
+    } catch {}
+  }
+
+  done(seen) {
+    const challenge = this.challenge;
+    clearTimeout(this.pollTimer);
+    cancelAnimationFrame(this.frame);
+    window.removeEventListener("keydown", this.onKey, true);
+    const mine = challenge.side;
+    const won = seen.winner === mine;
+    const other = mine === "challenger" ? seen.defender : seen.challenger;
+    const resting = "Your dough rests for 10 minutes before you can challenge again.";
+    let title;
+    let detail = "";
+    if (seen.winner === null) {
+      title = "Nobody baked";
+      detail = `${seen.challenger} went away.`;
+    } else if (seen.ending === "baked") {
+      title = won ? (mine === "challenger" ? "The oven is yours" : "You keep the oven") : `${other} bakes better`;
+      detail = won ? "Fresh out of the oven: enjoy the film." : resting;
+    } else if (seen.ending === "dropped-off" || seen.ending === "seat-gone") {
+      title = won ? "The oven is yours" : "You handed over the oven";
+      if (won) detail = `${other} stopped watching.`;
+    } else if (seen.ending === "no-answer") {
+      title = won ? "The oven is yours" : "You didn't answer in time";
+      detail = won ? `${other} didn't answer.` : resting;
+    } else {
+      title = won ? "You keep the oven" : "You left the bake-off";
+      detail = won ? `${other} left the bake-off.` : resting;
+    }
+    const children = [this.heading(title, detail)];
+    if (seen.baked && seen.baked[0] && seen.baked[1]) children.push(this.table(seen));
+    if (mine === "defender" && seen.winner !== "challenger") {
+      children.push(this.pill("Back to the film", true, () => this.resume()));
+    } else if (mine === "challenger" && won) {
+      children.push(this.pill("Watch", true, () => { this.stop(); this.player.open(challenge.pick); }));
+    } else {
+      children.push(this.pill("Close", false, () => { this.stop(); this.player.close(false); }));
+    }
+    this.show(...children);
+  }
+
+  table(seen) {
+    const table = element("table", "pp-bake-table");
+    const head = element("tr");
+    head.append(element("th"), element("th", "", { text: seen.challenger }), element("th", "", { text: seen.defender }));
+    table.append(head);
+    const [first, second] = seen.baked;
+    first.crust.forEach((_, index) => {
+      const row = element("tr");
+      row.append(
+        element("td", "", { text: `Semmel ${index + 1}` }),
+        element("td", "", { text: `${first.crust[index]} crust · ${first.rise[index]} rise` }),
+        element("td", "", { text: `${second.crust[index]} crust · ${second.rise[index]} rise` }),
+      );
+      table.append(row);
+    });
+    const total = element("tr", "pp-bake-total");
+    total.append(element("td", "", { text: "Total" }), element("td", "", { text: String(first.total) }), element("td", "", { text: String(second.total) }));
+    table.append(total);
+    return table;
+  }
+
+  resume() {
+    const held = this.held;
+    this.held = false;
+    this.stop();
+    if (held && !this.player.closed) this.player.video.play()?.catch(() => {});
+    if (this.player.session && !this.player.closed) this.watch(this.player.session);
+  }
+}
+// bake-off: end
+
 class Player {
   constructor() {
     this.capabilities = capabilities();
@@ -391,6 +753,7 @@ class Player {
     this.video = element("video", "pp-video", { playsinline: "", "webkit-playsinline": "", "x-webkit-airplay": "allow", preload: "auto" });
     this.video.disablePictureInPicture = false;
     this.layer = element("div", "pp-layer");
+    this.bakeoff = new Bakeoff(this);
     this.build();
     document.body.append(this.root);
     this.root.focus({ preventScroll: true });
@@ -477,7 +840,7 @@ class Player {
     this.miniStop = button("pp-icon pp-mini-stop", "Stop", icons.stop);
     this.miniBar = element("div", "pp-minibar", { role: "button", "aria-label": "Open the player" });
     this.miniBar.append(this.miniText, this.miniPlay, this.miniStop);
-    this.root.append(this.video, this.spinner, this.ripple, this.layer, this.skip, this.upNext, this.sheet, this.message, this.miniBar);
+    this.root.append(this.video, this.spinner, this.ripple, this.layer, this.skip, this.upNext, this.sheet, this.message, this.bakeoff.root, this.miniBar);
   }
 
   bind() {
@@ -593,7 +956,7 @@ class Player {
     let taps = [];
     this.root.addEventListener("pointerdown", (event) => {
       if (this.drag || (event.pointerType === "mouse" && event.button !== 0)) return;
-      if (event.target.closest("input, .pp-sheet, .pp-message, .pp-upnext, .pp-skip")) return;
+      if (event.target.closest("input, .pp-sheet, .pp-message, .pp-bake, .pp-upnext, .pp-skip")) return;
       if (this.mini ? event.target.closest(".pp-minibar button") : !event.target.closest(".pp-layer") || event.target.closest("button")) return;
       this.drag = { pointer: event.pointerId, start: event.clientY, moved: 0, live: false, opening: this.mini, samples: [{ y: event.clientY, t: performance.now() }] };
     });
@@ -959,6 +1322,11 @@ class Player {
         this.awaitTv(`opening the stream failed: ${error.message}`);
         return;
       }
+      if (error.status === 429 && error.data && error.data.full) {
+        request("POST", "/api/screen", { action: "stop", device }).catch(() => {});
+        this.bakeoff.full(error.data.full, pick);
+        return;
+      }
       command({ action: "failed", reason: error.message });
       this.failed(error.message);
       return;
@@ -969,6 +1337,7 @@ class Player {
     }
     this.opening = null;
     this.session = session;
+    this.bakeoff.watch(session);
     this.ready = false;
     this.played = 0;
     this.started = false;
@@ -1457,6 +1826,7 @@ class Player {
   close(reportStop = true) {
     if (this.closed) return;
     this.closed = true;
+    this.bakeoff.stop();
     const session = this.session;
     const reported = session && reportStop && (this.started || this.carrying) ? this.report(this.video.ended ? "ended" : "stopped", true) : Promise.resolve();
     const ending = session ? session.id : this.replacing;

@@ -5,6 +5,7 @@ mod auth;
 mod bus;
 mod cache;
 mod cec;
+mod challenge;
 mod client_log;
 mod command;
 mod core;

@@ -195,6 +195,7 @@ struct Parts {
     downloads: Option<Downloads>,
     ready: Option<(PathBuf, PathBuf)>,
     push: Push,
+    store: Store,
 }
 
 #[derive(Clone)]
@@ -284,6 +285,7 @@ impl Core {
                 audio,
                 downloads,
                 ready: ready.clone().map(|file| (root.clone(), file)),
+                store: store.clone(),
             }),
         };
         core.set_library(Arc::new(library));
@@ -347,6 +349,7 @@ impl Core {
                 audio: None,
                 downloads: None,
                 ready: None,
+                store: Store::new(PathBuf::new(), None, None),
             }),
         };
         core.set_library(Arc::new(library));
@@ -438,6 +441,21 @@ impl Core {
             .ok()
             .flatten()
             .map(|found| found.name)
+    }
+
+    /// Whether `path` is whole in the offline cache, so it plays without pCloud.
+    pub fn is_downloaded(&self, path: &Path) -> bool {
+        self.parts.store.is_downloaded(path)
+    }
+
+    pub async fn setting(&self, name: &str) -> Option<String> {
+        self.parts.db.setting(name).await.ok().flatten()
+    }
+
+    pub async fn set_setting(&self, name: &str, value: &str) {
+        if let Err(error) = self.parts.db.set_setting(name, Some(value)).await {
+            eprintln!("setting {name}: {error}");
+        }
     }
 
     pub fn storage(&self) -> Option<storage::Report> {

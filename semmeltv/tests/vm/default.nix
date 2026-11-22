@@ -35,6 +35,7 @@ let
     "feedback"
     "downloads"
     "sign-in"
+    "bakeoff"
     "tv-restart"
     "maintenance"
   ];

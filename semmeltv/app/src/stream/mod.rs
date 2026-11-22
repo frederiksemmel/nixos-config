@@ -1,3 +1,4 @@
+mod bakeoff;
 mod codecs;
 pub mod probe;
 mod remux;
@@ -5,6 +6,7 @@ mod vtt;
 
 use crate::api::{self, problem};
 use crate::auth::gate::Who;
+use crate::challenge::Arena;
 use crate::core::{Core, Request};
 use crate::profile::ProfileId;
 use crate::progress::Watched;
@@ -29,7 +31,12 @@ use tokio::sync::{OnceCell, watch};
 use vtt::{Cue, Source};
 
 const REST: Duration = Duration::from_secs(180);
-const MOST_SESSIONS: usize = 3;
+/// Phones and laptops that can watch at once (docs/streaming.md §3).
+const MOST_STREAMS: usize = 8;
+/// Of those, how many can read a film that isn't downloaded to the TV: each
+/// one comes from pCloud through rclone's cache on the SD card, and that is
+/// what runs out first. The TV playing such a film counts as one.
+const MOST_FROM_PCLOUD: usize = 3;
 const CELLULAR_WARNING: u64 = 8_000_000;
 const PLAYLIST: &str = "application/vnd.apple.mpegurl";
 
@@ -96,6 +103,8 @@ struct Marks {
 struct Live {
     id: String,
     remux: Remux,
+    name: String,
+    downloaded: bool,
     dialogue: Arc<AtomicBool>,
     profile: ProfileId,
     device: Option<crate::screen::Device>,
@@ -141,6 +150,7 @@ struct Streams {
     live: Arc<Mutex<HashMap<String, Arc<Live>>>>,
     probes: Arc<Mutex<HashMap<PathBuf, Media>>>,
     captions: Arc<Mutex<Captions>>,
+    arena: Arc<Mutex<Arena>>,
 }
 
 pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Router<S> {
@@ -151,8 +161,11 @@ pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Ro
         live: Arc::default(),
         probes: Arc::default(),
         captions: Arc::default(),
+        arena: Arc::default(),
     };
     tokio::spawn(reap(streams.clone()));
+    let loading = streams.clone();
+    tokio::spawn(async move { bakeoff::load_calibration(&loading).await });
     Router::new()
         .route("/api/stream/open", post(open))
         .route("/api/stream/{id}", delete(close))
@@ -162,12 +175,14 @@ pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Ro
         .route("/api/stream/{id}/marks", get(marks))
         .route("/api/stream/{id}/progress", post(progress))
         .route("/api/stream/{id}/{name}", get(file))
+        .merge(bakeoff::routes())
         .with_state(streams)
 }
 
 async fn reap(streams: Streams) {
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
+        bakeoff::settle(&streams);
         let gone: Vec<Arc<Live>> = {
             let mut live = streams.live.lock().unwrap();
             let idle: Vec<String> = live
@@ -185,6 +200,7 @@ async fn reap(streams: Streams) {
                 device_name(live.device.as_ref())
             );
             live.remux.close();
+            bakeoff::seat_gone(&streams, &live.id);
         }
     }
 }
@@ -554,7 +570,13 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         (crate::screen::OnScreen::Moving { device: to, .. }, Some(asking)) => to.id == asking.id,
         _ => false,
     };
-    let tv_playing = streams.core.now_playing().is_some() && !handed_here;
+    let now_playing = streams.core.now_playing();
+    let tv_from_pcloud = !handed_here
+        && now_playing
+            .as_ref()
+            .and_then(|playing| tv_file(&streams.core.library(), &playing.playing))
+            .is_some_and(|file| !streams.core.is_downloaded(&file));
+    let downloaded = streams.core.is_downloaded(&chosen.file);
     let (ended, full) = {
         let mut live = streams.live.lock().unwrap();
         let mut ended = Vec::new();
@@ -575,19 +597,29 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
                 }
             }
         }
-        let limit = if tv_playing { 1 } else { MOST_SESSIONS };
-        (ended, live.len() >= limit)
+        let mut arena = streams.arena.lock().unwrap();
+        let now = std::time::Instant::now();
+        let full = if arena.keeps_a_place_for(profile, now) {
+            arena.took_place(profile);
+            None
+        } else {
+            let from_pcloud = live.values().filter(|other| !other.downloaded).count() + usize::from(tv_from_pcloud);
+            room(live.len() + arena.places_kept(now), from_pcloud, downloaded)
+        };
+        (ended, full)
     };
     for other in ended {
         other.remux.close();
+        bakeoff::seat_gone(&streams, &other.id);
     }
-    if full {
-        let reason = if tv_playing {
-            "The TV is playing, so only one phone can watch at a time"
-        } else {
-            "Three phones are already watching"
-        };
-        return refused(StatusCode::TOO_MANY_REQUESTS, reason.to_string());
+    if let Some(full) = full {
+        eprintln!(
+            "stream: {} can't open {}: {}",
+            device_name(body.device.as_ref()),
+            file_name(&chosen.file),
+            full.message()
+        );
+        return bakeoff::full(&streams, profile, body.device.as_ref(), full).await;
     }
     let start = body
         .start
@@ -625,6 +657,8 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     let live = Arc::new(Live {
         id: id.clone(),
         remux,
+        name: chosen.title.clone(),
+        downloaded,
         dialogue,
         profile,
         device: body.device.clone(),
@@ -683,6 +717,67 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
     .into_response()
 }
 
+/// Which limit a new stream would break, if any.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Full {
+    Streams,
+    FromPcloud,
+}
+
+impl Full {
+    pub fn message(self) -> String {
+        match self {
+            Self::Streams => {
+                format!("All {MOST_STREAMS} trays are taken: {MOST_STREAMS} phones and laptops are watching")
+            }
+            Self::FromPcloud => format!(
+                "Only {MOST_FROM_PCLOUD} can bake fresh from pCloud at once. Films downloaded to the TV still fit"
+            ),
+        }
+    }
+}
+
+fn room(streams: usize, from_pcloud: usize, downloaded: bool) -> Option<Full> {
+    if streams >= MOST_STREAMS {
+        Some(Full::Streams)
+    } else if !downloaded && from_pcloud >= MOST_FROM_PCLOUD {
+        Some(Full::FromPcloud)
+    } else {
+        None
+    }
+}
+
+fn tv_file(library: &crate::library::Library, playing: &crate::bus::Playing) -> Option<PathBuf> {
+    match playing {
+        crate::bus::Playing::Movie { movie } => library
+            .movies
+            .iter()
+            .find(|found| &found.key == movie)
+            .map(|found| found.path.clone()),
+        crate::bus::Playing::Episode { show, season, episode } => library
+            .shows
+            .iter()
+            .find(|found| &found.key == show)
+            .and_then(|found| found.episode(*season, *episode))
+            .map(|found| found.path.clone()),
+        crate::bus::Playing::File => None,
+    }
+}
+
+#[cfg(test)]
+mod room_tests {
+    use super::{Full, MOST_FROM_PCLOUD, MOST_STREAMS, room};
+
+    #[test]
+    fn a_stream_fits_until_every_tray_is_taken_or_pcloud_has_all_it_can_bake() {
+        assert_eq!(room(0, 0, false), None);
+        assert_eq!(room(MOST_STREAMS - 1, 0, true), None);
+        assert_eq!(room(MOST_STREAMS, 0, true), Some(Full::Streams));
+        assert_eq!(room(MOST_FROM_PCLOUD, MOST_FROM_PCLOUD, false), Some(Full::FromPcloud));
+        assert_eq!(room(MOST_FROM_PCLOUD, MOST_FROM_PCLOUD, true), None);
+    }
+}
+
 fn find(streams: &Streams, id: &str, asked: &str) -> Result<Arc<Live>, Response> {
     streams.live.lock().unwrap().get(id).cloned().ok_or_else(|| {
         eprintln!("stream {}: {asked} for a stream that has ended", short(id));
@@ -703,6 +798,7 @@ async fn close(State(streams): State<Streams>, Path(id): Path<String>) -> Respon
     if let Some(live) = closed {
         eprintln!("stream {}: closed by {}", short(&id), device_name(live.device.as_ref()));
         live.remux.close();
+        bakeoff::seat_gone(&streams, &id);
     }
     StatusCode::NO_CONTENT.into_response()
 }
@@ -922,6 +1018,7 @@ async fn progress(
             report.position
         );
         live.remux.close();
+        bakeoff::seat_gone(&streams, &id);
         return answer;
     }
     if answer.status().is_success() && live.sound_changed() {
