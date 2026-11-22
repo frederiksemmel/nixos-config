@@ -524,11 +524,14 @@ let
             # white (the tooltip foreground) as mostly unlocked, black as
             # mostly locked, a dot where the poller mostly was not running.
             # Eighth blocks above, below and at the ends draw the frame
-            # flush against the cells.
-            cells = 48
+            # flush against the cells. GTK wraps a tooltip at 50 characters,
+            # so every line stays narrower and the black cells are no-break
+            # spaces.
+            cells = 40
+            nbsp = "\302\240"
             for (c = 0; c < cells; c++) { top = top "▁"; bottom = bottom "▔" }
             split("3600 86400", win, " ")
-            split("Past 1h |Past 24h", name, "|")
+            split("Past 1h|Past 24h", name, "|")
             for (w = 1; w <= 2; w++) {
               start = now - win[w]
               bar = ""
@@ -537,16 +540,18 @@ let
                 b = start + win[w] * (c + 1) / cells
                 span(a, b)
                 if (U + L < (b - a) / 2) bar = bar "·"
-                else bar = bar (U >= L ? "█" : " ")
+                else bar = bar (U >= L ? "█" : nbsp)
               }
               span(start, now)
               on = U + L
               off = win[w] - on
-              share = on > 0 ? sprintf("%3d%%", 100 * U / on + 0.5) : "   –"
-              printf "           %s\n", top
-              printf "%s  ▕%s▏ %s\n", name[w], bar, share
-              printf "           %s\n", bottom
-              printf "           unlocked %s · locked %s", fmt(U), fmt(L)
+              share = on > 0 ? sprintf("%d%% unlocked", 100 * U / on + 0.5) : ""
+              if (w > 1) printf "\n"
+              printf "%s%*s\n", name[w], cells + 2 - length(name[w]), share
+              printf "%s%s\n", nbsp, top
+              printf "▕%s▏\n", bar
+              printf "%s%s\n", nbsp, bottom
+              printf "unlocked %s · locked %s", fmt(U), fmt(L)
               if (off >= 60) printf " · off %s", fmt(off)
               printf "\n"
             }
