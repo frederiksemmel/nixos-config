@@ -377,9 +377,45 @@ its listed files.
    place. Proposed as a follow-up after step 4.
 5. **Bluetooth and D-Bus outside a logind session.** The core no longer runs
    in cage's seat session. bluetoothctl, BlueALSA and any `uaccess`
-   device ACLs must work for a system service with `User=semmeltv`. Check
-   this on semmeltv5 in step 0b by running `semmeltv hear` and a pairing from
-   a plain `systemd-run --uid=semmeltv`.
+   device ACLs must work for a system service with `User=semmeltv`.
+   **Answer (step 0b, from the code and the NixOS modules): nothing the core
+   uses depends on the session.** With `User=` systemd applies the user's
+   supplementary groups (video, render, input, audio, systemd-journal), and
+   every device and bus name the core touches is granted by a group or to
+   everyone:
+
+   | The core uses | Granted by | Session needed? |
+   |---|---|---|
+   | `bluetoothctl` (`info`, `devices`, `connect`, `scan bredr`) → `org.bluez` | bluez's `bluetooth.conf`: `<policy context="default"><allow send_destination="org.bluez"/>`; its callbacks into bluetoothctl's agent are allowed by the `user="root"` policy. bluez asks no polkit. | No |
+   | `bluealsa-cli` (`list-pcms`, `monitor`, `volume`, `delay-adjustment`) → `org.bluealsa` | bluez-alsa's D-Bus policy: `<policy group="audio">`. dbus-broker takes the peer's groups from `SO_PEERGROUPS`, so the unit's supplementary groups count. | No |
+   | `arecord -D plughw:…` (voice mic, `SEMMELTV_MICROPHONE`), `aplay` into `plughw:Loopback,0,0` (phone mic) | `/dev/snd/*` is `GROUP="audio"` (udev `50-udev-default.rules`). `uaccess` adds an ACL on top for the seat's user, which the core no longer gets and does not need. | No |
+   | `/dev/cec*` (`cec_linux`) | `SUBSYSTEM=="cec", GROUP="video"`; not tagged `uaccess` at all | No |
+   | The ACT LED (`SEMMELTV_LED`) | `semmeltv-led.service` chgrps `brightness` to video | No |
+   | `/sys/class/drm/*/status`, thermal, `get_throttled` | world-readable (`status` writable by video through kiosk.nix's udev rule) | No |
+   | `grim` (feedback screenshot) | cage's socket `/run/user/<uid>/wayland-0`, a 0700 directory owned by semmeltv | Exists only while cage's session is open, so a screenshot fails while the tv is restarting and works while it hangs. The core's unit must not set `ProtectHome`, which hides `/run/user`. |
+   | `semmeltv-downloads` and `semmeltv-mount` | already run as `User=semmeltv` outside any session | — |
+
+   The `uaccess` ACLs (sound, `drm` cards, `rfkill`, video4linux, media) stay
+   with cage's session, where mpv and Slint need them for the decoders and
+   the GPU. The core opens none of `/dev/dri`, `/dev/video*`, `/dev/media*`
+   or `/dev/rfkill` (bluetoothd handles rfkill as root), and `ffmpeg` in
+   `stream/` encodes in software. `XDG_RUNTIME_DIR` is unset in the core's
+   unit; only the mpv IPC socket uses it, and that moves to the tv.
+
+   Two session effects to keep in mind. (a) logind's default `RemoveIPC=yes`
+   applies to semmeltv, a normal user: every time cage's session closes (each
+   tv restart, each deploy), logind deletes all SysV and POSIX IPC of the uid,
+   including the core's. The core creates none today (plain `plughw` devices,
+   no `dmix`/`dsnoop`, the stream dir is on disk, not `/dev/shm`); if that
+   changes, set `services.logind.settings.Login.RemoveIPC = false`. (b)
+   `KillUserProcesses`/`KillOnlyUsers=semmeltv` kills only the session's
+   scope, not `semmeltv.service`.
+
+   `semmeltv hear` is not a check of any of this: it reads a WAV file and
+   talks TCP to the speech server. The TV-side check is to run each command
+   above under `systemd-run --uid=semmeltv --pipe --wait` (a transient
+   service, which gets the same groups and no session) and expect them to
+   behave as they do from cage.
 6. **Memory on semmeltv3**: two processes, each holding the library. If RSS is
    too high, the tv could keep only what the menu draws. Measure first.
 7. **The renderer stays in the core.** A hung UPnP call is on its own thread
