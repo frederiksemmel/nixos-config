@@ -388,9 +388,9 @@ fn switch(text: &str) -> Option<Switch> {
 
 fn greeting(is_group: bool) -> &'static str {
     if is_group {
-        "Hoi zäme! /text <message> puts it on the display. /help lists the commands, \"ciao bello guys\" sends me away."
+        "Hoi zäme! /text <message> puts it on the display. /help lists the commands."
     } else {
-        "Hoi! Whatever you write here goes on the display. /help lists the commands, \"ciao bello guys\" sends me away."
+        "Hoi! Whatever you write here goes on the display. /help lists the commands."
     }
 }
 
