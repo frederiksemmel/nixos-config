@@ -1,9 +1,9 @@
 //! The bot as a linked device of a WhatsApp account.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex},
+    sync::{Arc, LazyLock, Mutex},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
@@ -359,18 +359,27 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         return Ok(());
     }
     if let Some(sticker) = base.sticker_message.as_option() {
+        let still = sticker.is_lottie != Some(true) || sticker.png_thumbnail.is_some();
         if is_group
             && !quotes_the_bot(&bot, &chat, sticker.context_info.as_option())
             && !bot.display.pairs(&chat.author(), false)
         {
+            if still {
+                hold(&chat.author(), Held::Sticker(sticker.clone()));
+            }
             return Ok(());
         }
         tracing::info!(chat = %info.source.chat, "whatsapp sticker");
-        if sticker.is_lottie == Some(true) && sticker.png_thumbnail.is_none() {
+        if !still {
             chat.send(flow::STILL_STICKERS_ONLY).await?;
             return Ok(());
         }
         let client = ctx.client.clone();
+        if let Some(Held::Text(text)) = take_held(&chat.author()) {
+            return bot
+                .draw_sticker_with_text(&chat, sticker_picture(&client, sticker), text)
+                .await;
+        }
         return bot.draw_picture(&chat, sticker_picture(&client, sticker)).await;
     }
     if let Some(gif) = base
@@ -410,10 +419,20 @@ async fn handle(bot: flow::Bot, groups: &SharedGroups, ctx: MessageContext) -> R
         return bot.message(&chat, &text).await;
     }
     let replying = mentioning || quotes_the_bot(&bot, &chat, context);
+    let command = flow::parse_command(&text).is_some();
     match addressed(&text, replying) {
+        Some(text) if flow::parse_command(&text).is_none() => match take_held(&chat.author()) {
+            Some(Held::Sticker(sticker)) => {
+                bot.draw_sticker_with_text(&chat, sticker_picture(&ctx.client, &sticker), text)
+                    .await
+            }
+            _ => bot.message(&chat, &text).await,
+        },
         Some(text) => bot.message(&chat, &text).await,
-        None if flow::parse_command(&text).is_none() && bot.display.pairs(&chat.author(), true) => {
-            bot.draw(&chat, flow::text_scene(text)).await
+        None if !command && bot.display.pairs(&chat.author(), true) => bot.draw(&chat, flow::text_scene(text)).await,
+        None if !command => {
+            hold(&chat.author(), Held::Text(text));
+            Ok(())
         }
         None => bot.command_message(&chat, &text).await,
     }
@@ -424,6 +443,29 @@ fn quotes_the_bot(bot: &flow::Bot, chat: &Conversation, context: Option<&wa::Con
     context
         .and_then(|context| context.stanza_id.as_deref())
         .is_some_and(|quoted| bot.replies.lock().unwrap().is_reply(&chat.key(), quoted))
+}
+
+/// A group sticker or text that wasn't meant for the bot, kept for [`flow::PAIRING`] in case its
+/// author's next message is meant for the bot and brings it along.
+enum Held {
+    Sticker(wa::message::StickerMessage),
+    Text(String),
+}
+
+static HELD: LazyLock<Mutex<HashMap<String, (Instant, Held)>>> = LazyLock::new(Mutex::default);
+
+fn hold(author: &str, held: Held) {
+    let mut all = HELD.lock().unwrap();
+    all.retain(|_, (at, _)| at.elapsed() < flow::PAIRING);
+    all.insert(author.to_owned(), (Instant::now(), held));
+}
+
+fn take_held(author: &str) -> Option<Held> {
+    HELD.lock()
+        .unwrap()
+        .remove(author)
+        .filter(|(at, _)| at.elapsed() < flow::PAIRING)
+        .map(|(_, held)| held)
 }
 
 /// The sticker's WebP, downloaded and decrypted; for a Lottie sticker, its PNG thumbnail.
@@ -530,6 +572,14 @@ mod tests {
         let (text, mentioning) = named_by_mention("Hoi @41771111111", &own, &mentioned[1..]);
         assert!(!mentioning);
         assert_eq!(text, "Hoi @41771111111");
+    }
+
+    #[test]
+    fn a_held_message_goes_to_its_author_once() {
+        hold("wa:held-test", Held::Text("Hoi".into()));
+        assert!(take_held("wa:someone-else").is_none());
+        assert!(matches!(take_held("wa:held-test"), Some(Held::Text(text)) if text == "Hoi"));
+        assert!(take_held("wa:held-test").is_none());
     }
 
     #[test]

@@ -379,17 +379,24 @@ impl Bot {
     pub async fn draw_picture<C: Chat>(&self, chat: &C, fetch: impl Future<Output = Result<Vec<u8>>>) -> Result<()> {
         self.display.hear(&chat.author(), false);
         let pending = self.start(chat).await?;
-        let message = match fetch.await.and_then(|bytes| picture::decode(&bytes)) {
-            Ok(image) => outcome(
-                self.display
-                    .show_part(&chat.author(), Part::Sticker(Arc::new(image)))
-                    .await,
-            )
-            .map_or_else(|message| message, |()| Message::Written),
-            Err(err) => {
-                tracing::warn!("no picture to draw: {err:#}");
-                Message::Failed
-            }
+        let message = match fetched(fetch).await {
+            Ok(picture) => done(self.display.show_part(&chat.author(), Part::Sticker(picture)).await),
+            Err(message) => message,
+        };
+        self.finish(chat, &pending, message, str::to_owned).await
+    }
+
+    /// Says a wait line, fetches a sticker and draws it beside `text` in one drawing, then tells the outcome.
+    pub async fn draw_sticker_with_text<C: Chat>(
+        &self,
+        chat: &C,
+        fetch: impl Future<Output = Result<Vec<u8>>>,
+        text: String,
+    ) -> Result<()> {
+        let pending = self.start(chat).await?;
+        let message = match fetched(fetch).await {
+            Ok(picture) => done(self.display.show(Scene::Sticker { picture, text }).await),
+            Err(message) => message,
         };
         self.finish(chat, &pending, message, str::to_owned).await
     }
@@ -515,6 +522,20 @@ impl Bot {
         self.replies.lock().unwrap().sent(&chat.key(), &id, message, &variant);
         Ok(())
     }
+}
+
+async fn fetched(fetch: impl Future<Output = Result<Vec<u8>>>) -> Result<Arc<RgbaImage>, Message> {
+    match fetch.await.and_then(|bytes| picture::decode(&bytes)) {
+        Ok(image) => Ok(Arc::new(image)),
+        Err(err) => {
+            tracing::warn!("no picture to draw: {err:#}");
+            Err(Message::Failed)
+        }
+    }
+}
+
+fn done(shown: Result<Shown<()>>) -> Message {
+    outcome(shown).map_or_else(|message| message, |()| Message::Written)
 }
 
 fn outcome<T>(shown: Result<Shown<T>>) -> Result<T, Message> {
@@ -921,6 +942,26 @@ mod tests {
         assert_eq!(shown(&display).await, Some(Scene::Text { text: "Ciao".into() }));
         display.show_part("wa:beat", Part::Sticker(black())).await.unwrap();
         assert!(matches!(shown(&display).await, Some(Scene::Sticker { .. })));
+    }
+
+    #[tokio::test]
+    async fn a_held_sticker_and_its_text_draw_once_together() {
+        let drawn = Arc::new(AtomicUsize::new(0));
+        let bot = bot(Box::new(Counted(drawn.clone())));
+        let chat = Fake::default();
+        let png = encoded(&black(), image::ImageFormat::Png);
+        bot.draw_sticker_with_text(&chat, async { Ok(png) }, "Hoi".into())
+            .await
+            .unwrap();
+        assert_eq!(drawn.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            shown(&bot.display).await,
+            Some(Scene::Sticker {
+                picture: black(),
+                text: "Hoi".into()
+            })
+        );
+        assert_eq!(chat.messages().len(), 1);
     }
 
     #[tokio::test]

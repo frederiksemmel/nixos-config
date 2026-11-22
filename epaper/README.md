@@ -38,7 +38,12 @@ A sticker sent to the bot goes on the panel, with the same wait and outcome repl
 - **WhatsApp:** in a private chat, every sticker. In a group, a sticker that replies to one of the bot's messages; any other sticker stays chat. An animated sticker draws its first frame.
 - **Telegram:** a still sticker draws as it is. An animated or video sticker draws its still thumbnail; without one, the bot answers that it can only draw still stickers.
 
-A sticker and a text from the same person, sent within 30 s of each other in either order, share the panel: the sticker in the first half of the long side, the text fitted into the other half. The second one doesn't get "busy" while the first is still drawing; it waits and then draws both. In a WhatsApp group the second one counts as meant for the bot even if it doesn't reply to it, so a sticker that replies to the bot can be followed by plain text.
+A sticker and a text from the same person, sent within 30 s of each other in either order, share the panel: the sticker in the first half of the long side, the text fitted into the other half. At least one of the two has to be meant for the bot; the other comes along.
+
+- In a private chat every message is meant for the bot. The first one draws on its own; the second waits for that drawing instead of getting "busy", then draws both.
+- In a group, a sticker or text that isn't meant for the bot is kept for 30 s. If the same person's next message is meant for the bot (a reply, an @mention or `spades`), both draw at once. So a sticker followed by `@bot schöne Sunntig` draws the sticker with "schöne Sunntig".
+- In a group, once a sticker or text has drawn, the same person's other kind within 30 s joins it even if it isn't meant for the bot.
+- Only one sticker and one text pair. Commands never pair, and a third message draws on its own.
 
 A picture is fitted into the panel at its current rotation, keeping its shape, and centred on white; transparent parts are white. How it is turned into four shades depends on the picture:
 
