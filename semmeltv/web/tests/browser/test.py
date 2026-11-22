@@ -55,6 +55,11 @@ def opens_title(page, engine):
           f'location.pathname === {href!r} && !document.querySelector("semmel-shell") && document.querySelector("main .detail h1")')
 
 
+def feedback_button_stays(page, engine, after):
+    until(page, engine, f"the feedback button still shows {after}",
+          'getComputedStyle(document.getElementById("feedback-open")).visibility === "visible"', 3000)
+
+
 def finds_subtitles(page, engine):
     until(page, engine, "a film without subtitles offers to find them", '!!document.querySelector("main .find-subtitles-row .pill")', 3000)
     page.wait_for_timeout(300)
@@ -430,10 +435,12 @@ def run(p, engine, device):
     zoom_comes_back(page, engine)
     text_selects_with_a_mouse_only(p, engine, page)
     opens_title(page, engine)
+    feedback_button_stays(page, engine, "after the page changes")
     finds_subtitles(page, engine)
     shares_a_title(page, engine)
     page.locator("main a.back").first.tap()
     until(page, engine, "Back returns home", 'location.pathname === "/" && !document.querySelector("semmel-shell")')
+    feedback_button_stays(page, engine, "after Back")
     page.wait_for_timeout(500)
     headphones(page, engine)
     feedback_follows_changes(page, engine)

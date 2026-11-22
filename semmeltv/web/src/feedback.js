@@ -185,4 +185,10 @@ document.addEventListener("click", async (event) => {
   }
 });
 
-document.documentElement.dataset.feedbackReady = "";
+function ready() {
+  const html = document.documentElement;
+  if (!html.hasAttribute("data-feedback-ready")) html.dataset.feedbackReady = "";
+}
+
+ready();
+new MutationObserver(ready).observe(document.documentElement, { attributes: true, attributeFilter: ["data-feedback-ready"] });
