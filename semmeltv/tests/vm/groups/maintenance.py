@@ -27,7 +27,7 @@ def the_guess_moves_past(promised, timeout):
 
 def reopened():
     tv.succeed("semmeltv-maintenance off")
-    tv.systemctl("start cage-tty1.service")
+    tv.systemctl("start semmeltv.service cage-tty1.service")
     app_restarted()
 
 
@@ -60,7 +60,7 @@ with scenario("planned work shows the bakery's closed screen with its reason, an
 with scenario("a stopped core shows the closed screen at once, guesses again once it runs over, and the page comes back by itself"):
     film_page(phone)
     stopped = time.monotonic()
-    tv.systemctl("stop cage-tty1.service")
+    tv.systemctl("stop semmeltv.service")
     first = maintenance()
     assert first["state"] == "closed" and first["cause"] == "restarting", first
 
@@ -74,7 +74,7 @@ with scenario("a stopped core shows the closed screen at once, guesses again onc
     phone.until(LATE, 10000)
     phone.shot("maintenance-restarting-overdue")
 
-    tv.systemctl("start cage-tty1.service")
+    tv.systemctl("start semmeltv.service")
     app_restarted()
     phone.until('!!document.querySelector("main button.play[data-play-movie]")', 60000)
     took = time.monotonic() - stopped

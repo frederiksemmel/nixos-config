@@ -29,6 +29,7 @@ mod loader;
 mod manifest;
 mod mdblist;
 mod nav;
+mod notify;
 mod offline;
 mod overlay;
 mod parse;
@@ -231,6 +232,10 @@ fn run_ui(args: Args, cache: Cache) -> Result<(), String> {
     shown
 }
 
+/// How long a thread of the tv may go without a beat before the tv ends
+/// itself, so that systemd starts it again.
+const TV_STUCK_FOR: std::time::Duration = std::time::Duration::from_secs(15);
+
 fn tv_socket() -> PathBuf {
     env_path("SEMMELTV_TV_SOCKET").unwrap_or_else(|| PathBuf::from(link::SOCKET))
 }
@@ -238,6 +243,7 @@ fn tv_socket() -> PathBuf {
 /// The core on its own: the API, the library, the TV's remote and the
 /// decisions, with the tv at the other end of its socket.
 fn run_core(args: Args, cache: Cache) -> Result<(), String> {
+    reach_cage();
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .thread_name("semmeltv-core")
         .enable_all()
@@ -248,17 +254,58 @@ fn run_core(args: Args, cache: Cache) -> Result<(), String> {
         link::socket::bind(&path, link::revision()).map_err(|error| format!("{}: {error}", path.display()))?;
     runtime.block_on(async {
         start_core(args, cache, core::TvEnd::Socket(listening)).await?;
+        notify::ready();
         std::future::pending::<Result<(), String>>().await
     })
 }
 
+/// Points a core started outside cage's session at cage's Wayland socket,
+/// so grim can take the TV's screenshot for a feedback report. Called before
+/// any thread starts.
+fn reach_cage() {
+    if env::var_os("XDG_RUNTIME_DIR").is_none() {
+        let uid = unsafe { libc::getuid() };
+        unsafe { env::set_var("XDG_RUNTIME_DIR", format!("/run/user/{uid}")) };
+    }
+    if env::var_os("WAYLAND_DISPLAY").is_none() {
+        unsafe { env::set_var("WAYLAND_DISPLAY", "wayland-0") };
+    }
+}
+
 /// The tv on its own: the menu and the player, steered by the core over its
 /// socket.
+/// Marks what this process inherited past stdio close-on-exec, so mpv
+/// doesn't inherit it in turn. cage hands its program the end of a pipe and
+/// exits once nobody holds it: held by mpv too, a tv that died would leave
+/// cage, and the TV, waiting on mpv instead of starting again.
+fn keep_inherited_to_ourselves() {
+    let Ok(open) = fs::read_dir("/proc/self/fd") else {
+        return;
+    };
+    let fds: Vec<i32> = open
+        .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse().ok())
+        .filter(|fd| *fd > 2)
+        .collect();
+    for fd in fds {
+        unsafe {
+            let flags = libc::fcntl(fd, libc::F_GETFD);
+            if flags >= 0 {
+                libc::fcntl(fd, libc::F_SETFD, flags | libc::FD_CLOEXEC);
+            }
+        }
+    }
+}
+
 fn run_tv(args: &Args) -> Result<(), String> {
     let path = tv_socket();
     if args.dump {
         return link::client::dump(&path).map_err(|error| format!("{}: {error}", path.display()));
     }
+    keep_inherited_to_ourselves();
+    notify::watch(TV_STUCK_FOR, |stuck| {
+        eprintln!("tv: {stuck:?} stuck for {TV_STUCK_FOR:?}; ending the tv so that it starts again");
+        std::process::abort();
+    });
     let (menu, inbox) = ui::inbox();
     let (said, heard) = std::sync::mpsc::channel();
     let telling = said.clone();

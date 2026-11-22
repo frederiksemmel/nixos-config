@@ -21,7 +21,7 @@ with scenario("a phone reopens its stream where it was after the TV app restarts
     phone.page.on("request", lambda request: opens.append(request.post_data_json) if request.url.endswith("/api/stream/open") else None)
     boot = screen(phone)["boot"]
     at = phone_time(phone)
-    tv.systemctl("restart cage-tty1.service")
+    restart_the_app()
     app_restarted()
     eventually("the phone opens its stream again", lambda: phone.page.wait_for_timeout(200) or opens or None, timeout=60)
     assert abs(opens[-1]["start"] - at) < 15, f"the phone was at {at}, reopened at {opens[-1]['start']}"

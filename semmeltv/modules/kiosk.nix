@@ -12,6 +12,11 @@
 }:
 let
   cfg = config.services.semmeltv;
+  tvSocket = "/run/semmeltv/tv.sock";
+  tvReads = [
+    "SEMMELTV_LIBRARY"
+    "SEMMELTV_META"
+  ];
   blankCursor = pkgs.callPackage ../app/blank-cursor.nix { };
   stats = pkgs.writeShellApplication {
     name = "semmeltv-stats";
@@ -57,13 +62,21 @@ in
       description = "Home of the `semmeltv` user, holding `library`, `cache`, the database `semmeltv.db` and the feedback reports in `feedback`.";
     };
 
+    split = lib.mkEnableOption ''
+      two processes: the core (`semmeltv core`: the API, the library, the
+      TV's remote and what plays) as `semmeltv.service`, and the tv
+      (`semmeltv tv`: the menu and mpv) under cage, talking over a Unix
+      socket. Each has a watchdog, and a tv that freezes or crashes no
+      longer takes the API with it. Off, the app runs as one process under
+      cage'';
+
     coreEnvironment = lib.mkOption {
       type = lib.types.attrsOf lib.types.str;
       default = { };
       example = {
         SEMMELTV_HEADPHONES = "bluetooth";
       };
-      description = "Environment of the SemmelTV core: the API, the database, the library, downloads, headphones and TV control. The app under cage gets it too, on top of `services.cage.environment`.";
+      description = "Environment of the SemmelTV core: the API, the database, the library, downloads, headphones and TV control. With `split` it is `semmeltv.service`'s; without, the app under cage gets it on top of `services.cage.environment`.";
     };
 
     adminUser = lib.mkOption {
@@ -145,7 +158,7 @@ in
     security.polkit.extraConfig = ''
       polkit.addRule(function(action, subject) {
         if (action.id == "org.freedesktop.systemd1.manage-units"
-            && action.lookup("unit") == "cage-tty1.service"
+            && (action.lookup("unit") == "cage-tty1.service" || action.lookup("unit") == "semmeltv.service")
             && subject.user == "${cfg.adminUser}") {
           return polkit.Result.YES;
         }
@@ -173,18 +186,28 @@ in
       package = pkgs.cage.override {
         wlroots_0_20 = pkgs.wlroots_0_20.override { enableXWayland = false; };
       };
-      program = lib.getExe cfg.package;
-      environment = cfg.coreEnvironment // {
-        FONTCONFIG_FILE = "${pkgs.makeFontsConf {
-          fontDirectories = [
-            pkgs.dejavu_fonts
-            pkgs.inter
-          ];
-        }}";
-        XCURSOR_THEME = "blank";
-        WLR_LIBINPUT_NO_DEVICES = "1";
-        SEMMELTV_DECODER = cfg.decoder;
-      };
+      program = if cfg.split then "${lib.getExe cfg.package} tv" else lib.getExe cfg.package;
+      environment =
+        (
+          if cfg.split then
+            lib.filterAttrs (name: _: lib.elem name tvReads) cfg.coreEnvironment
+            // {
+              SEMMELTV_TV_SOCKET = tvSocket;
+            }
+          else
+            cfg.coreEnvironment
+        )
+        // {
+          FONTCONFIG_FILE = "${pkgs.makeFontsConf {
+            fontDirectories = [
+              pkgs.dejavu_fonts
+              pkgs.inter
+            ];
+          }}";
+          XCURSOR_THEME = "blank";
+          WLR_LIBINPUT_NO_DEVICES = "1";
+          SEMMELTV_DECODER = cfg.decoder;
+        };
     };
 
     assertions = [
@@ -207,11 +230,37 @@ in
     };
 
     systemd.services.cage-tty1 = {
-      after = [ "systemd-tmpfiles-setup.service" ];
+      after = [ "systemd-tmpfiles-setup.service" ] ++ lib.optional cfg.split "semmeltv.service";
+      wants = lib.optional cfg.split "semmeltv.service";
       restartIfChanged = lib.mkForce true;
       serviceConfig = {
         Restart = "always";
         RestartSec = 2;
+      };
+    };
+
+    systemd.services.semmeltv = lib.mkIf cfg.split {
+      description = "SemmelTV core: the API, the library, the TV's remote and what plays";
+      wantedBy = [ "multi-user.target" ];
+      after = [
+        "systemd-tmpfiles-setup.service"
+        "network.target"
+      ];
+      environment = cfg.coreEnvironment // {
+        SEMMELTV_TV_SOCKET = tvSocket;
+      };
+      serviceConfig = {
+        ExecStart = "${lib.getExe cfg.package} core";
+        User = "semmeltv";
+        Group = "users";
+        WorkingDirectory = cfg.stateDir;
+        Type = "notify";
+        NotifyAccess = "main";
+        WatchdogSec = 30;
+        Restart = "always";
+        RestartSec = 1;
+        RuntimeDirectory = "semmeltv";
+        RuntimeDirectoryMode = "0700";
       };
     };
 

@@ -101,6 +101,11 @@ in
       wants = [ "semmeltv-mount.service" ];
     };
 
+    systemd.services.semmeltv = lib.mkIf cfg.split {
+      after = [ "semmeltv-mount.service" ];
+      wants = [ "semmeltv-mount.service" ];
+    };
+
     systemd.services.semmeltv-mount = {
       description = "Read-only pCloud mount for SemmelTV";
       wantedBy = [ "multi-user.target" ];

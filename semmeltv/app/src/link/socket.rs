@@ -1,7 +1,8 @@
 //! The core's end of the link over a Unix socket. One tv at a time: a new
 //! one replaces the one before. Nothing here waits on the tv for the core:
 //! orders go through bounded queues, every write has 2 s, and a tv silent
-//! for 15 s is dropped.
+//! for 15 s is dropped and killed, since a tv that froze whole cannot end
+//! itself and systemd cannot see it inside cage's session.
 
 use super::messages::{FromTv, PROTOCOL, ToTv};
 use super::{LINE_LIMIT, Link, QUEUE, line_of};
@@ -16,10 +17,13 @@ use tokio::net::UnixListener;
 use tokio::net::unix::{OwnedReadHalf, OwnedWriteHalf};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender, error::TrySendError};
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 const HELLO_TIME: Duration = Duration::from_secs(5);
 const WRITE_TIME: Duration = Duration::from_secs(2);
 const SILENT_TIME: Duration = Duration::from_secs(15);
+const STEADY_EVERY: Duration = Duration::from_millis(500);
+const STALL: Duration = Duration::from_secs(2);
 
 /// What the socket tells the core: what a tv said, or that the tv it had
 /// is gone.
@@ -70,6 +74,7 @@ type Tell = Arc<dyn Fn(Heard) + Send + Sync>;
 
 struct Greeting {
     id: u64,
+    pid: Option<i32>,
     reader: BufReader<OwnedReadHalf>,
     writer: OwnedWriteHalf,
     hello: FromTv,
@@ -77,13 +82,14 @@ struct Greeting {
 
 enum Happened {
     Greeted(Box<Greeting>),
-    Closed { id: u64, why: String },
+    Closed { id: u64, why: String, silent: bool },
 }
 
 /// The tv that is connected: its queue of orders and the tasks that read
 /// from it and write to it, which stop when it is dropped.
 struct Current {
     id: u64,
+    pid: Option<i32>,
     orders: mpsc::Sender<ToTv>,
     tasks: [JoinHandle<()>; 2],
 }
@@ -114,7 +120,7 @@ async fn run(listener: UnixListener, mut orders: UnboundedReceiver<ToTv>, revisi
             },
             Some(event) = happened.recv() => match event {
                 Happened::Greeted(greeting) => {
-                    let Greeting { id, reader, writer, hello } = *greeting;
+                    let Greeting { id, pid, reader, writer, hello } = *greeting;
                     if current.take().is_some() {
                         eprintln!("tv: a new tv took the place of the one connected");
                     }
@@ -124,13 +130,16 @@ async fn run(listener: UnixListener, mut orders: UnboundedReceiver<ToTv>, revisi
                         tokio::spawn(write_orders(writer, queued, id, events.clone())),
                         tokio::spawn(read_said(reader, id, tell.clone(), events.clone())),
                     ];
-                    current = Some(Current { id, orders: queue, tasks });
+                    current = Some(Current { id, pid, orders: queue, tasks });
                     eprintln!("tv: connected");
                     tell(Heard::Said(Box::new(hello)));
                 }
-                Happened::Closed { id, why } => {
+                Happened::Closed { id, why, silent } => {
                     if current.as_ref().is_some_and(|tv| tv.id == id) {
                         eprintln!("tv: {why}");
+                        if let Some(pid) = current.as_ref().and_then(|tv| tv.pid).filter(|_| silent) {
+                            kill(pid, &why);
+                        }
                         current = None;
                         tell(Heard::Gone);
                     }
@@ -152,8 +161,8 @@ async fn run(listener: UnixListener, mut orders: UnboundedReceiver<ToTv>, revisi
 
 async fn greet(stream: tokio::net::UnixStream, id: u64, revision: String, events: UnboundedSender<Happened>) {
     let ours = unsafe { libc::getuid() };
-    match stream.peer_cred() {
-        Ok(peer) if peer.uid() == ours => {}
+    let pid = match stream.peer_cred() {
+        Ok(peer) if peer.uid() == ours => peer.pid(),
         Ok(peer) => {
             eprintln!("tv: refused a connection from uid {}", peer.uid());
             return;
@@ -162,7 +171,7 @@ async fn greet(stream: tokio::net::UnixStream, id: u64, revision: String, events
             eprintln!("tv: whose connection: {error}");
             return;
         }
-    }
+    };
     let (reader, mut writer) = stream.into_split();
     let mut reader = BufReader::new(reader);
     let mut line = Vec::new();
@@ -191,6 +200,7 @@ async fn greet(stream: tokio::net::UnixStream, id: u64, revision: String, events
     let hello = hello.expect("a hello");
     let _ = events.send(Happened::Greeted(Box::new(Greeting {
         id,
+        pid,
         reader,
         writer,
         hello,
@@ -210,25 +220,72 @@ async fn write_orders(
             Ok(Err(error)) => format!("gone while writing: {error}"),
             Err(_) => format!("not reading, dropped it after {WRITE_TIME:?} on {}", order.name()),
         };
-        let _ = events.send(Happened::Closed { id, why });
+        let _ = events.send(Happened::Closed { id, why, silent: false });
         return;
     }
 }
 
+/// Reads what the tv says until it goes, breaks the protocol, or says
+/// nothing for `SILENT_TIME` of time the core itself ran steadily: a check
+/// that comes over `STALL` late means the core was stopped, starved or
+/// suspended, and the silence counts again from then, so the core never
+/// takes its own pause for the tv's.
 async fn read_said(mut reader: BufReader<OwnedReadHalf>, id: u64, tell: Tell, events: UnboundedSender<Happened>) {
     let mut line = Vec::new();
-    let why = loop {
-        match tokio::time::timeout(SILENT_TIME, read_line(&mut reader, &mut line)).await {
-            Ok(Ok(true)) => match serde_json::from_slice::<FromTv>(&line) {
+    let (why, silent) = loop {
+        let read = {
+            let mut since = Instant::now();
+            let mut checked = since;
+            let read = read_line(&mut reader, &mut line);
+            tokio::pin!(read);
+            let mut checks = tokio::time::interval(STEADY_EVERY);
+            loop {
+                tokio::select! {
+                    biased;
+                    read = &mut read => break Some(read),
+                    _ = checks.tick() => {
+                        let now = Instant::now();
+                        if now - checked > STALL {
+                            eprintln!("tv: the core stalled for {:?}; the tv's silence counts from now", now - checked);
+                            since = now;
+                        }
+                        checked = now;
+                        if now - since >= SILENT_TIME {
+                            break None;
+                        }
+                    }
+                }
+            }
+        };
+        match read {
+            Some(Ok(true)) => match serde_json::from_slice::<FromTv>(&line) {
                 Ok(said) => tell(Heard::Said(Box::new(said))),
                 Err(error) => eprintln!("tv: a line the core does not understand: {error}"),
             },
-            Ok(Ok(false)) => break "gone".to_string(),
-            Ok(Err(error)) => break format!("dropped: {error}"),
-            Err(_) => break format!("silent for {SILENT_TIME:?}, dropped"),
+            Some(Ok(false)) => break ("gone".to_string(), false),
+            Some(Err(error)) => break (format!("dropped: {error}"), false),
+            None => {
+                break (
+                    format!("silent for {SILENT_TIME:?} while the core ran steadily, dropped"),
+                    true,
+                );
+            }
         }
     };
-    let _ = events.send(Happened::Closed { id, why });
+    let _ = events.send(Happened::Closed { id, why, silent });
+}
+
+/// Ends a tv that went silent, so that systemd starts it again. Never this
+/// process itself, which a tv in the same process would be.
+fn kill(pid: i32, why: &str) {
+    if u32::try_from(pid).ok() == Some(std::process::id()) {
+        eprintln!("tv: the silent tv is this process {pid} ({why}); not ending it");
+        return;
+    }
+    eprintln!("tv: ending the silent tv, process {pid}, so that it starts again: {why}");
+    if unsafe { libc::kill(pid, libc::SIGKILL) } != 0 {
+        eprintln!("tv: could not end process {pid}: {}", io::Error::last_os_error());
+    }
 }
 
 /// Reads one line into `line`, without its newline. False at the end of the
@@ -491,6 +548,52 @@ mod tests {
             Heard::Said(Box::new(FromTv::Started {
                 play: "a-play".to_string()
             }))
+        );
+    }
+
+    /// Waits on Tokio's clock for the next thing the core hears, so the
+    /// runtime keeps running and a paused clock moves on.
+    async fn hear(hearing: &Receiver<Heard>, within: Duration) -> Option<Heard> {
+        let deadline = tokio::time::Instant::now() + within;
+        while tokio::time::Instant::now() < deadline {
+            if let Ok(heard) = hearing.try_recv() {
+                return Some(heard);
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        None
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_core_that_was_paused_does_not_take_its_pause_for_a_silent_tv() {
+        let path = socket("paused");
+        let (_link, hearing) = core(&path);
+        let (mut stream, _reader) = tv(&path, "this-build");
+        assert_eq!(
+            hear(&hearing, Duration::from_secs(1)).await,
+            Some(Heard::Said(Box::new(hello("this-build"))))
+        );
+        tokio::time::advance(Duration::from_secs(20)).await;
+        stream.write_all(&line_of(&FromTv::Report(Box::default()))).unwrap();
+        assert_eq!(
+            hear(&hearing, Duration::from_secs(1)).await,
+            Some(Heard::Said(Box::new(FromTv::Report(Box::default())))),
+            "the tv is still connected, not dropped and killed"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_tv_silent_for_fifteen_seconds_of_a_steady_core_is_dropped() {
+        let path = socket("silent");
+        let (_link, hearing) = core(&path);
+        let (_stream, _reader) = tv(&path, "this-build");
+        hear(&hearing, Duration::from_secs(1)).await;
+        let started = tokio::time::Instant::now();
+        assert_eq!(hear(&hearing, Duration::from_secs(30)).await, Some(Heard::Gone));
+        let after = started.elapsed();
+        assert!(
+            after >= SILENT_TIME && after < SILENT_TIME + Duration::from_secs(1),
+            "{after:?}"
         );
     }
 }

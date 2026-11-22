@@ -1118,10 +1118,12 @@ fn tick(shared: &Shared) {
         {
             let mut playback = shared.lock().unwrap();
             if playback.closed {
+                crate::notify::rests("player");
                 return;
             }
             playback.tick(Instant::now());
         }
+        crate::notify::beat("player");
         thread::sleep(TICK);
     }
 }

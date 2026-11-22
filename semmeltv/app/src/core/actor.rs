@@ -391,6 +391,7 @@ impl Actor {
                     None => return,
                 },
                 _ = playback.tick() => {
+                    crate::notify::alive();
                     self.tend_bakeoff();
                     self.publish_playback();
                     if self.on_tv.is_none() {

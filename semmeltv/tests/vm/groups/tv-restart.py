@@ -1,17 +1,10 @@
 import threading
 
 NOT_SPLIT = "the core and the tv are not split into semmeltv.service and cage-tty1's `semmeltv tv`"
-EXPECTED_FAILURE = NOT_SPLIT
 
 
 def tv_processes():
-    return [
-        int(pid)
-        for pid in tv.succeed(
-            "for pid in $(cat /sys/fs/cgroup$(systemctl show -P ControlGroup cage-tty1.service)/cgroup.procs 2>/dev/null); do"
-            " tr '\\0' ' ' < /proc/$pid/cmdline 2>/dev/null | grep -qE '/bin/semmeltv tv( |$)' && echo $pid; done; true"
-        ).split()
-    ]
+    return [int(pid) for pid in tv.succeed("pgrep -u semmeltv -f '^/nix/store/[^ ]*/bin/semmeltv tv$' || true").split()]
 
 
 def split_tv():
@@ -28,8 +21,8 @@ def a_new_tv_runs(before, timeout):
     eventually("a new tv process runs", lambda: [pid for pid in tv_processes() if pid != before], timeout=timeout, every=0.2)
 
 
-def watchdog_timeouts():
-    return int(tv.succeed("journalctl -b -u cage-tty1.service -o cat | grep -c 'Watchdog timeout' || true").strip())
+def silent_tvs_ended():
+    return int(tv.succeed("journalctl -b -u semmeltv.service -o cat | grep -c 'ending the silent tv' || true").strip())
 
 
 class Probe:
@@ -103,9 +96,29 @@ with scenario("a film resumes within 10 s where it was after the tv process is k
     CLEANUP.remove(probe.stopping.set)
     stop_everything(phone)
 
-with scenario("a frozen tv process leaves the API up, and the watchdog restarts the tv and the film"):
+with scenario("a film plays on while the core restarts, and the restarted core takes it over"):
+    split_tv()
+    film_plays_at_100()
+    tv.systemctl("stop semmeltv.service")
+    stopped_at = tv_position() or 0
+    tv_plays_past(stopped_at + 3, timeout=15)
+    tv.systemctl("start semmeltv.service")
+    tv.wait_for_open_port(8090)
+    took_over = eventually(
+        "the restarted core shows the film it took over",
+        lambda: (lambda playing: playing if playing and playing.get("kind") == "movie" and playing["position"] > stopped_at else None)(
+            phone.api("GET", "/api/playback")["body"]["now_playing"]
+        ),
+        timeout=30,
+        every=0.5,
+    )
+    print(f"stopped the core at {stopped_at:.1f} s, the restarted one shows {took_over['position']:.1f} s")
+    tv_plays_past(stopped_at + 6, timeout=15)
+    stop_everything(phone)
+
+with scenario("a frozen tv process leaves the API up, and the core ends it so the tv and the film come back"):
     before = split_tv()
-    timeouts = watchdog_timeouts()
+    ended = silent_tvs_ended()
     film_plays_at_100()
     probe = Probe(PROBE_COOKIE)
     thaw = lambda: tv.execute(f"kill -CONT {before}")
@@ -114,9 +127,9 @@ with scenario("a frozen tv process leaves the API up, and the watchdog restarts 
     left_at = tv_position() or 0
     tv.succeed(f"kill -STOP {before}")
     frozen = time.monotonic()
-    eventually("the watchdog restarts cage-tty1", lambda: watchdog_timeouts() > timeouts, timeout=30, every=1)
+    eventually("the core ends the silent tv", lambda: silent_tvs_ended() > ended, timeout=30, every=1)
     restarted = time.monotonic()
-    print(f"the watchdog fired {restarted - frozen:.1f} s after the freeze")
+    print(f"the core ended the frozen tv {restarted - frozen:.1f} s after the freeze")
     a_new_tv_runs(before, 10)
     resumes_near(left_at, restarted, 10)
     time.sleep(2)

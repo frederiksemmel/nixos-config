@@ -300,7 +300,7 @@ in
           })
         ];
 
-        systemd.services.cage-tty1.serviceConfig.ExecStop =
+        systemd.services.${if cfg.split then "semmeltv" else "cage-tty1"}.serviceConfig.ExecStop =
           "-${pkgs.writeShellScript "semmeltv-announce-restart" ''
             SEMMELTV_FRONT_CONTROL=127.0.0.1:${toString front.controlPort} exec ${maintenance} restarting
           ''}";

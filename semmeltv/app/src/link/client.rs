@@ -171,6 +171,7 @@ pub fn start(path: PathBuf, link: Link, said: Receiver<FromTv>, revision: String
 fn post(shared: &Shared, said: &Receiver<FromTv>) {
     let mut last = Instant::now();
     loop {
+        crate::notify::beat("link");
         match said.recv_timeout(HEARTBEAT) {
             Ok(message) => {
                 shared.kept.lock().unwrap().said(&message);
@@ -261,6 +262,11 @@ pub fn dump(path: &Path) -> io::Result<()> {
         ended: None,
     };
     writer.write_all(&line_of(&hello))?;
+    thread::spawn(move || {
+        while writer.write_all(&line_of(&FromTv::Report(Box::default()))).is_ok() {
+            thread::sleep(HEARTBEAT);
+        }
+    });
     let mut reader = BufReader::new(stream);
     let mut line = Vec::new();
     let mut out = io::stdout().lock();

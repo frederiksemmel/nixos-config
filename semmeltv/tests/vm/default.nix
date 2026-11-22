@@ -39,7 +39,7 @@ let
     "tv-restart"
     "maintenance"
   ];
-  expectedToFail = [ "tv-restart" ];
+  expectedToFail = [ ];
   proxied = {
     proxyWebsockets = true;
     extraConfig = ''
@@ -73,6 +73,7 @@ let
         boot.kernelModules = [ "snd-dummy" ];
 
         services.semmeltv = {
+          split = true;
           enable = true;
           adminUser = "root";
           package = semmeltv;

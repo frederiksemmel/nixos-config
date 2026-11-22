@@ -29,6 +29,7 @@ use std::time::{Duration, Instant};
 
 const MESSAGE_TIME: Duration = Duration::from_secs(4);
 const UP_NEXT_TICK: Duration = Duration::from_millis(50);
+const BEAT_EVERY: Duration = Duration::from_secs(1);
 const EMPTY_LIBRARY: &str = "The library is empty";
 const TOGETHER_TITLE: &str = "Watch together";
 
@@ -148,6 +149,9 @@ pub fn run(inbox: Inbox, tell: impl Fn(FromTv) + 'static, meta: &Path) -> Result
     });
     let _ = window.set(ui.as_weak());
     ui.invoke_changed();
+
+    let beating = Timer::default();
+    beating.start(TimerMode::Repeated, BEAT_EVERY, || crate::notify::beat("ui"));
 
     ui.on_resized(display::refresh);
     display::refresh();

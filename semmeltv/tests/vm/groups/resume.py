@@ -7,7 +7,7 @@ with scenario("a film played on the TV resumes where it was after the app restar
     tv_plays_past(105)
     left_at = tv_position() or 0
     tv.screenshot("tv-playing")
-    tv.systemctl("restart cage-tty1.service")
+    restart_the_app()
     app_restarted()
     tv_plays_nothing()
     film_page(phone)

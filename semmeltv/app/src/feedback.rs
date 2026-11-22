@@ -440,6 +440,7 @@ impl Feedback {
                 match run(grim, &["-s", "0.5", "-t", "jpeg", "-q", "70", &path]).await {
                     Ok(_) => Some(name),
                     Err(problem) => {
+                        eprintln!("feedback: the TV's screenshot: {problem}");
                         problems.push(problem);
                         None
                     }

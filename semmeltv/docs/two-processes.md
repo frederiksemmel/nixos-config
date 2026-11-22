@@ -355,10 +355,9 @@ shows the splash and reconnects until it gets `Welcome`.
 
 - **semmeltv5** (Pi 5, 8 GB): everything above, with headphones and downloads
   on the core's side.
-- **semmeltv3** (Pi 3, 1 GB, zram): the TV-set renderer is the main way HEVC
-  plays here, and it stays in the core, so a tv restart doesn't interrupt a
-  hand-off. Memory: two Tokio runtimes and two copies of `Library`. Measure
-  RSS in stage 4 before switching semmeltv3.
+- **semmeltv3** (Pi 3, 1 GB, zram): stays one process (`semmeltv ui` under
+  cage, `services.semmeltv.split` off). Only semmeltv5 is split; nothing about
+  semmeltv3 changes, and nobody deploys or tests the split there.
 - **laptop / `semmeltv ui`**: one process, the in-memory link, the same code
   paths.
 
@@ -385,7 +384,7 @@ functions (`play_from`, `record_place`, `publish_playback`, `key`,
 | **1e** | Renderer: the steering thread sends `Seen` as `Signal::TvSet`. The actor keeps it like a `Report`. The renderer backend leaves `Player`. | The renderer's existing session tests, plus one where `seen` is never locked by the actor | After 1b. Parallel with 1c and 1d (different functions, `renderer.rs`). |
 | **2** | **Menu over the link.** `Home`, `Key`, `Message`, `Panel`, `UpNext`, `Together` become `ToTv`; `ui.rs` sends `FromTv::Ask`/`Key` instead of `core.send`. The bus drops its `#[serde(skip)]` variants. `ui::run` no longer gets the core's runtime handle. | The existing "a new library reaches both frontends" and "a remote key goes to the screen" tests rewritten against the link; a test that the library is sent only when its revision changes | After 1b. Parallel with 1c–1e if it keeps to `ui.rs`/`bus.rs`. |
 | **3** | **The socket.** `link::socket`: the core's listener (peer uid, single slot, bounded writer, timeouts, stale/lost), the tv's client (reconnect, `Hello`, local keys while disconnected). Subcommands `semmeltv core` and `semmeltv tv`; `semmeltv ui` keeps the in-memory link. `semmeltv tv --dump`. | Socket tests on a temp dir: wrong uid refused (skipped when not root); a second client replaces the first; a reader that stops makes the core drop it within 2 s without blocking `send`; a revision mismatch closes it; a 16 MB line limit. Recovery tests (§2.6): a resume after `Lost`, giving up after 2 minutes, the crash-loop guard, adoption from `Hello.playing`, `Hello.ended`. | After 2 |
-| **4** | **Two units.** `semmeltv.service` + `cage-tty1` running `semmeltv tv`, env from 0b, sd_notify (`READY`, `WATCHDOG`) in both, polkit, `hosts/mount.nix` ordering. Move the `ExecStop` that announces a restart to the front (`semmeltv-maintenance restarting`, set on `cage-tty1` in `modules/web.nix`) to `semmeltv.service`, so phones see "Der Ofen wird neu angeheizt" when the core restarts and not when only the tv does. Deploy to semmeltv5 first; semmeltv3 after a day and an RSS check. | VM `tv-restart` (0c) now passes; all VM groups pass with the split; a VM case that stops `semmeltv.service` mid-film and checks the film keeps playing and is adopted. | After 3 |
+| **4** | **Two units.** `semmeltv.service` + `cage-tty1` running `semmeltv tv`, env from 0b, sd_notify (`READY`, `WATCHDOG`) in both, polkit, `hosts/mount.nix` ordering. Move the `ExecStop` that announces a restart to the front (`semmeltv-maintenance restarting`, set on `cage-tty1` in `modules/web.nix`) to `semmeltv.service`, so phones see "Der Ofen wird neu angeheizt" when the core restarts and not when only the tv does. Behind `services.semmeltv.split`, on for semmeltv5 only; semmeltv3 keeps one process, and its RSS check is dropped. | VM `tv-restart` (0c) now passes; all VM groups pass with the split; a VM case that stops `semmeltv.service` mid-film and checks the film keeps playing and is adopted. | After 3 |
 | **5** | Clean-up: drop `Core::bus()` uses by `ui.rs`, the leftovers of `block_in_place` around playback, and the README/ADR text. Write ADR 4 from this doc. | — | After 4 |
 
 How 1b came out, where it differs from the table above:
@@ -527,6 +526,50 @@ How 3b (recovery) came out:
 - The player now honours `Play.paused`: a playback started paused stays
   paused once mpv starts.
 
+How 4 came out:
+
+- `services.semmeltv.split` switches the layout per host. On, `semmeltv.service`
+  runs `semmeltv core` (`Type=notify`, `WatchdogSec=30`, `Restart=always`,
+  `RuntimeDirectory=semmeltv` mode 0700, after the mount) with
+  `coreEnvironment`, and `cage-tty1` runs `semmeltv tv` (after and wanting
+  the core) with only `SEMMELTV_LIBRARY`, `SEMMELTV_META` and the socket
+  from it. Off, cage runs `semmeltv ui` with all of it, as before. semmeltv5
+  turns it on.
+- The core says `READY=1` once it serves the socket and the API, and
+  `WATCHDOG=1` from the actor's 500 ms tick.
+- **Deviation from §3.1: the tv has no systemd watchdog.** cage opens a
+  logind session through PAM, which moves cage and the tv into a
+  `session-cN.scope`, outside `cage-tty1.service`'s cgroup, so systemd
+  ignores the tv's `WATCHDOG=1` and killed cage every 15 s in the first VM
+  run. Instead: the tv's Slint thread, its post thread and, while something
+  plays, the player's 100 ms tick beat (`notify::beat`), and a watchdog
+  thread in the tv aborts it when one of them went 15 s without a beat; cage
+  exits with it and `Restart=always` starts both again. A tv that froze
+  whole (`SIGSTOP`, every thread stuck) can't do that, so the core, which
+  drops a tv silent for 15 s, also kills it, by the pid `SO_PEERCRED` gave it
+  (same uid, no privileges), and logs the pid and why. `semmeltv tv --dump`
+  beats so it isn't killed. The 15 s count only time the core ran steadily:
+  the reader checks every 500 ms, and a check over 2 s late (the core
+  stopped, starved or suspended) starts the silence again, so a core never
+  kills a healthy tv for its own pause. It never kills its own pid.
+- grim reaches cage from the core: `semmeltv core` sets `XDG_RUNTIME_DIR` to
+  `/run/user/<its uid>` and `WAYLAND_DISPLAY` to `wayland-0` when they are
+  unset.
+- cage exits once nobody holds the pipe it hands its program. mpv used to
+  inherit that pipe from its parent, so a tv that died left cage waiting on
+  a still-playing mpv. `semmeltv tv` marks everything it inherited
+  close-on-exec at its start, so its death ends cage and `Restart=always`
+  starts both again.
+- cage's PAM session puts the tv in a `session-cN.scope`, not in
+  `cage-tty1.service`'s cgroup; the VM test finds it with `pgrep`.
+- The restart announcement (`ExecStop`) sits on `semmeltv.service` when
+  split, on `cage-tty1` otherwise; the polkit rule covers both units.
+- The VM runs split. Its tests restart "the app" as both units, stop the
+  core for the closed screen, and `tv-restart` passes; it has a third case
+  that stops the core mid-film and checks the film plays on and is taken
+  over. Its frozen-tv case waits for the core's "ending the silent tv"
+  instead of systemd's watchdog.
+
 Steps 0a, 0b and 0c can start today in three sessions. 1a → 1b is the
 critical path. 1c, 1d, 1e and 2 can then go in parallel if each stays inside
 its listed files.
@@ -595,8 +638,7 @@ its listed files.
    - grim captured 1 MB.
 
    No `SupplementaryGroups=` is needed.
-6. **Memory on semmeltv3**: two processes, each holding the library. If RSS is
-   too high, the tv could keep only what the menu draws. Measure first.
+6. **Memory on semmeltv3**: moot, since semmeltv3 stays one process.
 7. **The renderer stays in the core.** A hung UPnP call is on its own thread
    and touches no shared lock after step 1e, but it is still core code talking
    to a flaky device. The alternative, a third process, is not proposed.

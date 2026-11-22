@@ -33,7 +33,7 @@ touches:
 | `downloads` | `semmeltv-vm-downloads` | season downloads, the search box's offers, TMDB and people search, pCloud storage |
 | `sign-in` | `semmeltv-vm-sign-in` | invites, the profile picker with passwords, profiles on one phone and their limits |
 | `bakeoff` | `semmeltv-vm-bakeoff` | a full oven: challenging someone who watches over the API and on a phone, dropping off, losing a bake-off, the rest after it ([streaming](../../docs/streaming.md)) |
-| `tv-restart` | `semmeltv-vm-tv-restart` | **expected to fail** until step 4 of [two processes](../../docs/two-processes.md): a killed or frozen tv process comes back with the film while the API answers |
+| `tv-restart` | `semmeltv-vm-tv-restart` | the [two processes](../../docs/two-processes.md): a killed or frozen tv process comes back with the film while the API answers, and a film plays on while the core restarts |
 | `maintenance` | `semmeltv-vm-maintenance` | the bakery's closed screen from the front: planned work with `semmeltv-maintenance`, a stopped core, the guess growing once it runs over, the page coming back by itself |
 
 One group, on nixbuild:
@@ -56,8 +56,9 @@ built yet. Its check passes only while at least one scenario fails, and every
 failure names the group's `EXPECTED_FAILURE`; a scenario failing for any other
 reason, or every scenario passing, fails the check. Once the layout lands, take
 the group out of `expectedToFail` and delete its `EXPECTED_FAILURE` line.
-`tv-restart` fails today because `semmeltv.service` and a `semmeltv tv` under
-cage don't exist yet.
+
+The VM runs the core and the tv apart (`services.semmeltv.split`), as
+semmeltv5 does: "the app" restarts as `semmeltv.service` and `cage-tty1`.
 
 The VM shortens the app's fixed waits through its environment, set in
 `default.nix`: `SEMMELTV_UP_NEXT_SECONDS` for the Up next countdown,

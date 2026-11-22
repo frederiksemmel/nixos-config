@@ -38,6 +38,9 @@ url = "2"
 uuid = "1"
 webauthn-rs = { version = "0.6.2", default-features = false }
 
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util"] }
+
 [build-dependencies]
 slint-build = "1.18"
 
