@@ -10,7 +10,6 @@ use std::io;
 use std::mem;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -32,7 +31,7 @@ const CEC_ADAP_G_CONNECTOR_INFO: u32 = 0x8044_610a;
 const CEC_CONNECTOR_TYPE_DRM: u32 = 1;
 
 static INPUT_HELD_UNTIL: Mutex<Option<Instant>> = Mutex::new(None);
-static ACTIVE_SOURCE: AtomicBool = AtomicBool::new(false);
+static INPUT: Mutex<Input> = Mutex::new(Input::Unknown);
 
 pub fn spawn(remote: Core) {
     for path in adapters(Path::new("/dev")) {
@@ -57,15 +56,53 @@ pub enum Screen {
 }
 
 pub fn screen() -> Screen {
-    screen_of(tv_is_on().ok(), ACTIVE_SOURCE.load(Ordering::Relaxed))
+    screen_of(tv_is_on().ok(), input())
 }
 
-fn screen_of(on: Option<bool>, active_source: bool) -> Screen {
-    match (on, active_source) {
-        (Some(true), true) => Screen::Showing,
-        (Some(true), false) => Screen::Elsewhere,
+fn screen_of(on: Option<bool>, input: Input) -> Screen {
+    match (on, input) {
+        (Some(true), Input::Ours) => Screen::Showing,
+        (Some(true), Input::Theirs | Input::Unknown) => Screen::Elsewhere,
         (Some(false) | None, _) => Screen::Off,
     }
+}
+
+/// Who has the TV's input, as far as SemmelTV heard. A started core does not
+/// know, and the input stays unknown until SemmelTV announces itself or another
+/// device takes it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Input {
+    Ours,
+    Theirs,
+    Unknown,
+}
+
+impl Input {
+    fn after(self, opcode: CecOpcode, reaction: &Reaction) -> Self {
+        match (opcode, reaction, self) {
+            (_, Reaction::Stop, _) => Input::Theirs,
+            (CecOpcode::Standby, _, Input::Ours) => Input::Unknown,
+            _ => self,
+        }
+    }
+
+    /// Only a wake or a SemmelTV that had the input announces itself on a link
+    /// change: a restart or a returning address never takes the TV from
+    /// another device.
+    fn greeting(self, greeting: Greeting) -> Greeting {
+        match greeting {
+            Greeting::Announce if self != Input::Ours => Greeting::Silent,
+            greeting => greeting,
+        }
+    }
+}
+
+fn input() -> Input {
+    *INPUT.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+fn set_input(input: Input) {
+    *INPUT.lock().unwrap_or_else(PoisonError::into_inner) = input;
 }
 
 fn tv_is_on() -> io::Result<bool> {
@@ -82,7 +119,7 @@ fn tv_is_on() -> io::Result<bool> {
 }
 
 pub fn turn_tv_off() -> io::Result<()> {
-    ACTIVE_SOURCE.store(false, Ordering::Relaxed);
+    set_input(input().after(CecOpcode::Standby, &Reaction::TvOff));
     each_adapter(|_, device| device.transmit(own_logical_address(&device)?, CecLogicalAddress::Tv, CecOpcode::Standby))
 }
 
@@ -193,7 +230,7 @@ fn listen(path: &Path, remote: &Core) -> io::Result<()> {
                     );
                     wake.recovered();
                 }
-                match wake.link_changed(plugged, !state.log_addr_mask.is_empty(), Instant::now()) {
+                match input().greeting(wake.link_changed(plugged, !state.log_addr_mask.is_empty(), Instant::now())) {
                     Greeting::Silent => {}
                     Greeting::Announce => log_failure(path, "Active Source", announce(&device)),
                     Greeting::Wake => log_failure(
@@ -214,10 +251,9 @@ fn listen(path: &Path, remote: &Core) -> io::Result<()> {
             }
             wake.heard(message.initiator(), opcode);
             let own_address = device.get_phys()?;
-            let reaction = react(opcode, message.parameters(), own_address);
-            if lost_the_screen(opcode, &reaction) {
-                ACTIVE_SOURCE.store(false, Ordering::Relaxed);
-            }
+            let before = input();
+            let reaction = react(opcode, message.parameters(), own_address, before);
+            set_input(before.after(opcode, &reaction));
             match reaction {
                 Reaction::Ignore => {}
                 Reaction::Press(command) => {
@@ -298,12 +334,8 @@ fn announce(device: &CecDevice) -> io::Result<()> {
         CecOpcode::ActiveSource,
         &device.get_phys()?.to_bytes(),
     )?;
-    ACTIVE_SOURCE.store(true, Ordering::Relaxed);
+    set_input(Input::Ours);
     Ok(())
-}
-
-fn lost_the_screen(opcode: CecOpcode, reaction: &Reaction) -> bool {
-    opcode == CecOpcode::Standby || *reaction == Reaction::Stop
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -317,7 +349,7 @@ enum Reaction {
     Reply(CecOpcode, u8),
 }
 
-fn react(opcode: CecOpcode, parameters: &[u8], own_address: CecPhysicalAddress) -> Reaction {
+fn react(opcode: CecOpcode, parameters: &[u8], own_address: CecPhysicalAddress, input: Input) -> Reaction {
     match opcode {
         CecOpcode::UserControlPressed => parameters
             .first()
@@ -325,6 +357,7 @@ fn react(opcode: CecOpcode, parameters: &[u8], own_address: CecPhysicalAddress) 
             .and_then(key_command)
             .map_or(Reaction::Ignore, Reaction::Press),
         CecOpcode::UserControlReleased => Reaction::Release,
+        CecOpcode::RequestActiveSource if input == Input::Theirs => Reaction::Ignore,
         CecOpcode::RequestActiveSource => Reaction::Announce,
         CecOpcode::SetStreamPath if own_address == parameters => Reaction::Announce,
         CecOpcode::SetStreamPath | CecOpcode::ActiveSource if elsewhere(parameters.get(..2), own_address) => {
@@ -541,7 +574,7 @@ mod tests {
     const OWN: CecPhysicalAddress = CecPhysicalAddress::from_num(0x1000);
 
     fn press(code: u8) -> Reaction {
-        react(CecOpcode::UserControlPressed, &[code], OWN)
+        react(CecOpcode::UserControlPressed, &[code], OWN, Input::Unknown)
     }
 
     #[test]
@@ -567,26 +600,76 @@ mod tests {
             (&[], Reaction::Ignore),
         ];
         for (code, reaction) in cases {
-            assert_eq!(react(CecOpcode::UserControlPressed, code, OWN), reaction, "{code:x?}");
+            assert_eq!(
+                react(CecOpcode::UserControlPressed, code, OWN, Input::Unknown),
+                reaction,
+                "{code:x?}"
+            );
         }
     }
 
     #[test]
     fn the_screen_shows_semmeltv_only_when_the_tv_is_on_and_semmeltv_is_the_active_source() {
-        assert_eq!(screen_of(Some(true), true), Screen::Showing);
-        assert_eq!(screen_of(Some(true), false), Screen::Elsewhere);
-        assert_eq!(screen_of(Some(false), true), Screen::Off, "standby");
-        assert_eq!(screen_of(None, true), Screen::Off, "no answer over CEC");
+        assert_eq!(screen_of(Some(true), Input::Ours), Screen::Showing);
+        assert_eq!(screen_of(Some(true), Input::Theirs), Screen::Elsewhere);
+        assert_eq!(
+            screen_of(Some(true), Input::Unknown),
+            Screen::Elsewhere,
+            "after a restart"
+        );
+        assert_eq!(screen_of(Some(false), Input::Ours), Screen::Off, "standby");
+        assert_eq!(screen_of(None, Input::Ours), Screen::Off, "no answer over CEC");
     }
 
     #[test]
     fn semmeltv_stops_being_shown_on_standby_or_another_input() {
-        let elsewhere = react(CecOpcode::ActiveSource, &[0x20, 0x00], OWN);
-        assert!(lost_the_screen(CecOpcode::ActiveSource, &elsewhere));
-        assert!(lost_the_screen(CecOpcode::Standby, &Reaction::TvOff));
-        let ours = react(CecOpcode::SetStreamPath, &[0x10, 0x00], OWN);
-        assert!(!lost_the_screen(CecOpcode::SetStreamPath, &ours));
-        assert!(!lost_the_screen(CecOpcode::UserControlPressed, &press(0x00)));
+        use Input::{Ours, Theirs, Unknown};
+        let elsewhere = react(CecOpcode::ActiveSource, &[0x20, 0x00], OWN, Ours);
+        let ours = react(CecOpcode::SetStreamPath, &[0x10, 0x00], OWN, Ours);
+        let cases = [
+            (Ours, CecOpcode::ActiveSource, &elsewhere, Theirs),
+            (Unknown, CecOpcode::ActiveSource, &elsewhere, Theirs),
+            (Ours, CecOpcode::Standby, &Reaction::TvOff, Unknown),
+            (Theirs, CecOpcode::Standby, &Reaction::TvOff, Theirs),
+            (Unknown, CecOpcode::Standby, &Reaction::TvOff, Unknown),
+            (Ours, CecOpcode::SetStreamPath, &ours, Ours),
+            (Ours, CecOpcode::UserControlPressed, &press(0x00), Ours),
+            (Theirs, CecOpcode::UserControlPressed, &press(0x00), Theirs),
+        ];
+        for (before, opcode, reaction, after) in cases {
+            assert_eq!(before.after(opcode, reaction), after, "{before:?} {opcode:?}");
+        }
+    }
+
+    #[test]
+    fn the_tvs_request_for_its_source_is_answered_unless_another_device_took_the_input() {
+        let cases = [
+            (Input::Ours, Reaction::Announce),
+            (Input::Unknown, Reaction::Announce),
+            (Input::Theirs, Reaction::Ignore),
+        ];
+        for (input, reaction) in cases {
+            assert_eq!(
+                react(CecOpcode::RequestActiveSource, &[], OWN, input),
+                reaction,
+                "{input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_restart_or_a_returning_address_reclaims_the_input_only_when_semmeltv_had_it() {
+        let cases = [
+            (Greeting::Announce, Input::Ours, Greeting::Announce),
+            (Greeting::Announce, Input::Unknown, Greeting::Silent),
+            (Greeting::Announce, Input::Theirs, Greeting::Silent),
+            (Greeting::Wake, Input::Unknown, Greeting::Wake),
+            (Greeting::Wake, Input::Theirs, Greeting::Wake),
+            (Greeting::Silent, Input::Ours, Greeting::Silent),
+        ];
+        for (greeting, input, sent) in cases {
+            assert_eq!(input.greeting(greeting), sent, "{input:?}");
+        }
     }
 
     #[test]
@@ -616,7 +699,11 @@ mod tests {
             (CecOpcode::SetStreamPath, &[], Reaction::Ignore),
         ];
         for (opcode, parameters, reaction) in cases {
-            assert_eq!(react(opcode, parameters, OWN), reaction, "{opcode:?} {parameters:x?}");
+            assert_eq!(
+                react(opcode, parameters, OWN, Input::Unknown),
+                reaction,
+                "{opcode:?} {parameters:x?}"
+            );
         }
     }
 

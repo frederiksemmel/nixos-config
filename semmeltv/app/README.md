@@ -226,6 +226,12 @@ SemmelTV as the active source, plus 2 seconds for the picture, or at most 20
 seconds. A pause or resume in the meantime wins. SemmelTV is the active source
 from its own Active Source until the TV sends Standby or routes elsewhere.
 
+Nothing else switches the TV's input, so a deploy never takes the TV from the
+PlayStation. A restarted core announces nothing: it does not know which input
+the TV shows until it announces itself for a video or another device claims the
+input. It answers the TV's Request Active Source unless another device took the
+input since SemmelTV last had it, and a Standby does not change that.
+
 Waking the TV, when told to, for a video or on plug-in, sends Image View On, asks the
 TV for its power status every half second until it reports on (at most 15
 seconds), then claims the input with Active Source. Until 5 seconds after that,
@@ -260,8 +266,8 @@ goes missing while the adapter's DRM connector still reads "connected", the app
 writes `detect` to that connector's `status` in sysfs, after 2 seconds and then
 at doubling intervals of up to 5 minutes, until the address is back. The kiosk
 module's udev rule lets the `video` group write that file. An address restored
-this way announces SemmelTV as the active source, as an app restart does, and
-never turns the TV on.
+this way announces SemmelTV as the active source only if SemmelTV had the
+input, and never turns the TV on.
 
 Switching the TV to another input stops playback and closes the player, with the
 position saved, the same as Stop. The app takes a Routing Change or Set Stream
