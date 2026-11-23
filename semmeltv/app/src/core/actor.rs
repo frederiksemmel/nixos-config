@@ -1529,6 +1529,10 @@ impl Actor {
             }
             Request::TvProfile(by) => return self.show_profile(by).await,
             Request::Dialogue(by) => return self.apply_dialogue(by).await,
+            Request::TvWentOff => {
+                self.let_the_headphones_go();
+                return Outcome::done("");
+            }
         };
         let message = self.describe(&action);
         let ok = match &action {
@@ -2177,9 +2181,13 @@ impl Actor {
                     } else {
                         television.show_semmeltv()
                     };
-                    if let Err(failure) = sent {
-                        eprintln!("TV: {failure:?}");
-                        core.signal(Signal::TvSilent);
+                    match sent {
+                        Err(failure) => {
+                            eprintln!("TV: {failure:?}");
+                            core.signal(Signal::TvSilent);
+                        }
+                        Ok(()) if control == Control::TvOff => core.send(Request::TvWentOff),
+                        Ok(()) => {}
                     }
                 });
             }
@@ -2192,6 +2200,14 @@ impl Actor {
             (Control::Stop, Some(tv)) => tv.stop(),
             (Control::Mute, Some(tv)) => tv.mute(true),
             (Control::Unmute, Some(tv)) => tv.mute(false),
+        }
+    }
+
+    /// Nobody listens with the TV off: the sound goes back to the TV, which
+    /// disconnects the headphones.
+    fn let_the_headphones_go(&self) {
+        if let Some(audio) = self.audio.clone() {
+            spawn_blocking(move || audio.choose(audio::Output::Tv));
         }
     }
 
@@ -2725,6 +2741,37 @@ mod tests {
                 Outcome::refused("Pause, but nothing is playing")
             );
         });
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_tv_going_off_puts_the_sound_back_on_the_tv_and_lets_the_headphones_go() {
+        let mut calls = None;
+        let (core, inbox) = Core::detached_with_audio(db::test_library(), |bus, found| {
+            let (audio, made) = audio::tests::connected_airpods(bus, found);
+            calls = Some(made);
+            Some(audio)
+        })
+        .await;
+        let calls = calls.unwrap();
+        let wears = db::AudioPrefs::Unpaired
+            .pairing(audio::tests::AIRPODS.to_string())
+            .choosing(db::Output::Headphones);
+        core.db().save_audio_prefs(ProfileId::FIRST, &wears).await.unwrap();
+        let (link, _orders) = Link::pair();
+        let core = core_with_tv(core, inbox, link).await;
+        let output = |core: &Core| core.sound().ok().map(|view| view.output);
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while output(&core) != Some(audio::Output::Headphones) && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(output(&core), Some(audio::Output::Headphones));
+        assert!(calls.try_recv().is_err());
+
+        at_once(&core, Request::TvWentOff).await;
+
+        let call = calls.recv_timeout(Duration::from_secs(2));
+        assert_eq!(call, Ok(format!("disconnect {}", audio::tests::AIRPODS)));
+        assert_eq!(output(&core), Some(audio::Output::Tv));
     }
 
     #[test]

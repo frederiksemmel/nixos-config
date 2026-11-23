@@ -71,6 +71,8 @@ pub enum Request {
     Dialogue(ProfileId),
     /// SemmelTV is about to restart for an update.
     Restarting,
+    /// The TV went into standby, by its own remote or by SemmelTV.
+    TvWentOff,
 }
 
 #[derive(Clone, Debug, PartialEq)]

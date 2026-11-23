@@ -227,6 +227,10 @@ fn listen(path: &Path, remote: &Core) -> io::Result<()> {
                 }
                 Reaction::Release => keys.release(),
                 Reaction::Announce => log_failure(path, "Active Source", announce(&device)),
+                Reaction::TvOff => {
+                    eprintln!("{}: the TV went into standby", path.display());
+                    remote.send(Request::TvWentOff);
+                }
                 Reaction::Stop if holding_input(Instant::now()) => {
                     eprintln!(
                         "{}: {opcode:?} while switching to SemmelTV, claiming the input back",
@@ -309,6 +313,7 @@ enum Reaction {
     Release,
     Announce,
     Stop,
+    TvOff,
     Reply(CecOpcode, u8),
 }
 
@@ -326,6 +331,7 @@ fn react(opcode: CecOpcode, parameters: &[u8], own_address: CecPhysicalAddress) 
             Reaction::Stop
         }
         CecOpcode::RoutingChange if elsewhere(parameters.get(2..4), own_address) => Reaction::Stop,
+        CecOpcode::Standby => Reaction::TvOff,
         CecOpcode::MenuRequest => Reaction::Reply(CecOpcode::MenuStatus, MENU_ACTIVATED),
         CecOpcode::GiveDevicePowerStatus => Reaction::Reply(CecOpcode::ReportPowerStatus, POWER_ON),
         _ => Reaction::Ignore,
@@ -577,7 +583,7 @@ mod tests {
     fn semmeltv_stops_being_shown_on_standby_or_another_input() {
         let elsewhere = react(CecOpcode::ActiveSource, &[0x20, 0x00], OWN);
         assert!(lost_the_screen(CecOpcode::ActiveSource, &elsewhere));
-        assert!(lost_the_screen(CecOpcode::Standby, &Reaction::Ignore));
+        assert!(lost_the_screen(CecOpcode::Standby, &Reaction::TvOff));
         let ours = react(CecOpcode::SetStreamPath, &[0x10, 0x00], OWN);
         assert!(!lost_the_screen(CecOpcode::SetStreamPath, &ours));
         assert!(!lost_the_screen(CecOpcode::UserControlPressed, &press(0x00)));
@@ -585,8 +591,9 @@ mod tests {
 
     #[test]
     fn each_cec_message_gets_its_reaction() {
-        let cases: [(CecOpcode, &[u8], Reaction); 13] = [
+        let cases: [(CecOpcode, &[u8], Reaction); 14] = [
             (CecOpcode::RequestActiveSource, &[], Reaction::Announce),
+            (CecOpcode::Standby, &[], Reaction::TvOff),
             (
                 CecOpcode::MenuRequest,
                 &[0],

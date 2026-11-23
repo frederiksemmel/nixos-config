@@ -1336,12 +1336,12 @@ fn sink_path(address: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::bus::Event;
     use std::sync::mpsc;
 
-    const AIRPODS: &str = "34:0E:22:67:03:38";
+    pub(crate) const AIRPODS: &str = "34:0E:22:67:03:38";
     const FREDERIK: ProfileId = ProfileId(1);
     const MAMI: ProfileId = ProfileId(2);
     const OTHER: &str = "00:11:22:33:44:55";
@@ -1492,6 +1492,31 @@ mod tests {
             calls,
             routes,
         }
+    }
+
+    /// The AirPods for a core's test, paired and connected, on a radio that
+    /// tells each call it gets to the receiver.
+    pub(crate) fn connected_airpods(bus: Bus, found: Found) -> (Audio, mpsc::Receiver<String>) {
+        let (calls_sent, calls) = mpsc::channel();
+        let world = World {
+            paired: Some(airpods()),
+            connects: true,
+            sinks: vec![AIRPODS.to_string()],
+            ..World::default()
+        };
+        let audio = Audio::new(
+            Box::new(FakeRadio {
+                world: Arc::new(Mutex::new(world)),
+                calls: calls_sent,
+            }),
+            bus,
+            Box::new(|_| {}),
+            TIMING,
+        );
+        let paired = audio.learn_paired();
+        audio.sinks_listed(&[AIRPODS.to_string()]);
+        found(paired);
+        (audio, calls)
     }
 
     fn paired_rig() -> Rig {
