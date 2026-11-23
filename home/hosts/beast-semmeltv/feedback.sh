@@ -167,9 +167,15 @@ case $command in
         (($# == 1)) || usage
         if answer=$(api GET /api/deploy/watching 2>&1); then
           printf '%s\n' "$answer"
-        elif [[ $answer == *"error: 404"* ]]; then
-          api GET /api/playback |
-            jq -c '{watching: [.now_playing | select(. != null) | {person: "Someone", device: "the TV", title, paused}]}'
+        elif [[ $answer == *"error: 404"* || $answer == *"error: 403"* ]]; then
+          ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" '
+            for property in filename pause eof-reached; do
+              printf "{\"command\":[\"get_property\",\"%s\"]}\n" "$property" |
+                sudo -u semmeltv socat - /run/user/1001/semmeltv-mpv.sock 2>/dev/null || echo "{}"
+            done' |
+            jq -sc '{watching: (if .[0].error == "success" and .[2].data != true
+              then [{person: "Someone", device: "the TV", title: .[0].data, paused: (.[1].data == true)}]
+              else [] end)}'
         else
           printf '%s\n' "$answer" >&2
           exit 1
