@@ -171,6 +171,10 @@ pub(crate) enum Signal {
         reply: Option<oneshot::Sender<Outcome>>,
     },
     People(Vec<(ProfileId, String)>),
+    Stops {
+        play: String,
+        stops: Vec<crate::together::Stop>,
+    },
     Reloaded {
         profile: ProfileId,
         progress: Arc<Progress>,

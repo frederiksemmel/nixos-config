@@ -33,3 +33,39 @@ with scenario("Apple's native HLS path plays an episode, the next one and its su
     eventually("the TV hears that the Apple phone stopped", lambda: screen(apple)["play"] is None)
     switch_to(apple, "tv")
     apple.close()
+
+with scenario("a phone pauses where someone it watches the series with stopped, and says whose place it is"):
+    miriam = Phone(playwright, who="Miriam")
+    miriam.goto("/")
+    miriam.until(LOADED)
+    episode_2 = {"show": SHOW, "season": 1, "episode": 2}
+
+    def stops_at(someone, position):
+        opened = someone.api("POST", "/api/stream/open", episode_2 | {"client": NO_DOLBY, "device": {"id": "vm-setup", "name": "setup"}})
+        assert opened["status"] == 200, opened
+        stream = opened["body"]["id"]
+        for state, at in (("start", 0), ("stopped", position)):
+            reported = someone.api("POST", f"/api/stream/{stream}/progress", {"position": at, "played": at, "state": state})
+            assert reported["status"] == 200, reported
+        someone.api("DELETE", f"/api/stream/{stream}")
+
+    stops_at(miriam, 30)
+    stops_at(phone, 2)
+    others = phone.api("GET", f"/api/shows/{SHOW}")["body"]["together"]["others"]
+    miriam_id = next(person["id"] for person in others if person["name"] == "Miriam")
+    assert phone.api("PUT", f"/api/shows/{SHOW}/together/{miriam_id}")["body"]["ok"]
+    phone.goto(f"/shows/{SHOW}")
+    phone.until('document.querySelectorAll("main button.episode[data-play-show]").length === 3')
+    switch_to(phone, "phone")
+    episode = phone.page.locator('main button.episode[data-episode="2"]')
+    episode.scroll_into_view_if_needed()
+    episode.tap()
+    phone.until(PLAYS, 30000)
+    phone.until(f'{VIDEO}.paused && [...document.querySelectorAll(".pp-toast")].some((toast) => toast.textContent === "Paused where Miriam stopped")', 45000)
+    paused_at = phone_time(phone)
+    assert 29 <= paused_at <= 32, f"paused at {paused_at} s, Miriam stopped at 30 s"
+    phone.page.wait_for_timeout(1500)
+    assert phone.js(f"{VIDEO}.paused"), "it stays paused until the viewer goes on"
+    close_player(phone)
+    assert phone.api("DELETE", f"/api/shows/{SHOW}/together/{miriam_id}")["body"]["ok"]
+    miriam.close()

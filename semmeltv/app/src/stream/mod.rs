@@ -13,6 +13,7 @@ use crate::profile::ProfileId;
 use crate::progress::Watched;
 use crate::segments::{self, Kind as SegmentKind, Title};
 use crate::sidecar;
+use crate::together;
 use axum::extract::{Path, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -99,6 +100,7 @@ struct Mark {
 struct Marks {
     segments: Vec<Mark>,
     credits: Option<f64>,
+    stops: Vec<together::Stop>,
 }
 
 struct Live {
@@ -956,12 +958,15 @@ async fn marks(State(streams): State<Streams>, Path(id): Path<String>) -> Respon
                     })
                     .collect(),
                 credits: found.credits,
+                stops: Vec::new(),
             }
         })
         .await;
+    let stops = together::stops_for(&streams.core, live.profile, &live.file, live.start).await;
     Json(Marks {
         segments: found.segments.clone(),
         credits: live.credits(),
+        stops,
     })
     .into_response()
 }

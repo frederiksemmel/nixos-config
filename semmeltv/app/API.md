@@ -147,6 +147,12 @@ name, color }`. Catching up copies their episode and time into your progress,
 keeps your own audio and subtitle choice, and puts the show first in your
 Continue Watching.
 
+Playing an episode, on the TV or a phone, pauses once where someone in your
+group for that show stopped in it, further on than where you started; people
+less than a minute apart share one pause. The TV shows "Paused where Mami
+stopped · Press OK to watch on", a phone "Paused where Mami stopped"; a seek
+past the place does not pause.
+
 A card is
 `{ kind: "movie" | "show", key, title, years, subtitle, poster, backdrop, ratings, finished }`.
 `finished` is true for a film that played to its end, stopped in its credits
@@ -765,7 +771,7 @@ segments, instead of playing it on the TV.
 | POST | `/api/stream/open` | `{ movie }` or `{ show, season?, episode? }`, plus `client`, `device?`, `audio?`, `start?`, `replaces?` → a session |
 | GET | `/api/stream/{id}/main.m3u8` | the master playlist, to give the `<video>` or hls.js |
 | GET | `/api/stream/{id}/subtitles/{n}` | `{ cues: [{ start, end, text }], complete }` for subtitle `n` |
-| GET | `/api/stream/{id}/marks` | `{ segments, credits }`: TheIntroDB's recap and intro, and where the credits start |
+| GET | `/api/stream/{id}/marks` | `{ segments, credits, stops }`: TheIntroDB's recap and intro, where the credits start, and `stops`, each `{ at, said }`, where people you watch the series with stopped further on in this episode; the player pauses there once and shows `said` ("Paused where Mami stopped") |
 | POST | `/api/stream/{id}/progress` | `{ position, played, state }` → `{ ok, kept_from }`, or `{ ok, reopen, kept_from }` |
 | DELETE | `/api/stream/{id}` | ends the session |
 

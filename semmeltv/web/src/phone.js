@@ -911,7 +911,10 @@ class Player {
       const now = this.now();
       if (this.lastTime !== null && !video.seeking && !video.paused) {
         const step = now - this.lastTime;
-        if (step > 0 && step < 2) this.played += step;
+        if (step > 0 && step < 2) {
+          this.played += step;
+          this.stopAt(this.lastTime, now);
+        }
       }
       this.lastTime = now;
       if (!this.scrubbing) this.paint();
@@ -1556,6 +1559,17 @@ class Player {
       this.skip.hidden = true;
       if (this.countdown && credits && now < credits) this.cancelCountdown();
     }
+  }
+
+  // Pauses once where someone this series is watched together with stopped.
+  stopAt(from, now) {
+    const stops = this.marks.stops || [];
+    const stop = stops.find((each) => from < each.at && each.at <= now);
+    if (!stop) return;
+    this.marks.stops = stops.filter((each) => each !== stop);
+    note(stop.said, `at ${clock(now)}`);
+    this.pause();
+    this.toast(stop.said);
   }
 
   startCountdown() {

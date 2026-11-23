@@ -23,7 +23,7 @@ touches:
 | `resume` | `semmeltv-vm-resume` | where the TV resumes: a film after the app restarts, a finished episode starting over, Back cancelling the countdown |
 | `segments` | `semmeltv-vm-segments` | Skip intro and Play next from theintrodb segments |
 | `streams` | `semmeltv-vm-streams` | the phone's HLS stream: pace and subtitles, ffmpeg's muxer, a seek outside the stream, `semmeltv-stats` |
-| `phone-playback` | `semmeltv-vm-phone-playback` | the phone plays the next episode in place, Apple's native HLS path |
+| `phone-playback` | `semmeltv-vm-phone-playback` | the phone plays the next episode in place, Apple's native HLS path, a pause where someone watching the series together stopped |
 | `laptop` | `semmeltv-vm-laptop` | the laptop player's controls, Back after a reload, a laptop that goes quiet, rows and scroll bars |
 | `handover` | `semmeltv-vm-handover` | a film moving between phone and TV, a phone stream surviving a TV app restart, the TV/phone switch |
 | `live` | `semmeltv-vm-live` | a page whose live connection died catching up (Chromium and WebKit) |

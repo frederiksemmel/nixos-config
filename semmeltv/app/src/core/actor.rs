@@ -67,6 +67,8 @@ const UPDATE_SHOWN_FOR: Duration = Duration::from_secs(2);
 const UPDATE_HIDES_AFTER: Duration = Duration::from_millis(1500);
 const NO_RESTART_WITHIN: Duration = Duration::from_secs(if cfg!(test) { 3 } else { 30 });
 const PICKED_UP: &str = "Picked up where it stopped";
+const STOP_SAID: &str = "Press OK to watch on";
+const STOP_SHOWN: Duration = Duration::from_secs(8);
 const PICKED_UP_AFTER_UPDATE: &str = "Wieder gebacken. Weiter geht's!";
 
 type Boxed<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
@@ -100,6 +102,7 @@ struct OnTv {
     unsegmented: Option<Title>,
     lost: Option<Instant>,
     resumes: Vec<Instant>,
+    stops: Vec<together::Stop>,
 }
 
 /// A playback started again on a tv that came back: its token, whether it
@@ -482,6 +485,17 @@ impl Actor {
                 self.people = people;
                 self.publish_home();
             }
+            Signal::Stops { play, stops } => {
+                if let Some(tv) = self.on_tv.as_mut().filter(|tv| tv.play == play) {
+                    if !stops.is_empty() {
+                        eprintln!(
+                            "together: pauses at {:?} s",
+                            stops.iter().map(|stop| stop.at).collect::<Vec<_>>()
+                        );
+                    }
+                    tv.stops = stops;
+                }
+            }
         }
     }
 
@@ -794,6 +808,7 @@ impl Actor {
             unsegmented: self.title(path),
             lost: None,
             resumes,
+            stops: Vec::new(),
             play: play.play,
         });
         self.publish_playback();
@@ -812,6 +827,7 @@ impl Actor {
         }
         self.wake_tv();
         self.record_start(&file, owner).await;
+        self.find_stops();
         self.lead = Some(file);
         self.queue_downloads(true);
         self.tend_bakeoff();
@@ -1101,8 +1117,29 @@ impl Actor {
             saved: running.position,
             lost: None,
             resumes: Vec::new(),
+            stops: Vec::new(),
         });
         self.publish_playback();
+        self.find_stops();
+    }
+
+    /// Looks up, away from the actor, where the owner's watch-together
+    /// partners stopped further on in what the TV plays.
+    fn find_stops(&self) {
+        let Some(tv) = &self.on_tv else {
+            return;
+        };
+        let (core, play, owner, file, from) = (
+            self.core.clone(),
+            tv.play.clone(),
+            tv.owner,
+            tv.file.clone(),
+            tv.last.place.position,
+        );
+        self.core.saves().save(move |_| async move {
+            let stops = together::stops_for(&core, owner, &file, from).await;
+            core.signal(Signal::Stops { play, stops });
+        });
     }
 
     /// The tv came back with nothing playing. What it lost plays again a
@@ -1274,7 +1311,16 @@ impl Actor {
         }
         let duration = report.place.duration;
         let unsegmented = tv.unsegmented.take_if(|_| duration > 0.0);
+        let playing_on = report.state.started && !report.state.paused && tv.hold == Hold::Free;
+        let stop = playing_on
+            .then(|| together::reached(&mut tv.stops, tv.last.place.position, report.place.position))
+            .flatten();
         tv.last = report;
+        if let Some(stop) = stop {
+            eprintln!("together: {} at {:.0} s", stop.said, stop.at);
+            tv.pause(true);
+            tv.toast(&stop.said, STOP_SAID, STOP_SHOWN);
+        }
         if let Some(title) = unsegmented {
             let (find, link, play) = (self.segments.clone(), tv.link.clone(), tv.play.clone());
             tokio::spawn(async move {
@@ -3483,6 +3529,76 @@ mod tests {
             together = next_together(&orders);
         }
         assert_eq!(people(&together)[0], ("Mami", "At your place", true));
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn an_episode_on_the_tv_pauses_once_where_a_partner_stopped_and_says_whose_place_it_is() {
+        let (core, orders) = core_and_tv().await;
+        let mami = ProfileId(2);
+        assert!(
+            core.db()
+                .set_together(ProfileId::FIRST, mami, "dark", true)
+                .await
+                .unwrap()
+        );
+        let episode = core.library().shows[0].seasons[0].episodes[0].clone();
+        let mut theirs = Progress::default();
+        theirs.shows.insert(
+            "dark".to_string(),
+            Position {
+                season: episode.season,
+                episode: episode.number,
+                finished: false,
+            },
+        );
+        let place = progress::Place {
+            position: 600.0,
+            duration: 3000.0,
+            credits: None,
+        };
+        theirs.record(&episode.path, place);
+        core.publish_progress(mami, theirs);
+        core.ask(Request::PlayFile(episode.path.clone())).await.unwrap();
+        let play = told(&orders, |order| match order {
+            ToTv::Play(play) => Some(play.play),
+            _ => None,
+        });
+        core.signal(Signal::Tv(FromTv::Started { play: play.clone() }));
+        let paused_and_said = |orders: &std::sync::mpsc::Receiver<ToTv>| {
+            let (mut paused, mut said) = (0, Vec::new());
+            for order in orders.try_iter() {
+                match order {
+                    ToTv::Pause { paused: true, .. } => paused += 1,
+                    ToTv::Toast { heading, status, .. } if !heading.is_empty() => said.push((heading, status)),
+                    _ => {}
+                }
+            }
+            (paused, said)
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let said = loop {
+            core.signal(reported(&play, 599.5, true));
+            core.signal(reported(&play, 600.1, true));
+            settled(&core).await;
+            let (paused, said) = paused_and_said(&orders);
+            if paused > 0 {
+                assert_eq!(paused, 1);
+                break said;
+            }
+            assert!(Instant::now() < deadline, "the TV never paused at Mami's place");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        assert_eq!(
+            said,
+            [(
+                "Paused where Mami stopped".to_string(),
+                "Press OK to watch on".to_string()
+            )]
+        );
+        core.signal(reported(&play, 599.5, true));
+        core.signal(reported(&play, 600.1, true));
+        settled(&core).await;
+        assert_eq!(paused_and_said(&orders), (0, Vec::new()), "a stop pauses once");
     }
 
     #[tokio::test(flavor = "multi_thread")]
