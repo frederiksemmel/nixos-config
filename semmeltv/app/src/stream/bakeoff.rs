@@ -6,7 +6,8 @@ use super::{Full as Limit, Streams, short};
 use crate::api::problem;
 use crate::auth::gate::Who;
 use crate::challenge::bake::{Calibration, GAME, Input, SEMMELS};
-use crate::challenge::{Challenger, Effect, Refusal, Seat, Side, View, Watcher};
+use crate::challenge::sheet::Sheet;
+use crate::challenge::{Challenger, Effect, Refusal, Seat, Side, View, Watcher, minutes};
 use crate::profile::ProfileId;
 use crate::screen::Device;
 use axum::extract::{Path, State};
@@ -49,18 +50,49 @@ pub async fn save_calibration(core: &crate::core::Core) {
 
 #[derive(Serialize)]
 pub struct Full {
-    game: &'static str,
     heading: &'static str,
     message: String,
+    question: String,
     watchers: Vec<Listed>,
-    resting_ms: Option<u64>,
 }
 
 #[derive(Serialize)]
 struct Listed {
     #[serde(flatten)]
     watcher: Watcher,
-    busy: bool,
+    /// What they watch on which device, for the sheet's row.
+    line: String,
+    /// Why they can't be challenged now, if they can't.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<&'static str>,
+    pickable: bool,
+}
+
+impl Full {
+    fn new(message: String, watchers: Vec<(Watcher, bool)>, resting: Option<std::time::Duration>) -> Self {
+        let question = match resting {
+            Some(left) => format!(
+                "Your dough is still resting: you can challenge again in {}.",
+                minutes(left)
+            ),
+            None => "Who do you want to challenge for a place in the oven?".to_string(),
+        };
+        let watchers = watchers
+            .into_iter()
+            .map(|(watcher, busy)| Listed {
+                line: format!("{} · {}", watcher.device, watcher.title),
+                note: busy.then_some("already in a bake-off"),
+                pickable: !busy && resting.is_none(),
+                watcher,
+            })
+            .collect();
+        Self {
+            heading: FULL_HEADING,
+            message,
+            question,
+            watchers,
+        }
+    }
 }
 
 #[derive(Serialize)]
@@ -149,22 +181,16 @@ pub async fn full(streams: &Streams, profile: ProfileId, device: Option<&Device>
         let arena = streams.core.arena();
         let listed = watchers
             .into_iter()
-            .map(|watcher| Listed {
-                busy: arena.busy(&watcher.seat),
-                watcher,
+            .map(|watcher| {
+                let busy = arena.busy(&watcher.seat);
+                (watcher, busy)
             })
             .collect();
         (listed, arena.resting(profile, now))
     };
     let answer = FullAnswer {
         error: message.clone(),
-        full: Full {
-            game: GAME,
-            heading: FULL_HEADING,
-            message,
-            watchers: listed,
-            resting_ms: resting.map(|left| left.as_millis() as u64),
-        },
+        full: Full::new(message, listed, resting),
     };
     (StatusCode::TOO_MANY_REQUESTS, Json(answer)).into_response()
 }
@@ -242,8 +268,15 @@ async fn challenge(State(streams): State<Streams>, Who(profile): Who, Json(body)
 }
 
 fn view(streams: &Streams, id: &str, side: Side) -> Response {
-    match streams.core.arena().view(id, side, Instant::now()) {
-        Some(view) => Json(Seen { game: GAME, side, view }).into_response(),
+    let arena = streams.core.arena();
+    match arena.view(id, side, Instant::now()) {
+        Some(view) => Json(Seen {
+            game: GAME,
+            side,
+            sheet: Sheet::of(&view, side, arena.is_practice(id)),
+            view,
+        })
+        .into_response(),
         None => refused(&Refusal::NoSuchChallenge),
     }
 }
@@ -252,6 +285,7 @@ fn view(streams: &Streams, id: &str, side: Side) -> Response {
 struct Seen {
     game: &'static str,
     side: Side,
+    sheet: Sheet,
     #[serde(flatten)]
     view: View,
 }
@@ -442,46 +476,63 @@ mod tests {
         assert!(serde_json::from_str::<Presses>(r#"{"input":"touch","presses":[1,2]}"#).is_err());
     }
 
+    fn ramu() -> Watcher {
+        Watcher {
+            seat: Seat::Stream("abc".to_string()),
+            profile: ProfileId(3),
+            person: "Ramu".to_string(),
+            device: "Ramu's iPhone".to_string(),
+            title: "Dune".to_string(),
+        }
+    }
+
     #[test]
-    fn the_full_ovens_answer_names_who_watches_and_how_long_the_dough_rests() {
+    fn the_full_ovens_answer_names_who_watches_and_asks_whom_to_challenge() {
         let answer = FullAnswer {
             error: "Three phones are already watching".to_string(),
-            full: Full {
-                game: GAME,
-                heading: FULL_HEADING,
-                message: "Three phones are already watching".to_string(),
-                watchers: vec![Listed {
-                    watcher: Watcher {
-                        seat: Seat::Stream("abc".to_string()),
-                        profile: ProfileId(3),
-                        person: "Ramu".to_string(),
-                        device: "Ramu's iPhone".to_string(),
-                        title: "Dune".to_string(),
-                    },
-                    busy: false,
-                }],
-                resting_ms: Some(1_000),
-            },
+            full: Full::new(
+                "Three phones are already watching".to_string(),
+                vec![(ramu(), false)],
+                None,
+            ),
         };
         assert_eq!(
             serde_json::to_value(&answer).unwrap(),
             serde_json::json!({
                 "error": "Three phones are already watching",
                 "full": {
-                    "game": "Semmelstechen",
                     "heading": "Der Ofen ist voll",
                     "message": "Three phones are already watching",
+                    "question": "Who do you want to challenge for a place in the oven?",
                     "watchers": [{
                         "seat": { "kind": "stream", "id": "abc" },
                         "profile": 3,
                         "person": "Ramu",
                         "device": "Ramu's iPhone",
                         "title": "Dune",
-                        "busy": false
+                        "line": "Ramu's iPhone · Dune",
+                        "pickable": true
                     }],
-                    "resting_ms": 1000
                 }
             })
+        );
+    }
+
+    #[test]
+    fn nobody_can_be_picked_while_the_dough_rests_nor_someone_already_baking() {
+        let busy = Full::new(String::new(), vec![(ramu(), true)], None);
+        assert!(!busy.watchers[0].pickable);
+        assert_eq!(busy.watchers[0].note, Some("already in a bake-off"));
+        let resting = Full::new(
+            String::new(),
+            vec![(ramu(), false)],
+            Some(std::time::Duration::from_secs(61)),
+        );
+        assert!(!resting.watchers[0].pickable);
+        assert_eq!(resting.watchers[0].note, None);
+        assert_eq!(
+            resting.question,
+            "Your dough is still resting: you can challenge again in 2 minutes."
         );
     }
 }

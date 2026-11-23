@@ -3,7 +3,8 @@
 //! oven on its own clock and sends its presses when the oven is done.
 
 use super::bake::{BURNS_AFTER_MS, Baked, GAME, Input, REST_MS, SEMMELS, WINDOW, crust};
-use super::{Ending, Side, View};
+use super::sheet::Sheet;
+use super::{Side, View};
 use crate::command::Command;
 use crate::overlay::{self, HEIGHT, WIDTH};
 use serde::{Deserialize, Serialize};
@@ -181,23 +182,14 @@ impl Stand {
                 let bias = bias_ms.get(&Input::Remote).copied().unwrap_or_default() / 1000.0;
                 events.extend(self.oven(elapsed, golden_ms, bias));
             }
-            View::Done {
-                challenger,
-                winner,
-                ending,
-                baked,
-                ..
-            } => {
-                let (title, detail) = verdict(challenger, *winner, *ending);
-                events.push(heading(&title));
-                events.push(line(300.0, 40.0, &detail));
+            View::Done { baked, .. } => {
+                let sheet = Sheet::of(&self.view, Side::Defender, false);
+                events.push(heading(&sheet.title));
+                events.push(line(300.0, 40.0, &sheet.detail));
                 events.extend(table(baked));
-                let hint = if *winner == Some(Side::Challenger) {
-                    "OK"
-                } else {
-                    "OK: back to the film"
-                };
-                events.push(line(850.0, 34.0, hint));
+                if let Some(next) = sheet.actions.first() {
+                    events.push(line(850.0, 34.0, &format!("OK: {}", next.label)));
+                }
             }
         }
         events.join("\n")
@@ -247,26 +239,6 @@ impl Stand {
         events.push(text(CENTRE, 810.0, 44.0, &scores.join("   ")));
         events.push(line(870.0, 34.0, "Press OK when the Semmel is golden"));
         events
-    }
-}
-
-/// The result's heading and line, for the TV, which is always the one
-/// challenged.
-fn verdict(challenger: &str, winner: Option<Side>, ending: Ending) -> (String, String) {
-    let resting = "You can challenge again in 10 minutes.".to_string();
-    match (winner, ending) {
-        (None, _) => ("Nobody baked".to_string(), format!("{challenger} went away.")),
-        (Some(Side::Defender), Ending::Baked) => (
-            "You keep the oven".to_string(),
-            "Fresh out of the oven: enjoy the film.".to_string(),
-        ),
-        (Some(Side::Defender), _) => (
-            "You keep the oven".to_string(),
-            format!("{challenger} left the bake-off."),
-        ),
-        (Some(Side::Challenger), Ending::Baked) => (format!("{challenger} bakes better"), resting),
-        (Some(Side::Challenger), Ending::NoAnswer) => ("You didn't answer in time".to_string(), resting),
-        (Some(Side::Challenger), _) => ("You handed over the oven".to_string(), String::new()),
     }
 }
 
@@ -367,6 +339,7 @@ fn pill(x: f64, y: f64, label: &str, focused: bool) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::challenge::Ending;
     use std::collections::HashMap;
 
     fn asked() -> View {
@@ -442,10 +415,22 @@ mod tests {
             frame.contains("Mami bakes better") && frame.contains("10 minutes"),
             "{frame}"
         );
+        assert!(frame.contains("OK: Close"), "{frame}");
         assert_eq!(stand.key(Command::Select, now), Some(Answer::Dismiss));
-        assert_eq!(
-            verdict("Mami", Some(Side::Defender), Ending::Withdrawn).1,
-            "Mami left the bake-off."
+        let kept = Stand::new(
+            View::Done {
+                challenger: "Mami".to_string(),
+                defender: "Frederik".to_string(),
+                winner: Some(Side::Defender),
+                ending: Ending::Withdrawn,
+                baked: [None, None],
+            },
+            now,
+        );
+        let frame = kept.frame(now);
+        assert!(
+            frame.contains("Mami left the bake-off.") && frame.contains("OK: Back to the film"),
+            "{frame}"
         );
     }
 }

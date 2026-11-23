@@ -5,6 +5,7 @@
 
 pub mod bake;
 pub mod screen;
+pub mod sheet;
 
 use crate::profile::ProfileId;
 use bake::{Baked, Calibration, Input, Oven, SEMMELS};
@@ -291,6 +292,11 @@ impl Arena {
                 Stage::Baking { starts, .. } => starts,
             })
             .map(|(id, _)| id.as_str())
+    }
+
+    /// Whether `id` is a practice bake against the Bäckermeister.
+    pub fn is_practice(&self, id: &str) -> bool {
+        self.challenges.get(id).is_some_and(|entry| entry.practice)
     }
 
     pub fn challenger_of(&self, id: &str) -> Option<ProfileId> {

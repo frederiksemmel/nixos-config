@@ -794,10 +794,12 @@ At most eight sessions play at once, and at most three of them on films that
 aren't downloaded to the TV, where the TV playing such a film counts as one;
 the reasons and measurements are in [streaming](../docs/streaming.md). A
 handoff doesn't count as the TV playing for the phone it moves to. An open past
-a limit gets 429 with `{ error, full: { heading, message, watchers,
-resting_ms } }`: `watchers` are the sessions whose end would make room, each
-`{ seat: { kind: "stream", id } or { kind: "tv" }, profile, person, device, title, busy }`, and
-`resting_ms` is how long the asker must wait before challenging again, or null.
+a limit gets 429 with `{ error, full: { heading, message, question, watchers
+} }`: `watchers` are the sessions whose end would make room, each
+`{ seat: { kind: "stream", id } or { kind: "tv" }, profile, person, device, title, line, note?, pickable }`.
+`question` is the sheet's line above them (whom to challenge, or how long the
+asker's dough still rests), `line` the row's "device · title", `note` why they
+can't be challenged, and `pickable` whether the asker can challenge them now.
 Three minutes after its last request a session ends, stopping its
 ffmpeg and deleting its segments; a phone that comes back opens it again.
 
@@ -852,8 +854,11 @@ The challenger's calls need the challenger's sign-in; the defender's go through
 the stream's id like the stream's other calls. `input` is `touch`, `mouse`,
 `keys` or `remote`. `presses` holds three numbers or nulls: each Semmel's press
 in milliseconds after its golden moment on that device's screen, or null where
-it burnt. A view is `{ game, side, stage, challenger, defender, … }`, where
-`game` is the game's name (the 429's `full` carries it too), with `stage`
+it burnt. A view is `{ game, side, sheet, stage, challenger, defender, … }`, where
+`game` is the game's name. `sheet` is what that side's screen shows, worded by
+the server for the phone and the TV alike: `{ title, detail, note?, actions }`,
+each action `{ label, strong, does }` with `does` one of `accept`, `drop-off`,
+`give-up`, `watch`, `resume`, `again` or `close`. With `stage`
 
 - `asked`: `title`, `answer_within_ms`;
 - `baking`: `starts_in_ms`, `golden_ms` (three), `length_ms`, `bias_ms` (each
