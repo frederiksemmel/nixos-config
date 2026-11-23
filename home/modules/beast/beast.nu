@@ -345,6 +345,39 @@ export def clean [
   }
 }
 
+# Ends the given sessions, after listing them and asking.
+#
+# A working session is refused. Ending one keeps its transcript, so
+# `claude --resume` still opens it.
+@example "End two sessions" { beast end e6dbfaf6 e464a8ea }
+export def end [
+  ...sessions: string@complete-sessions # session ids, or their starts
+  --yes (-y)                            # end them without asking
+] {
+  if ($sessions | is-empty) {
+    error make --unspanned { msg: "give the sessions to end, see beast list" }
+  }
+  let all = on-beast sessions
+  let matches = $sessions | each {|q|
+    let found = $all | where {|s| $s.id | str starts-with $q }
+    if ($found | length) != 1 {
+      error make --unspanned { msg: $"($q) matches ($found | length) sessions" }
+    }
+    $found | first
+  }
+  let working = $matches | where state == "working"
+  if ($working | is-not-empty) {
+    error make --unspanned { msg: $"working, not ended: ($working.id | str join ' ')" }
+  }
+  print ($matches | each {|s|
+    { id: $s.id, title: ($s.title | str substring ..<50), group: $s.group, state: $s.state, "last message": (ago $s.last) }
+  })
+  if $yes or ((input $"end these ($matches | length) sessions? [y/N] ") in [y Y]) {
+    let stayed = end-sessions $matches.session
+    print $"ended (($matches | length) - $stayed) of ($matches | length) sessions"
+  }
+}
+
 def niri-window-ids [] {
   ^niri msg --json windows | from json | get id
 }

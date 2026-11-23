@@ -53,6 +53,44 @@ let
     '';
   };
 
+  # The beast picker's list, end and clean as a program on PATH.
+  beast = pkgs.writers.writeNuBin "beast" ''
+    $env.PATH = ($env.PATH | prepend "${pkgs.nushell}/bin")
+    use ${../modules/beast}/beast.nu
+
+    # Lists the sessions on beast, newest message first.
+    def "main list" [
+      --group: string # only this group
+      --json          # print JSON instead of a table
+    ] {
+      let rows = beast list | where {|s| $group == null or $s.group == $group } | select id title name state group repo last
+      if $json { $rows | to json } else { $rows | table --expand }
+    }
+
+    # Ends the given sessions; a working one is refused.
+    def "main end" [
+      ...sessions: string # session ids, or their starts
+      --yes (-y)          # end them without asking
+    ] {
+      beast end ...$sessions --yes=$yes
+    }
+
+    # Ends the sessions matching every given filter; working ones are kept.
+    def "main clean" [
+      --quiet-for: duration # no message for this long
+      --repo: string        # in this repo
+      --group: string       # in this group
+      --match: string       # title matches this regex
+      --stopped             # only sessions that are already stopped
+      --dry-run (-n)        # list the matches without ending them
+      --yes (-y)            # end them without asking
+    ] {
+      beast clean --quiet-for=$quiet_for --repo=$repo --group=$group --match=$match --stopped=$stopped --dry-run=$dry_run --yes=$yes
+    }
+
+    def main [] { help main }
+  '';
+
   session-end = pkgs.writeShellApplication {
     name = "session-end";
     runtimeInputs = [
@@ -121,6 +159,7 @@ in
     claudeBg
     session-group
     session-end
+    beast
     pkgs.pyright
   ];
 
@@ -237,6 +276,17 @@ in
     shows this session's group and the groups in use. When the work here has
     moved to another topic, run `session-group <name>`, reusing a name in use if
     one fits.
+
+    # Ending other sessions
+
+    `beast list [--group NAME] [--json]` lists the sessions on beast, the same
+    ones the user's picker shows. A stopped session stays listed until it is
+    ended. When the user asks to close or clean up sessions, end them with
+    `beast end ID... --yes`, or by filter with `beast clean --group NAME
+    --stopped --dry-run` and then the same with `--yes` instead of `--dry-run`.
+    Ending removes a session's worktree and branch and keeps its transcript; a
+    working session, or one whose worktree has unpushed commits or changes, is
+    kept and named. Never end your own session this way: that is `/end`.
 
     # Starting another session
 

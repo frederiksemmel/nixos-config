@@ -949,6 +949,10 @@ in
               "Bash(rm -fr node_modules)"
               "Bash(nix eval:*)"
               "Bash(nh:*)"
+              # Listing beast's Claude sessions; ending them still asks.
+              "Bash(beast list:*)"
+              "Bash(beast clean --dry-run:*)"
+              "Bash(beast clean -n:*)"
               # deploy-rs: applies frederik's home on beast.
               "Bash(deploy:*)"
               # Reading GitHub, including whatever gh grew no subcommand for.
