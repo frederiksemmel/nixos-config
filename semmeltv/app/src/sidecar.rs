@@ -1,7 +1,9 @@
 use crate::subtitles::{language_code, language_name};
 use serde::{Deserialize, Serialize};
-use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc;
+use std::time::{Duration, Instant};
+use std::{fs, io, thread};
 
 const EXTENSIONS: [&str; 4] = ["srt", "ass", "ssa", "vtt"];
 const VIDEO_EXTENSIONS: [&str; 7] = ["mkv", "mp4", "avi", "m4v", "mov", "webm", "ts"];
@@ -206,6 +208,44 @@ pub fn find(video: &Path) -> Vec<Sidecar> {
     sidecars.into_iter().map(|(_, sidecar)| sidecar).collect()
 }
 
+/// Reads every sidecar at once, so the pCloud mount holds them all before mpv
+/// adds them one after another, which costs about a second each when they
+/// are not cached yet. The ones not read `within` stay out of this play and
+/// are read to the end behind it, ready for the next.
+pub fn warm(sidecars: Vec<Sidecar>, within: Duration) -> Vec<Sidecar> {
+    let until = Instant::now() + within;
+    let (done, heard) = mpsc::channel();
+    for (index, sidecar) in sidecars.iter().enumerate() {
+        let (done, path) = (done.clone(), sidecar.path.clone());
+        thread::spawn(move || {
+            let read = fs::File::open(&path).and_then(|mut file| io::copy(&mut file, &mut io::sink()));
+            let _ = done.send((index, read.is_ok()));
+        });
+    }
+    drop(done);
+    let mut read = vec![false; sidecars.len()];
+    let mut answered = 0;
+    while answered < sidecars.len() {
+        let Ok((index, ok)) = heard.recv_timeout(until.saturating_duration_since(Instant::now())) else {
+            break;
+        };
+        read[index] = ok;
+        answered += 1;
+    }
+    if answered < sidecars.len() {
+        eprintln!(
+            "subtitles: {} of {} files were not read within {within:?}, so this play goes without them",
+            sidecars.len() - answered,
+            sidecars.len()
+        );
+    }
+    sidecars
+        .into_iter()
+        .zip(read)
+        .filter_map(|(sidecar, read)| read.then_some(sidecar))
+        .collect()
+}
+
 pub fn file_name(video: &Path, language: &str) -> Option<String> {
     let stem = video.file_stem()?.to_string_lossy();
     Some(format!("{stem}.{language}.srt"))
@@ -322,5 +362,59 @@ mod tests {
             file_name(Path::new("/lib/Movies/Up (2009)/Up.2009.1080p.mkv"), "en").as_deref(),
             Some("Up.2009.1080p.en.srt")
         );
+    }
+
+    #[test]
+    fn subtitles_still_unread_when_the_time_is_up_are_left_out_of_the_play() {
+        let tree = tree("warm", &[("Dark S01/Subs/2_English.srt", 500)]);
+        let hung = tree.0.join("Dark S01/Subs/5_German.srt");
+        let fifo = std::ffi::CString::new(hung.to_str().unwrap()).unwrap();
+        assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+        let sidecar = |name: &str| Sidecar {
+            path: tree.0.join("Dark S01/Subs").join(name),
+            language: None,
+            title: name.to_string(),
+            forced: false,
+            hearing_impaired: false,
+        };
+        let sidecars = vec![sidecar("2_English.srt"), sidecar("5_German.srt"), sidecar("gone.srt")];
+        let asked = std::time::Instant::now();
+        let warmed = warm(sidecars, Duration::from_millis(200));
+        assert!(asked.elapsed() < Duration::from_millis(400), "{:?}", asked.elapsed());
+        assert_eq!(warmed, [sidecar("2_English.srt")]);
+        drop(fs::OpenOptions::new().write(true).open(&hung));
+    }
+
+    #[test]
+    fn subtitles_are_read_side_by_side_not_one_after_another() {
+        let names: Vec<String> = (0..30).map(|n| format!("{n}_English.srt")).collect();
+        let tree = tree("side-by-side", &[]);
+        fs::create_dir_all(&tree.0).unwrap();
+        let mut fifos = Vec::new();
+        for name in &names {
+            let path = tree.0.join(name);
+            let fifo = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
+            assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o600) }, 0);
+            fifos.push(path);
+        }
+        let sidecars: Vec<Sidecar> = fifos
+            .iter()
+            .map(|path| Sidecar {
+                path: path.clone(),
+                language: None,
+                title: String::new(),
+                forced: false,
+                hearing_impaired: false,
+            })
+            .collect();
+        for path in fifos {
+            std::thread::spawn(move || {
+                let writer = fs::OpenOptions::new().write(true).open(path);
+                std::thread::sleep(Duration::from_millis(100));
+                drop(writer);
+            });
+        }
+        let warmed = warm(sidecars.clone(), Duration::from_secs(1));
+        assert_eq!(warmed, sidecars);
     }
 }

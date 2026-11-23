@@ -5,12 +5,17 @@ use crate::offline::{Source, Store};
 use crate::sidecar::{self, Sidecar};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tokio::task::spawn_blocking;
 use tokio::time::timeout;
 
 /// How long finding a file and its subtitles may take.
 pub const FIND_WITHIN: Duration = Duration::from_secs(4);
+
+/// How long after the start of the finding its subtitle files must be read,
+/// early enough to leave the play within `FIND_WITHIN`.
+const SIDECARS_READ_BY: Duration = Duration::from_secs(3);
+const _: () = assert!(SIDECARS_READ_BY.as_millis() < FIND_WITHIN.as_millis());
 
 /// Where a file plays from, and the subtitle files beside it; `None` when it
 /// is out of reach. Called with the file and whether the TV is online.
@@ -26,6 +31,7 @@ impl Files {
     pub fn of(store: Store, playable: impl Fn(&Path) -> PathBuf + Send + Sync + 'static) -> Self {
         Self {
             find: Arc::new(move |path, online| {
+                let began = Instant::now();
                 let here = playable(path);
                 let source = match store.source(path, online) {
                     _ if here != path => here,
@@ -33,7 +39,10 @@ impl Files {
                     Source::Cached(file) => file,
                     Source::Unavailable => return None,
                 };
-                let sidecars = sidecar::find(&source);
+                let sidecars = sidecar::warm(
+                    sidecar::find(&source),
+                    (began + SIDECARS_READ_BY).saturating_duration_since(Instant::now()),
+                );
                 Some((source, sidecars))
             }),
         }
@@ -72,7 +81,6 @@ pub async fn prepare(files: Files, path: PathBuf, online: bool, within: Duration
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::Instant;
 
     const SHORT: Duration = Duration::from_millis(200);
 
