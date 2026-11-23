@@ -2070,15 +2070,15 @@ in
           "${mod}+7".action = focus-workspace 7;
           "${mod}+8".action = focus-workspace 8;
           "${mod}+9".action = focus-workspace 9;
-          "${mod}+Ctrl+1".action = move-column-to-index 1;
-          "${mod}+Ctrl+2".action = move-column-to-index 2;
-          "${mod}+Ctrl+3".action = move-column-to-index 3;
-          "${mod}+Ctrl+4".action = move-column-to-index 4;
-          "${mod}+Ctrl+5".action = move-column-to-index 5;
-          "${mod}+Ctrl+6".action = move-column-to-index 6;
-          "${mod}+Ctrl+7".action = move-column-to-index 7;
-          "${mod}+Ctrl+8".action = move-column-to-index 8;
-          "${mod}+Ctrl+9".action = move-column-to-index 9;
+          "${mod}+Ctrl+1".action.move-column-to-index = [ 1 ];
+          "${mod}+Ctrl+2".action.move-column-to-index = [ 2 ];
+          "${mod}+Ctrl+3".action.move-column-to-index = [ 3 ];
+          "${mod}+Ctrl+4".action.move-column-to-index = [ 4 ];
+          "${mod}+Ctrl+5".action.move-column-to-index = [ 5 ];
+          "${mod}+Ctrl+6".action.move-column-to-index = [ 6 ];
+          "${mod}+Ctrl+7".action.move-column-to-index = [ 7 ];
+          "${mod}+Ctrl+8".action.move-column-to-index = [ 8 ];
+          "${mod}+Ctrl+9".action.move-column-to-index = [ 9 ];
 
           # Window grouping
           "${mod}+BracketLeft".action = consume-or-expel-window-left;

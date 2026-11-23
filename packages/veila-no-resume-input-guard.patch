@@ -1,13 +1,16 @@
 --- a/crates/curtain/src/state/interaction/control.rs
 +++ b/crates/curtain/src/state/interaction/control.rs
-@@ -29,9 +29,7 @@
-                 self.authorize_unlock();
+@@ -30,13 +30,10 @@
                  self.request_exit();
              }
--            ControlEvent::ArmResumeInputGuard => {
+             ControlEvent::ArmResumeInputGuard => {
 -                self.resume_input.arm();
--            }
-+            ControlEvent::ArmResumeInputGuard => {}
+                 self.clear_auth_input_for_sleep(queue_handle);
+             }
              ControlEvent::MarkResumed => {
                  self.resume_input.mark_resumed();
+-                // input can arrive between arming the guard and entering sleep
+-                self.clear_auth_input_for_sleep(queue_handle);
              }
+             ControlEvent::UpdateNowPlaying { snapshot } => {
+                 tracing::debug!(
