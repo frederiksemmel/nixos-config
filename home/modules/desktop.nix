@@ -1468,7 +1468,12 @@ in
       };
       Install.WantedBy = [ "graphical-session.target" ];
     };
-    services.awww.enable = true;
+    services.awww = {
+      enable = true;
+      package = pkgs.awww.overrideAttrs (old: {
+        patches = (old.patches or [ ]) ++ [ ../../packages/awww-restore-on-reconfigure.patch ];
+      });
+    };
 
     # Repoints the link when it is missing or targets a wallpaper set from an
     # older generation.
