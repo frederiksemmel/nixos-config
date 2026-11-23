@@ -150,6 +150,7 @@ pub struct DeployState {
     #[serde(default)]
     pub others: usize,
     pub asked: Option<DeployAsked>,
+    pub waiting: Option<DeployAsked>,
     pub run: Option<DeployRun>,
 }
 

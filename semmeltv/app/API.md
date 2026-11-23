@@ -1001,14 +1001,15 @@ deploys. These need an admin or the service token; the state lives in memory
 and starts empty when the app restarts.
 
 - `GET /api/deploy`: `{ "revision", "checked_at", "main", "pending",
-  "others", "asked", "run" }`. `revision` is `/etc/semmeltv/revision`,
+  "others", "asked", "waiting", "run" }`. `revision` is `/etc/semmeltv/revision`,
   `checked_at` when beast last sent main (null until it has), `main` main's
   newest commit. `pending` lists main's commits after `revision` that change
   the TVs, newest first, each `{ "sha", "at", "subject", "reports" }` with the
   reports it fixed (`id`, `person`, `message`); null when `revision` is not
   among the commits beast sent. `others` counts the commits in between that
   change only other machines. `asked` is `{ "at", "by" }` while a deploy waits
-  for beast; `run` is the last deploy, `{ "state": "running" | "failed" |
+  for beast; `waiting` is `{ "at", "by" }` while beast holds a deploy because
+  someone watches; `run` is the last deploy, `{ "state": "running" | "failed" |
   "finished", "at", "by", "message" }`.
 - `POST /api/deploy`: asks for a deploy. 409 while one runs, or before beast
   has sent main.
@@ -1019,7 +1020,13 @@ and starts empty when the app restarts.
   that commit.
 - `POST /api/deploy/progress`: beast says how the asked deploy goes,
   `{ "state": "running" }` (which takes the ask), `{ "state": "finished" }`
-  or `{ "state": "failed", "message": … }`.
+  or `{ "state": "failed", "message": … }`. Running also ends `waiting`.
+- `GET /api/deploy/watching`: `{ "watching": [{ "person", "device", "title",
+  "paused" }] }`, everyone a deploy would interrupt: the TV while a film is
+  open in its player (paused too, until it has been paused for an hour) and
+  each phone or laptop stream.
+- `POST /api/deploy/wait`: beast holds a deploy until nobody watches, and the
+  Feedback page says so; `DELETE /api/deploy/wait` takes that back.
 
 ## Trying it
 

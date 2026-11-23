@@ -554,6 +554,13 @@ fn deployment(state: &DeployState, now: u64) -> Deployment {
                 );
                 offer = false;
             }
+            _ if state.waiting.is_some() => {
+                let held = state.waiting.as_ref().map_or(0, |waiting| waiting.at);
+                status = format!(
+                    "Held {} because someone was watching. Beast deploys once nobody watches; Deploy now deploys at once.",
+                    age(held, now)
+                );
+            }
             Some(DeployRun::Failed { at, by, message }) => {
                 status = format!("The deploy {by} asked for failed {}: {message}", age(*at, now));
             }
@@ -726,6 +733,7 @@ mod tests {
             pending: Some(vec![commit("ccccccc3333"), commit("bbbbbbb2222")]),
             others: 1,
             asked: None,
+            waiting: None,
             run: None,
         };
         assert_eq!(
@@ -766,6 +774,18 @@ mod tests {
         assert!(!deployment(&state, 1000).offer);
 
         state.run = None;
+        state.waiting = Some(DeployAsked {
+            at: 400,
+            by: "beast".to_string(),
+        });
+        let held = deployment(&state, 1000);
+        assert_eq!(
+            held.status,
+            "Held 10 min ago because someone was watching. Beast deploys once nobody watches; Deploy now deploys at once."
+        );
+        assert!(held.offer);
+        state.waiting = None;
+
         state.pending = Some(Vec::new());
         state.others = 0;
         let current = deployment(&state, 1000);

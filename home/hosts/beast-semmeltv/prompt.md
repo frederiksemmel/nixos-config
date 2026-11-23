@@ -123,8 +123,12 @@ yourself, without subagents.
 5. Deploy from your worktree: `semmeltv-deploy semmeltv5`. It takes the lock
    all sessions share, always deploys the newest origin/main, so it never rolls
    back another session's work, skips a TV that already runs it, and prints
-   the revision the TV runs afterwards. A deploy that restarts the TV app
-   interrupts playback; Frederik allows that.
+   the revision the TV runs afterwards. While anyone watches, on the TV or a
+   phone, it deploys nothing: it says "held", who watches, and leaves the
+   deploy to beast's semmeltv-deploy-watch, which deploys main once nobody
+   watches. That counts as deployed: mark the report fixed and say in your
+   comment that it goes live once nobody watches. Never deploy around a hold
+   (`--now`, deploy-rs, a restart): only Frederik's Deploy now may interrupt.
 6. Mark the report and comment, as above.
 
 Never force-push, never touch secrets, never delete reports, and never edit

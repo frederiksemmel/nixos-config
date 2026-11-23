@@ -9,7 +9,7 @@ usage: semmeltv-feedback HOST list [new|reopened|needs_review|done]
        semmeltv-feedback HOST mark ID needs-review WHY DECIDE [--ask QUESTION (--option TEXT | --recommend TEXT)...]...
        semmeltv-feedback HOST mark ID fixed COMMIT WHAT
        semmeltv-feedback HOST mark ID no-change WHY
-       semmeltv-feedback HOST deploy state|now|running|finished
+       semmeltv-feedback HOST deploy state|now|running|finished|watching|wait|unwait
        semmeltv-feedback HOST deploy failed MESSAGE
        semmeltv-feedback HOST deploy main FILE
 
@@ -25,7 +25,9 @@ person's Answer arrives as a comment such as "QUESTION\n→ b: TEXT".
 deploy talks to the Deploy box on the Feedback page: state shows what the TV
 knows, now asks for a deploy as its button does, main sends main's newest
 commits (FILE, as semmeltv-deploy-watch writes it), and running, finished and
-failed tell the TV how the deploy it asked for goes.
+failed tell the TV how the deploy it asked for goes. watching lists who watches
+on the TV or a phone right now; wait shows on the page that a deploy is held
+until nobody does, and unwait takes that back.
 
 HOST is semmeltv5. Talks to the TV's API on 127.0.0.1 over ssh
 with the TV's service token, which never leaves the TV.
@@ -159,6 +161,18 @@ case $command in
       running | finished)
         (($# == 1)) || usage
         api POST /api/deploy/progress "$(jq -nc --arg state "$1" '{state: $state}')"
+        ;;
+      watching)
+        (($# == 1)) || usage
+        api GET /api/deploy/watching
+        ;;
+      wait)
+        (($# == 1)) || usage
+        api POST /api/deploy/wait '{}'
+        ;;
+      unwait)
+        (($# == 1)) || usage
+        api DELETE /api/deploy/wait '{}'
         ;;
       failed)
         (($# == 2)) || usage

@@ -611,9 +611,12 @@ yet: each commit that changes the TVs, with the reports it fixed, and a Deploy
 now button. The `semmeltv-deploy-watch` user timer on beast asks both TVs
 every 20 seconds, sends main's newest 100 commits when the TV doesn't have
 them yet (`semmeltv-feedback HOST deploy main FILE`), and runs
-`semmeltv-deploy HOST` from origin/main when the button was pressed. It
+`semmeltv-deploy --now HOST` from origin/main when the button was pressed. It
 deploys at once, even mid-film, and tells the page whether it is running,
-finished or failed. The box stays away until beast has sent main, so the
+finished or failed. Without `--now`, `semmeltv-deploy` deploys nothing while
+anyone watches (`semmeltv-feedback HOST deploy watching`): it marks the deploy
+held, the page says so, and the timer deploys origin/main once nobody
+watches. The box stays away until beast has sent main, so the
 button never shows without beast behind it. `semmeltv-feedback HOST deploy
 state` shows what the TV knows; `journalctl --user -u semmeltv-deploy-watch`
 shows the deploys.

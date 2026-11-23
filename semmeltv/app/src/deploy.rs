@@ -77,6 +77,8 @@ enum Progress {
 struct Known {
     main: Option<(u64, Vec<Commit>)>,
     asked: Option<Asked>,
+    /// A deploy beast holds because someone watches; it runs once nobody does.
+    waiting: Option<Asked>,
     run: Option<Run>,
 }
 
@@ -165,7 +167,7 @@ impl Deploy {
             .ok()
             .map(|text| text.trim().to_string())
             .filter(|text| !text.is_empty());
-        let (checked_at, main, asked, run, commits) = {
+        let (checked_at, main, asked, waiting, run, commits) = {
             let known = self.state.lock().await;
             (
                 known.main.as_ref().map(|(at, _)| *at),
@@ -174,6 +176,7 @@ impl Deploy {
                     .as_ref()
                     .and_then(|(_, commits)| commits.first().map(|commit| commit.sha.clone())),
                 known.asked.clone(),
+                known.waiting.clone(),
                 known.run.clone(),
                 known.main.as_ref().map(|(_, commits)| commits.clone()),
             )
@@ -194,6 +197,7 @@ impl Deploy {
             "pending": found.as_ref().map(|(shown, _)| shown),
             "others": found.as_ref().map_or(0, |(_, others)| *others),
             "asked": asked,
+            "waiting": waiting,
             "run": run,
         })
     }
@@ -245,6 +249,7 @@ async fn progress(State(deploy): State<Deploy>, Json(progress): Json<Progress>) 
         let by = known
             .asked
             .as_ref()
+            .or(known.waiting.as_ref())
             .map(|asked| asked.by.clone())
             .or_else(|| match &known.run {
                 Some(Run::Running { by, .. }) => Some(by.clone()),
@@ -255,6 +260,7 @@ async fn progress(State(deploy): State<Deploy>, Json(progress): Json<Progress>) 
         known.run = Some(match progress {
             Progress::Running => {
                 known.asked = None;
+                known.waiting = None;
                 Run::Running { at, by }
             }
             Progress::Failed { message } => Run::Failed {
@@ -269,11 +275,27 @@ async fn progress(State(deploy): State<Deploy>, Json(progress): Json<Progress>) 
     Json(deploy.view().await).into_response()
 }
 
+async fn wait(State(deploy): State<Deploy>, caller: Option<Extension<Caller>>) -> Response {
+    let by = caller_name(caller);
+    deploy.state.lock().await.waiting = Some(Asked {
+        at: now(),
+        by: by.clone(),
+    });
+    eprintln!("deploy: {by} holds a deploy until nobody watches");
+    Json(deploy.view().await).into_response()
+}
+
+async fn stop_waiting(State(deploy): State<Deploy>) -> Response {
+    deploy.state.lock().await.waiting = None;
+    Json(deploy.view().await).into_response()
+}
+
 pub fn routes<S: Clone + Send + Sync + 'static>(deploy: Deploy) -> Router<S> {
     Router::new()
         .route("/api/deploy", get(show).post(ask))
         .route("/api/deploy/main", post(tell_main))
         .route("/api/deploy/progress", post(progress))
+        .route("/api/deploy/wait", post(wait).delete(stop_waiting))
         .with_state(deploy)
 }
 

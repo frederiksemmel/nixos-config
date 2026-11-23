@@ -1,6 +1,6 @@
 usage() {
   cat >&2 <<'EOF'
-usage: semmeltv-deploy semmeltv5 [FLAKE]
+usage: semmeltv-deploy [--now] semmeltv5 [FLAKE]
 
 Deploys FLAKE (default: the current directory) to semmeltv5 with deploy-rs,
 building on nixbuild.net. Every deploy on beast takes the same lock, so two
@@ -10,10 +10,20 @@ A clean checkout whose HEAD is on origin/main deploys the newest origin/main
 instead, so a session that deploys after another never rolls back the other's
 work. A TV that already runs that commit is left alone. A checkout with
 uncommitted changes or commits not on origin/main deploys as it is.
+
+While anyone watches, on the TV or a phone, it deploys nothing: it lists who
+watches, marks the deploy as held, and the Feedback page says so.
+semmeltv-deploy-watch deploys the newest origin/main once nobody watches.
+--now deploys even then, as Deploy now on the Feedback page does.
 EOF
   exit 2
 }
 
+now=0
+if [[ ${1:-} == --now ]]; then
+  now=1
+  shift
+fi
 (($# >= 1 && $# <= 2)) || usage
 host=$1
 flake=$(realpath "${2:-.}")
@@ -25,8 +35,17 @@ holder=$runtime/semmeltv-deploy.holder
 builders='ssh://eu.nixbuild.net x86_64-linux,aarch64-linux - 100 4 benchmark,big-parallel'
 session=${CLAUDE_CODE_SESSION_ID:-}
 
+state=${XDG_STATE_HOME:-$HOME/.local/state}/semmeltv-deploy
+held=$state/$host.held
+mkdir -p "$state"
+
 tv() {
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$host" "$@"
+}
+
+not_held() {
+  rm -f "$held"
+  semmeltv-feedback "$host" deploy unwait >/dev/null 2>&1 || true
 }
 
 main=""
@@ -69,6 +88,21 @@ if git -C "$flake" rev-parse --is-inside-work-tree >/dev/null 2>&1 &&
   fi
   if [[ $(tv cat /etc/semmeltv/revision 2>/dev/null || true) == "$revision" ]]; then
     echo "semmeltv-deploy: $host already runs ${revision:0:7}, nothing to deploy" >&2
+    not_held
+    exit 0
+  fi
+fi
+
+if ((!now)); then
+  if ! answer=$(semmeltv-feedback "$host" deploy watching 2>&1); then
+    printf 'semmeltv-deploy: asking %s who watches failed, so it deploys nothing:\n%s\n' "$host" "$answer" >&2
+    exit 1
+  fi
+  watching=$(jq -r '.watching[] | "  \(.person) watches \(.title) on \(.device)\(if .paused then ", paused" else "" end)"' <<<"$answer")
+  if [[ -n $watching ]]; then
+    echo "${revision:0:7} held $(date '+%F %T'), session ${session:0:8}" >"$held"
+    semmeltv-feedback "$host" deploy wait >/dev/null || echo "semmeltv-deploy: telling the Feedback page the deploy is held failed" >&2
+    printf 'semmeltv-deploy: held, because someone watches:\n%s\nsemmeltv-deploy-watch deploys the newest origin/main once nobody watches; Deploy now on the Feedback page deploys at once.\n' "$watching" >&2
     exit 0
   fi
 fi
@@ -77,4 +111,5 @@ echo "$host ${revision:0:7} from $flake, session ${session:0:8}, pid $$, since $
 echo "semmeltv-deploy: deploying ${revision:0:7} to $host" >&2
 
 nix run "$target#deploy-rs" -- "$target#$host" --skip-checks -- --builders "$builders" --max-jobs 0
+not_held
 echo "semmeltv-deploy: $host now runs $(tv cat /etc/semmeltv/revision 2>/dev/null || echo 'an unknown revision')" >&2

@@ -297,6 +297,8 @@ mod tests {
             (&post, "/api/deploy", Access::AdminOrService),
             (&post, "/api/deploy/main", Access::AdminOrService),
             (&post, "/api/deploy/progress", Access::AdminOrService),
+            (&post, "/api/deploy/wait", Access::AdminOrService),
+            (&get, "/api/deploy/watching", Access::AdminOrService),
         ];
         for (method, path, want) in rows {
             assert_eq!(access(method, path), want, "{method} {path}");

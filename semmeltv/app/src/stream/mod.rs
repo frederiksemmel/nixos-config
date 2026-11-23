@@ -1,3 +1,4 @@
+mod audience;
 mod bakeoff;
 
 pub use bakeoff::save_calibration;
@@ -153,6 +154,7 @@ struct Streams {
     live: Arc<Mutex<HashMap<String, Arc<Live>>>>,
     probes: Arc<Mutex<HashMap<PathBuf, Media>>>,
     captions: Arc<Mutex<Captions>>,
+    pause: Arc<Mutex<audience::Pause>>,
 }
 
 pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Router<S> {
@@ -163,6 +165,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Ro
         live: Arc::default(),
         probes: Arc::default(),
         captions: Arc::default(),
+        pause: Arc::default(),
     };
     tokio::spawn(reap(streams.clone()));
     let loading = streams.clone();
@@ -176,6 +179,7 @@ pub fn routes<S: Clone + Send + Sync + 'static>(core: Core, root: PathBuf) -> Ro
         .route("/api/stream/{id}/marks", get(marks))
         .route("/api/stream/{id}/progress", post(progress))
         .route("/api/stream/{id}/{name}", get(file))
+        .route("/api/deploy/watching", get(audience::watching))
         .merge(bakeoff::routes())
         .with_state(streams)
 }
@@ -184,6 +188,7 @@ async fn reap(streams: Streams) {
     loop {
         tokio::time::sleep(Duration::from_secs(30)).await;
         bakeoff::settle(&streams);
+        audience::look(&streams);
         let gone: Vec<Arc<Live>> = {
             let mut live = streams.live.lock().unwrap();
             let idle: Vec<String> = live

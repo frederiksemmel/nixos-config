@@ -2088,6 +2088,44 @@ mod tests {
     }
 
     #[test]
+    fn beast_holds_a_deploy_while_the_tv_plays_and_the_page_shows_it_waits() {
+        let server = serve(no_root());
+        assert_eq!(get(&server, "/api/deploy/watching").1, json!({ "watching": [] }));
+        server.bus.playback(Some(NowPlaying {
+            title: "Dune".to_string(),
+            paused: true,
+            ..NowPlaying::default()
+        }));
+        let (status, watching) = get(&server, "/api/deploy/watching");
+        assert_eq!(status, 200, "{watching}");
+        assert_eq!(watching["watching"][0]["device"], "the TV");
+        assert_eq!(watching["watching"][0]["title"], "Dune");
+        assert_eq!(
+            watching["watching"][0]["paused"], true,
+            "a pause still counts as watching"
+        );
+
+        let (status, held) = post(&server, "/api/deploy/wait", json!({}));
+        assert_eq!(status, 200, "{held}");
+        assert_eq!(held["waiting"]["by"], "someone");
+        assert_eq!(get(&server, "/api/deploy").1["waiting"]["by"], "someone");
+        let (_, running) = post(&server, "/api/deploy/progress", json!({ "state": "running" }));
+        assert_eq!(running["waiting"], Value::Null);
+        assert_eq!(running["run"]["by"], "someone");
+
+        post(&server, "/api/deploy/wait", json!({}));
+        let mut response = agent()
+            .delete(format!("{}/api/deploy/wait", server.base))
+            .call()
+            .unwrap();
+        let stopped: Value = response.body_mut().read_json().unwrap();
+        assert_eq!(stopped["waiting"], Value::Null);
+
+        server.bus.playback(None);
+        assert_eq!(get(&server, "/api/deploy/watching").1, json!({ "watching": [] }));
+    }
+
+    #[test]
     fn feedback_is_kept_as_files_and_read_back_newest_first() {
         let server = serve(no_root());
         let trail = json!([{ "kind": "tap", "message": "button \"Play\"" }]);

@@ -42,7 +42,7 @@ deploy() {
   log=$state/$host.log
   git -C "$repo" worktree add --quiet --detach "$checkout" origin/main
   echo "$host: deploying origin/main ${main:0:7}, asked on its Feedback page"
-  if semmeltv-deploy "$host" "$checkout" >"$log" 2>&1; then
+  if semmeltv-deploy --now "$host" "$checkout" >"$log" 2>&1; then
     cat "$log"
     for _ in $(seq 12); do
       semmeltv-feedback "$host" deploy finished >/dev/null 2>&1 && break
@@ -55,7 +55,28 @@ deploy() {
   git -C "$repo" worktree remove --force "$checkout" || true
 }
 
+# A deploy semmeltv-deploy held because someone watched: once nobody does,
+# deploy main. A failed one is not tried again every 20 seconds: it shows on
+# the Feedback page, where Deploy now tries again.
+deploy_held() {
+  local host=$1 checkout log
+  checkout=$(mktemp -d "$runtime/semmeltv-deploy-watch.XXXXXX")
+  log=$state/$host.log
+  git -C "$repo" worktree add --quiet --detach "$checkout" origin/main
+  echo "$host: nobody watches, deploying origin/main ${main:0:7}, held since $(cat "$held")"
+  if semmeltv-deploy "$host" "$checkout" >"$log" 2>&1; then
+    cat "$log"
+  else
+    cat "$log"
+    rm -f "$held"
+    semmeltv-feedback "$host" deploy unwait >/dev/null || true
+    semmeltv-feedback "$host" deploy failed "$(grep -v '^\s*$' "$log" | tail -n 4 | cut -c1-300)" >/dev/null || true
+  fi
+  git -C "$repo" worktree remove --force "$checkout" || true
+}
+
 host=semmeltv5
+held=${XDG_STATE_HOME:-$HOME/.local/state}/semmeltv-deploy/$host.held
 if ! answer=$(semmeltv-feedback "$host" deploy state 2>&1); then
   say "$host" "$host: asking it about deploys failed: $(tail -n 1 <<<"$answer")"
   exit 0
@@ -73,5 +94,16 @@ elif jq -e '.run.state == "running"' <<<"$answer" >/dev/null; then
     semmeltv-feedback "$host" deploy finished >/dev/null
   else
     semmeltv-feedback "$host" deploy failed "Beast stopped before the deploy finished. Deploy now tries again." >/dev/null
+  fi
+elif [[ -e $held ]]; then
+  if jq -e '.pending == []' <<<"$answer" >/dev/null; then
+    rm -f "$held"
+    semmeltv-feedback "$host" deploy unwait >/dev/null || true
+  elif ! watching=$(semmeltv-feedback "$host" deploy watching 2>&1); then
+    say "$host" "$host: asking who watches failed: $(tail -n 1 <<<"$watching")"
+  elif jq -e '.watching == []' <<<"$watching" >/dev/null; then
+    deploy_held "$host"
+  elif jq -e '.waiting == null' <<<"$answer" >/dev/null; then
+    semmeltv-feedback "$host" deploy wait >/dev/null || true
   fi
 fi

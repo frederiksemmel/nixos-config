@@ -20,8 +20,10 @@ let
   semmeltv-deploy = pkgs.writeShellApplication {
     name = "semmeltv-deploy";
     runtimeInputs = [
+      semmeltv-feedback
       pkgs.coreutils
       pkgs.git
+      pkgs.jq
       pkgs.openssh
       pkgs.util-linux
     ];
@@ -82,7 +84,7 @@ in
   };
 
   systemd.user.services.semmeltv-deploy-watch = {
-    Unit.Description = "Tells the TVs what is on main and deploys when a Feedback page's Deploy now asks";
+    Unit.Description = "Tells the TVs what is on main, deploys when a Feedback page's Deploy now asks, and deploys a held deploy once nobody watches";
     Service = {
       Type = "oneshot";
       ExecStart = lib.getExe deployWatch;
