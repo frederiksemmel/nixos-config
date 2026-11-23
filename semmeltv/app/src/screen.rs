@@ -656,6 +656,62 @@ impl View {
     }
 }
 
+/// What one device's player does with the screen as it is: the phone only
+/// carries this out, the rules are here.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "do", rename_all = "lowercase")]
+pub enum Here {
+    /// This device plays the title: open it, from `at` if the player isn't
+    /// on it already.
+    Open {
+        #[serde(flatten)]
+        title: Title,
+        at: f64,
+    },
+    /// The screen is on this device but plays nothing: a video still
+    /// playing goes on and reports, a stopped one stays where it is.
+    Hold,
+    /// Nothing for this device: an open player closes.
+    Close,
+}
+
+impl View {
+    /// What the device `id` does with this screen.
+    pub fn here(&self, id: Option<&str>) -> Here {
+        let ours = |device: &Device| id == Some(device.id.as_str());
+        match &self.on {
+            OnScreen::Moving { device, play } if ours(device) => Here::Open {
+                title: play.place.title.clone(),
+                at: play.place.position,
+            },
+            OnScreen::Phone {
+                device,
+                play: Some(PlayView::Starting { place } | PlayView::Playing { place, .. }),
+            } if ours(device) => Here::Open {
+                title: place.title.clone(),
+                at: place.position,
+            },
+            OnScreen::Phone { device, play: None } if ours(device) => Here::Hold,
+            _ => Here::Close,
+        }
+    }
+
+    /// The view as the device `id` reads it, with what it does.
+    pub fn for_device(&self, id: Option<&str>) -> ForDevice<'_> {
+        ForDevice {
+            view: self,
+            here: self.here(id),
+        }
+    }
+}
+
+#[derive(Serialize)]
+pub struct ForDevice<'a> {
+    #[serde(flatten)]
+    pub view: &'a View,
+    pub here: Here,
+}
+
 impl Default for View {
     fn default() -> Self {
         Self::of(&Screen::Tv, None)
@@ -1265,6 +1321,60 @@ mod tests {
         let mut screen = playing(&iphone, "s1", 1.0, now);
         let effects = screen.step(flip_to(&phone("b")), Some(&tv), now);
         assert_eq!(effects, vec![Effect::StopTv]);
+    }
+
+    #[test]
+    fn a_phone_opens_what_moves_to_it_or_plays_on_it_and_closes_for_anything_else() {
+        let now = Instant::now();
+        let iphone = phone("a");
+        let mut moving = Screen::Tv;
+        moving.step(flip_to(&iphone), Some(&place(1228.0)), now);
+        let episode = Title::Episode {
+            show: "outlander".to_string(),
+            season: 2,
+            episode: 3,
+        };
+        let idle = Screen::Phone {
+            device: iphone.clone(),
+            play: None,
+        };
+        let rows = [
+            ("the TV", Screen::Tv, Here::Close, Here::Close),
+            (
+                "moving to a",
+                moving,
+                Here::Open {
+                    title: episode.clone(),
+                    at: 1228.0,
+                },
+                Here::Close,
+            ),
+            (
+                "playing on a",
+                playing(&iphone, "s1", 12.0, now),
+                Here::Open {
+                    title: episode.clone(),
+                    at: 12.0,
+                },
+                Here::Close,
+            ),
+            ("a, playing nothing", idle, Here::Hold, Here::Close),
+        ];
+        for (name, screen, on_a, on_b) in rows {
+            let view = View::of(&screen, None);
+            assert_eq!(view.here(Some("a")), on_a, "{name}");
+            assert_eq!(view.here(Some("b")), on_b, "{name}");
+            assert_eq!(view.here(None), Here::Close, "{name}");
+        }
+        let view = View::of(&playing(&iphone, "s1", 12.0, now), None);
+        let json = serde_json::to_value(view.for_device(Some("a"))).unwrap();
+        assert_eq!(json["kind"], "phone");
+        assert_eq!(
+            json["here"],
+            json!({ "do": "open", "kind": "episode", "show": "outlander", "season": 2, "episode": 3, "at": 12.0 })
+        );
+        let json = serde_json::to_value(View::of(&Screen::Tv, None).for_device(Some("a"))).unwrap();
+        assert_eq!(json["here"], json!({ "do": "close" }));
     }
 
     #[test]

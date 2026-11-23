@@ -168,6 +168,11 @@ function thisDevice() {
 
 const device = thisDevice();
 
+// The screen as this device reads it: `here` says what its player does.
+function screenPath() {
+  return `/api/screen?device=${encodeURIComponent(device.id)}`;
+}
+
 function ownsSpace(target) {
   return Boolean(target.closest?.(".pp button") && !target.closest(".pp-layer"));
 }
@@ -196,7 +201,7 @@ function tvPick() {
 }
 
 function ours(view) {
-  return Boolean(view.device && view.device.id === device.id);
+  return Boolean(view.here && view.here.do !== "close");
 }
 
 function render() {
@@ -252,47 +257,44 @@ function adopt(view) {
 
 function reconcile() {
   const view = screen;
-  const play = view.play;
+  const here = view.here || { do: "close" };
   if (reloaded) {
     const saved = reloaded;
     reloaded = null;
-    if (ours(view) && view.kind === "phone" && !play) {
+    if (here.do === "hold") {
       playHere(saved.pick);
       if (saved.mini && player) player.minimize();
       return;
     }
   }
-  const wanted = ours(view) && play && ["moving", "starting", "playing"].includes(play.state);
-  if (!wanted) {
-    if (player && !player.closed && !player.fresh() && !player.resuming && !player.awaiting && !player.bakeoff.shown()) {
-      const why = `screen is ${view.kind}${view.device ? ` on ${view.device.name}` : ""}${play ? `, ${play.state}` : ", nothing playing"}${view.notice ? `; last notice: ${view.notice.text}` : ""}`;
-      if (ours(view) && view.kind === "phone" && !play) {
-        if (player.playing()) {
-          note(`the TV dropped this phone's play at ${clock(player.now())}; it keeps playing and reports`, why);
-          player.report("playing");
-          return;
-        }
-        note(`player stops at ${clock(player.now())}: the TV dropped this phone's play`, why);
-        player.idle();
-      } else {
-        note("player closes: the screen moved away", why);
-        player.close(false);
-      }
-    }
+  if (here.do === "open") {
+    const pick = pickOfPlay(here);
+    if (player && !player.closed && player.shows(pick)) return;
+    openPlayer(pick, { start: here.at });
     return;
   }
-  const pick = pickOfPlay(play);
-  if (player && !player.closed && player.shows(pick)) return;
-  openPlayer(pick, { start: play.position });
+  if (!player || player.closed || player.fresh() || player.resuming || player.awaiting || player.bakeoff.shown()) return;
+  const play = view.play;
+  const why = `screen is ${view.kind}${view.device ? ` on ${view.device.name}` : ""}${play ? `, ${play.state}` : ", nothing playing"}${view.notice ? `; last notice: ${view.notice.text}` : ""}`;
+  if (here.do === "close") {
+    note("player closes: the screen moved away", why);
+    player.close(false);
+  } else if (player.playing()) {
+    note(`the TV dropped this phone's play at ${clock(player.now())}; it keeps playing and reports`, why);
+    player.report("playing");
+  } else {
+    note(`player stops at ${clock(player.now())}: the TV dropped this phone's play`, why);
+    player.idle();
+  }
 }
 
 function listen() {
   if (socket && socket.readyState <= 1) return;
   const base = api ? api.replace(/^http/, "ws") : location.origin.replace(/^http/, "ws");
-  const mine = new WebSocket(`${base}/api/events`);
+  const mine = new WebSocket(`${base}/api/events?device=${encodeURIComponent(device.id)}`);
   socket = mine;
   mine.addEventListener("open", () => {
-    request("GET", "/api/screen").then(adopt).catch(() => {});
+    request("GET", screenPath()).then(adopt).catch(() => {});
   });
   mine.addEventListener("message", (message) => {
     let event;
@@ -322,7 +324,7 @@ async function tell(body) {
   note(asked, `screen was ${screen.kind}`);
   try {
     await request("POST", "/api/screen", { ...body, device });
-    const view = await request("GET", "/api/screen");
+    const view = await request("GET", screenPath());
     note(`${asked}: TV agreed`, `screen is ${view.kind}${view.play ? `, ${view.play.state}` : ""}`);
     pending = null;
     adopt(view);
@@ -330,7 +332,7 @@ async function tell(body) {
     pending = null;
     paintSwitch();
     if (player && player.waiting) player.close(false);
-    request("GET", "/api/screen").then(adopt).catch(() => {});
+    request("GET", screenPath()).then(adopt).catch(() => {});
     throw error;
   }
 }
@@ -1688,7 +1690,7 @@ class Player {
     while (!this.closed && (Date.now() < until || closedForMaintenance())) {
       let view = null;
       try {
-        view = await request("GET", "/api/screen");
+        view = await request("GET", screenPath());
       } catch {
         await sleep(delay);
         delay = Math.min(delay * 2, LONGEST_RETRY);
@@ -1698,7 +1700,7 @@ class Player {
       const before = boot;
       adopt(view);
       if (this.closed || this.resuming || this.opening || boot !== before) return;
-      if (this.session && ours(view) && view.play && !this.recover()) this.failed(why);
+      if (this.session && view.here.do === "open" && !this.recover()) this.failed(why);
       return;
     }
     this.awaiting = false;
@@ -1728,14 +1730,14 @@ class Player {
         try {
           await request("POST", "/api/screen", { action: "resume", ...pick, position, device });
           this.resuming = false;
-          adopt(await request("GET", "/api/screen"));
+          adopt(await request("GET", screenPath()));
           return;
         } catch (error) {
           if (!transient(error) || (Date.now() > until && !closedForMaintenance())) {
             note("playing on here after the restart was refused", error.message);
             this.resuming = false;
             this.waiting = false;
-            request("GET", "/api/screen").then(adopt).catch(() => this.close(false));
+            request("GET", screenPath()).then(adopt).catch(() => this.close(false));
             return;
           }
           await sleep(delay);
@@ -1998,7 +2000,7 @@ window.addEventListener("click", (event) => {
 document.addEventListener("visibilitychange", () => {
   if (document.visibilityState !== "visible") return;
   listen();
-  request("GET", "/api/screen").then(adopt).catch(() => {});
+  request("GET", screenPath()).then(adopt).catch(() => {});
 });
 
 window.addEventListener("semmeltv:reconnect", relisten);
@@ -2018,6 +2020,6 @@ new MutationObserver(render).observe(html, { attributes: true, childList: true }
 new MutationObserver(render).observe(document.body, { childList: true, subtree: true });
 render();
 listen();
-request("GET", "/api/screen").then(adopt).catch(() => {});
+request("GET", screenPath()).then(adopt).catch(() => {});
 if (location.hash === PRACTICE) practiceBake();
 window.addEventListener("hashchange", () => { if (location.hash === PRACTICE) practiceBake(); });

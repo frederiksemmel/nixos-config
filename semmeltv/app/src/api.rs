@@ -1678,8 +1678,14 @@ async fn volume(State(api): State<Api>, Path(change): Path<String>) -> Response 
     }
 }
 
-async fn screen_view(State(api): State<Api>) -> Json<screen::View> {
-    Json(api.core.screen())
+/// Which device asks, so the answer can say what that device does.
+#[derive(Deserialize)]
+struct DeviceQuery {
+    device: Option<String>,
+}
+
+async fn screen_view(State(api): State<Api>, Query(query): Query<DeviceQuery>) -> Response {
+    Json(api.core.screen().for_device(query.device.as_deref())).into_response()
 }
 
 fn without_control(command: ScreenCommand) -> Option<ScreenCommand> {
@@ -1714,11 +1720,12 @@ async fn screen_command(
     }
 }
 
-async fn events(State(api): State<Api>, upgrade: WebSocketUpgrade) -> Response {
-    upgrade.on_upgrade(move |socket| stream_events(socket, api.core.bus().clone()))
+async fn events(State(api): State<Api>, Query(query): Query<DeviceQuery>, upgrade: WebSocketUpgrade) -> Response {
+    upgrade.on_upgrade(move |socket| stream_events(socket, api.core.bus().clone(), query.device))
 }
 
-async fn stream_events(mut socket: WebSocket, bus: Bus) {
+async fn stream_events(socket: WebSocket, bus: Bus, device: Option<String>) {
+    let mut socket = Events { socket, device };
     let (now_playing, mut events) = bus.subscribe();
     if send_event(&mut socket, &Event::Playback { now_playing }).await.is_err() {
         return;
@@ -1746,7 +1753,7 @@ async fn stream_events(mut socket: WebSocket, bus: Bus) {
                 }
                 Err(broadcast::error::RecvError::Closed) => return,
             },
-            message = socket.recv() => match message {
+            message = socket.socket.recv() => match message {
                 Some(Ok(Message::Close(_))) | Some(Err(_)) | None => return,
                 Some(Ok(_)) => {}
             },
@@ -1754,9 +1761,32 @@ async fn stream_events(mut socket: WebSocket, bus: Bus) {
     }
 }
 
-async fn send_event(socket: &mut WebSocket, event: &Event) -> Result<(), axum::Error> {
-    let text = serde_json::to_string(event).unwrap_or_default();
-    socket.send(Message::Text(text.into())).await
+/// An events socket and the device it reaches, which reads each screen with
+/// what it does.
+struct Events {
+    socket: WebSocket,
+    device: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "type", rename = "screen")]
+struct ScreenFor<'a> {
+    screen: screen::ForDevice<'a>,
+}
+
+fn event_text(event: &Event, device: Option<&str>) -> String {
+    match event {
+        Event::Screen { screen } => serde_json::to_string(&ScreenFor {
+            screen: screen.for_device(device),
+        }),
+        other => serde_json::to_string(other),
+    }
+    .unwrap_or_default()
+}
+
+async fn send_event(socket: &mut Events, event: &Event) -> Result<(), axum::Error> {
+    let text = event_text(event, socket.device.as_deref());
+    socket.socket.send(Message::Text(text.into())).await
 }
 
 #[cfg(test)]
@@ -1769,6 +1799,27 @@ mod tests {
     use serde_json::{Value, json};
     use std::sync::atomic::{AtomicU64, Ordering};
     use std::sync::mpsc;
+
+    #[test]
+    fn each_events_socket_reads_the_screen_with_what_its_own_device_does() {
+        let screen = screen::Screen::Phone {
+            device: screen::Device {
+                id: "a".to_string(),
+                name: "iPhone".to_string(),
+            },
+            play: None,
+        };
+        let event = Event::Screen {
+            screen: screen::View::of(&screen, None),
+        };
+        let read = |device| serde_json::from_str::<Value>(&event_text(&event, device)).unwrap();
+        assert_eq!(read(Some("a"))["type"], "screen");
+        assert_eq!(read(Some("a"))["screen"]["kind"], "phone");
+        assert_eq!(read(Some("a"))["screen"]["here"], json!({ "do": "hold" }));
+        assert_eq!(read(Some("b"))["screen"]["here"], json!({ "do": "close" }));
+        let other = Event::Playback { now_playing: None };
+        assert_eq!(event_text(&other, Some("a")), serde_json::to_string(&other).unwrap());
+    }
 
     #[test]
     fn a_phone_asks_for_a_movie_or_a_show_and_never_both() {

@@ -697,7 +697,7 @@ the screen, and every front end shows what it says.
 
 | Method | Path | Answer |
 | --- | --- | --- |
-| GET | `/api/screen` | the screen, see below |
+| GET | `/api/screen?device=ID` | the screen, as the device `ID` reads it, see below |
 | POST | `/api/screen` | a command, see below → `{ message, ok }` |
 
 The screen is `{ kind, boot, notice }` plus what its kind carries. `kind` is
@@ -713,6 +713,15 @@ whenever the app restarts, and the screen then starts over on the TV with nothin
 playing. `notice` is the last thing worth saying,
 `{ id, text, tone }` with `tone` `quiet` or `error`; a new `id` means a new
 notice.
+
+`here` is what the asking device's player does, decided by the TV so the phone
+only carries it out: `{ do: "open", kind, movie | show season episode, at }`
+when the screen moves to this device or it plays there (open that title from
+`at`, unless the player is on it already), `{ do: "hold" }` when the screen is
+on this device but plays nothing (a video still playing goes on and reports, a
+stopped one stays), and `{ do: "close" }` otherwise. Without `device` it is
+always `close`. `/api/events?device=ID` sends each screen event with the same
+`here` for its device.
 
 Commands carry `action` and the sending `device`:
 
