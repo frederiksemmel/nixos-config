@@ -26,7 +26,8 @@ deploy talks to the Deploy box on the Feedback page: state shows what the TV
 knows, now asks for a deploy as its button does, main sends main's newest
 commits (FILE, as semmeltv-deploy-watch writes it), and running, finished and
 failed tell the TV how the deploy it asked for goes. watching lists who watches
-on the TV or a phone right now; wait shows on the page that a deploy is held
+on the TV or a phone right now (a core too old to tell answers with what only
+the TV plays); wait shows on the page that a deploy is held
 until nobody does, and unwait takes that back.
 
 HOST is semmeltv5. Talks to the TV's API on 127.0.0.1 over ssh
@@ -164,7 +165,15 @@ case $command in
         ;;
       watching)
         (($# == 1)) || usage
-        api GET /api/deploy/watching
+        if answer=$(api GET /api/deploy/watching 2>&1); then
+          printf '%s\n' "$answer"
+        elif [[ $answer == *"error: 404"* ]]; then
+          api GET /api/playback |
+            jq -c '{watching: [.now_playing | select(. != null) | {person: "Someone", device: "the TV", title, paused}]}'
+        else
+          printf '%s\n' "$answer" >&2
+          exit 1
+        fi
         ;;
       wait)
         (($# == 1)) || usage
