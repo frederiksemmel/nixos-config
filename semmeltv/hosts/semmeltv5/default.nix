@@ -7,7 +7,6 @@
   imports = with nixos-raspberrypi.nixosModules; [
     ../common.nix
     ../mount.nix
-    ./adblock.nix
     raspberry-pi-5.base
     raspberry-pi-5.display-vc4
   ];
