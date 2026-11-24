@@ -13,6 +13,7 @@ toasty-driver-sqlite = { git = "https://github.com/tokio-rs/toasty", rev = "45ac
 rusqlite = "0.40"
 cec_linux = { version = "0.2", features = ["poll"] }
 deunicode = "1"
+futures-util = "0.3"
 flate2 = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
 webp = { version = "0.3", default-features = false }

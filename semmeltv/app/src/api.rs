@@ -218,6 +218,7 @@ fn router(api: Api) -> Router {
         .merge(crate::feedback::routes(api.feedback.clone()))
         .merge(crate::deploy::routes(api.deploy.clone()))
         .merge(storage::routes(api.core.clone()))
+        .merge(crate::files::routes(api.core.clone()))
         .merge(stream::routes(api.core.clone(), api.stream.clone()));
     match gate {
         Some(gate) => routes

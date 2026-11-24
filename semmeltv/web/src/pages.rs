@@ -851,6 +851,27 @@ async fn share_button(path: &str, text: &str) -> Result<impl View> {
 }
 
 #[component]
+async fn save_icon() -> Result<impl View> {
+    Ok(view! {
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path d="M12 3.5v11"></path>
+            <path d="m8 10.5 4 4 4-4"></path>
+            <path d="M5 19.5h14"></path>
+        </svg>
+    })
+}
+
+#[component]
+async fn save_button(href: &str) -> Result<impl View> {
+    Ok(view! {
+        <a class="pill quiet save" href=(href) download=(true)>
+            save_icon()
+            "Save file"
+        </a>
+    })
+}
+
+#[component]
 async fn episode_row(
     cx: &Cx,
     public: &Public,
@@ -870,6 +891,7 @@ async fn episode_row(
     let label = episode.short_label.clone();
     let share = episode_link(series, season_number, episode_number);
     let share_text = share_text(title, None, Some((&episode.short_label, &episode.label)));
+    let save = public.url(&format!("/api/files/shows/{series}/{season_number}/{episode_number}"));
     Ok(view! {
         <li class=(if shared { "episode-row shared" } else { "episode-row" })>
             <button type="button" class="episode" data-play-show=(series) data-season=(season_number.to_string())
@@ -905,10 +927,15 @@ async fn episode_row(
                 })>
                 check_icon()
             </button>
-            <button type="button" class="share-episode" aria-label=(format!("Share {label}"))
-                data-share=(share.as_str()) data-share-text=(share_text.as_str())>
-                share_icon()
-            </button>
+            <span class="episode-more">
+                <button type="button" class="share-episode" aria-label=(format!("Share {label}"))
+                    data-share=(share.as_str()) data-share-text=(share_text.as_str())>
+                    share_icon()
+                </button>
+                <a class="save-episode" href=(save) download=(true) aria-label=(format!("Save {label} to this device"))>
+                    save_icon()
+                </a>
+            </span>
         </li>
     })
 }
@@ -1075,6 +1102,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
     }
     rows.extend(downloaded_by(&movie.downloaded_by));
     let share = movie.card.href();
+    let save = public.url(&format!("/api/files/movies/{key}"));
     let share_line = share_text(&movie.card.title, movie.card.years.as_deref(), None);
     Ok(view! {
         <article class="title detail">
@@ -1110,6 +1138,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
                             <div class="detail-more">
                                 movie_mark(key: key.as_str(), finished: movie.card.finished, said: said.clone())
                                 share_button(path: share.as_str(), text: share_line.as_str())
+                                save_button(href: save.as_str())
                                 if let Some(fetch) = &fetch {
                                     find_subtitles(label: "Find subtitles", body: fetch.as_str())
                                 }
@@ -1510,9 +1539,29 @@ mod tests {
             "{plain}"
         );
         assert!(plain.contains(r#"aria-label="Share S2 E4""#), "{plain}");
+        assert!(
+            plain.contains(r#"href="/api/api/files/shows/community/2/4" download="#),
+            "{plain}"
+        );
+        assert!(plain.contains(r#"aria-label="Save S2 E4 to this device""#), "{plain}");
         assert!(!plain.contains("shared"), "{plain}");
         let shared = render(true).await;
         assert!(shared.contains(r#"class="episode-row shared""#), "{shared}");
+    }
+
+    #[tokio::test]
+    async fn a_film_page_saves_the_whole_file_to_this_device() {
+        let cx = &Cx::default();
+        let html = view! { cx => save_button(href: "/api/files/movies/dune-2021") }
+            .single()
+            .await
+            .unwrap()
+            .render(cx);
+        assert!(
+            html.contains(r#"<a class="pill quiet save" href="/api/files/movies/dune-2021" download="#),
+            "{html}"
+        );
+        assert!(html.contains("Save file"), "{html}");
     }
 
     #[test]

@@ -256,6 +256,8 @@ mod tests {
             (&post, "/api/auth/passkeys/start", Access::Signed),
             (&get, "/api/stream/abc/main.m3u8", Access::Stream),
             (&post, "/api/stream/open", Access::Signed),
+            (&get, "/api/files/movies/dune-2021", Access::Signed),
+            (&get, "/api/files/shows/outlander/1/2", Access::Signed),
             (&get, "/api/events", Access::Service),
             (&post, "/api/restarting", Access::Service),
             (&get, "/api/library", Access::Signed),

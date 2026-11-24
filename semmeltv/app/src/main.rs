@@ -16,6 +16,7 @@ mod display;
 mod downloads;
 mod feedback;
 mod fetch;
+mod files;
 mod heatmap;
 mod hold;
 mod imdb;
