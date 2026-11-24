@@ -6,7 +6,10 @@
   ...
 }:
 let
-  hosts = [ "semmeltv5" ];
+  hosts = [
+    "semmeltv5"
+    "semmeltvmami"
+  ];
 in
 {
   flake = {
