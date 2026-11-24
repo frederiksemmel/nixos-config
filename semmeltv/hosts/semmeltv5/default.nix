@@ -31,6 +31,7 @@
         public = true;
         forward = {
           "beachparty.semmeltv.ch" = "192.168.1.230:8445";
+          "semmeltvmami.semmeltv.ch" = "192.168.1.169:8445";
         };
         desecTokenFile = config.age.secrets.desec_token.path;
       };

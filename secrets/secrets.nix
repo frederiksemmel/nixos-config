@@ -53,6 +53,7 @@ in
   "desec_token.age".publicKeys = [
     frederik
     semmeltv5
+    semmeltvmami
     rpi3
   ];
   "tmdb_token.age".publicKeys = [

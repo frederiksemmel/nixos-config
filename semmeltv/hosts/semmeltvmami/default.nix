@@ -21,6 +21,12 @@
         tailnet = "cuscus-exponential.ts.net";
         serviceTokenFile = config.age.secrets.semmeltv_service_token.path;
       };
+      lan = {
+        domain = "semmeltvmami.semmeltv.ch";
+        public = true;
+        relayedFrom = "192.168.1.178";
+        desecTokenFile = config.age.secrets.desec_token.path;
+      };
     };
     downloads = {
       enable = true;
@@ -30,6 +36,7 @@
   };
 
   age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard_semmeltvmami.age;
+  age.secrets.desec_token.file = ../../../secrets/desec_token.age;
   age.secrets.semmeltv_service_token = {
     file = ../../../secrets/semmeltv_service_token.age;
     owner = "semmeltv";
