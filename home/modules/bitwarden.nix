@@ -84,14 +84,19 @@ let
   };
 
   # Run by ssh's `Match exec` on every connection: loads the vault's SSH keys
-  # when the agent is empty, and never matches.
+  # when the agent is empty, and never matches. Connections take turns, so one
+  # that starts while another waits on the vault password waits for it too, up
+  # to two minutes, and then finds the keys loaded.
   rbwSshAdd = pkgs.writeShellApplication {
     name = "rbw-ssh-add";
     runtimeInputs = [
       pkgs.rbw
       pkgs.openssh
+      pkgs.util-linux
     ];
     text = ''
+      exec 9>"$XDG_RUNTIME_DIR/rbw-ssh-add.lock"
+      flock -w 120 9 || exit 1
       ssh-add -l >/dev/null 2>&1 && exit 1
       rm -f "${sshApprovals}"
       rbw list --fields id,name,type | awk -F '\t' '$3 == "SSH Key" { print $1 "\t" $2 }' \
