@@ -41,6 +41,9 @@ in
   "mullvad_wireguard.age".publicKeys = [
     frederik
     semmeltv5
+  ];
+  "mullvad_wireguard_semmeltvmami.age".publicKeys = [
+    frederik
     semmeltvmami
   ];
   "epaper_telegram_token.age".publicKeys = [

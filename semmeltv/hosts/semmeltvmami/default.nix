@@ -29,7 +29,7 @@
     };
   };
 
-  age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard.age;
+  age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard_semmeltvmami.age;
   age.secrets.semmeltv_service_token = {
     file = ../../../secrets/semmeltv_service_token.age;
     owner = "semmeltv";
