@@ -341,20 +341,6 @@ in
   networking.useDHCP = false;
   networking.wireless.iwd.enable = true;
   networking.wireless.iwd.settings.DriverQuirks.OweDisable = "iwlwifi";
-  systemd.services.wifi-powersave-off = {
-    description = "Turn off power saving on wlan0";
-    bindsTo = [ "sys-subsystem-net-devices-wlan0.device" ];
-    after = [ "sys-subsystem-net-devices-wlan0.device" ];
-    wantedBy = [
-      "sys-subsystem-net-devices-wlan0.device"
-      "multi-user.target"
-    ];
-    serviceConfig = {
-      Type = "oneshot";
-      RemainAfterExit = true;
-      ExecStart = "${lib.getExe pkgs.iw} dev wlan0 set power_save off";
-    };
-  };
   networking.firewall = {
     enable = true;
     allowedTCPPorts = [
