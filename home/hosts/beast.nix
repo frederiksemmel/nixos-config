@@ -37,6 +37,7 @@ in
     ./beast-disk-cleanup
     ./beast-claude.nix
     ./beast-semmeltv
+    ./beast-vm-tests.nix
   ];
 
   profiles.bitwarden.headlessSshKeys.enable = true;
