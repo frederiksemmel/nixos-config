@@ -46,10 +46,14 @@ let
     '';
   };
   # Electron apps export CHROME_DESKTOP=<their desktop file>, and a Chromium
-  # started from one of their links takes it as its Wayland app-id.
+  # started from one of their links takes it as its Wayland app-id. Claude
+  # Desktop starts xdg-open with a PATH and XDG_DATA_DIRS that hold neither the
+  # profile's apps nor its desktop files.
   handlr-xdg-open = pkgs.writeShellScriptBin "xdg-open" ''
     unset CHROME_DESKTOP
-    ${lib.getExe pkgs.handlr-regex} open "$@"
+    export PATH="$PATH:${config.home.profileDirectory}/bin:/run/current-system/sw/bin"
+    export XDG_DATA_DIRS="''${XDG_DATA_DIRS:-/usr/local/share:/usr/share}:${config.home.profileDirectory}/share:/run/current-system/sw/share"
+    exec ${lib.getExe pkgs.handlr-regex} open "$@"
   '';
   wlr-common-config = p: ''
     # Theming
@@ -961,8 +965,17 @@ in
       wallpaperNext
       ironbar
       gnome-themes-extra # Adwaita-dark for GTK 3
+      # Claude Desktop looks for xdg-open in /usr/bin before any of PATH.
       (flake.inputs.llm-agents.packages.${pkgs.stdenv.hostPlatform.system}.claude-desktop.override {
         commandLineArgs = "--password-store=gnome-libsecret";
+        buildFHSEnv =
+          args:
+          pkgs.buildFHSEnv (
+            args
+            // {
+              targetPkgs = p: args.targetPkgs p ++ [ (lib.hiPrio handlr-xdg-open) ];
+            }
+          );
       })
 
       # Networking & Communication
