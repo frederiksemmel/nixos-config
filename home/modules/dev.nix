@@ -1004,6 +1004,7 @@ in
             "rust-analyzer-lsp@claude-plugins-official" = true;
             "typescript-lsp@claude-plugins-official" = true;
             "frontend-design@claude-plugins-official" = true;
+            "mattpocock-skills@claude-plugins-official" = false;
           };
 
           # Not the `marketplaces` option: that one only emits `source =
