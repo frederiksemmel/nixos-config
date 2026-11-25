@@ -736,8 +736,9 @@ impl Actor {
                 again,
             });
             let (files, file, online, core) = (self.files.clone(), path.to_path_buf(), self.online, self.core.clone());
+            let languages = self.subtitles.settings_of(owner).languages;
             tokio::spawn(async move {
-                let prepared = prepare::prepare(files, file, online, prepare::FIND_WITHIN).await;
+                let prepared = prepare::prepare(files, file, online, languages, prepare::FIND_WITHIN).await;
                 core.signal(Signal::Prepared { id, prepared });
             });
         })
@@ -2560,7 +2561,7 @@ mod tests {
             tv: Link::pair().0,
             segments: Arc::new(|_, _| Err("no segments in tests".to_string())),
             files: Files {
-                find: Arc::new(|path, _| Some((path.to_path_buf(), Vec::new()))),
+                find: Arc::new(|path, _, _| Some((path.to_path_buf(), Vec::new()))),
             },
             remove: tending::remover(),
         }
@@ -2739,7 +2740,7 @@ mod tests {
             let hardware = Hardware {
                 tv: link,
                 files: Files {
-                    find: Arc::new(|_, _| {
+                    find: Arc::new(|_, _, _| {
                         loop {
                             std::thread::park();
                         }

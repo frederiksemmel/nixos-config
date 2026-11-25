@@ -2,7 +2,7 @@
 //! and the phones change on them, and what the core should remember about
 //! the file that plays.
 
-use super::{Change, Playing, Remembered, Settings, Track, language_name, same_language};
+use super::{Change, Offer, Playing, Remembered, Settings, Track, language_name, same_language, worth_offering};
 use crate::link::messages::PlaySubtitles;
 use crate::progress::Tracks;
 use crate::sidecar::Sidecar;
@@ -54,7 +54,33 @@ impl Track {
     }
 }
 
+impl Track {
+    fn offer(&self) -> Offer<'_> {
+        Offer {
+            language: self.language.as_deref(),
+            title: self.title.as_deref(),
+            forced: self.forced,
+            hearing_impaired: self.hearing_impaired,
+            usable: true,
+        }
+    }
+}
+
 impl Playing {
+    /// Offers the tracks worth it to someone who reads `languages`, and the
+    /// one that shows, whatever it is.
+    fn offer(&mut self, languages: &[String]) {
+        let offers: Vec<Offer> = self.every.iter().map(Track::offer).collect();
+        let keep = worth_offering(&offers, languages);
+        self.tracks = self
+            .every
+            .iter()
+            .zip(keep)
+            .filter(|(track, keep)| *keep || self.track == Some(track.id))
+            .map(|(track, _)| track.clone())
+            .collect();
+    }
+
     fn label(&self, id: i64) -> String {
         self.tracks
             .iter()
@@ -303,9 +329,11 @@ impl SubtitleTracks {
         let playing = self.playing.get_or_insert_with(Playing::default);
         match observed {
             Observed::Tracks { subtitles, audio } => {
-                playing.tracks = subtitles;
+                let external = subtitles.iter().filter(|track| track.external).count();
+                embedded = Some(subtitles.len() - external);
+                playing.every = subtitles;
                 playing.audio_tracks = audio;
-                let external = playing.tracks.iter().filter(|track| track.external).count();
+                playing.offer(&self.settings.languages);
                 let settled = self.awaited > 0 && external >= self.awaited;
                 if settled
                     && self.settings.shown
@@ -316,9 +344,11 @@ impl SubtitleTracks {
                 if settled {
                     self.awaited = 0;
                 }
-                embedded = Some(playing.tracks.len() - external);
             }
-            Observed::Track(track) => playing.track = track,
+            Observed::Track(track) => {
+                playing.track = track;
+                playing.offer(&self.settings.languages);
+            }
             Observed::Audio(track) => {
                 playing.audio = track;
                 playing.last_audio = track.or(playing.last_audio);
@@ -341,6 +371,9 @@ impl SubtitleTracks {
                     .into_iter()
                     .map(|(name, value)| json!(["set_property", name, value]))
                     .collect();
+                if let Some(playing) = &mut self.playing {
+                    playing.offer(&settings.languages);
+                }
                 self.settings = settings;
                 Answer::done((commands, "Subtitle style changed".to_string()))
             }
@@ -583,6 +616,38 @@ mod tests {
         assert!(commands.contains(&json!(["set_property", "sub-scale", 1.5])));
         tracks.observe(track_list(endless_summer()));
         assert_eq!(tracks.change(Change::Toggle).message, "Subtitles: French");
+    }
+
+    #[test]
+    fn only_tracks_worth_it_are_offered_but_every_one_is_counted() {
+        let mut tracks = up();
+        tracks.observe(track_list(json!([
+            sub(1, "eng", ""),
+            sub(2, "ara", ""),
+            sub(3, "eng", "Commentary"),
+            sub(4, "ger", ""),
+            sub(5, "ger", ""),
+            sub(6, "hun", ""),
+        ])));
+        let offered = |tracks: &SubtitleTracks| -> Vec<i64> {
+            tracks.playing().unwrap().tracks.iter().map(|track| track.id).collect()
+        };
+        assert_eq!(offered(&tracks), [1, 4]);
+        assert_eq!(tracks.take_remembered().unwrap().1.embedded, Some(6));
+        tracks.observe(Observed::Track(Some(6)));
+        assert_eq!(offered(&tracks), [1, 4, 6]);
+        tracks.observe(Observed::Track(Some(1)));
+        assert_eq!(offered(&tracks), [1, 4]);
+        let hungarian = Settings {
+            languages: vec!["hu".to_string()],
+            ..Settings::default()
+        };
+        tracks.change(Change::Restyle(hungarian));
+        assert_eq!(offered(&tracks), [1, 6]);
+        assert_eq!(
+            tracks.change(Change::Track(Some(2))).message,
+            "There is no subtitle track 2"
+        );
     }
 
     #[test]

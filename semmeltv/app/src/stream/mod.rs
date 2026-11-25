@@ -399,17 +399,26 @@ async fn examine(streams: &Streams, file: &PathBuf) -> Result<Media, String> {
 
 fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profile: ProfileId) -> Vec<Subtitle> {
     let settings = streams.core.subtitles().settings_of(profile);
-    let mut found: Vec<Subtitle> = Vec::new();
-    for sidecar in sidecar::find(file) {
-        found.push(Subtitle {
-            id: 0,
-            name: sidecar.title.clone(),
-            language: sidecar.language.clone(),
-            forced: sidecar.forced,
-            default: false,
-            supported: true,
-            source: Some(Source::Sidecar(sidecar.path.clone())),
-        });
+    listed(sidecar::find(file), media, &settings)
+}
+
+/// The subtitles a phone offers someone with `settings`: the sidecars and the
+/// file's own tracks worth offering, the preferred one as the default.
+fn listed(sidecars: Vec<sidecar::Sidecar>, media: &Media, settings: &crate::subtitles::Settings) -> Vec<Subtitle> {
+    let mut found: Vec<(Subtitle, bool)> = Vec::new();
+    for sidecar in sidecars {
+        found.push((
+            Subtitle {
+                id: 0,
+                name: sidecar.title.clone(),
+                language: sidecar.language.clone(),
+                forced: sidecar.forced,
+                default: false,
+                supported: true,
+                source: Some(Source::Sidecar(sidecar.path.clone())),
+            },
+            sidecar.hearing_impaired,
+        ));
     }
     for embedded in &media.subtitles {
         let language = embedded.language.clone();
@@ -421,16 +430,35 @@ fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profi
         if !embedded.is_text() {
             name.push_str(" (picture subtitles show only on the TV)");
         }
-        found.push(Subtitle {
-            id: 0,
-            name,
-            language,
-            forced: embedded.forced,
-            default: false,
-            supported: embedded.is_text(),
-            source: embedded.is_text().then_some(Source::Embedded(embedded.index)),
-        });
+        found.push((
+            Subtitle {
+                id: 0,
+                name,
+                language,
+                forced: embedded.forced,
+                default: false,
+                supported: embedded.is_text(),
+                source: embedded.is_text().then_some(Source::Embedded(embedded.index)),
+            },
+            embedded.hearing_impaired,
+        ));
     }
+    let offers: Vec<crate::subtitles::Offer> = found
+        .iter()
+        .map(|(subtitle, hearing_impaired)| crate::subtitles::Offer {
+            language: subtitle.language.as_deref(),
+            title: Some(&subtitle.name),
+            forced: subtitle.forced,
+            hearing_impaired: *hearing_impaired,
+            usable: subtitle.supported,
+        })
+        .collect();
+    let keep = crate::subtitles::worth_offering(&offers, &settings.languages);
+    let mut found: Vec<Subtitle> = found
+        .into_iter()
+        .zip(keep)
+        .filter_map(|((subtitle, _), keep)| keep.then_some(subtitle))
+        .collect();
     if settings.shown {
         let preferred = settings.languages.iter().find_map(|wanted| {
             found.iter().position(|subtitle| {
@@ -450,6 +478,72 @@ fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profi
         subtitle.id = id;
     }
     found
+}
+
+#[cfg(test)]
+mod listed_tests {
+    use super::{Source, listed, probe};
+    use crate::sidecar::Sidecar;
+    use crate::subtitles::Settings;
+    use std::path::PathBuf;
+
+    fn embedded(index: usize, codec: &str, language: &str, title: Option<&str>) -> probe::Embedded {
+        probe::Embedded {
+            index,
+            codec: codec.to_string(),
+            language: Some(language.to_string()),
+            title: title.map(str::to_string),
+            forced: false,
+            hearing_impaired: false,
+        }
+    }
+
+    #[test]
+    fn a_phone_offers_one_track_per_language_and_kind_a_text_one_first() {
+        let media = probe::Media {
+            subtitles: vec![
+                embedded(0, "hdmv_pgs_subtitle", "de", None),
+                embedded(1, "subrip", "en", None),
+                embedded(2, "subrip", "hr", None),
+                embedded(3, "subrip", "de", None),
+                embedded(4, "subrip", "en", Some("Commentary")),
+                embedded(5, "subrip", "es", None),
+            ],
+            ..probe::Media::default()
+        };
+        let sidecars = vec![
+            Sidecar {
+                path: PathBuf::from("/lib/Saving Grace/Subs/2_English.srt"),
+                language: Some("en".to_string()),
+                title: "English".to_string(),
+                forced: false,
+                hearing_impaired: false,
+            },
+            Sidecar {
+                path: PathBuf::from("/lib/Saving Grace/Subs/3_French.srt"),
+                language: Some("fr".to_string()),
+                title: "French".to_string(),
+                forced: false,
+                hearing_impaired: false,
+            },
+        ];
+        let settings = Settings {
+            shown: true,
+            languages: vec!["de".to_string(), "en".to_string()],
+            ..Settings::default()
+        };
+        let list = listed(sidecars, &media, &settings);
+        let sources: Vec<_> = list.iter().map(|subtitle| subtitle.source.clone()).collect();
+        assert_eq!(
+            sources,
+            [
+                Some(Source::Sidecar(PathBuf::from("/lib/Saving Grace/Subs/2_English.srt"))),
+                Some(Source::Embedded(3)),
+            ]
+        );
+        assert_eq!(list.iter().map(|subtitle| subtitle.id).collect::<Vec<_>>(), [0, 1]);
+        assert!(list[1].default, "German comes first in the settings");
+    }
 }
 
 fn resume_at(progress: &crate::progress::Progress, file: &PathBuf, duration: f64) -> f64 {

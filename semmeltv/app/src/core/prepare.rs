@@ -17,9 +17,10 @@ pub const FIND_WITHIN: Duration = Duration::from_secs(4);
 const SIDECARS_READ_BY: Duration = Duration::from_secs(3);
 const _: () = assert!(SIDECARS_READ_BY.as_millis() < FIND_WITHIN.as_millis());
 
-/// Where a file plays from, and the subtitle files beside it; `None` when it
-/// is out of reach. Called with the file and whether the TV is online.
-pub type Find = Arc<dyn Fn(&Path, bool) -> Option<(PathBuf, Vec<Sidecar>)> + Send + Sync>;
+/// Where a file plays from, and the subtitle files beside it worth loading;
+/// `None` when it is out of reach. Called with the file, whether the TV is
+/// online and the languages the person who plays it reads.
+pub type Find = Arc<dyn Fn(&Path, bool, &[String]) -> Option<(PathBuf, Vec<Sidecar>)> + Send + Sync>;
 
 #[derive(Clone)]
 pub struct Files {
@@ -30,7 +31,7 @@ impl Files {
     /// The files of `store`, with `playable` naming the copy to play.
     pub fn of(store: Store, playable: impl Fn(&Path) -> PathBuf + Send + Sync + 'static) -> Self {
         Self {
-            find: Arc::new(move |path, online| {
+            find: Arc::new(move |path, online, languages| {
                 let began = Instant::now();
                 let here = playable(path);
                 let source = match store.source(path, online) {
@@ -40,7 +41,7 @@ impl Files {
                     Source::Unavailable => return None,
                 };
                 let sidecars = sidecar::warm(
-                    sidecar::find(&source),
+                    sidecar::wanted(sidecar::find(&source), languages),
                     (began + SIDECARS_READ_BY).saturating_duration_since(Instant::now()),
                 );
                 Some((source, sidecars))
@@ -64,10 +65,10 @@ pub struct Ready {
 }
 
 /// Finds `path`. A file that is not found `within` is `Silent`.
-pub async fn prepare(files: Files, path: PathBuf, online: bool, within: Duration) -> Prepared {
+pub async fn prepare(files: Files, path: PathBuf, online: bool, languages: Vec<String>, within: Duration) -> Prepared {
     let find = files.find.clone();
     let looking = path.clone();
-    match timeout(within, spawn_blocking(move || find(&looking, online))).await {
+    match timeout(within, spawn_blocking(move || find(&looking, online, &languages))).await {
         Ok(Ok(Some((source, sidecars)))) => Prepared::Ready(Box::new(Ready { source, sidecars })),
         Ok(Ok(None)) => Prepared::OutOfReach,
         Ok(Err(_)) => Prepared::Silent,
@@ -88,12 +89,19 @@ mod tests {
     async fn a_mount_that_never_answers_is_given_up_on_in_time() {
         let (release, held) = std::sync::mpsc::channel::<()>();
         let held = std::sync::Mutex::new(held);
-        let hung: Find = Arc::new(move |_, _| {
+        let hung: Find = Arc::new(move |_, _, _| {
             let _ = held.lock().unwrap().recv();
             None
         });
         let asked = Instant::now();
-        let prepared = prepare(Files { find: hung }, PathBuf::from("/lib/a.mkv"), true, SHORT).await;
+        let prepared = prepare(
+            Files { find: hung },
+            PathBuf::from("/lib/a.mkv"),
+            true,
+            Vec::new(),
+            SHORT,
+        )
+        .await;
         assert!(matches!(prepared, Prepared::Silent), "{prepared:?}");
         assert!(asked.elapsed() < Duration::from_millis(400), "{:?}", asked.elapsed());
         drop(release);
@@ -101,14 +109,28 @@ mod tests {
 
     #[tokio::test]
     async fn a_file_found_is_ready_and_one_out_of_reach_says_so() {
-        let found: Find = Arc::new(|path, _| Some((path.to_path_buf(), Vec::new())));
-        let prepared = prepare(Files { find: found }, PathBuf::from("/lib/a.mkv"), true, SHORT).await;
+        let found: Find = Arc::new(|path, _, _| Some((path.to_path_buf(), Vec::new())));
+        let prepared = prepare(
+            Files { find: found },
+            PathBuf::from("/lib/a.mkv"),
+            true,
+            Vec::new(),
+            SHORT,
+        )
+        .await;
         assert!(
             matches!(&prepared, Prepared::Ready(ready) if ready.source == Path::new("/lib/a.mkv")),
             "{prepared:?}"
         );
-        let gone: Find = Arc::new(|_, _| None);
-        let prepared = prepare(Files { find: gone }, PathBuf::from("/lib/a.mkv"), false, SHORT).await;
+        let gone: Find = Arc::new(|_, _, _| None);
+        let prepared = prepare(
+            Files { find: gone },
+            PathBuf::from("/lib/a.mkv"),
+            false,
+            Vec::new(),
+            SHORT,
+        )
+        .await;
         assert!(matches!(prepared, Prepared::OutOfReach), "{prepared:?}");
     }
 }

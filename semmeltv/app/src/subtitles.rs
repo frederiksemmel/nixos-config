@@ -235,6 +235,53 @@ fn same_language(code: &str, wanted: &str) -> bool {
     primary(code) == primary(wanted) || language_name(code).is_some_and(|name| language_name(wanted) == Some(name))
 }
 
+/// A subtitle track as far as choosing the ones worth offering goes.
+#[derive(Clone, Copy, Debug)]
+pub struct Offer<'a> {
+    pub language: Option<&'a str>,
+    pub title: Option<&'a str>,
+    pub forced: bool,
+    pub hearing_impaired: bool,
+    /// Whether the device can show it: picture subtitles can't go to a phone.
+    pub usable: bool,
+}
+
+fn commentary(title: &str) -> bool {
+    let title = title.to_lowercase();
+    title.contains("comment") || title.contains("kommentar")
+}
+
+/// Which of `tracks` someone who reads `languages` picks from: none in other
+/// languages, no commentaries, and of the tracks alike in language, forced
+/// and SDH only the first, a usable one before one that isn't. Tracks with
+/// no language stay, as nobody can tell what they hold, and with no
+/// languages set every language does.
+pub fn worth_offering(tracks: &[Offer], languages: &[String]) -> Vec<bool> {
+    let read = |code: &str| languages.is_empty() || languages.iter().any(|wanted| same_language(code, wanted));
+    let mut keep = vec![false; tracks.len()];
+    let mut taken: Vec<(String, bool, bool)> = Vec::new();
+    for usable in [true, false] {
+        for (index, track) in tracks.iter().enumerate() {
+            if track.usable != usable || track.title.is_some_and(commentary) {
+                continue;
+            }
+            match track.language.filter(|code| !code.eq_ignore_ascii_case("und")) {
+                None => keep[index] = true,
+                Some(code) if read(code) => {
+                    let language = language_name(code).map_or_else(|| primary(code), str::to_string);
+                    let kind = (language, track.forced, track.hearing_impaired);
+                    if !taken.contains(&kind) {
+                        taken.push(kind);
+                        keep[index] = true;
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+    }
+    keep
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Playing {
     pub visible: bool,
@@ -245,6 +292,9 @@ pub struct Playing {
     pub audio_tracks: Vec<Track>,
     #[serde(skip)]
     last_audio: Option<i64>,
+    /// Every subtitle track of the file, of which `tracks` are the ones offered.
+    #[serde(skip)]
+    every: Vec<Track>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -694,7 +744,11 @@ mod tests {
         assert_eq!(body["settings"]["size"], 1.0);
         assert_eq!(body["playing"]["visible"], false);
         assert_eq!(body["playing"]["track"], Value::Null);
-        assert_eq!(body["playing"]["tracks"][2]["label"], "French");
+        assert_eq!(
+            body["playing"]["tracks"].as_array().unwrap().len(),
+            2,
+            "no French for en and de"
+        );
         assert_eq!(body["playing"]["tracks"][1]["hearing_impaired"], true);
         assert_eq!(body["playing"]["audio_tracks"][0]["label"], "English");
         assert_eq!(body["playing"]["audio"], Value::Null);
@@ -738,6 +792,72 @@ mod tests {
         let (status, _) = send(&server, "POST", "/api/audio/track", json!({ "track": 2 }));
         assert_eq!(status, 200);
         assert_eq!(server.asked.recv().unwrap(), "Subtitles(Audio(2))");
+    }
+
+    fn offer<'a>(language: &'a str, title: &'a str) -> Offer<'a> {
+        Offer {
+            language: (!language.is_empty()).then_some(language),
+            title: (!title.is_empty()).then_some(title),
+            forced: false,
+            hearing_impaired: false,
+            usable: true,
+        }
+    }
+
+    fn offered(tracks: &[Offer], languages: &[&str]) -> Vec<usize> {
+        let languages: Vec<String> = languages.iter().map(|code| code.to_string()).collect();
+        worth_offering(tracks, &languages)
+            .into_iter()
+            .enumerate()
+            .filter_map(|(index, keep)| keep.then_some(index))
+            .collect()
+    }
+
+    #[test]
+    fn only_tracks_in_the_persons_languages_are_worth_offering() {
+        let ice_age = [
+            offer("eng", ""),
+            offer("ara", ""),
+            offer("bul", ""),
+            offer("ger", ""),
+            offer("hun", ""),
+        ];
+        assert_eq!(offered(&ice_age, &["en", "de"]), [0, 3]);
+        assert_eq!(offered(&ice_age, &["fr"]), Vec::<usize>::new());
+        assert_eq!(offered(&ice_age, &[]), [0, 1, 2, 3, 4]);
+        let unknown = [offer("", "Track"), offer("und", ""), offer("fr", "")];
+        assert_eq!(offered(&unknown, &["en"]), [0, 1]);
+    }
+
+    #[test]
+    fn commentaries_and_duplicates_are_not_worth_offering() {
+        let sdh = Offer {
+            hearing_impaired: true,
+            ..offer("eng", "SDH")
+        };
+        let gladiator = [sdh, offer("eng", "Commentary by Director Ridley Scott")];
+        assert_eq!(offered(&gladiator, &["en"]), [0]);
+        assert_eq!(offered(&[offer("ger", "Kommentar"), offer("ger", "")], &["de"]), [1]);
+        let forced = Offer {
+            forced: true,
+            ..offer("en-US", "")
+        };
+        let thrones = [
+            offer("en-US", ""),
+            offer("en-US", ""),
+            forced,
+            offer("eng", "English"),
+            sdh,
+            offer("de", ""),
+            offer("ger", ""),
+        ];
+        assert_eq!(offered(&thrones, &["en", "de"]), [0, 2, 4, 5]);
+        let picture = Offer {
+            usable: false,
+            ..offer("ger", "")
+        };
+        assert_eq!(offered(&[picture, offer("de", "Text")], &["de"]), [1]);
+        assert_eq!(offered(&[picture, offer("fr", "")], &["de"]), [0]);
     }
 
     #[test]

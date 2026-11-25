@@ -1,4 +1,4 @@
-use crate::subtitles::{language_code, language_name};
+use crate::subtitles::{Offer, language_code, language_name, worth_offering};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -208,6 +208,38 @@ pub fn find(video: &Path) -> Vec<Sidecar> {
     sidecars.into_iter().map(|(_, sidecar)| sidecar).collect()
 }
 
+/// The sidecars worth loading for someone who reads `languages`.
+pub fn wanted(sidecars: Vec<Sidecar>, languages: &[String]) -> Vec<Sidecar> {
+    let names: Vec<String> = sidecars
+        .iter()
+        .map(|sidecar| {
+            sidecar
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    let offers: Vec<Offer> = sidecars
+        .iter()
+        .zip(&names)
+        .map(|(sidecar, name)| Offer {
+            language: sidecar.language.as_deref(),
+            title: Some(name),
+            forced: sidecar.forced,
+            hearing_impaired: sidecar.hearing_impaired,
+            usable: true,
+        })
+        .collect();
+    let keep = worth_offering(&offers, languages);
+    sidecars
+        .into_iter()
+        .zip(keep)
+        .filter_map(|(sidecar, keep)| keep.then_some(sidecar))
+        .collect()
+}
+
 /// Reads every sidecar at once, so the pCloud mount holds them all before mpv
 /// adds them one after another, which costs about a second each when they
 /// are not cached yet. The ones not read `within` stay out of this play and
@@ -319,6 +351,44 @@ mod tests {
         );
         assert!(found[3].forced);
         assert!(found[2].hearing_impaired);
+        let languages = ["en".to_string(), "de".to_string()];
+        assert_eq!(
+            summary(&wanted(found, &languages), &tree.0),
+            [
+                "Airplane 1980/Airplane.1980.de.srt de German",
+                "Airplane 1980/Subs/13_English.srt en English",
+                "Airplane 1980/Subs/3_English-SDH.srt en English SDH",
+                "Airplane 1980/Subs/14_English.srt en English forced",
+            ]
+        );
+    }
+
+    #[test]
+    fn of_twenty_seven_languages_an_episode_loads_the_ones_read_here() {
+        let tree = tree(
+            "thrones",
+            &[
+                ("GoT S01/GoT.S01E01.mkv", 10),
+                ("GoT S01/Subs/GoT.S01E01/1000_en-US.srt", 900),
+                ("GoT S01/Subs/GoT.S01E01/1001_en-US.srt", 800),
+                ("GoT S01/Subs/GoT.S01E01/1002_bg-BG.srt", 800),
+                ("GoT S01/Subs/GoT.S01E01/1005_es-419.srt", 800),
+                ("GoT S01/Subs/GoT.S01E01/1025_sr-Latn-RS.srt", 800),
+                ("GoT S01/Subs/GoT.S01E01/7_English.srt", 850),
+                ("GoT S01/Subs/GoT.S01E01/8_English.srt", 100),
+                ("GoT S01/Subs/GoT.S01E01/9_German Commentary.srt", 700),
+            ],
+        );
+        let found = find(&tree.0.join("GoT S01/GoT.S01E01.mkv"));
+        assert_eq!(found.len(), 8);
+        let languages = ["en".to_string(), "de".to_string()];
+        assert_eq!(
+            summary(&wanted(found, &languages), &tree.0),
+            [
+                "GoT S01/Subs/GoT.S01E01/1000_en-US.srt en English",
+                "GoT S01/Subs/GoT.S01E01/8_English.srt en English forced",
+            ]
+        );
     }
 
     #[test]
