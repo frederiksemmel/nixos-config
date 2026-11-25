@@ -761,6 +761,38 @@ let
   };
   rerun-icon = pkgs.callPackage ../../packages/rerun-icon.nix { };
   niri-computer-use = pkgs.callPackage ../../packages/niri-computer-use.nix { };
+  # Patent MCP servers for Claude Desktop. uv runs the pinned PyPI release on
+  # Nix's Python. API keys come from the vault while it is unlocked; with it locked
+  # the servers start without them and the keyed tools fail.
+  #   "USPTO Open Data Portal": password = ODP API key
+  #   "EPO OPS": username = consumer key, password = consumer secret
+  patentMcp =
+    name: from: exe:
+    pkgs.writeShellApplication {
+      inherit name;
+      runtimeInputs = [
+        pkgs.uv
+        pkgs.rbw
+      ];
+      text = ''
+        if rbw unlocked 2>/dev/null; then
+          if key=$(rbw get --field password "USPTO Open Data Portal" 2>/dev/null); then
+            export USPTO_API_KEY="$key" USPTO_ODP_API_KEY="$key"
+          fi
+          if key=$(rbw get --field username "EPO OPS" 2>/dev/null); then
+            export EPO_OPS_API_KEY="$key"
+            EPO_OPS_API_SECRET=$(rbw get --field password "EPO OPS")
+            export EPO_OPS_API_SECRET
+          fi
+        fi
+        export UV_PYTHON_DOWNLOADS=never
+        exec uv tool run --quiet --python ${lib.getExe pkgs.python313} --from '${from}' ${exe}
+      '';
+    };
+  patentMcpUspto = patentMcp "patent-mcp-uspto" "patent-mcp-server==1.8.3" "patent-mcp-server";
+  patentClientAgentsMcp =
+    patentMcp "patent-client-agents-mcp" "patent-client-agents[mcp]==0.32.0"
+      "patent-client-agents-mcp";
   tvcast = pkgs.callPackage ../../packages/tvcast { };
   # `tvcast-imv cast FILE` stops a running cast, or casts FILE to a TV picked
   # in fuzzel; `tvcast-imv follow FILE` switches a running cast to FILE.
@@ -1490,22 +1522,26 @@ in
 
     # Repoints the link when it is missing or targets a wallpaper set from an
     # older generation.
-    # Claude Desktop rewrites its config file, so the server is merged into it
+    # Claude Desktop rewrites its config file, so the servers are merged into it
     # rather than linked from the store.
     home.activation.claudeDesktopMcp =
       let
         configFile = "${config.xdg.configHome}/Claude/claude_desktop_config.json";
-        server = builtins.toJSON {
-          command = lib.getExe niri-computer-use;
-          args = [ "serve" ];
+        servers = builtins.toJSON {
+          niri-computer-use = {
+            command = lib.getExe niri-computer-use;
+            args = [ "serve" ];
+          };
+          patent-uspto.command = lib.getExe patentMcpUspto;
+          patent-client-agents.command = lib.getExe patentClientAgentsMcp;
         };
       in
       lib.hm.dag.entryAfter [ "writeBoundary" ] ''
         run mkdir -p ${config.xdg.configHome}/Claude
         [ -s ${configFile} ] || run sh -c 'echo "{}" > ${configFile}'
         tmp=$(mktemp)
-        ${lib.getExe pkgs.jq} --argjson server '${server}' \
-          '.mcpServers["niri-computer-use"] = $server' ${configFile} > "$tmp"
+        ${lib.getExe pkgs.jq} --argjson servers '${servers}' \
+          '.mcpServers += $servers' ${configFile} > "$tmp"
         run mv "$tmp" ${configFile}
       '';
 
