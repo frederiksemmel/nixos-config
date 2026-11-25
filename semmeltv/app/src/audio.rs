@@ -33,6 +33,8 @@ const VOLUME_STEP: u8 = 8;
 const MAX_AUDIO_DELAY: i32 = 500;
 const FIND_MY: &str = " - Find My";
 const APPLE: &str = "bluetooth:v004C";
+const SBC: &str = "SBC";
+const AAC: &str = "AAC";
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Device {
@@ -131,6 +133,12 @@ pub struct PairingView {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Codecs {
+    pub selected: String,
+    pub available: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Route {
     pub device: String,
     pub said: String,
@@ -151,6 +159,8 @@ pub trait Radio: Send + Sync {
     fn delay_adjustment(&self, address: &str) -> Option<i32>;
     fn set_delay_adjustment(&self, address: &str, milliseconds: i32) -> Result<(), String>;
     fn set_volume(&self, address: &str, level: Level) -> Result<(), String>;
+    fn codecs(&self, address: &str) -> Option<Codecs>;
+    fn select_codec(&self, address: &str, codec: &str) -> Result<(), String>;
 }
 
 pub type Mover = Box<dyn Fn(Route) + Send + Sync>;
@@ -240,6 +250,7 @@ struct Known {
     wire: Wire,
     volume: Option<Level>,
     audio_delay: Option<i32>,
+    codec_asked: bool,
 }
 
 impl Known {
@@ -249,6 +260,7 @@ impl Known {
             wire,
             volume: None,
             audio_delay: None,
+            codec_asked: false,
         }
     }
 }
@@ -396,6 +408,12 @@ impl Radio for Silent {
         self.hang()
     }
     fn set_volume(&self, _: &str, _: Level) -> Result<(), String> {
+        self.hang()
+    }
+    fn codecs(&self, _: &str) -> Option<Codecs> {
+        self.hang()
+    }
+    fn select_codec(&self, _: &str, _: &str) -> Result<(), String> {
         self.hang()
     }
 }
@@ -828,6 +846,9 @@ impl Audio {
     }
 
     fn sink(&self, address: &str, present: bool) {
+        if present && self.moved_to_aac(address) {
+            return;
+        }
         let level = if present {
             self.inner.radio.volume(address)
         } else {
@@ -864,6 +885,9 @@ impl Audio {
             (true, Wire::Connected(_)) => {}
             (false, Wire::Connecting { .. }) => {}
             (false, _) => {
+                if matches!(known.wire, Wire::Connected(_)) {
+                    known.codec_asked = false;
+                }
                 known.wire = Wire::Idle;
                 if had_sound {
                     state.error = Some(format!(
@@ -879,6 +903,40 @@ impl Audio {
         if let Some(output) = route {
             self.route(output, Some(&headphones));
         }
+    }
+
+    /// Asks headphones that came up on SBC for AAC, once per connection,
+    /// when they offer it. True when the codec changed: BlueALSA then makes
+    /// the sink anew, and the sound moves on its next sighting.
+    fn moved_to_aac(&self, address: &str) -> bool {
+        {
+            let mut state = self.inner.state.lock().unwrap();
+            let Some(known) = state
+                .headphones
+                .as_mut()
+                .filter(|known| known.device.address == address && !known.codec_asked)
+            else {
+                return false;
+            };
+            known.codec_asked = true;
+        }
+        let radio = &self.inner.radio;
+        let Some(codecs) = radio.codecs(address) else {
+            return false;
+        };
+        if codecs.selected != SBC || !codecs.available.iter().any(|codec| codec == AAC) {
+            return false;
+        }
+        if let Err(error) = radio.select_codec(address, AAC) {
+            eprintln!("headphones: {error}, staying on SBC");
+            return false;
+        }
+        let deadline = Instant::now() + self.inner.timing.sink_wait;
+        while radio.codecs(address).is_none_or(|codecs| codecs.selected != AAC) && Instant::now() < deadline {
+            thread::sleep(self.inner.timing.poll);
+        }
+        eprintln!("headphones: AAC instead of SBC");
+        true
     }
 
     pub fn change_volume(&self, change: VolumeChange) -> Option<Result<String, String>> {
@@ -1316,6 +1374,38 @@ impl Radio for Bluetoothctl {
         }
         Ok(())
     }
+
+    fn codecs(&self, address: &str) -> Option<Codecs> {
+        parse_codecs(&bluealsa_cli(&["codec", &sink_path(address)?]))
+    }
+
+    fn select_codec(&self, address: &str, codec: &str) -> Result<(), String> {
+        let path = sink_path(address).ok_or_else(|| format!("no BlueALSA sink for {address}"))?;
+        let output = Command::new("bluealsa-cli")
+            .args(["codec", &path, codec])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .output()
+            .map_err(|error| format!("bluealsa-cli: {error}"))?;
+        if output.status.success() {
+            Ok(())
+        } else {
+            Err(format!(
+                "bluealsa-cli codec {path} {codec}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            ))
+        }
+    }
+}
+
+fn parse_codecs(text: &str) -> Option<Codecs> {
+    let selected = pcm_value(text, "Selected codec:")?;
+    let available = text
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("Available codecs:"))
+        .map(|codecs| codecs.split_whitespace().map(str::to_string).collect())
+        .unwrap_or_default();
+    Some(Codecs { selected, available })
 }
 
 fn bluealsa_cli(args: &[&str]) -> String {
@@ -1364,6 +1454,15 @@ pub(crate) mod tests {
         pairs: bool,
         volume: Option<Level>,
         adjustment: i32,
+        codecs: Option<Codecs>,
+        switches: bool,
+    }
+
+    fn on_sbc(offers: &[&str]) -> Option<Codecs> {
+        Some(Codecs {
+            selected: SBC.to_string(),
+            available: offers.iter().map(|codec| codec.to_string()).collect(),
+        })
     }
 
     struct FakeRadio {
@@ -1453,6 +1552,22 @@ pub(crate) mod tests {
             self.world.lock().unwrap().volume = Some(level);
             Ok(())
         }
+
+        fn codecs(&self, _address: &str) -> Option<Codecs> {
+            self.world.lock().unwrap().codecs.clone()
+        }
+
+        fn select_codec(&self, address: &str, codec: &str) -> Result<(), String> {
+            self.call(format!("codec {address} {codec}"));
+            let mut world = self.world.lock().unwrap();
+            if !world.switches {
+                return Err("Couldn't select codec".to_string());
+            }
+            if let Some(codecs) = world.codecs.as_mut() {
+                codecs.selected = codec.to_string();
+            }
+            Ok(())
+        }
     }
 
     struct Rig {
@@ -1519,13 +1634,17 @@ pub(crate) mod tests {
         (audio, calls)
     }
 
-    fn paired_rig() -> Rig {
-        rig(World {
+    fn paired_world() -> World {
+        World {
             paired: Some(airpods()),
             connects: true,
             pairs: true,
             ..World::default()
-        })
+        }
+    }
+
+    fn paired_rig() -> Rig {
+        rig(paired_world())
     }
 
     fn call(rig: &Rig) -> String {
@@ -2129,6 +2248,68 @@ pub(crate) mod tests {
         );
         rig.audio.sinks_listed(&[]);
         assert_eq!(rig.audio.view().headphones.unwrap().volume, None);
+    }
+
+    #[test]
+    fn headphones_that_come_up_on_sbc_move_to_aac_before_the_sound_does() {
+        let rig = rig(World {
+            codecs: on_sbc(&[SBC, AAC]),
+            switches: true,
+            ..paired_world()
+        });
+        rig.audio.choose(Output::Headphones);
+        assert_eq!(call(&rig), format!("connect {AIRPODS}"));
+        rig.audio.sink(AIRPODS, true);
+        assert_eq!(call(&rig), format!("codec {AIRPODS} AAC"));
+        assert!(rig.routes.try_recv().is_err());
+        assert_eq!(link(&rig.audio.view()), Some(Link::Connecting));
+        rig.audio.sink(AIRPODS, false);
+        rig.audio.sink(AIRPODS, true);
+        assert_eq!(route(&rig).said, "Sound on AirPods");
+        assert!(rig.calls.try_recv().is_err());
+    }
+
+    #[test]
+    fn headphones_stay_on_sbc_when_aac_is_not_to_be_had() {
+        for (codecs, switches) in [(on_sbc(&[SBC]), true), (on_sbc(&[SBC, AAC]), false)] {
+            let rig = rig(World {
+                codecs,
+                switches,
+                ..paired_world()
+            });
+            rig.audio.choose(Output::Headphones);
+            assert_eq!(call(&rig), format!("connect {AIRPODS}"));
+            rig.audio.sink(AIRPODS, true);
+            assert_eq!(route(&rig).said, "Sound on AirPods");
+        }
+    }
+
+    #[test]
+    fn headphones_are_asked_for_aac_again_after_they_reconnect() {
+        let rig = rig(World {
+            codecs: on_sbc(&[SBC, AAC]),
+            switches: true,
+            ..paired_world()
+        });
+        rig.audio.choose(Output::Headphones);
+        assert_eq!(call(&rig), format!("connect {AIRPODS}"));
+        rig.audio.sink(AIRPODS, true);
+        assert_eq!(call(&rig), format!("codec {AIRPODS} AAC"));
+        rig.audio.sink(AIRPODS, true);
+        assert_eq!(route(&rig).said, "Sound on AirPods");
+        rig.audio.sink(AIRPODS, false);
+        rig.world.lock().unwrap().codecs = on_sbc(&[SBC, AAC]);
+        rig.audio.sink(AIRPODS, true);
+        assert_eq!(call(&rig), format!("codec {AIRPODS} AAC"));
+    }
+
+    #[test]
+    fn bluealsa_cli_codec_says_what_is_selected_and_offered() {
+        assert_eq!(
+            parse_codecs("Available codecs: SBC AAC\nSelected codec: SBC\n"),
+            on_sbc(&[SBC, AAC])
+        );
+        assert_eq!(parse_codecs(""), None);
     }
 
     #[test]
