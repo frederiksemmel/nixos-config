@@ -583,11 +583,15 @@ let
 
         # Nerd Font lock glyphs nf-fa-unlock (U+F09C) and nf-fa-lock (U+F023), in a
         # Nerd Font: the bar font lacks them, and fallback finds a bullet at U+F023.
+        ${shellPalette [
+          "red"
+          "green"
+        ]}
         if [ "$cur" = unlocked ]; then
-          ironbar var set vault "<span font_family='FiraCode Nerd Font Propo'></span>" >/dev/null || true
+          ironbar var set vault "<span font_family='FiraCode Nerd Font Propo' color='$green'></span>" >/dev/null || true
           head="Bitwarden (rbw) is unlocked. Click to lock."
         else
-          ironbar var set vault "<span font_family='FiraCode Nerd Font Propo'></span>" >/dev/null || true
+          ironbar var set vault "<span font_family='FiraCode Nerd Font Propo' color='$red'></span>" >/dev/null || true
           head="Bitwarden (rbw) is locked. Click to unlock."
         fi
         ironbar var set vault_tooltip "$head"$'\n\n'"$(stats "$now")" >/dev/null || true
@@ -767,7 +771,7 @@ let
   #   "USPTO Open Data Portal": password = ODP API key
   #   "EPO OPS": username = consumer key, password = consumer secret
   patentMcp =
-    name: from: exe:
+    name: from: exe: extra:
     pkgs.writeShellApplication {
       inherit name;
       runtimeInputs = [
@@ -786,13 +790,15 @@ let
           fi
         fi
         export UV_PYTHON_DOWNLOADS=never
-        exec uv tool run --quiet --python ${lib.getExe pkgs.python313} --from '${from}' ${exe}
+        exec uv tool run --quiet --python ${lib.getExe pkgs.python313} --from '${from}' ${
+          lib.concatMapStringsSep " " (w: "--with '${w}'") extra
+        } ${exe}
       '';
     };
-  patentMcpUspto = patentMcp "patent-mcp-uspto" "patent-mcp-server==1.8.3" "patent-mcp-server";
+  patentMcpUspto = patentMcp "patent-mcp-uspto" "patent-mcp-server==1.8.3" "patent-mcp-server" [ ];
   patentClientAgentsMcp =
-    patentMcp "patent-client-agents-mcp" "patent-client-agents[mcp]==0.32.0"
-      "patent-client-agents-mcp";
+    patentMcp "patent-client-agents-mcp" "patent-client-agents[mcp]==0.32.0" "patent-client-agents-mcp"
+      [ "hishel<2" ];
   tvcast = pkgs.callPackage ../../packages/tvcast { };
   # `tvcast-imv cast FILE` stops a running cast, or casts FILE to a TV picked
   # in fuzzel; `tvcast-imv follow FILE` switches a running cast to FILE.
