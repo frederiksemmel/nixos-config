@@ -193,7 +193,7 @@ async fn settings_page(cx: &Cx) -> Result<impl View> {
                 match subtitles {
                     Ok(subtitles) => {
                         <div class="setting-group">
-                            switch(name: "shown", label: "Show when a video starts", detail: "The yellow key on the remote shows and hides them", on: subtitles.settings.shown)
+                            switch(name: "shown", label: "Show when a video starts", detail: "A series keeps what its last episode showed. The yellow key on the remote shows and hides them", on: subtitles.settings.shown)
                             language_order(initial: subtitles.settings.languages.join(","))
                         </div>
                         style(settings: &subtitles.settings)

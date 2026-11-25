@@ -183,6 +183,8 @@ pub struct SeriesPlace {
     pub season: i64,
     pub episode: i64,
     pub finished: bool,
+    pub subtitles_shown: Option<bool>,
+    pub subtitle_language: Option<String>,
 }
 
 #[derive(Debug, toasty::Model)]

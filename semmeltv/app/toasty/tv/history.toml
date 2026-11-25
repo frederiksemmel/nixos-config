@@ -64,3 +64,8 @@ snapshot_name = "0011_snapshot.toml"
 id = 7173035011331843046
 name = "0012_push-notices.sql"
 snapshot_name = "0012_snapshot.toml"
+
+[[migrations]]
+id = 6615213925081993419
+name = "0013_series-subtitles.sql"
+snapshot_name = "0013_snapshot.toml"

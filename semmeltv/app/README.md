@@ -302,8 +302,11 @@ own for commands sent over its IPC socket, which is how the remote reaches it.
 Stopping a video saves its position and playing it again resumes there. So does
 a restart, and a crash or power cut loses at most the last 30 seconds. A video
 that played to its end starts over. The database keeps, per profile, the last
-episode started per show, and each file's stopping point with the audio track,
-subtitle track and whether subtitles showed. mpv keeps nothing of its own: it
+episode started per show with how its subtitles last showed (off, or on in a
+language), and each file's stopping point with the audio track,
+subtitle track and whether subtitles showed. An episode that starts from the
+beginning takes its show's subtitles, on the TV and on a phone, before the
+profile's own "Show when a video starts". mpv keeps nothing of its own: it
 starts with `--start`, `--aid`, `--sid` and `--sub-visibility` from the
 database and `--no-resume-playback`. A file's real duration and where its
 credits start are kept once for everyone. Files are keyed by their path in the
@@ -361,8 +364,10 @@ Times come from [TheIntroDB](https://theintrodb.org) when an episode starts, and
 are not stored. An episode needs its show's `tmdb` in `library.db`, and without
 one or without a network it plays with no button. When
 several ranges exist the earliest counts, since later ones have been wrong. An
-intro said to start at 0:00 and last over 95 seconds is dropped: that is a cold
-open someone marked as the intro, as on several Community episodes. Their
+intro said to start at 0:00 and last over 95 seconds is dropped as a cold open
+someone marked as the intro, as on several Community episodes, unless the
+episode before or after has an intro within 8 seconds as long: Game of Thrones
+opens with its 1:50 titles. Their
 terms allow personal, non-commercial use and forbid passing the data on, so
 timings must not be exported or committed.
 
@@ -412,7 +417,7 @@ async: the core and the API await them.
 | `capabilities` | what an admin granted a viewer on this TV: `control_tv`, `download` (old `headphones` rows mean nothing) | profile |
 | `passkeys`, `sessions`, `invites` | sign-in, kept by the auth code | profile |
 | `video_places` | an episode's or film's stopping point, when it was last played, finished, audio and subtitle track, subtitles shown | profile |
-| `series_places` | the last episode started per show, and whether it finished | profile |
+| `series_places` | the last episode started per show, whether it finished, and how its subtitles last showed | profile |
 | `started` | Currently watching, newest first | profile |
 | `dismissed_videos` | episodes and films taken off Started and Forgotten | profile |
 | `subtitle_settings` | the subtitle settings, as JSON | profile |

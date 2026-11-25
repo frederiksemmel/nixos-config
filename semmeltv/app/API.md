@@ -772,7 +772,7 @@ segments, instead of playing it on the TV.
 | GET | `/api/stream/{id}/main.m3u8` | the master playlist, to give the `<video>` or hls.js |
 | GET | `/api/stream/{id}/subtitles/{n}` | `{ cues: [{ start, end, text }], complete }` for subtitle `n` |
 | GET | `/api/stream/{id}/marks` | `{ segments, credits, stops }`: TheIntroDB's recap and intro, where the credits start, and `stops`, each `{ at, said }`, where people you watch the series with stopped further on in this episode; the player pauses there once and shows `said` ("Paused where Mami stopped") |
-| POST | `/api/stream/{id}/progress` | `{ position, played, state }` → `{ ok, kept_from }`, or `{ ok, reopen, kept_from }` |
+| POST | `/api/stream/{id}/progress` | `{ position, played, state, subtitles? }` → `{ ok, kept_from }`, or `{ ok, reopen, kept_from }` |
 | DELETE | `/api/stream/{id}` | ends the session |
 
 `client` says what the browser decodes: `{ hevc, eac3, ac3 }`, all booleans.
@@ -847,6 +847,8 @@ and the show's place, finishes the file when it stops in the credits or ends,
 and otherwise writes the position into the file's mpv resume entry, so the TV
 carries on from there. While the TV plays the same file, `ok` is false and
 nothing changes. A `stopped` or `ended` report also ends the session.
+`subtitles`, `{ id }` with the shown subtitle's id or null when off, is kept
+for an episode's show, so its next episode starts the same way.
 
 ## Bake-offs
 

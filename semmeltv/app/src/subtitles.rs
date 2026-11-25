@@ -4,6 +4,7 @@ use crate::core::{Core, Request};
 use crate::db::{self, Db};
 use crate::link::messages::PlaySubtitles;
 use crate::profile::ProfileId;
+use crate::progress::ShowSubtitles;
 use crate::sidecar::Sidecar;
 use axum::extract::State;
 use axum::http::StatusCode;
@@ -177,6 +178,20 @@ impl Settings {
         args
     }
 
+    /// These settings for an episode of a show watched before: its
+    /// subtitles start the way the last episode left them.
+    pub fn for_show(&self, show: Option<&ShowSubtitles>) -> Self {
+        let mut settings = self.clone();
+        if let Some(show) = show {
+            settings.shown = show.shown;
+            if let Some(language) = &show.language {
+                settings.languages.retain(|wanted| !same_language(wanted, language));
+                settings.languages.insert(0, language.clone());
+            }
+        }
+        settings
+    }
+
     fn merged(&self, changes: Map<String, Value>) -> Result<Self, String> {
         let mut current = match serde_json::to_value(self) {
             Ok(Value::Object(fields)) => fields,
@@ -317,6 +332,20 @@ pub struct Remembered {
 impl Remembered {
     pub fn is_empty(&self) -> bool {
         self.delay == 0.0 && self.embedded.is_none()
+    }
+}
+
+impl Playing {
+    /// What the next episode of the same show should start with.
+    pub fn for_show(&self) -> ShowSubtitles {
+        let shown = self
+            .track
+            .filter(|_| self.visible)
+            .and_then(|id| self.tracks.iter().find(|track| track.id == id));
+        ShowSubtitles {
+            shown: shown.is_some(),
+            language: shown.and_then(|track| track.language.clone()),
+        }
     }
 }
 
@@ -577,6 +606,51 @@ mod tests {
         assert!(plain.contains(&"--sub-visibility=no".to_string()));
         assert!(plain.contains(&"--sub-border-style=outline-and-shadow".to_string()));
         assert!(plain.contains(&"--sub-ass-override=scale".to_string()));
+    }
+
+    #[test]
+    fn an_episode_starts_its_subtitles_the_way_the_last_one_left_them() {
+        let mine = Settings {
+            languages: vec!["en".to_string(), "de".to_string()],
+            ..Settings::default()
+        };
+        assert_eq!(mine.for_show(None), mine);
+        let german = ShowSubtitles {
+            shown: true,
+            language: Some("ger".to_string()),
+        };
+        let shown = mine.for_show(Some(&german));
+        assert!(shown.shown);
+        assert_eq!(shown.languages, ["ger", "en"]);
+        let off = ShowSubtitles {
+            shown: false,
+            language: None,
+        };
+        assert_eq!(
+            Settings {
+                shown: true,
+                ..mine.clone()
+            }
+            .for_show(Some(&off)),
+            mine
+        );
+
+        let playing = endless_summer();
+        let english = Playing {
+            track: Some(1),
+            visible: true,
+            ..playing.clone()
+        };
+        let english_show = ShowSubtitles {
+            shown: true,
+            language: Some("en".to_string()),
+        };
+        assert_eq!(english.for_show(), english_show);
+        let hidden = Playing {
+            visible: false,
+            ..english
+        };
+        assert_eq!(hidden.for_show(), off);
     }
 
     #[test]

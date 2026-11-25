@@ -22,6 +22,14 @@ pub struct Tracks {
     pub subtitles_shown: Option<bool>,
 }
 
+/// How someone last watched a show's subtitles, so its next episode starts
+/// the same way: shown, in which language, or off.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ShowSubtitles {
+    pub shown: bool,
+    pub language: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub enum Viewing {
     #[default]
@@ -105,6 +113,8 @@ pub struct Progress {
     pub watching: Watching,
     #[serde(default)]
     pub dismissed: Vec<Dismissal>,
+    #[serde(default)]
+    pub subtitles: HashMap<String, ShowSubtitles>,
 }
 
 impl Progress {

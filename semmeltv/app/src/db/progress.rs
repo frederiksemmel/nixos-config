@@ -2,7 +2,7 @@ use super::index::{self, Index, Known, Video};
 use super::models::{self, Dismissal as StoredDismissal, SeriesPlace, Started as StoredStarted, VideoFact, VideoPlace};
 use super::{Db, Result};
 use crate::profile::ProfileId;
-use crate::progress::{Position, Progress, Tracks, Viewing, Watched};
+use crate::progress::{Position, Progress, ShowSubtitles, Tracks, Viewing, Watched};
 use crate::watching::{Dismissal, Entry, Watching};
 use std::collections::BTreeMap;
 use toasty::Executor;
@@ -61,6 +61,7 @@ struct Show {
     season: i64,
     episode: i64,
     finished: bool,
+    subtitles: Option<ShowSubtitles>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -140,6 +141,10 @@ async fn load(executor: &mut dyn Executor, profile: i64) -> toasty::Result<Rows>
                 season: show.season,
                 episode: show.episode,
                 finished: show.finished,
+                subtitles: show.subtitles_shown.map(|shown| ShowSubtitles {
+                    shown,
+                    language: show.subtitle_language,
+                }),
             })
             .collect(),
         started: started
@@ -200,6 +205,8 @@ async fn store(executor: &mut dyn Executor, profile: i64, wanted: Rows, known: K
             .season(row.season)
             .episode(row.episode)
             .finished(row.finished)
+            .subtitles_shown(row.subtitles.as_ref().map(|subtitles| subtitles.shown))
+            .subtitle_language(row.subtitles.and_then(|subtitles| subtitles.language))
             .exec(executor)
             .await?;
     }
@@ -332,6 +339,7 @@ fn rows(index: &Index, progress: &Progress) -> Rows {
                 season: position.season.into(),
                 episode: position.episode.into(),
                 finished: position.finished,
+                subtitles: progress.subtitles.get(key).cloned(),
             })
         })
         .collect();
@@ -392,6 +400,9 @@ fn assemble(index: &Index, rows: Rows) -> Progress {
             finished: show.finished,
         };
         progress.shows.insert(key.clone(), position);
+        if let Some(subtitles) = show.subtitles {
+            progress.subtitles.insert(key.clone(), subtitles);
+        }
     }
     progress.watching = Watching::from_entries(
         rows.started
@@ -505,6 +516,13 @@ pub mod tests {
             file: PathBuf::from(UP),
             at: 1_800_000_050,
         });
+        progress.subtitles.insert(
+            "dark".to_string(),
+            ShowSubtitles {
+                shown: true,
+                language: Some("de".to_string()),
+            },
+        );
         progress
     }
 
@@ -522,6 +540,7 @@ pub mod tests {
         let mut progress = sample();
         db.save_progress(ProfileId::FIRST, &progress).await.unwrap();
         progress.shows.clear();
+        progress.subtitles.clear();
         progress.watching.leave(Kind::Movie, "up");
         progress.dismissed.clear();
         progress.finish(Path::new(DARK));

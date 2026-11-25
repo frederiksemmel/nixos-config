@@ -64,6 +64,7 @@ pub struct Report {
     pub credits: Option<f64>,
     pub played: f64,
     pub moment: Moment,
+    pub subtitles: Option<crate::progress::ShowSubtitles>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -397,8 +398,14 @@ async fn examine(streams: &Streams, file: &PathBuf) -> Result<Media, String> {
     Ok(media)
 }
 
-fn subtitle_list(streams: &Streams, file: &std::path::Path, media: &Media, profile: ProfileId) -> Vec<Subtitle> {
-    let settings = streams.core.subtitles().settings_of(profile);
+fn subtitle_list(
+    streams: &Streams,
+    file: &std::path::Path,
+    media: &Media,
+    profile: ProfileId,
+    show: Option<&crate::progress::ShowSubtitles>,
+) -> Vec<Subtitle> {
+    let settings = streams.core.subtitles().settings_of(profile).for_show(show);
     listed(sidecar::find(file), media, &settings)
 }
 
@@ -726,7 +733,12 @@ async fn open(State(streams): State<Streams>, Who(profile): Who, Json(body): Jso
         .filter(|at| at.is_finite() && *at >= 0.0 && *at < duration)
         .unwrap_or_else(|| resume_at(&progress, &chosen.file, duration));
     let id = new_id();
-    let subtitles = subtitle_list(&streams, &chosen.file, &media, profile);
+    let show = streams
+        .core
+        .library()
+        .find_episode(&chosen.file)
+        .and_then(|(show, _)| progress.subtitles.get(&show.key).cloned());
+    let subtitles = subtitle_list(&streams, &chosen.file, &media, profile, show.as_ref());
     let spec = Spec {
         source: playable,
         audio: audio.map(|audio| audio.index),
@@ -1076,6 +1088,14 @@ struct ProgressBody {
     position: f64,
     played: f64,
     state: Moment,
+    #[serde(default)]
+    subtitles: Option<ShownBody>,
+}
+
+/// The subtitle the phone shows, or none when they are off.
+#[derive(Deserialize)]
+struct ShownBody {
+    id: Option<usize>,
 }
 
 async fn progress(
@@ -1105,6 +1125,15 @@ async fn progress(
         credits: live.credits(),
         played: report.played.max(0.0),
         moment: report.state,
+        subtitles: report.subtitles.map(|shown| {
+            let subtitle = shown
+                .id
+                .and_then(|id| live.subtitles.iter().find(|subtitle| subtitle.id == id));
+            crate::progress::ShowSubtitles {
+                shown: subtitle.is_some(),
+                language: subtitle.and_then(|subtitle| subtitle.language.clone()),
+            }
+        }),
     });
     let answer = api::ask(&streams.core, request).await;
     let removed = if ends {

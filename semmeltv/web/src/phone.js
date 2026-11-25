@@ -1384,6 +1384,7 @@ class Player {
     const video = this.video;
     const source = `${api}${session.playlist}`;
     this.base = 0;
+    this.subtitlesFor = null;
     this.clearSubtitles();
     const begin = () => {
       if (this.session !== session) return;
@@ -1393,6 +1394,7 @@ class Player {
       const kept = this.chosen && samePick(this.chosen.pick, this.pick) ? this.chosen.id : undefined;
       if (kept !== undefined) this.chooseSubtitle(kept);
       else this.applyDefaultSubtitles(session);
+      this.subtitlesFor = session;
       video.play().catch(() => this.blocked(session));
     };
     this.detach();
@@ -1670,6 +1672,7 @@ class Player {
 
   async reportFor(session, state, keepalive = false) {
     const body = { position: this.position(session), played: this.played, state };
+    if (this.subtitlesFor === session) body.subtitles = { id: this.subtitle ?? null };
     try {
       const answer = await request("POST", `/api/stream/${session.id}/progress`, body, { keepalive });
       if (answer && Number.isFinite(answer.kept_from) && session === this.session) this.keptFrom = answer.kept_from;

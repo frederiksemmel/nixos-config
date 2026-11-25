@@ -776,6 +776,12 @@ impl Actor {
             Some(watched) if start > 0.0 => watched.tracks(),
             _ => progress::Tracks::default(),
         };
+        let mut subtitles = self.subtitles.for_play(owner, path, sidecars);
+        if tracks == progress::Tracks::default()
+            && let Some((show, _)) = self.library.find_episode(path)
+        {
+            subtitles.settings = subtitles.settings.for_show(theirs.subtitles.get(&show.key));
+        }
         let dialogue = self.core.dialogue(owner).await.load(Ordering::SeqCst);
         let (token, paused, resumes) = match again {
             Some(Again {
@@ -792,7 +798,7 @@ impl Actor {
             paused,
             tracks,
             caption: self.caption(path),
-            subtitles: self.subtitles.for_play(owner, path, sidecars),
+            subtitles,
             audio_device: self.audio_device(),
             dialogue,
             next: up_next::follows(&self.library, path),
@@ -1452,9 +1458,13 @@ impl Actor {
         };
         let (file, owner) = (file.clone(), *owner);
         let (place, tracks, played) = (last.place, last.tracks, last.played);
+        let shown = last.subtitles.as_ref().map(subtitles::Playing::for_show);
         let mut progress = (*self.progress_of(owner).await).clone();
         progress.record(&file, place);
         progress.keep_tracks(&file, tracks);
+        if let (Some(shown), Some((show, _))) = (shown, self.library.find_episode(&file)) {
+            progress.subtitles.insert(show.key.clone(), shown);
+        }
         progress.played(&file, watching::now());
         watching::record(&mut progress, &self.library, &file, played, watching::now());
         self.keep(owner, progress).await;
@@ -1965,6 +1975,9 @@ impl Actor {
         let mut progress = (*self.progress_of(by).await).clone();
         if report.moment == stream::Moment::Start {
             self.tell_partners(by, file);
+        }
+        if let (Some(shown), Some((show, _))) = (report.subtitles.clone(), self.library.find_episode(file)) {
+            progress.subtitles.insert(show.key.clone(), shown);
         }
         if report.moment == stream::Moment::Start
             && let Some((show, episode)) = self.library.find_episode(file)
@@ -3314,7 +3327,109 @@ mod tests {
             profile,
             device: None,
             session: "a-session".to_string(),
+            subtitles: None,
         }
+    }
+
+    /// The test library with a second episode of Dark after the first.
+    fn two_episodes() -> (Library, PathBuf, PathBuf) {
+        let mut library = db::test_library();
+        let first = library.shows[0].seasons[0].episodes[0].clone();
+        let next = crate::library::Episode {
+            id: 71,
+            number: first.number + 1,
+            path: PathBuf::from("/lib/Series/Dark/S01/Dark.S01E03.mkv"),
+            ..first.clone()
+        };
+        library.shows[0].seasons[0].episodes.push(next.clone());
+        (library, first.path, next.path)
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn play_next_starts_the_next_episode_with_the_subtitles_the_last_one_showed() {
+        let (library, first, next) = two_episodes();
+        let (core, inbox) = Core::detached(library).await;
+        let (link, orders) = Link::pair();
+        let core = core_with_tv(core, inbox, link).await;
+        let played = |orders: &std::sync::mpsc::Receiver<ToTv>| {
+            told(orders, |order| match order {
+                ToTv::Play(play) => Some(play),
+                _ => None,
+            })
+        };
+        core.ask(Request::PlayFile(first.clone())).await.unwrap();
+        let play = played(&orders);
+        assert!(!play.subtitles.settings.shown);
+        let mut tracks = subtitles::SubtitleTracks::new(&first, messages::PlaySubtitles::default());
+        tracks.observe(
+            subtitles::Observed::parse(&serde_json::json!({ "name": "track-list", "data": [
+                { "id": 1, "type": "sub", "lang": "eng", "title": "English" },
+                { "id": 2, "type": "sub", "lang": "ger", "title": "Deutsch" },
+            ] }))
+            .unwrap(),
+        );
+        let mut shown = tracks.playing().unwrap();
+        shown.visible = true;
+        shown.track = Some(2);
+        core.signal(Signal::Tv(FromTv::Report(Box::new(Report {
+            play: Some(play.play.clone()),
+            subtitles: Some(shown),
+            ..Report::default()
+        }))));
+        core.signal(Signal::Tv(FromTv::Finished(Ended {
+            play: play.play,
+            file: first,
+            owner: ProfileId::FIRST,
+            finish: Finish::Next,
+            place: progress::Place {
+                position: 2990.0,
+                duration: 3000.0,
+                credits: None,
+            },
+            tracks: progress::Tracks {
+                audio: Some(1),
+                subtitle: Some(2),
+                subtitles_shown: Some(true),
+            },
+            played: 2990.0,
+        })));
+        let again = played(&orders);
+        assert_eq!(again.file, next);
+        assert_eq!(again.tracks, progress::Tracks::default());
+        assert!(again.subtitles.settings.shown);
+        assert_eq!(again.subtitles.settings.languages[0], "ger");
+        assert_eq!(
+            core.progress(ProfileId::FIRST).await.subtitles.get("dark"),
+            Some(&progress::ShowSubtitles {
+                shown: true,
+                language: Some("ger".to_string()),
+            })
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn subtitles_a_phone_shows_in_an_episode_are_kept_for_the_show() {
+        let (library, first, _) = two_episodes();
+        let (core, inbox) = Core::detached(library).await;
+        let actor = Actor::new(core.clone(), ProfileId::FIRST, hardware()).await;
+        tokio::spawn(actor.run(inbox));
+        let mami = ProfileId(2);
+        let english = progress::ShowSubtitles {
+            shown: true,
+            language: Some("en".to_string()),
+        };
+        let mut playing = report(&core, stream::Moment::Playing, 600.0, mami);
+        playing.file = first.clone();
+        playing.subtitles = Some(english.clone());
+        core.ask(Request::Phone(playing)).await.unwrap();
+        assert_eq!(core.progress(mami).await.subtitles.get("dark"), Some(&english));
+        let mut film = report(&core, stream::Moment::Playing, 600.0, mami);
+        film.subtitles = Some(progress::ShowSubtitles {
+            shown: false,
+            language: None,
+        });
+        core.ask(Request::Phone(film)).await.unwrap();
+        assert_eq!(core.progress(mami).await.subtitles.len(), 1);
     }
 
     #[tokio::test(flavor = "multi_thread")]
