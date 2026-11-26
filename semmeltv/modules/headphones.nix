@@ -39,6 +39,8 @@ in
 
     environment.systemPackages = [ bluealsa ];
 
+    networking.wireless.iwd.settings.Scan.DisablePeriodicScan = true;
+
     services.semmeltv.coreEnvironment.SEMMELTV_HEADPHONES = "bluetooth";
   };
 }
