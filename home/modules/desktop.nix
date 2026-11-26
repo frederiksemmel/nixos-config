@@ -2087,6 +2087,7 @@ in
           # Workspaces
           "${mod}+U".action = focus-workspace-down;
           "${mod}+I".action = focus-workspace-up;
+          "${mod}+Tab".action = focus-workspace-previous;
           # "${mod}+Ctrl+U".action = move-window-down-or-workspace-down;
           # "${mod}+Ctrl+I".action = move-window-up-or-workspace-up;
           "${mod}+Shift+U".action = move-workspace-down;
