@@ -15,6 +15,7 @@ pub enum Capability {
     /// read as nothing.
     Headphones,
     Download,
+    SaveFiles,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, toasty::Embed)]

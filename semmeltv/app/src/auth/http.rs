@@ -511,6 +511,8 @@ async fn set_capability(gate: &Gate, id: i64, name: &str, on: bool) -> Response 
                 (Capability::ControlTv, false) => format!("{} can't control the TV", person.name),
                 (Capability::Download, true) => format!("{} can download", person.name),
                 (Capability::Download, false) => format!("{} can't download", person.name),
+                (Capability::SaveFiles, true) => format!("{} can save files to their own devices", person.name),
+                (Capability::SaveFiles, false) => format!("{} can't save files", person.name),
             };
             Json(json!({ "ok": true, "message": message, "person": person })).into_response()
         }

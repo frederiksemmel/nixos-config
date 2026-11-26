@@ -1081,6 +1081,7 @@ mod tests {
         let frederik = rig.auth.person(FREDERIK).await.unwrap();
         assert!(frederik.can(Capability::ControlTv));
         assert!(frederik.can(Capability::Download));
+        assert!(frederik.can(Capability::SaveFiles));
         assert!(!rig.auth.person(MAMI).await.unwrap().can(Capability::ControlTv));
         let oma = rig.auth.create_profile("Oma", Role::Viewer).await.unwrap();
         assert!(oma.capabilities.is_empty());
@@ -1103,8 +1104,14 @@ mod tests {
             serde_json::json!(["download"])
         );
         assert_eq!(Capability::named("headphones"), None);
+        let mami = rig.auth.grant(MAMI, Capability::SaveFiles, true).await.unwrap();
+        assert_eq!(mami.capabilities, [Capability::Download, Capability::SaveFiles]);
+        assert_eq!(
+            serde_json::to_value(&mami).unwrap()["capabilities"],
+            serde_json::json!(["download", "save-files"])
+        );
         let mami = rig.auth.grant(MAMI, Capability::Download, false).await.unwrap();
-        assert!(!mami.can(Capability::Download));
+        assert!(!mami.can(Capability::Download) && mami.can(Capability::SaveFiles));
         assert_eq!(
             rig.auth.grant(ProfileId(999), Capability::ControlTv, true).await,
             Err(Refusal::UnknownProfile)

@@ -879,6 +879,7 @@ async fn episode_row(
     title: &str,
     episode: &Episode,
     shared: bool,
+    saves: bool,
     said: Signal<String>,
 ) -> Result<impl View> {
     let show_key = series.to_string();
@@ -891,7 +892,7 @@ async fn episode_row(
     let label = episode.short_label.clone();
     let share = episode_link(series, season_number, episode_number);
     let share_text = share_text(title, None, Some((&episode.short_label, &episode.label)));
-    let save = public.url(&format!("/api/files/shows/{series}/{season_number}/{episode_number}"));
+    let save = saves.then(|| public.url(&format!("/api/files/shows/{series}/{season_number}/{episode_number}")));
     Ok(view! {
         <li class=(if shared { "episode-row shared" } else { "episode-row" })>
             <button type="button" class="episode" data-play-show=(series) data-season=(season_number.to_string())
@@ -932,9 +933,11 @@ async fn episode_row(
                     data-share=(share.as_str()) data-share-text=(share_text.as_str())>
                     share_icon()
                 </button>
-                <a class="save-episode" href=(save) download=(true) aria-label=(format!("Save {label} to this device"))>
-                    save_icon()
-                </a>
+                if let Some(save) = &save {
+                    <a class="save-episode" href=(save.as_str()) download=(true) aria-label=(format!("Save {label} to this device"))>
+                        save_icon()
+                    </a>
+                }
             </span>
         </li>
     })
@@ -1102,7 +1105,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
     }
     rows.extend(downloaded_by(&movie.downloaded_by));
     let share = movie.card.href();
-    let save = public.url(&format!("/api/files/movies/{key}"));
+    let save = crate::auth::saves_files(cx).then(|| public.url(&format!("/api/files/movies/{key}")));
     let share_line = share_text(&movie.card.title, movie.card.years.as_deref(), None);
     Ok(view! {
         <article class="title detail">
@@ -1138,7 +1141,9 @@ async fn movie(cx: &Cx) -> Result<impl View> {
                             <div class="detail-more">
                                 movie_mark(key: key.as_str(), finished: movie.card.finished, said: said.clone())
                                 share_button(path: share.as_str(), text: share_line.as_str())
-                                save_button(href: save.as_str())
+                                if let Some(save) = &save {
+                                    save_button(href: save.as_str())
+                                }
                                 if let Some(fetch) = &fetch {
                                     find_subtitles(label: "Find subtitles", body: fetch.as_str())
                                 }
@@ -1164,6 +1169,7 @@ async fn movie(cx: &Cx) -> Result<impl View> {
 async fn show(cx: &Cx) -> Result<impl View> {
     let key = path_param::<Key>(cx).to_string();
     let public = app_context::<Public>(cx).clone();
+    let saves = crate::auth::saves_files(cx);
     let show = match Api::of(cx).show(&key).await.map_err(failed)? {
         Found::Here(show) => show,
         Found::Missing => return Err(not_found().into()),
@@ -1343,7 +1349,7 @@ async fn show(cx: &Cx) -> Result<impl View> {
                                     #[key(episode.episode)]
                                     for episode in &group.episodes {
                                         episode_row(public: &public, series: key.as_str(), title: show.card.title.as_str(), episode: episode,
-                                            shared: shared == Some((number, episode.episode)), said: said.clone())
+                                            shared: shared == Some((number, episode.episode)), saves: saves, said: said.clone())
                                     }
                                 </ol>
                             }
@@ -1503,7 +1509,7 @@ mod tests {
     }
 
     #[component]
-    async fn community_row(cx: &Cx, shared: bool) -> Result<impl View> {
+    async fn community_row(cx: &Cx, shared: bool, saves: bool) -> Result<impl View> {
         let episode: Episode = serde_json::from_value(json!({
             "season": 2, "episode": 4, "label": "Basic Rocket Science", "short_label": "S2 E4",
             "still": null, "band": null, "details": "",
@@ -1515,21 +1521,21 @@ mod tests {
         };
         let said = signal(cx, String::new);
         Ok(view! {
-            episode_row(public: &public, series: "community", title: "Community", episode: &episode, shared: shared, said: said)
+            episode_row(public: &public, series: "community", title: "Community", episode: &episode, shared: shared, saves: saves, said: said)
         })
     }
 
     #[tokio::test]
     async fn an_episode_row_has_a_share_button_and_stands_out_when_shared() {
-        let render = |shared: bool| async move {
+        let render = |shared: bool, saves: bool| async move {
             let cx = &Cx::default();
-            view! { cx => community_row(shared: shared) }
+            view! { cx => community_row(shared: shared, saves: saves) }
                 .single()
                 .await
                 .unwrap()
                 .render(cx)
         };
-        let plain = render(false).await;
+        let plain = render(false, true).await;
         assert!(
             plain.contains(r#"data-share="/shows/community?season=2&amp;episode=4""#),
             "{plain}"
@@ -1545,8 +1551,12 @@ mod tests {
         );
         assert!(plain.contains(r#"aria-label="Save S2 E4 to this device""#), "{plain}");
         assert!(!plain.contains("shared"), "{plain}");
-        let shared = render(true).await;
+        let shared = render(true, true).await;
         assert!(shared.contains(r#"class="episode-row shared""#), "{shared}");
+        let unsaved = render(false, false).await;
+        assert!(!unsaved.contains("/api/files/"), "{unsaved}");
+        assert!(!unsaved.contains("save-episode"), "{unsaved}");
+        assert!(unsaved.contains(r#"aria-label="Share S2 E4""#), "{unsaved}");
     }
 
     #[tokio::test]

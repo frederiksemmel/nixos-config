@@ -1148,6 +1148,7 @@ pub struct Person {
 
 pub const CONTROL_TV: &str = "control-tv";
 pub const DOWNLOAD: &str = "download";
+pub const SAVE_FILES: &str = "save-files";
 
 impl Person {
     pub fn admin(&self) -> bool {
@@ -1164,6 +1165,10 @@ impl Person {
 
     pub fn downloads(&self) -> bool {
         self.can(DOWNLOAD)
+    }
+
+    pub fn saves_files(&self) -> bool {
+        self.can(SAVE_FILES)
     }
 
     pub fn initial(&self) -> String {
@@ -1335,6 +1340,8 @@ mod tests {
         assert!(!read(json!([])).controls_tv());
         assert!(read(json!(["download"])).downloads());
         assert!(!read(json!(["control-tv", "headphones"])).downloads());
+        assert!(read(json!(["save-files"])).saves_files());
+        assert!(!read(json!(["download"])).saves_files());
     }
 
     #[test]

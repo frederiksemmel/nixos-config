@@ -32,15 +32,19 @@ pub enum Capability {
     /// how the downloads are going. Stopping a download, the TV's storage
     /// and removing titles stay with the admin.
     Download,
+    /// Save a film's or an episode's file from the library onto one's own
+    /// phone or laptop.
+    SaveFiles,
 }
 
 impl Capability {
-    pub const ALL: [Capability; 2] = [Capability::ControlTv, Capability::Download];
+    pub const ALL: [Capability; 3] = [Capability::ControlTv, Capability::Download, Capability::SaveFiles];
 
     pub fn name(self) -> &'static str {
         match self {
             Capability::ControlTv => "control-tv",
             Capability::Download => "download",
+            Capability::SaveFiles => "save-files",
         }
     }
 
@@ -48,6 +52,7 @@ impl Capability {
         match self {
             Capability::ControlTv => "Only someone allowed to control this TV can do that",
             Capability::Download => "Only someone allowed to download on this TV can do that",
+            Capability::SaveFiles => "Only someone allowed to save files from this TV can do that",
         }
     }
 

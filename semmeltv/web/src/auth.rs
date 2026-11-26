@@ -1,4 +1,4 @@
-use crate::api::{Api, CONTROL_TV, Choice, DOWNLOAD, Me, Member, Person};
+use crate::api::{Api, CONTROL_TV, Choice, DOWNLOAD, Me, Member, Person, SAVE_FILES};
 use crate::layout::back;
 use topcoat::Result;
 use topcoat::context::{Cx, try_request_context};
@@ -31,6 +31,10 @@ pub fn controls_tv(cx: &Cx) -> bool {
 
 pub fn downloads(cx: &Cx) -> bool {
     me(cx).is_some_and(|me| me.person.downloads())
+}
+
+pub fn saves_files(cx: &Cx) -> bool {
+    me(cx).is_some_and(|me| me.person.saves_files())
 }
 
 pub fn may_download(cx: &Cx) -> Result<()> {
@@ -402,7 +406,7 @@ async fn account_page(cx: &Cx) -> Result<impl View> {
 
 fn role_note(person: &Person) -> &'static str {
     match (person.admin(), person.controls_tv()) {
-        (true, _) => "Admin: everything, including the TV, downloads, storage and people",
+        (true, _) => "Admin: everything, including the TV, downloads, saving files, storage and people",
         (false, true) => "Watches, plays on the TV, uses its remote and pairs their own headphones",
         (false, false) => "Watches on this phone or laptop; the TV's remote isn't yours on this TV",
     }
@@ -419,13 +423,19 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
     });
     if !person.admin() {
         facts.push(if person.downloads() {
-            "downloads".to_string()
+            "adds to the library".to_string()
         } else {
-            "no downloads".to_string()
+            "can't add to the library".to_string()
+        });
+        facts.push(if person.saves_files() {
+            "saves files".to_string()
+        } else {
+            "can't save files".to_string()
         });
     }
     let control = format!("/api/auth/members/{}/capabilities/{CONTROL_TV}", person.id);
     let download = format!("/api/auth/members/{}/capabilities/{DOWNLOAD}", person.id);
+    let save = format!("/api/auth/members/{}/capabilities/{SAVE_FILES}", person.id);
     facts.push(match member.passkeys {
         0 => "no passkey".to_string(),
         1 => "1 passkey".to_string(),
@@ -464,9 +474,14 @@ async fn member_row(member: &Member, own: bool) -> Result<impl View> {
                         <button type="button" class="pill" data-capability=(control) data-method="PUT">"Give TV control"</button>
                     }
                     if person.downloads() {
-                        <button type="button" class="pill quiet" data-capability=(download) data-method="DELETE">"Stop downloads"</button>
+                        <button type="button" class="pill quiet" data-capability=(download) data-method="DELETE">"Stop adding to library"</button>
                     } else {
-                        <button type="button" class="pill" data-capability=(download) data-method="PUT">"Let download"</button>
+                        <button type="button" class="pill" data-capability=(download) data-method="PUT">"Let add to library"</button>
+                    }
+                    if person.saves_files() {
+                        <button type="button" class="pill quiet" data-capability=(save) data-method="DELETE">"Stop saving files"</button>
+                    } else {
+                        <button type="button" class="pill" data-capability=(save) data-method="PUT">"Let save files"</button>
                     }
                 }
                 if member.sessions > 0 {
@@ -489,7 +504,7 @@ async fn people_page(cx: &Cx) -> Result<impl View> {
         <article class="page people">
             back(href: "/profiles")
             <h1>"People"</h1>
-            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote and sound, and pair their own Bluetooth headphones that nobody else can use, and only those you let download find films and seasons and add them to the library. Admins do all that, and stop downloads, remove titles, pair the TV and manage people."</p>
+            <p class="setting-note">"Everyone signs in with an invite link once, then with a passkey or their password. Viewers browse and watch on their own phone or laptop, while nothing else plays; only those you let control the TV play on it and use its remote and sound, and pair their own Bluetooth headphones that nobody else can use; only those you let add to the library find films and seasons and download them onto the TV; and only those you let save files save a film or an episode onto their own phone or laptop. Admins do all that, and stop downloads, remove titles, pair the TV and manage people."</p>
             match members {
                 Ok(members) => {
                     <section class="settings">
@@ -522,6 +537,7 @@ async fn people_page(cx: &Cx) -> Result<impl View> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use topcoat::view::ViewExt;
 
     #[test]
     fn every_page_has_its_access() {
@@ -577,6 +593,64 @@ mod tests {
         for (path, sent_to_setup) in rows {
             assert_eq!(waits_for_setup(path), sent_to_setup, "{path}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_viewer_is_let_add_to_the_library_and_save_files_apart() {
+        let render = |capabilities: serde_json::Value| async move {
+            let member: Member = serde_json::from_value(serde_json::json!({
+                "id": 2, "name": "Mami", "role": "viewer", "color": "#3E63DD", "capabilities": capabilities,
+                "password": true, "passkeys": 1, "sessions": 0, "last_seen_at": null, "invite_expires_at": null,
+            }))
+            .unwrap();
+            let cx = &Cx::default();
+            view! { cx => member_row(member: &member, own: false) }
+                .single()
+                .await
+                .unwrap()
+                .render(cx)
+        };
+        let neither = render(serde_json::json!([])).await;
+        assert!(neither.contains("can't add to the library"), "{neither}");
+        assert!(neither.contains("can't save files"), "{neither}");
+        assert!(
+            neither.contains(r#"data-capability="/api/auth/members/2/capabilities/download" data-method="PUT""#),
+            "{neither}"
+        );
+        assert!(
+            neither.contains(r#"data-capability="/api/auth/members/2/capabilities/save-files" data-method="PUT""#),
+            "{neither}"
+        );
+        assert!(
+            neither.contains("Let add to library") && neither.contains("Let save files"),
+            "{neither}"
+        );
+
+        let saves = render(serde_json::json!(["save-files"])).await;
+        assert!(
+            saves.contains("can't add to the library") && saves.contains("saves files"),
+            "{saves}"
+        );
+        assert!(!saves.contains("can't save files"), "{saves}");
+        assert!(
+            saves.contains(r#"data-capability="/api/auth/members/2/capabilities/save-files" data-method="DELETE""#),
+            "{saves}"
+        );
+        assert!(
+            saves.contains("Stop saving files") && saves.contains("Let add to library"),
+            "{saves}"
+        );
+
+        let adds = render(serde_json::json!(["download"])).await;
+        assert!(
+            adds.contains("adds to the library") && !adds.contains("can't add"),
+            "{adds}"
+        );
+        assert!(adds.contains("can't save files"), "{adds}");
+        assert!(
+            adds.contains("Stop adding to library") && adds.contains("Let save files"),
+            "{adds}"
+        );
     }
 
     #[test]

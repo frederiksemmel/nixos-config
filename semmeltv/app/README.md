@@ -414,7 +414,7 @@ async: the core and the API await them.
 | Table | Holds | Per |
 | --- | --- | --- |
 | `profiles` | Frederik (admin), Mami, Miriam, Ramu (viewers): name, role, password hash, colour | |
-| `capabilities` | what an admin granted a viewer on this TV: `control_tv`, `download` (old `headphones` rows mean nothing) | profile |
+| `capabilities` | what an admin granted a viewer on this TV: `control_tv`, `download`, `save_files` (old `headphones` rows mean nothing) | profile |
 | `passkeys`, `sessions`, `invites` | sign-in, kept by the auth code | profile |
 | `video_places` | an episode's or film's stopping point, when it was last played, finished, audio and subtitle track, subtitles shown | profile |
 | `series_places` | the last episode started per show, whether it finished, and how its subtitles last showed | profile |
@@ -473,7 +473,9 @@ nobody else sees them, sends the sound to them, sets their timing or forgets
 them, and choosing your own takes them on the TV at once. Downloading is a
 second capability (`download`, migration `0008`): Settings > Downloads to find films and seasons
 and follow the running downloads, and a show's "More seasons" buttons; nobody
-but the admin has it until it is granted. Without a capability the web app
+but the admin has it until it is granted. Saving a film's or an episode's file
+onto one's own phone or laptop is a third (`save-files`, migration `0014`), apart
+from downloading into the library, and nobody has it at first either. Without a capability the web app
 shows none of its controls, and the API refuses them. Only an admin stops a
 download, removes titles from the TV's storage, pairs the TV for volume, and
 adds, invites, signs out or removes people, and grants or takes back

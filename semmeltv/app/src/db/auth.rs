@@ -48,6 +48,7 @@ fn capability(capability: Capability) -> models::Capability {
     match capability {
         Capability::ControlTv => models::Capability::ControlTv,
         Capability::Download => models::Capability::Download,
+        Capability::SaveFiles => models::Capability::SaveFiles,
     }
 }
 
@@ -59,6 +60,7 @@ fn granted(grants: &[Grant], id: i64) -> BTreeSet<Capability> {
             models::Capability::ControlTv => Some(Capability::ControlTv),
             models::Capability::Headphones => None,
             models::Capability::Download => Some(Capability::Download),
+            models::Capability::SaveFiles => Some(Capability::SaveFiles),
         })
         .collect()
 }
@@ -509,7 +511,13 @@ mod tests {
             db.profile(mami).await.unwrap().unwrap().granted,
             BTreeSet::from([Capability::Download])
         );
+        assert!(db.set_granted(mami, Capability::SaveFiles, true).await.unwrap());
         assert!(db.set_granted(mami, Capability::Download, false).await.unwrap());
+        assert_eq!(
+            db.profile(mami).await.unwrap().unwrap().granted,
+            BTreeSet::from([Capability::SaveFiles])
+        );
+        assert!(db.set_granted(mami, Capability::SaveFiles, false).await.unwrap());
         assert!(db.profile(mami).await.unwrap().unwrap().granted.is_empty());
 
         let mut handle = db.db.clone();

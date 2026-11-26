@@ -53,6 +53,9 @@ With it set, every request passes one gate in the app before anything else:
 - Downloading needs the `download` capability, else 403 "Only someone allowed
   to download on this TV can do that": the rest of `/api/downloads/*`. The
   web app checks the same capability before it calls the downloads service.
+- Saving a library file onto one's own device needs the `save-files`
+  capability, else 403 "Only someone allowed to save files from this TV can do
+  that": `GET /api/files/*`. The web app shows the Save buttons only to them.
 - `GET /api/events` also takes `Authorization: Bearer <token>`, the token in
   `SEMMELTV_SERVICE_TOKEN_FILE`, which is how the web app's server follows the
   TV. The token opens nothing else.
@@ -98,7 +101,8 @@ Argon2id.
 A person is `{ id, name, role, color, capabilities }`, `role` being `admin` or
 `viewer`. `capabilities` lists what the person may do on this TV beyond
 browsing and watching on their own device: `control-tv` (which includes
-pairing and using their own headphones) and `download`. An
+pairing and using their own headphones), `download` (adding films and
+seasons to the library) and `save-files` (saving a file onto one's own device). An
 admin has every capability; a viewer only those granted, none at first. Each
 TV keeps its own grants.
 Passkeys use WebAuthn with user verification (Face ID, Touch ID, a screen

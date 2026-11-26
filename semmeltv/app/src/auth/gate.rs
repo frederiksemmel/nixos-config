@@ -68,6 +68,7 @@ pub fn access(method: &Method, path: &str) -> Access {
         | ["api", "downloads", "jobs", _, "stop"]
         | ["api", "downloads", "pcloud", ..] => Access::Admin,
         ["api", "downloads", ..] => Access::Needs(Capability::Download),
+        ["api", "files", ..] => Access::Needs(Capability::SaveFiles),
         ["api", "play" | "command" | "volume", ..]
         | ["api", "audio", "track" | "pair" | "headphones" | "delay"]
         | ["api", "subtitles", "track" | "toggle" | "delay"] => Access::Needs(Capability::ControlTv),
@@ -256,8 +257,18 @@ mod tests {
             (&post, "/api/auth/passkeys/start", Access::Signed),
             (&get, "/api/stream/abc/main.m3u8", Access::Stream),
             (&post, "/api/stream/open", Access::Signed),
-            (&get, "/api/files/movies/dune-2021", Access::Signed),
-            (&get, "/api/files/shows/outlander/1/2", Access::Signed),
+            (
+                &get,
+                "/api/files/movies/dune-2021",
+                Access::Needs(Capability::SaveFiles),
+            ),
+            (
+                &get,
+                "/api/files/shows/outlander/1/2",
+                Access::Needs(Capability::SaveFiles),
+            ),
+            (&get, "/api/filesx", Access::Signed),
+            (&put, "/api/auth/members/2/capabilities/save-files", Access::Admin),
             (&get, "/api/events", Access::Service),
             (&post, "/api/restarting", Access::Service),
             (&get, "/api/library", Access::Signed),
