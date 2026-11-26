@@ -175,6 +175,7 @@ pub async fn spawn(config: Config, core: Core) -> std::io::Result<()> {
 
 fn router(api: Api) -> Router {
     let gate = api.gate.clone();
+    let core = api.core.clone();
     let routes = Router::new()
         .route("/api/library", get(library))
         .route("/api/forgotten/dismiss", post(dismiss))
@@ -224,6 +225,7 @@ fn router(api: Api) -> Router {
         Some(gate) => routes
             .merge(auth::http::routes(gate.clone()))
             .with_state(api)
+            .layer(middleware::from_fn_with_state(core, crate::controlled::note))
             .layer(middleware::from_fn_with_state(gate, auth::gate::guard)),
         None => routes.with_state(api),
     }

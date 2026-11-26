@@ -733,6 +733,8 @@ pub struct UsagePerson {
     pub plays: usize,
     pub days: usize,
     pub sign_ins: usize,
+    #[serde(default)]
+    pub controls: usize,
     pub favourite: Option<String>,
     pub last_seen: Option<String>,
     pub devices: Vec<String>,
@@ -763,6 +765,17 @@ pub struct UsagePlay {
     pub seconds: u64,
 }
 
+/// Someone did something to the TV: `times` presses of `action` in a row.
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
+pub struct UsageControl {
+    pub at: u64,
+    pub when: String,
+    pub name: String,
+    pub device: String,
+    pub action: String,
+    pub times: usize,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct Usage {
     pub days: u64,
@@ -773,6 +786,8 @@ pub struct Usage {
     pub people: Vec<UsagePerson>,
     pub titles: Vec<UsageTitle>,
     pub plays: Vec<UsagePlay>,
+    #[serde(default)]
+    pub controls: Vec<UsageControl>,
 }
 
 #[derive(Debug, Deserialize)]

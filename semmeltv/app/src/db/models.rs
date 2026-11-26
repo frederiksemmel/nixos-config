@@ -53,6 +53,7 @@ pub enum Activity {
     SignIn,
     Visit,
     Play,
+    Control,
 }
 
 #[derive(Debug, toasty::Model)]

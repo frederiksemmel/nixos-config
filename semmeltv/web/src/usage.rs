@@ -1,4 +1,4 @@
-use crate::api::{Api, Span, Usage, UsagePerson, UsagePlay, UsageTitle};
+use crate::api::{Api, Span, Usage, UsageControl, UsagePerson, UsagePlay, UsageTitle};
 use crate::layout::back;
 use topcoat::Result;
 use topcoat::context::Cx;
@@ -73,6 +73,12 @@ fn person_facts(person: &UsagePerson) -> String {
     if let Some(favourite) = &person.favourite {
         facts.push(format!("mostly {favourite}"));
     }
+    if person.controls > 0 {
+        facts.push(format!(
+            "controlled the TV {}",
+            plural(person.controls, "time", "times")
+        ));
+    }
     facts.join(" · ")
 }
 
@@ -103,6 +109,17 @@ fn title_facts(title: &UsageTitle) -> String {
 fn play_facts(play: &UsagePlay) -> String {
     let device = if play.tv { "TV" } else { play.device.as_str() };
     format!("{} · {device} · {} · {}", play.name, watched(play.seconds), play.when)
+}
+
+fn control_action(control: &UsageControl) -> String {
+    match control.times {
+        1 => control.action.clone(),
+        times => format!("{} ×{times}", control.action),
+    }
+}
+
+fn control_facts(control: &UsageControl) -> String {
+    format!("{} · {} · {}", control.name, control.device, control.when)
 }
 
 fn marked(index: usize, count: usize) -> bool {
@@ -256,6 +273,27 @@ async fn recent_plays(usage: &Usage) -> Result<impl View> {
 }
 
 #[component]
+async fn tv_controls(usage: &Usage) -> Result<impl View> {
+    Ok(view! {
+        <section class="settings" id="tv-control">
+            <h2>"Who controlled the TV"</h2>
+            if usage.controls.is_empty() {
+                <p class="setting-note">"Nobody controlled the TV from the app in these " (usage.days) " days."</p>
+            } else {
+                <ul class="usage-list">
+                    for control in &usage.controls {
+                        <li class="usage-row usage-control">
+                            <b>(control_action(control))</b>
+                            <span class="usage-facts">(control_facts(control))</span>
+                        </li>
+                    }
+                </ul>
+            }
+        </section>
+    })
+}
+
+#[component]
 pub async fn usage_report(usage: &Usage) -> Result<impl View> {
     let totals = &usage.totals;
     Ok(view! {
@@ -281,6 +319,7 @@ pub async fn usage_report(usage: &Usage) -> Result<impl View> {
         if !usage.people.is_empty() {
             people_list(usage: usage)
         }
+        tv_controls(usage: usage)
         titles_list(usage: usage)
         recent_plays(usage: usage)
     })
@@ -354,6 +393,7 @@ mod tests {
                     days: 1,
                     favourite: Some("Dark".to_string()),
                     devices: vec!["iPad".to_string()],
+                    controls: 5,
                     ..UsagePerson::default()
                 },
             ],
@@ -386,6 +426,24 @@ mod tests {
                 title: "Dark · S01E01".to_string(),
                 seconds: 900,
             }],
+            controls: vec![
+                UsageControl {
+                    at: 3,
+                    when: "today 19:31".to_string(),
+                    name: "Mami".to_string(),
+                    device: "iPad · Safari".to_string(),
+                    action: "Volume up".to_string(),
+                    times: 4,
+                },
+                UsageControl {
+                    at: 2,
+                    when: "today 19:30".to_string(),
+                    name: "Mami".to_string(),
+                    device: "iPad · Safari".to_string(),
+                    action: "Played Dark · S01E02".to_string(),
+                    times: 1,
+                },
+            ],
         }
     }
 
@@ -419,6 +477,23 @@ mod tests {
         assert!(html.contains("TV 1 h · phone 0 min · last seen Tuesday 21:00 · TV"));
         assert!(html.contains("Mami 15 min · 1 play"));
         assert!(html.contains("Mami · iPad · 15 min · Tuesday 21:00"));
+    }
+
+    #[tokio::test]
+    async fn the_report_lists_who_controlled_the_tv_newest_first() {
+        let html = render(&sample()).await;
+        assert!(html.contains("Who controlled the TV"));
+        assert!(html.contains("1 play · 1 day · mostly Dark · controlled the TV 5 times"));
+        let volume = html.find("Volume up ×4").unwrap();
+        let played = html.find("Played Dark · S01E02").unwrap();
+        assert!(volume < played, "the newest comes first");
+        assert!(html.contains("Mami · iPad · Safari · today 19:31"));
+        let quiet = render(&Usage {
+            days: 7,
+            ..Usage::default()
+        })
+        .await;
+        assert!(quiet.contains("Nobody controlled the TV from the app in these 7 days."));
     }
 
     #[tokio::test]

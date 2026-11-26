@@ -17,14 +17,31 @@ impl Db {
             Activity::SignIn => StoredActivity::SignIn,
             Activity::Visit => StoredActivity::Visit,
             Activity::Play => StoredActivity::Play,
+            Activity::Control => StoredActivity::Control,
         };
+        self.note(at, activity, profile, device, "").await
+    }
+
+    /// One thing someone did to the TV through the app, such as "Paused".
+    pub async fn note_control(&self, at: u64, profile: ProfileId, device: &str, action: &str) -> Result<()> {
+        self.note(at, StoredActivity::Control, profile, device, action).await
+    }
+
+    async fn note(
+        &self,
+        at: u64,
+        activity: StoredActivity,
+        profile: ProfileId,
+        device: &str,
+        title: &str,
+    ) -> Result<()> {
         let mut db = self.db.clone();
         toasty::create!(Usage {
             at: seconds(at),
             activity,
             profile_id: profile.0,
             device: device.to_string(),
-            title: String::new(),
+            title: title.to_string(),
             play: String::new(),
             seconds: 0,
         })
@@ -89,6 +106,7 @@ impl Db {
                     StoredActivity::SignIn => Activity::SignIn,
                     StoredActivity::Visit => Activity::Visit,
                     StoredActivity::Play => Activity::Play,
+                    StoredActivity::Control => Activity::Control,
                 },
                 profile: ProfileId(row.profile_id),
                 device: row.device,
@@ -120,6 +138,9 @@ mod tests {
             .await
             .unwrap();
         db.note_usage(50, Activity::SignIn, frederik, "iPhone").await.unwrap();
+        db.note_control(300, frederik, "iPhone · Safari", "Paused")
+            .await
+            .unwrap();
         let events = db.usage_since(0).await.unwrap();
         assert_eq!(
             events
@@ -130,8 +151,10 @@ mod tests {
                 (50, Activity::SignIn, "", 0),
                 (100, Activity::Play, "Dark · S01E01", 60),
                 (200, Activity::Play, "Arrival", 30),
+                (300, Activity::Control, "Paused", 0),
             ]
         );
-        assert_eq!(db.usage_since(150).await.unwrap().len(), 1);
+        assert_eq!(events[3].device, "iPhone · Safari");
+        assert_eq!(db.usage_since(150).await.unwrap().len(), 2);
     }
 }

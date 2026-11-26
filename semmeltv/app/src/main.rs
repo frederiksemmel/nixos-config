@@ -8,6 +8,7 @@ mod cec;
 mod challenge;
 mod client_log;
 mod command;
+mod controlled;
 mod core;
 mod db;
 mod deploy;

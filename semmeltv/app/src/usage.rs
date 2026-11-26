@@ -13,6 +13,11 @@ const LISTED_PLAYS: usize = 40;
 
 const LISTED_TITLES: usize = 10;
 const RECENT_PLAYS: usize = 30;
+const RECENT_CONTROLS: usize = 50;
+const LISTED_CONTROLS: usize = 40;
+/// Presses this close together, by one person on one device doing the same,
+/// count as one line: holding volume up is one line, not twelve.
+const SAME_PRESS: u64 = 120;
 const LONGEST_DAILY: u64 = 62;
 const WEEKDAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
@@ -48,9 +53,22 @@ pub struct Someone {
     pub plays: usize,
     pub days: usize,
     pub sign_ins: usize,
+    pub controls: usize,
     pub favourite: Option<String>,
     pub last_seen: Option<String>,
     pub devices: Vec<String>,
+}
+
+/// Someone did something to the TV through the app: `times` presses of the
+/// same `action` in a row, the newest at `at`.
+#[derive(Debug, PartialEq, Eq, Serialize)]
+pub struct Controlled {
+    pub at: u64,
+    pub when: String,
+    pub name: String,
+    pub device: String,
+    pub action: String,
+    pub times: usize,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -90,6 +108,30 @@ pub struct Summary {
     pub people: Vec<Someone>,
     pub titles: Vec<Watched>,
     pub plays: Vec<Played>,
+    pub controls: Vec<Controlled>,
+}
+
+/// Folds presses of the same action by the same person on the same device,
+/// each within [`SAME_PRESS`] of the one before, into one line.
+fn note_control(controls: &mut Vec<Controlled>, at: u64, name: String, device: &str, action: &str) {
+    if let Some(last) = controls.last_mut()
+        && last.name == name
+        && last.device == device
+        && last.action == action
+        && at.saturating_sub(last.at) <= SAME_PRESS
+    {
+        last.at = at;
+        last.times += 1;
+        return;
+    }
+    controls.push(Controlled {
+        at,
+        when: String::new(),
+        name,
+        device: device.to_string(),
+        action: action.to_string(),
+        times: 1,
+    });
 }
 
 pub fn summary(
@@ -119,6 +161,7 @@ pub fn summary(
     let mut people: BTreeMap<String, Person> = BTreeMap::new();
     let mut works: BTreeMap<&str, (usize, BTreeMap<String, u64>)> = BTreeMap::new();
     let mut plays = Vec::new();
+    let mut controls = Vec::new();
     for event in events {
         let who = name(&event.profile);
         let person = people.entry(who.clone()).or_default();
@@ -131,6 +174,10 @@ pub fn summary(
         match event.activity {
             Activity::SignIn => person.sign_ins += 1,
             Activity::Visit => {}
+            Activity::Control => {
+                person.controls += 1;
+                note_control(&mut controls, event.at, who, &event.device, &event.title);
+            }
             Activity::Play => {
                 let tv = event.device == "TV";
                 person.plays += 1;
@@ -188,6 +235,7 @@ pub fn summary(
             plays: person.plays,
             days: person.days.len(),
             sign_ins: person.sign_ins,
+            controls: person.controls,
             favourite: favourite(who),
             last_seen: person
                 .last
@@ -232,6 +280,11 @@ pub fn summary(
     titles.truncate(LISTED_TITLES);
     plays.sort_by_key(|play| std::cmp::Reverse(play.at));
     plays.truncate(RECENT_PLAYS);
+    controls.reverse();
+    controls.truncate(RECENT_CONTROLS);
+    for control in &mut controls {
+        control.when = crate::details::when_local(local_now, control.at as i64 + offset(control.at));
+    }
     Summary {
         days,
         totals,
@@ -241,6 +294,7 @@ pub fn summary(
         people: someone,
         titles,
         plays,
+        controls,
     }
 }
 
@@ -276,6 +330,8 @@ pub enum Activity {
     Visit,
     /// One play on the TV or a phone, with the time actually watched.
     Play,
+    /// Someone did something to the TV through the app; `title` says what.
+    Control,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -294,6 +350,7 @@ struct Person {
     days: BTreeSet<i64>,
     hours: BTreeSet<i64>,
     plays: usize,
+    controls: usize,
     on_tv: u64,
     on_phone: u64,
     last: Option<u64>,
@@ -341,6 +398,7 @@ pub fn report(
         match event.activity {
             Activity::SignIn => person.sign_ins += 1,
             Activity::Visit => {}
+            Activity::Control => person.controls += 1,
             Activity::Play => {
                 person.plays += 1;
                 if event.device == "TV" {
@@ -426,7 +484,42 @@ pub fn report(
             let _ = writeln!(out, "  … and {} older", plays.len() - LISTED_PLAYS);
         }
     }
+
+    let mut controls = Vec::new();
+    for event in events.iter().filter(|event| event.activity == Activity::Control) {
+        note_control(
+            &mut controls,
+            event.at,
+            name(&event.profile),
+            &event.device,
+            &event.title,
+        );
+    }
+    if !controls.is_empty() {
+        out.push_str("\nWho controlled the TV, newest first\n");
+        for control in controls.iter().rev().take(LISTED_CONTROLS) {
+            let _ = writeln!(
+                out,
+                "  {}  {:<10} {:<16}  {}",
+                stamp(control.at, &offset),
+                control.name,
+                control.device,
+                action(control)
+            );
+        }
+        if controls.len() > LISTED_CONTROLS {
+            let _ = writeln!(out, "  … and {} older", controls.len() - LISTED_CONTROLS);
+        }
+    }
     out
+}
+
+/// "Volume up", or "Volume up ×4" for four presses in a row.
+pub fn action(control: &Controlled) -> String {
+    match control.times {
+        1 => control.action.clone(),
+        times => format!("{} ×{times}", control.action),
+    }
 }
 
 #[cfg(test)]
@@ -666,6 +759,89 @@ mod tests {
         assert!(lines.iter().any(|line| {
             line.split_whitespace().collect::<Vec<_>>().join(" ") == "2026-11-17 12:01 Mami 50 min iPad Dark · S01E01"
         }));
+    }
+
+    #[test]
+    fn the_summary_and_report_say_who_controlled_the_tv_and_fold_repeated_presses() {
+        let noon = 1_794_916_800;
+        let names = BTreeMap::from([
+            (ProfileId(1), "Frederik".to_string()),
+            (ProfileId(2), "Mami".to_string()),
+        ]);
+        let phone = "iPhone · Safari";
+        let events = [
+            event(noon, Activity::Control, 2, phone, "Played Dark · S01E01", 0),
+            event(noon + 60, Activity::Control, 2, phone, "Volume up", 0),
+            event(noon + 90, Activity::Control, 2, phone, "Volume up", 0),
+            event(noon + 200, Activity::Control, 2, phone, "Volume up", 0),
+            event(noon + 400, Activity::Control, 2, phone, "Volume up", 0),
+            event(noon + 410, Activity::Control, 1, "Mac · Firefox", "Volume up", 0),
+            event(noon + 420, Activity::Control, 1, "Mac · Firefox", "Paused", 0),
+        ];
+        let summary = summary(&events, &names, noon + HOUR, 7, |_| 0);
+        let controls: Vec<(String, &str, &str, String)> = summary
+            .controls
+            .iter()
+            .map(|control| {
+                (
+                    control.when.clone(),
+                    control.name.as_str(),
+                    control.device.as_str(),
+                    action(control),
+                )
+            })
+            .collect();
+        assert_eq!(
+            controls,
+            [
+                (
+                    "today 12:07".to_string(),
+                    "Frederik",
+                    "Mac · Firefox",
+                    "Paused".to_string()
+                ),
+                (
+                    "today 12:06".to_string(),
+                    "Frederik",
+                    "Mac · Firefox",
+                    "Volume up".to_string()
+                ),
+                ("today 12:06".to_string(), "Mami", phone, "Volume up".to_string()),
+                ("today 12:03".to_string(), "Mami", phone, "Volume up ×3".to_string()),
+                (
+                    "today 12:00".to_string(),
+                    "Mami",
+                    phone,
+                    "Played Dark · S01E01".to_string()
+                ),
+            ]
+        );
+        let counted: Vec<(&str, usize, usize)> = summary
+            .people
+            .iter()
+            .map(|person| (person.name.as_str(), person.controls, person.plays))
+            .collect();
+        assert_eq!(counted, [("Frederik", 2, 0), ("Mami", 5, 0)]);
+        assert_eq!(summary.totals.plays, 0, "controlling is not watching");
+
+        let text = report(&events, &names, noon + HOUR, 7, |_| 0);
+        let listed: Vec<String> = text
+            .split("Who controlled the TV, newest first\n")
+            .nth(1)
+            .unwrap()
+            .lines()
+            .map(|line| line.split_whitespace().collect::<Vec<_>>().join(" "))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                "2026-11-17 12:07 Frederik Mac · Firefox Paused",
+                "2026-11-17 12:06 Frederik Mac · Firefox Volume up",
+                "2026-11-17 12:06 Mami iPhone · Safari Volume up",
+                "2026-11-17 12:03 Mami iPhone · Safari Volume up ×3",
+                "2026-11-17 12:00 Mami iPhone · Safari Played Dark · S01E01",
+            ]
+        );
     }
 
     #[test]
