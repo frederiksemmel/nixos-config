@@ -465,6 +465,68 @@ let
       done
     '';
   };
+  # Keeps parked notifications from being forgotten. A notification that
+  # arrives hidden (persistent or critical) shows for a few seconds through
+  # mako's fresh mode, and every five minutes the hidden ones peek in from the
+  # screen edge through its peek mode. Both modes only mean something while
+  # parked, so they are dropped when parked is.
+  notifPark = pkgs.writeShellApplication {
+    name = "notif-park";
+    runtimeInputs = [
+      config.services.mako.package
+      pkgs.coreutils
+      pkgs.gnugrep
+      pkgs.jq
+      pkgs.systemd
+    ];
+    text = ''
+      parked() {
+        makoctl mode | grep -qx parked
+      }
+
+      while sleep 300; do
+        if parked && [[ $(makoctl list -j | jq length) -gt 0 ]]; then
+          makoctl mode -a peek >/dev/null || true
+          sleep 4
+          makoctl mode -r peek >/dev/null || true
+        fi
+      done &
+
+      timer=
+      busctl --user monitor --json=short \
+        --match "type='method_call',interface='org.freedesktop.Notifications',member='Notify'" \
+        --match "type='signal',path='/fr/emersion/Mako'" |
+        jq --unbuffered -r '
+          if .member == "Notify" then
+            .payload.data as $d
+            | if $d[7] == 0 or ($d[6].urgency.data // 1) == 2 then "hidden" else empty end
+          elif (.payload.data[2] // [] | index("Modes")) then "modes"
+          else empty end' |
+        while read -r event; do
+          case $event in
+            hidden)
+              if parked; then
+                if [[ -n $timer ]]; then
+                  kill "$timer" 2>/dev/null || true
+                fi
+                makoctl mode -a fresh >/dev/null || true
+                (
+                  sleep 6
+                  makoctl mode -r fresh >/dev/null || true
+                ) &
+                timer=$!
+              fi
+              ;;
+            modes)
+              modes=$(makoctl mode || true)
+              if ! grep -qx parked <<<"$modes" && grep -qxE 'fresh|peek' <<<"$modes"; then
+                makoctl mode -r fresh -r peek >/dev/null || true
+              fi
+              ;;
+          esac
+        done
+    '';
+  };
   # Bar cell for rbw's lock state. Polls the agent, logs each change as
   # "<epoch> unlocked|locked|off" and sets the vault and vault_tooltip ironvars,
   # the tooltip drawing the past hour and day as timelines with the share
@@ -1454,6 +1516,33 @@ in
             "${papirus}/Papirus-Dark:${papirus}/Papirus"
           else
             "${papirus}/Papirus:${papirus}/Papirus-Dark";
+        # The hidden notifications fold into groups (persistent, critical) and
+        # the newest of each shows; mako sorts newest first.
+        glimpse = mode: style: ''
+
+          [mode=${mode} expiring=0]
+          group-by=expiring,urgency
+
+          [mode=${mode} urgency=critical]
+          group-by=expiring,urgency
+
+          [mode=${mode} grouped=false expiring=0]
+          invisible=0
+          ${style}
+
+          [mode=${mode} grouped=false urgency=critical]
+          invisible=0
+          ${style}
+
+          [mode=${mode} group-index=0]
+          invisible=0
+          format=<span foreground="${p.muted}">%a · %g hidden</span>\n<b>%s</b>\n%b
+          ${style}
+        '';
+        # Shifts a 380px card right so its first 52px (border and icon) stay
+        # on screen; the left margin keeps the surface wide enough that mako
+        # clips the card instead of narrowing it.
+        peekMargin = "margin=6,-328,6,334";
       in
       ''
         font=${p.font} 9
@@ -1496,6 +1585,8 @@ in
 
         [mode=parked urgency=critical]
         invisible=1
+        ${glimpse "fresh" ""}
+        ${glimpse "peek" peekMargin}
       '';
     # Three fingers, since browsers take a two-finger pinch for zoom.
     xdg.configFile."libinput-gestures.conf".text =
@@ -2350,6 +2441,19 @@ in
         Restart = "on-failure";
       };
       Install.WantedBy = [ "ironbar.service" ];
+    };
+
+    systemd.user.services.notif-park = {
+      Unit = {
+        Description = "Brief and periodic glimpses of parked notifications";
+        PartOf = [ "mako.service" ];
+        After = [ "mako.service" ];
+      };
+      Service = {
+        ExecStart = lib.getExe notifPark;
+        Restart = "on-failure";
+      };
+      Install.WantedBy = [ "mako.service" ];
     };
 
     systemd.user.services.bar-vault = lib.mkIf config.profiles.bitwarden.enable {
