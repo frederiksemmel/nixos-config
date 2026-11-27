@@ -37,10 +37,14 @@ in
     ./beast-disk-cleanup
     ./beast-claude.nix
     ./beast-semmeltv
+    ../../feedback/hub
+    ../../courts/beast.nix
     ./beast-vm-tests.nix
   ];
 
   profiles.bitwarden.headlessSshKeys.enable = true;
+
+  services.feedback-hub.enable = true;
 
   programs.nushell.extraEnv = ''
     $env.SSH_AUTH_SOCK = $env.SSH_AUTH_SOCK? | default $"($env.XDG_RUNTIME_DIR)/gcr/ssh"

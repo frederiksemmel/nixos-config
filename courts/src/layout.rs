@@ -1,18 +1,22 @@
 use topcoat::Result;
 use topcoat::asset::{Asset, asset};
+use topcoat::context::Cx;
 use topcoat::router::error::NotFoundError;
 use topcoat::router::{Slot, StatusCode, layout, not_found};
 use topcoat::view::{View, error_boundary, view};
 
 const STYLE: Asset = asset!("./style.css");
 const NOTIFY: Asset = asset!("./notify.js");
+const FEEDBACK: Asset = asset!("../../feedback/client/feedback-mode.js");
+const FEEDBACK_STYLE: Asset = asset!("../../feedback/client/feedback-mode.css");
 pub const ICON_URL: &str = "/icon.svg";
 
 #[layout("/")]
-async fn root(slot: Slot<'_>) -> Result<impl View> {
+async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
+    let signed_in = crate::auth::signed_in(cx);
     Ok(view! {
         <!DOCTYPE html>
-        <html lang="en">
+        <html lang="en" data-feedback-project=(if signed_in { "courts" } else { "" }) data-feedback-send="/api/feedback" data-feedback-list="/feedback">
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -25,6 +29,10 @@ async fn root(slot: Slot<'_>) -> Result<impl View> {
                 <link rel="manifest" href="/manifest.webmanifest">
                 <link rel="stylesheet" href=(STYLE)>
                 <script type="module" src=(NOTIFY)></script>
+                if signed_in {
+                    <link rel="stylesheet" href=(FEEDBACK_STYLE)>
+                    <script type="module" src=(FEEDBACK)></script>
+                }
             </head>
             <body>
                 <main>

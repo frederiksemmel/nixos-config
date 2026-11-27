@@ -28,7 +28,19 @@ fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-fn signed_in(cx: &Cx) -> bool {
+/// Whether the request carries the key as `Authorization: Bearer KEY`, as
+/// the feedback sessions on beast send it.
+pub fn bearer(cx: &Cx) -> bool {
+    let key = app_context::<Key>(cx);
+    !key.0.is_empty()
+        && headers(cx)
+            .get("authorization")
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .is_some_and(|given| same(given.trim(), &key.0))
+}
+
+pub fn signed_in(cx: &Cx) -> bool {
     let key = app_context::<Key>(cx);
     !key.0.is_empty()
         && headers(cx)
@@ -60,7 +72,7 @@ impl Layer for SignedIn {
     fn handle<'a>(&'a self, cx: &'a Cx, body: Body, next: Next<'a>) -> LayerFuture<'a> {
         Box::pin(async move {
             let path = uri(cx).path().to_string();
-            if open(&path) || signed_in(cx) {
+            if open(&path) || signed_in(cx) || bearer(cx) {
                 next.run(cx, body).await
             } else {
                 Err(redirect("/sign-in").into())

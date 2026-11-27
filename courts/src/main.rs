@@ -2,6 +2,7 @@
 
 mod auth;
 mod db;
+mod feedback;
 mod gotcourts;
 mod layout;
 mod notify;

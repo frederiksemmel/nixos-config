@@ -13,6 +13,8 @@ const BASE: &str = "https://apps.gotcourts.com";
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Court {
     pub id: i64,
+    #[serde(default = "tennis")]
+    pub sport: String,
     pub label: String,
     pub surface: String,
     pub indoor: bool,
@@ -22,6 +24,10 @@ pub struct Court {
     pub durations: Vec<i64>,
     pub opening: i64,
     pub closing: i64,
+}
+
+fn tennis() -> String {
+    "tennis".into()
 }
 
 /// A stretch of one court that can't be booked: someone's reservation, or a
@@ -177,6 +183,9 @@ pub fn parse(body: &Value) -> Result<Day, Error> {
         .filter_map(|court| {
             Some(Court {
                 id: int(&court["id"])?,
+                sport: Some(text(&court["sport"]).to_lowercase())
+                    .filter(|sport| !sport.is_empty())
+                    .unwrap_or_else(tennis),
                 label: text(&court["label"]).split_whitespace().collect::<Vec<_>>().join(" "),
                 surface: text(&court["surfaceType"]),
                 indoor: text(&court["type"]) != "outdoor",

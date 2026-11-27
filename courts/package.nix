@@ -13,14 +13,21 @@ let
     version = "0.1.0";
 
     src = lib.fileset.toSource {
-      root = ./.;
+      root = ../.;
       fileset = lib.fileset.unions [
         ./Cargo.lock
         ./Cargo.toml
         ./src
         ./toasty
+        ../feedback/client
       ];
     };
+    cargoToml = ./Cargo.toml;
+    cargoLock = ./Cargo.lock;
+    postUnpack = ''
+      cd $sourceRoot/courts
+      sourceRoot=.
+    '';
 
     strictDeps = true;
   };

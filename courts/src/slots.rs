@@ -45,6 +45,7 @@ mod tests {
     fn court(id: i64, interval: i64) -> Court {
         Court {
             id,
+            sport: "tennis".into(),
             label: format!("Platz {id}"),
             surface: "clay".into(),
             indoor: false,

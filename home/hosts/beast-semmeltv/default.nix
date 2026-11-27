@@ -31,16 +31,14 @@ let
     text = builtins.readFile ./deploy.sh;
   };
 
-  watch = pkgs.writeShellApplication {
-    name = "semmeltv-feedback-watch";
+  adapter = pkgs.writeShellApplication {
+    name = "feedback-semmeltv";
     runtimeInputs = [
       semmeltv-feedback
-      pkgs.coreutils
-      pkgs.gnugrep
+      semmeltv-deploy
       pkgs.jq
     ];
-    excludeShellChecks = [ "SC2016" ];
-    text = builtins.readFile ./watch.sh;
+    text = builtins.readFile ./adapter.sh;
   };
 
   deployWatch = pkgs.writeShellApplication {
@@ -70,17 +68,10 @@ in
     semmeltv-deploy
   ];
 
-  systemd.user.services.semmeltv-feedback-watch = {
-    Unit.Description = "Starts a Claude session for each New or Reopened SemmelTV report";
-    Service = {
-      Type = "oneshot";
-      ExecStart = lib.getExe watch;
-      Environment = [
-        path
-        "PROMPT=${./prompt.md}"
-        "SETTINGS=${triageSettings}"
-      ];
-    };
+  services.feedback-hub.projects.semmeltv = {
+    inherit adapter;
+    prompt = ./prompt.md;
+    settings = triageSettings;
   };
 
   systemd.user.services.semmeltv-deploy-watch = {
@@ -102,12 +93,4 @@ in
     Install.WantedBy = [ "timers.target" ];
   };
 
-  systemd.user.timers.semmeltv-feedback-watch = {
-    Unit.Description = "Asks the TVs for New feedback every two minutes";
-    Timer = {
-      OnBootSec = "2min";
-      OnUnitInactiveSec = "2min";
-    };
-    Install.WantedBy = [ "timers.target" ];
-  };
 }

@@ -66,7 +66,29 @@ mod models {
         pub earliest: i64,
         pub latest: i64,
         pub indoor: bool,
+        pub sport: Option<String>,
         pub created_at: i64,
+    }
+
+    /// One batch of comments sent from feedback mode, and what became of it.
+    #[derive(Debug, toasty::Model)]
+    #[table = "feedback"]
+    pub struct Report {
+        #[key]
+        #[auto]
+        pub id: i64,
+        pub created_at: i64,
+        pub page: String,
+        #[column(type = text)]
+        pub batch: Json<serde_json::Value>,
+        #[index]
+        pub state: String,
+        pub outcome: Option<String>,
+        pub answer: Option<String>,
+        pub commit: Option<String>,
+        pub marked_at: i64,
+        #[column(type = text)]
+        pub thread: Json<Vec<crate::feedback::Said>>,
     }
 
     /// A free slot a watch already told about, so it is told once.
@@ -97,12 +119,12 @@ mod models {
     }
 
     pub fn all() -> toasty::ModelSet {
-        toasty::models!(Club, Day, Closed, Watch, Told, Subscription, Setting)
+        toasty::models!(Club, Day, Closed, Watch, Told, Subscription, Setting, Report)
     }
 }
 
 use models::{Closed, Setting, Told};
-pub use models::{Club, Day, Subscription, Watch};
+pub use models::{Club, Day, Report, Subscription, Watch};
 
 #[derive(Clone)]
 pub struct Db {
@@ -248,6 +270,7 @@ impl Db {
         Ok(watches)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn add_watch(
         &self,
         club: Option<i64>,
@@ -255,6 +278,7 @@ impl Db {
         earliest: i64,
         latest: i64,
         indoor: bool,
+        sport: Option<String>,
         now: i64,
     ) -> Result<Watch> {
         let mut db = self.db.clone();
@@ -264,6 +288,7 @@ impl Db {
             earliest,
             latest,
             indoor,
+            sport,
             created_at: now,
         })
         .exec(&mut db)
@@ -308,6 +333,56 @@ impl Db {
             .delete()
             .exec(&mut db)
             .await?;
+        Ok(())
+    }
+
+    pub async fn add_report(&self, page: &str, batch: serde_json::Value, now: i64) -> Result<Report> {
+        let mut db = self.db.clone();
+        Ok(toasty::create!(Report {
+            created_at: now,
+            page: page.to_string(),
+            batch: batch,
+            state: "new".to_string(),
+            marked_at: now,
+            thread: Vec::<crate::feedback::Said>::new(),
+        })
+        .exec(&mut db)
+        .await?)
+    }
+
+    pub async fn reports(&self) -> Result<Vec<Report>> {
+        let mut db = self.db.clone();
+        let mut reports = Report::all().exec(&mut db).await?;
+        reports.sort_by(|a, b| b.id.cmp(&a.id));
+        Ok(reports)
+    }
+
+    pub async fn report(&self, id: i64) -> Result<Option<Report>> {
+        let mut db = self.db.clone();
+        Ok(Report::filter_by_id(id).first().exec(&mut db).await?)
+    }
+
+    pub async fn save_report(&self, report: Report) -> Result<()> {
+        let mut db = self.db.clone();
+        let mut found = report;
+        let (state, outcome, answer, commit, marked_at, thread) = (
+            found.state.clone(),
+            found.outcome.clone(),
+            found.answer.clone(),
+            found.commit.clone(),
+            found.marked_at,
+            found.thread.0.clone(),
+        );
+        toasty::update!(found {
+            state: state,
+            outcome: outcome,
+            answer: answer,
+            commit: commit,
+            marked_at: marked_at,
+            thread: thread,
+        })
+        .exec(&mut db)
+        .await?;
         Ok(())
     }
 
@@ -409,9 +484,36 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_report_keeps_its_batch_and_takes_a_status_and_thread() {
+        let db = Db::memory().await;
+        let batch = serde_json::json!({"page": "/", "items": [{"n": 1, "comment": "bigger"}]});
+        let report = db.add_report("/", batch.clone(), 5).await.unwrap();
+        assert_eq!(report.state, "new");
+        let mut found = db.report(report.id).await.unwrap().unwrap();
+        found.state = "done".into();
+        found.outcome = Some("fixed".into());
+        found.thread.0.push(crate::feedback::Said {
+            at: 6,
+            by: "claude".into(),
+            text: "done".into(),
+        });
+        db.save_report(found).await.unwrap();
+        let again = db.report(report.id).await.unwrap().unwrap();
+        assert_eq!(
+            (again.state.as_str(), again.outcome.as_deref()),
+            ("done", Some("fixed"))
+        );
+        assert_eq!(again.batch.0, batch);
+        assert_eq!(again.thread.0.len(), 1);
+    }
+
+    #[tokio::test]
     async fn a_watch_tells_once_and_goes_with_its_date() {
         let db = Db::memory().await;
-        let watch = db.add_watch(None, "2026-12-01", 0, 86400, false, 1).await.unwrap();
+        let watch = db
+            .add_watch(None, "2026-12-01", 0, 86400, false, None, 1)
+            .await
+            .unwrap();
         db.tell(watch.id, "2026-12-01", 5, 3600).await.unwrap();
         db.tell(watch.id, "2026-12-01", 5, 3600).await.unwrap();
         assert_eq!(db.told(watch.id).await.unwrap(), [(5, 3600)]);

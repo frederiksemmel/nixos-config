@@ -255,10 +255,15 @@ def zoom_comes_back(page, engine):
     page.evaluate(UNZOOMED)
     check(engine, "back at 1x, pinches are cancelled again", page.evaluate(PINCH)["cancelled"])
     page.locator("#feedback-open").tap()
-    until(page, engine, "the feedback box opens with its field focused", 'document.activeElement?.name === "message"')
-    check(engine, "while typing, iOS can't zoom into the field", "maximum-scale=1" in page.evaluate(VIEWPORT), page.evaluate(VIEWPORT))
-    page.locator(".feedback-close").tap()
-    until(page, engine, "after the field, zoom is unlocked again", f'!{VIEWPORT}.includes("maximum-scale")', 3000)
+    until(page, engine, "the feedback button starts feedback mode", 'document.documentElement.dataset.feedbackMode === "on"', 3000)
+    page.locator(".fbm-layer").tap(position={"x": 60, "y": 200})
+    until(page, engine, "a tap in feedback mode opens a comment for what it marked", 'document.activeElement?.name === "comment"', 3000)
+    page.locator(".fbm-card textarea").fill("Bigger, please")
+    page.locator(".fbm-primary").tap()
+    until(page, engine, "the comment is kept, numbered", 'document.querySelector(".fbm-count")?.textContent === "1"', 3000)
+    page.locator(".fbm-exit").tap()
+    until(page, engine, "and feedback mode ends", "!document.documentElement.dataset.feedbackMode", 3000)
+    page.evaluate('localStorage.removeItem("feedback-mode.semmeltv")')
 
 
 COUNTS = """JSON.stringify(Object.fromEntries([...document.querySelectorAll(".report-filters button")]

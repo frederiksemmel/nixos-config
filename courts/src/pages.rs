@@ -21,7 +21,7 @@ pub struct Site {
 }
 
 const HOURS: std::ops::Range<i64> = 6..23;
-const FROM_HOURS: [i64; 5] = [7, 12, 17, 18, 19];
+const FROM_HOURS: [i64; 4] = [12, 17, 18, 19];
 
 pub fn club_info(club: &db::Club) -> gotcourts::Club {
     gotcourts::Club {
@@ -58,9 +58,23 @@ fn surface(name: &str) -> &str {
         "rebound" => "Rebound Ace",
         "carpet" => "carpet",
         "grass" => "grass",
+        "artificial_grass" | "turf" => "artificial grass",
         "" => "?",
         other => other,
     }
+}
+
+pub fn sport_name(sport: &str) -> String {
+    let mut chars = sport.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().chain(chars).collect(),
+        None => "Tennis".into(),
+    }
+}
+
+fn sports(courts: &[Court]) -> String {
+    let set: BTreeSet<String> = courts.iter().map(|c| sport_name(&c.sport)).collect();
+    set.into_iter().collect::<Vec<_>>().join(", ")
 }
 
 fn kind(club: &db::Club) -> &'static str {
@@ -72,16 +86,66 @@ fn kind(club: &db::Club) -> &'static str {
     }
 }
 
-fn filter(courts: &[Court], only: &str) -> Vec<Court> {
-    courts
-        .iter()
-        .filter(|c| match only {
-            "indoor" => c.indoor,
-            "outdoor" => !c.indoor,
-            _ => true,
-        })
-        .cloned()
-        .collect()
+/// What the day page shows: a day, a sport, indoor or outdoor, and from when.
+#[derive(Clone, Default)]
+struct Filters {
+    date: String,
+    sport: String,
+    only: String,
+    from: i64,
+}
+
+impl Filters {
+    fn keeps(&self, court: &Court) -> bool {
+        (self.sport.is_empty() || court.sport == self.sport)
+            && match self.only.as_str() {
+                "indoor" => court.indoor,
+                "outdoor" => !court.indoor,
+                _ => true,
+            }
+    }
+
+    fn link(&self) -> String {
+        let mut link = format!("/?date={}", self.date);
+        if !self.sport.is_empty() {
+            link.push_str(&format!("&sport={}", self.sport));
+        }
+        if !self.only.is_empty() {
+            link.push_str(&format!("&only={}", self.only));
+        }
+        if self.from > 0 {
+            link.push_str(&format!("&from={}", self.from));
+        }
+        link
+    }
+
+    fn date(&self, date: &str) -> String {
+        Filters {
+            date: date.into(),
+            ..self.clone()
+        }
+        .link()
+    }
+
+    fn sport(&self, sport: &str) -> String {
+        Filters {
+            sport: sport.into(),
+            ..self.clone()
+        }
+        .link()
+    }
+
+    fn only(&self, only: &str) -> String {
+        Filters {
+            only: only.into(),
+            ..self.clone()
+        }
+        .link()
+    }
+
+    fn from(&self, from: i64) -> String {
+        Filters { from, ..self.clone() }.link()
+    }
 }
 
 /// How many courts are free starting in each hour.
@@ -102,15 +166,12 @@ fn heat(count: usize) -> &'static str {
     }
 }
 
-fn link_to(date: &str, only: &str, from: i64) -> String {
-    let mut link = format!("/?date={date}");
-    if !only.is_empty() {
-        link.push_str(&format!("&only={only}"));
-    }
-    if from > 0 {
-        link.push_str(&format!("&from={from}"));
-    }
-    link
+fn chip(on: bool) -> &'static str {
+    if on { "chip on" } else { "chip" }
+}
+
+fn current(on: bool) -> &'static str {
+    if on { "page" } else { "false" }
 }
 
 struct Row {
@@ -125,8 +186,26 @@ struct Row {
 #[query_params]
 struct DayQuery {
     date: Option<String>,
+    sport: Option<String>,
     only: Option<String>,
     from: Option<i64>,
+}
+
+/// Every sport some court of these clubs has, tennis first.
+async fn known_sports(db: &Db) -> Vec<String> {
+    let mut set: BTreeSet<String> = db
+        .clubs()
+        .await
+        .unwrap_or_default()
+        .iter()
+        .flat_map(|club| club.courts.0.iter().map(|c| c.sport.clone()).collect::<Vec<_>>())
+        .collect();
+    let mut list = Vec::new();
+    if set.remove("tennis") {
+        list.push("tennis".to_string());
+    }
+    list.extend(set);
+    list
 }
 
 #[page("/")]
@@ -136,18 +215,27 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     let query = query_params::<DayQuery>(cx).map_err(|error| topcoat::Error::msg(error.to_string()))?;
     let dates = time::dates(site.days);
     let today = time::today();
-    let date = query
-        .date
-        .clone()
-        .filter(|d| dates.contains(d))
-        .unwrap_or_else(|| today.clone());
-    let only = query
-        .only
-        .clone()
-        .filter(|o| o == "indoor" || o == "outdoor")
-        .unwrap_or_default();
-    let from = query.from.unwrap_or(0).clamp(0, 23);
-    let after = (from * 3600).max(if date == today { time::seconds_today() } else { 0 });
+    let all_sports = known_sports(&db).await;
+    let filters = Filters {
+        date: query
+            .date
+            .clone()
+            .filter(|d| dates.contains(d))
+            .unwrap_or_else(|| today.clone()),
+        sport: query
+            .sport
+            .clone()
+            .filter(|s| all_sports.contains(s))
+            .unwrap_or_default(),
+        only: query
+            .only
+            .clone()
+            .filter(|o| o == "indoor" || o == "outdoor")
+            .unwrap_or_default(),
+        from: query.from.unwrap_or(0).clamp(0, 23),
+    };
+    let date = filters.date.clone();
+    let after = (filters.from * 3600).max(if date == today { time::seconds_today() } else { 0 });
     let clubs = db.clubs().await.map_err(topcoat::Error::msg)?;
     let days: BTreeMap<i64, db::Day> = db
         .days_on(&date)
@@ -160,7 +248,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         .into_iter()
         .filter_map(|club| {
             let stored = days.get(&club.id)?;
-            let courts = filter(&stored.courts.0, &only);
+            let courts: Vec<Court> = stored.courts.0.iter().filter(|c| filters.keeps(c)).cloned().collect();
             if courts.is_empty() {
                 return None;
             }
@@ -184,63 +272,87 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     let oldest = rows.iter().map(|r| r.fetched_at).min();
     let (open, full): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| !r.free.is_empty());
     let free_total: usize = open.iter().map(|r| r.free.len()).sum();
+    let several_sports = all_sports.len() > 1;
+    let summary = format!(
+        "{} free {} at {} {}",
+        free_total,
+        if free_total == 1 { "slot" } else { "slots" },
+        open.len(),
+        if open.len() == 1 { "club" } else { "clubs" }
+    );
     Ok(view! {
-        nav()
-        <nav class="chips dates">
-            for d in &dates {
-                <a class=(if *d == date { "chip on" } else { "chip" }) href=(link_to(d, &only, from))>(time::label(d))</a>
-            }
-        </nav>
-        <nav class="chips">
-            <a class=(if only.is_empty() { "chip on" } else { "chip" }) href=(link_to(&date, "", from))>"All courts"</a>
-            <a class=(if only == "indoor" { "chip on" } else { "chip" }) href=(link_to(&date, "indoor", from))>"Indoor"</a>
-            <a class=(if only == "outdoor" { "chip on" } else { "chip" }) href=(link_to(&date, "outdoor", from))>"Outdoor"</a>
-            <span class="gap"></span>
-            <a class=(if from == 0 { "chip on" } else { "chip" }) href=(link_to(&date, &only, 0))>"Any time"</a>
-            for hour in FROM_HOURS {
-                <a class=(if from == hour { "chip on" } else { "chip" }) href=(link_to(&date, &only, hour))>(format!("from {hour}:00"))</a>
-            }
-        </nav>
+        nav(current: "courts")
+        <section class="filters" aria-label="Filters">
+            <nav class="chips dates" aria-label="Day">
+                for d in &dates {
+                    <a class=(chip(*d == date)) aria-current=(current(*d == date)) href=(filters.date(d))>(time::label(d))</a>
+                }
+            </nav>
+            <div class="chips">
+                if several_sports {
+                    <a class=(chip(filters.sport.is_empty())) href=(filters.sport(""))>"All sports"</a>
+                    for sport in &all_sports {
+                        <a class=(chip(filters.sport == *sport)) href=(filters.sport(sport))>(sport_name(sport))</a>
+                    }
+                    <span class="gap" aria-hidden="true"></span>
+                }
+                <a class=(chip(filters.only.is_empty())) href=(filters.only(""))>"Indoor and outdoor"</a>
+                <a class=(chip(filters.only == "indoor")) href=(filters.only("indoor"))>"Indoor"</a>
+                <a class=(chip(filters.only == "outdoor")) href=(filters.only("outdoor"))>"Outdoor"</a>
+            </div>
+            <div class="chips">
+                <a class=(chip(filters.from == 0)) href=(filters.from(0))>"Any time"</a>
+                for hour in FROM_HOURS {
+                    <a class=(chip(filters.from == hour)) href=(filters.from(hour))>(format!("From {hour}:00"))</a>
+                }
+            </div>
+        </section>
         <p class="summary">
-            (format!("{} · {} free slots at {} clubs", time::label(&date), free_total, open.len()))
+            <strong>(time::label(&date))</strong>
+            (format!(" · {summary}"))
             if let Some(at) = oldest {
-                <span class="quiet">(format!(" · asked GotCourts {}", time::ago(at)))</span>
+                <span class="quiet">(format!(" · updated {}", time::ago(at)))</span>
             }
         </p>
         if open.is_empty() && full.is_empty() {
-            <p class="empty">"Nothing from GotCourts for this day yet. The first round takes a few minutes after a start."</p>
+            <p class="empty">"Nothing from GotCourts for this day yet. After a restart the first round takes a few minutes."</p>
         }
         if !open.is_empty() {
-            <div class="grid-wrap">
-                <table class="grid">
-                    <thead>
-                        <tr>
-                            <th></th>
-                            for hour in HOURS {
-                                <th>(format!("{hour}"))</th>
-                            }
-                        </tr>
-                    </thead>
-                    <tbody>
-                        for row in &open {
+            <section class="overview" aria-label="Free courts by hour">
+                <div class="grid-wrap">
+                    <table class="grid">
+                        <thead>
                             <tr>
-                                <th><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
+                                <th scope="col"><span class="sr">"Club"</span></th>
                                 for hour in HOURS {
-                                    <td class=(heat(row.hours.get(&hour).copied().unwrap_or(0)))>
-                                        if let Some(count) = row.hours.get(&hour) {
-                                            (count.to_string())
-                                        }
-                                    </td>
+                                    <th scope="col">(format!("{hour}"))</th>
                                 }
                             </tr>
-                        }
-                    </tbody>
-                </table>
-            </div>
+                        </thead>
+                        <tbody>
+                            for row in &open {
+                                <tr>
+                                    <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
+                                    for hour in HOURS {
+                                        <td class=(heat(row.hours.get(&hour).copied().unwrap_or(0)))>
+                                            if let Some(count) = row.hours.get(&hour) {
+                                                (count.to_string())
+                                            }
+                                        </td>
+                                    }
+                                </tr>
+                            }
+                        </tbody>
+                    </table>
+                </div>
+                <p class="legend quiet">"Courts free per hour. Tap a club for its times."</p>
+            </section>
         }
-        for row in &open {
-            club_card(row: row, date: &date)
-        }
+        <div class="cards">
+            for row in &open {
+                club_card(row: row, date: &date, several_sports: several_sports)
+            }
+        </div>
         if !full.is_empty() {
             <section class="full">
                 <h2>"Nothing free"</h2>
@@ -258,17 +370,21 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
 }
 
 #[component]
-async fn nav() -> Result<impl View> {
+pub async fn nav(current: &'static str) -> Result<impl View> {
     Ok(view! {
         <header class="top">
             <a class="brand" href="/">"Courts"</a>
-            <a class="top-link" href="/watches">"Watches"</a>
+            <nav class="tabs" aria-label="Sections">
+                <a href="/" aria-current=(if current == "courts" { "page" } else { "false" })>"Free courts"</a>
+                <a href="/watches" aria-current=(if current == "watches" { "page" } else { "false" })>"Watches"</a>
+                <a href="/feedback" aria-current=(if current == "feedback" { "page" } else { "false" })>"Feedback"</a>
+            </nav>
         </header>
     })
 }
 
 #[component]
-async fn club_card(row: &Row, date: &str) -> Result<impl View> {
+async fn club_card(row: &Row, date: &str, several_sports: bool) -> Result<impl View> {
     let club = &row.club;
     let courts: Vec<(&Court, Vec<&Slot>)> = row
         .courts
@@ -282,24 +398,31 @@ async fn club_card(row: &Row, date: &str) -> Result<impl View> {
         .filter(|(_, free)| !free.is_empty())
         .collect();
     let book = GotCourts::booking_url(&club.canonical, date);
+    let what = if several_sports {
+        format!("{} · {}", sports(&row.courts), surfaces(&row.courts))
+    } else {
+        surfaces(&row.courts)
+    };
     Ok(view! {
         <section class="club" id=(format!("club-{}", club.id))>
             <header>
-                <h2><a href=(format!("/clubs/{}", club.id))>(club.name.as_str())</a></h2>
+                <div>
+                    <h2><a href=(format!("/clubs/{}", club.id))>(club.name.as_str())</a></h2>
+                    <p class="meta">
+                        (format!("{:.1} km · {} · {}", row.km, what, club.city))
+                        if !kind(club).is_empty() {
+                            (format!(" · {}", kind(club)))
+                        }
+                    </p>
+                </div>
                 <a class="pill" href=(book.as_str()) target="_blank" rel="noopener">"Book"</a>
             </header>
-            <p class="meta">
-                (format!("{:.1} km · {} · {}", row.km, surfaces(&row.courts), club.city))
-                if !kind(club).is_empty() {
-                    (format!(" · {}", kind(club)))
-                }
-            </p>
             <ul class="courts">
                 for (court, free) in &courts {
                     <li>
                         <span class="court">
                             (court.label.as_str())
-                            <small>(format!("{}{}", surface(&court.surface), if court.indoor { ", indoor" } else { "" }))</small>
+                            <small>(format!("{}{}{}", if several_sports { format!("{}, ", sport_name(&court.sport)) } else { String::new() }, surface(&court.surface), if court.indoor { ", indoor" } else { "" }))</small>
                         </span>
                         <span class="times">
                             for slot in free {
@@ -344,11 +467,11 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
     };
     let phone: String = club.phone.chars().filter(|c| c.is_ascii_digit() || *c == '+').collect();
     Ok(view! {
-        nav()
-        <article class="club-page">
+        nav(current: "courts")
+        <article class="page club-page">
             <h1>(club.name.as_str())</h1>
             <p class="meta">
-                (format!("{:.1} km · {}", km(&site, &club), surfaces(&courts)))
+                (format!("{:.1} km · {} · {}", km(&site, &club), sports(&courts), surfaces(&courts)))
                 if !kind(&club).is_empty() {
                     (format!(" · {}", kind(&club)))
                 }
@@ -369,7 +492,7 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
             </dl>
             <h2>"Courts"</h2>
             <table class="list">
-                <thead><tr><th>"Court"</th><th>"Surface"</th><th>"Hours"</th><th>"Booked in"</th></tr></thead>
+                <thead><tr><th>"Court"</th><th>"Sport"</th><th>"Surface"</th><th>"Hours"</th><th>"Booked in"</th></tr></thead>
                 <tbody>
                     for court in &courts {
                         <tr>
@@ -379,6 +502,7 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
                                     <small>" · ball machine"</small>
                                 }
                             </td>
+                            <td>(sport_name(&court.sport))</td>
                             <td>(format!("{}{}", surface(&court.surface), if court.indoor { ", indoor" } else { ", outdoor" }))</td>
                             <td>(format!("{}–{}", clock(court.opening), clock(court.closing)))</td>
                             <td>(court.durations.iter().map(|m| format!("{m} min")).collect::<Vec<_>>().join(", "))</td>
@@ -455,9 +579,10 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
         listed.push(Listed { watch, club, free });
     }
     let dates = time::dates(site.days);
+    let all_sports = known_sports(&db).await;
     Ok(view! {
-        nav()
-        <article class="watches">
+        nav(current: "watches")
+        <article class="page watches">
             <h1>"Watches"</h1>
             <p>"A watch sends a notification when a court frees up that fits it: when someone cancels, or a day opens for booking."</p>
             <section class="notifications" data-notify="section">
@@ -470,7 +595,7 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
                         <li>
                             <span>
                                 <strong>(format!("{} {}–{}", time::label(&item.watch.date), clock(item.watch.earliest), clock(item.watch.latest)))</strong>
-                                (format!(" · {}{}", item.club, if item.watch.indoor { ", indoor only" } else { "" }))
+                                (format!(" · {}{}{}", item.watch.sport.as_deref().map(|s| format!("{}, ", sport_name(s))).unwrap_or_default(), item.club, if item.watch.indoor { ", indoor only" } else { "" }))
                                 <br>
                                 <a class="quiet" href=(format!("/?date={}", item.watch.date))>(format!("{} slots fit now", item.free))</a>
                             </span>
@@ -512,6 +637,16 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
                         }
                     </select>
                 </label>
+                if all_sports.len() > 1 {
+                    <label>"Sport"
+                        <select name="sport">
+                            <option value="">"Any sport"</option>
+                            for sport in &all_sports {
+                                <option value=(sport.as_str())>(sport_name(sport))</option>
+                            }
+                        </select>
+                    </label>
+                }
                 <label class="check"><input type="checkbox" name="indoor" value="1"> "Indoor only"</label>
                 <button class="pill" type="submit">"Watch"</button>
             </form>
@@ -526,6 +661,7 @@ struct NewWatch {
     latest: i64,
     club: Option<String>,
     indoor: Option<String>,
+    sport: Option<String>,
 }
 
 #[route(POST "/watches/add")]
@@ -541,6 +677,7 @@ async fn add_watch(cx: &Cx, Form(new): Form<NewWatch>) -> Result<SeeOther> {
                 new.earliest.clamp(0, 24) * 3600,
                 new.latest.clamp(0, 24) * 3600,
                 new.indoor.is_some(),
+                new.sport.clone().filter(|s| !s.is_empty()),
                 time::now(),
             )
             .await

@@ -13,7 +13,7 @@ let
     version = "0.1.1";
 
     src = lib.fileset.toSource {
-      root = ../.;
+      root = ../..;
       fileset = lib.fileset.unions [
         (lib.fileset.fileFilter (
           file: file.hasExt "svg" || file.hasExt "png" && file.name != "semmel-source.png"
@@ -21,12 +21,13 @@ let
         ./Cargo.lock
         ./Cargo.toml
         ./src
+        ../../feedback/client
       ];
     };
     cargoToml = ./Cargo.toml;
     cargoLock = ./Cargo.lock;
     postUnpack = ''
-      cd $sourceRoot/web
+      cd $sourceRoot/semmeltv/web
       sourceRoot=.
     '';
 
