@@ -547,6 +547,7 @@ in
     enable = true;
     alsa.enable = true;
     pulse.enable = true;
+    extraConfig.pipewire."10-no-x11-bell"."context.properties"."module.x11.bell" = false;
     wireplumber.extraConfig."51-single-hdmi" = {
       "monitor.alsa.rules" = [
         {

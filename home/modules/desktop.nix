@@ -2056,14 +2056,6 @@ in
       #   };
       # };
 
-      ### Startup
-      spawn-at-startup = [
-        {
-          command = [
-            (lib.getExe pkgs.xwayland-satellite)
-          ];
-        }
-      ];
       environment = {
         QT_QPA_PLATFORM = "wayland";
       };
@@ -2633,6 +2625,7 @@ in
       mutableSettings = true;
       settings = {
         tray.enabled = false;
+        providers.applications.preferences.launchPrefix = "systemd-run --user --scope --slice=app.slice --collect --quiet --";
         providers.files.preferences.excludedIndexingPaths = [
           config.programs.rclone.remotes.pcloud.mounts."".mountPoint
         ];
