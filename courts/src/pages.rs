@@ -168,6 +168,164 @@ struct Pin {
     about: String,
 }
 
+/// What one day's stored answers hold, to search with different filters.
+struct Found<'a> {
+    clubs: &'a [db::Club],
+    days: &'a BTreeMap<i64, db::Day>,
+    home: (f64, f64),
+    today: &'a str,
+}
+
+/// How many free starts each other choice in the filter panel would give,
+/// keyed "group:value", and the total without the when, length, court and
+/// distance limits.
+pub struct Facets {
+    pub options: BTreeMap<String, usize>,
+    pub current: usize,
+    pub cleared: usize,
+}
+
+impl Facets {
+    fn of(&self, group: &str, value: &str) -> Option<usize> {
+        self.options.get(&format!("{group}:{value}")).copied()
+    }
+
+    /// How many more starts dropping this group's limit would show.
+    fn more(&self, group: &str, value: &str) -> usize {
+        self.of(group, value).unwrap_or(0).saturating_sub(self.current)
+    }
+}
+
+impl Found<'_> {
+    fn rows(&self, filters: &Filters) -> Vec<Row> {
+        let origin = filters.origin(self.home);
+        let after = (filters.from * 3600).max(if filters.date == self.today {
+            time::seconds_today()
+        } else {
+            0
+        });
+        let until = filters.until * 3600;
+        self.clubs
+            .iter()
+            .filter(|club| filters.members || guests(club))
+            .filter_map(|club| {
+                let stored = self.days.get(&club.id)?;
+                let courts: Vec<Court> = stored.courts.0.iter().filter(|c| keeps(filters, c)).cloned().collect();
+                if courts.is_empty() {
+                    return None;
+                }
+                let distance = distance(origin, club);
+                if filters.within > 0 && distance > filters.within as f64 {
+                    return None;
+                }
+                let free: Vec<Slot> = slots::free_for(&courts, &stored.busy.0, after, filters.length * 60)
+                    .into_iter()
+                    .filter(|slot| slot.end <= until)
+                    .collect();
+                let hours = by_hour(&free);
+                Some(Row {
+                    km: distance,
+                    club: club.clone(),
+                    courts,
+                    free,
+                    hours,
+                    fetched_at: stored.fetched_at,
+                })
+            })
+            .collect()
+    }
+
+    fn count(&self, filters: &Filters) -> usize {
+        self.rows(filters).iter().map(|row| row.free.len()).sum()
+    }
+
+    fn facets(&self, filters: &Filters, sports: &[String], surfaces: &BTreeSet<String>) -> Facets {
+        let mut options = BTreeMap::new();
+        let mut put = |key: String, changed: Filters| {
+            options.insert(key, self.count(&changed));
+        };
+        for sport in sports {
+            put(
+                format!("sport:{sport}"),
+                Filters {
+                    sport: sport.clone(),
+                    surface: String::new(),
+                    ..filters.clone()
+                },
+            );
+        }
+        for (_, from, until) in PRESETS.iter().copied().chain([("", EARLIEST, LATEST)]) {
+            put(
+                format!("when:{from}-{until}"),
+                Filters {
+                    from,
+                    until,
+                    ..filters.clone()
+                },
+            );
+        }
+        for (minutes, _) in LENGTHS {
+            put(
+                format!("length:{minutes}"),
+                Filters {
+                    length: minutes,
+                    ..filters.clone()
+                },
+            );
+        }
+        for place in ["", "indoor", "outdoor"] {
+            put(
+                format!("place:{place}"),
+                Filters {
+                    place: place.into(),
+                    ..filters.clone()
+                },
+            );
+        }
+        for name in surfaces.iter().map(String::as_str).chain([""]) {
+            put(
+                format!("surface:{name}"),
+                Filters {
+                    surface: name.into(),
+                    ..filters.clone()
+                },
+            );
+        }
+        for km in WITHIN.iter().copied().chain([0]) {
+            put(
+                format!("within:{km}"),
+                Filters {
+                    within: km,
+                    ..filters.clone()
+                },
+            );
+        }
+        for members in [false, true] {
+            put(
+                format!("members:{}", u8::from(members)),
+                Filters {
+                    members,
+                    ..filters.clone()
+                },
+            );
+        }
+        let cleared = self.count(&Filters {
+            from: EARLIEST,
+            until: LATEST,
+            length: 60,
+            place: String::new(),
+            surface: String::new(),
+            within: 0,
+            ..filters.clone()
+        });
+        Facets {
+            options,
+            current: self.count(filters),
+            cleared,
+        }
+    }
+}
+
 #[page("/")]
 async fn day_page(cx: &Cx) -> Result<impl View> {
     let site = app_context::<Site>(cx).clone();
@@ -178,8 +336,6 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     let filters = Filters::of(cx, &dates, &all_sports);
     let date = filters.date.clone();
     let origin = filters.origin(site.home);
-    let after = (filters.from * 3600).max(if date == today { time::seconds_today() } else { 0 });
-    let until = filters.until * 3600;
     let clubs = db.clubs(&site.clubs).await.map_err(topcoat::Error::msg)?;
     let days: BTreeMap<i64, db::Day> = db
         .days_on(&date)
@@ -195,34 +351,14 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         .map(|court| surface(&court.surface).to_string())
         .collect();
     let members_only = clubs.iter().filter(|club| !guests(club)).count();
-    let mut rows: Vec<Row> = clubs
-        .into_iter()
-        .filter(|club| filters.members || guests(club))
-        .filter_map(|club| {
-            let stored = days.get(&club.id)?;
-            let courts: Vec<Court> = stored.courts.0.iter().filter(|c| keeps(&filters, c)).cloned().collect();
-            if courts.is_empty() {
-                return None;
-            }
-            let distance = distance(origin, &club);
-            if filters.within > 0 && distance > filters.within as f64 {
-                return None;
-            }
-            let free: Vec<Slot> = slots::free_for(&courts, &stored.busy.0, after, filters.length * 60)
-                .into_iter()
-                .filter(|slot| slot.end <= until)
-                .collect();
-            let hours = by_hour(&free);
-            Some(Row {
-                km: distance,
-                club,
-                courts,
-                free,
-                hours,
-                fetched_at: stored.fetched_at,
-            })
-        })
-        .collect();
+    let found = Found {
+        clubs: &clubs,
+        days: &days,
+        home: site.home,
+        today: &today,
+    };
+    let facets = found.facets(&filters, &all_sports, &surfaces_here);
+    let mut rows = found.rows(&filters);
     let soonest = |row: &Row| row.free.iter().map(|s| s.start).min().unwrap_or(i64::MAX);
     if filters.sort == "near" {
         rows.sort_by(|a, b| {
@@ -277,7 +413,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 <a class=(chip(*d == date)) aria-current=(current(*d == date)) href=(filters.with_date(d))>(time::label(d))</a>
             }
         </nav>
-        filter_form(filters: &filters, sports: &all_sports, surfaces: &surfaces_here, members_only: members_only)
+        filter_form(filters: &filters, sports: &all_sports, surfaces: &surfaces_here, members_only: members_only, facets: &facets)
         <div class=(if map_view { "split show-map" } else { "split" })>
             <section class="results" aria-label="Free courts">
                 <div class="results-head">
@@ -353,21 +489,67 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     })
 }
 
+fn count(facets: &Facets, group: &str, value: &str) -> String {
+    facets.of(group, value).map(|n| n.to_string()).unwrap_or_default()
+}
+
+/// "+12 without this filter", when dropping the group's limit shows more.
+fn more(facets: &Facets, group: &str, open: &str) -> String {
+    match facets.more(group, open) {
+        0 => String::new(),
+        n => format!("+{n} without this filter"),
+    }
+}
+
 #[component]
 async fn filter_form(
     filters: &Filters,
     sports: &[String],
     surfaces: &BTreeSet<String>,
     members_only: usize,
+    facets: &Facets,
 ) -> Result<impl View> {
     let summary = filters.summary(&sport_name(&filters.sport));
     let from_hours: Vec<i64> = (EARLIEST..LATEST).collect();
     let until_hours: Vec<i64> = (EARLIEST + 1..=LATEST).collect();
+    let any_time = format!("{EARLIEST}-{LATEST}");
+    let when_more = more(facets, "when", &any_time);
+    let length_more = more(facets, "length", "60");
+    let place_more = if filters.place.is_empty() {
+        String::new()
+    } else {
+        more(facets, "place", "")
+    };
+    let surface_more = if filters.surface.is_empty() {
+        String::new()
+    } else {
+        more(facets, "surface", "")
+    };
+    let within_more = more(facets, "within", "0");
+    let members_more = if filters.members {
+        String::new()
+    } else {
+        more(facets, "members", "1")
+    };
+    let cleared = facets.cleared.saturating_sub(facets.current);
+    let clear_link = Filters {
+        date: filters.date.clone(),
+        sport: filters.sport.clone(),
+        view: filters.view.clone(),
+        near: filters.near,
+        sort: filters.sort.clone(),
+        members: filters.members,
+        ..Filters::default()
+    }
+    .link();
     Ok(view! {
         <details class="filters" data-filters="">
             <summary>
                 <span class="filters-label">"Filters"</span>
                 <span class="filters-summary">(summary.as_str())</span>
+                if cleared > 0 {
+                    <span class="filters-more">(format!("+{cleared} without them"))</span>
+                }
             </summary>
             <form method="get" action="/" data-autosubmit="">
                 <input type="hidden" name="f" value="1">
@@ -379,18 +561,18 @@ async fn filter_form(
                         <legend>"Sport"</legend>
                         <div class="seg">
                             for sport in sports {
-                                <label><input type="radio" name="sport" value=(sport.as_str()) checked=(*sport == filters.sport)> (sport_name(sport))</label>
+                                <label><input type="radio" name="sport" value=(sport.as_str()) checked=(*sport == filters.sport)> (sport_name(sport)) <span class="count">(count(facets, "sport", sport))</span></label>
                             }
                         </div>
                     </fieldset>
                 }
                 <fieldset class="group">
-                    <legend>"When"</legend>
+                    <legend>"When" <span class="more">(when_more.as_str())</span></legend>
                     <div class="row">
                         for (label, from, until) in PRESETS {
-                            <button type="submit" name="when" value=(format!("{from}-{until}")) class=(if filters.from == from && filters.until == until { "chip on" } else { "chip" })>(label)</button>
+                            <button type="submit" name="when" value=(format!("{from}-{until}")) class=(if filters.from == from && filters.until == until { "chip on" } else { "chip" })>(label) <span class="count">(count(facets, "when", &format!("{from}-{until}")))</span></button>
                         }
-                        <button type="submit" name="when" value=(format!("{EARLIEST}-{LATEST}")) class=(if filters.from == EARLIEST && filters.until == LATEST { "chip on" } else { "chip" })>"Any time"</button>
+                        <button type="submit" name="when" value=(any_time.as_str()) class=(if filters.from == EARLIEST && filters.until == LATEST { "chip on" } else { "chip" })>"Any time" <span class="count">(count(facets, "when", &any_time))</span></button>
                     </div>
                     <div class="row hours">
                         <label>"From"
@@ -410,37 +592,37 @@ async fn filter_form(
                     </div>
                 </fieldset>
                 <fieldset class="group">
-                    <legend>"How long"</legend>
+                    <legend>"How long" <span class="more">(length_more.as_str())</span></legend>
                     <div class="seg">
                         for (minutes, label) in LENGTHS {
-                            <label><input type="radio" name="length" value=(minutes.to_string()) checked=(minutes == filters.length)> (label)</label>
+                            <label><input type="radio" name="length" value=(minutes.to_string()) checked=(minutes == filters.length)> (label) <span class="count">(count(facets, "length", &minutes.to_string()))</span></label>
                         }
                     </div>
                 </fieldset>
                 <fieldset class="group">
-                    <legend>"Court"</legend>
+                    <legend>"Court" <span class="more">(if place_more.is_empty() { surface_more.as_str() } else { place_more.as_str() })</span></legend>
                     <div class="seg">
-                        <label><input type="radio" name="place" value="" checked=(filters.place.is_empty())> "Any"</label>
-                        <label><input type="radio" name="place" value="indoor" checked=(filters.place == "indoor")> "Indoor"</label>
-                        <label><input type="radio" name="place" value="outdoor" checked=(filters.place == "outdoor")> "Outdoor"</label>
+                        <label><input type="radio" name="place" value="" checked=(filters.place.is_empty())> "Any" <span class="count">(count(facets, "place", ""))</span></label>
+                        <label><input type="radio" name="place" value="indoor" checked=(filters.place == "indoor")> "Indoor" <span class="count">(count(facets, "place", "indoor"))</span></label>
+                        <label><input type="radio" name="place" value="outdoor" checked=(filters.place == "outdoor")> "Outdoor" <span class="count">(count(facets, "place", "outdoor"))</span></label>
                     </div>
                     if surfaces.len() > 1 {
                         <label class="inline">"Surface"
                             <select name="surface">
-                                <option value="">"Any surface"</option>
+                                <option value="">(format!("Any surface ({})", count(facets, "surface", "")))</option>
                                 for name in surfaces {
-                                    <option value=(name.as_str()) selected=(*name == filters.surface)>(name.as_str())</option>
+                                    <option value=(name.as_str()) selected=(*name == filters.surface)>(format!("{name} ({})", count(facets, "surface", name)))</option>
                                 }
                             </select>
                         </label>
                     }
                 </fieldset>
                 <fieldset class="group">
-                    <legend>"Where"</legend>
+                    <legend>"Where" <span class="more">(within_more.as_str())</span></legend>
                     <div class="seg">
-                        <label><input type="radio" name="within" value="0" checked=(filters.within == 0)> "Anywhere"</label>
+                        <label><input type="radio" name="within" value="0" checked=(filters.within == 0)> "Anywhere" <span class="count">(count(facets, "within", "0"))</span></label>
                         for km in WITHIN {
-                            <label><input type="radio" name="within" value=(km.to_string()) checked=(km == filters.within)> (format!("{km} km"))</label>
+                            <label><input type="radio" name="within" value=(km.to_string()) checked=(km == filters.within)> (format!("{km} km")) <span class="count">(count(facets, "within", &km.to_string()))</span></label>
                         }
                     </div>
                     <div class="row">
@@ -452,16 +634,22 @@ async fn filter_form(
                     </div>
                 </fieldset>
                 <fieldset class="group">
-                    <legend>"Order"</legend>
+                    <legend>"Order and access" <span class="more">(members_more.as_str())</span></legend>
                     <div class="seg">
                         <label><input type="radio" name="sort" value="soon" checked=(filters.sort != "near")> "Soonest"</label>
                         <label><input type="radio" name="sort" value="near" checked=(filters.sort == "near")> "Nearest"</label>
                     </div>
                     <label class="check">
                         <input type="checkbox" name="members" value="1" checked=(filters.members)>
-                        (format!("Members-only clubs too ({members_only})"))
+                        (format!("Members-only clubs too ({members_only} {}, {} free)", if members_only == 1 { "club" } else { "clubs" }, count(facets, "members", "1")))
                     </label>
                 </fieldset>
+                <div class="filters-foot">
+                    <span class="quiet">(format!("{} free starts with these filters", facets.current))</span>
+                    if cleared > 0 {
+                        <a class="chip" href=(clear_link.as_str())>(format!("Clear filters: +{cleared}"))</a>
+                    }
+                </div>
                 <noscript><button class="pill" type="submit">"Show"</button></noscript>
             </form>
         </details>
@@ -828,4 +1016,81 @@ async fn delete_watch(cx: &Cx) -> Result<SeeOther> {
         db.forget_watch(id).await.map_err(topcoat::Error::msg)?;
     }
     Ok(see_other("/watches"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::gotcourts::Busy;
+    use toasty::Json;
+
+    fn court(id: i64, indoor: bool) -> Court {
+        Court {
+            id,
+            sport: "tennis".into(),
+            label: format!("Platz {id}"),
+            surface: "clay".into(),
+            indoor,
+            ball_machine: false,
+            order: id,
+            interval: 60,
+            durations: vec![60],
+            opening: 8 * 3600,
+            closing: 12 * 3600,
+        }
+    }
+
+    #[test]
+    fn each_choice_counts_what_it_would_show() {
+        let club = db::Club {
+            id: 1,
+            name: "Lengg".into(),
+            canonical: "lengg".into(),
+            address: String::new(),
+            zip: String::new(),
+            city: "Zürich".into(),
+            latitude: 47.3779,
+            longitude: 8.5403,
+            phone: String::new(),
+            web: String::new(),
+            kind: "public".into(),
+            courts: Json(vec![court(1, true), court(2, false)]),
+            checked_at: 0,
+        };
+        let date = "2099-01-01".to_string();
+        let day = db::Day {
+            club_id: 1,
+            date: date.clone(),
+            fetched_at: 0,
+            courts: Json(vec![court(1, true), court(2, false)]),
+            busy: Json(vec![Busy {
+                court: Some(2),
+                start: 9 * 3600,
+                end: 10 * 3600,
+                note: None,
+            }]),
+        };
+        let clubs = vec![club];
+        let days = BTreeMap::from([(1, day)]);
+        let found = Found {
+            clubs: &clubs,
+            days: &days,
+            home: (47.3779, 8.5403),
+            today: "2000-01-01",
+        };
+        let filters = Filters {
+            date,
+            place: "indoor".into(),
+            ..Filters::default()
+        };
+        let facets = found.facets(&filters, &["tennis".into()], &BTreeSet::from(["clay".to_string()]));
+        // Indoor: 08–12 on court 1 is four starts; outdoor court 2 has three.
+        assert_eq!(facets.current, 4);
+        assert_eq!(facets.of("place", "outdoor"), Some(3));
+        assert_eq!(facets.of("place", ""), Some(7));
+        assert_eq!(facets.more("place", ""), 3);
+        // Two hours in a row: indoor 08, 09, 10.
+        assert_eq!(facets.of("length", "120"), Some(3));
+        assert_eq!(facets.cleared, 7);
+    }
 }

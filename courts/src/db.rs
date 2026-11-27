@@ -13,7 +13,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 mod models {
     use super::*;
 
-    #[derive(Debug, toasty::Model)]
+    #[derive(Debug, Clone, toasty::Model)]
     pub struct Club {
         #[key]
         pub id: i64,

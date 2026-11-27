@@ -281,7 +281,8 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 .filters[open] > summary::after { transform: translateY(2px) rotate(-135deg); }
 .filters-label { font-weight: 700; }
-.filters-summary { color: var(--quiet); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.filters > summary { flex-wrap: wrap; padding-top: 10px; padding-bottom: 10px; }
+.filters-summary { color: var(--quiet); min-width: 0; flex: 1 1 12ch; }
 .filters form {
   display: grid;
   gap: 16px;
@@ -403,3 +404,16 @@ textarea { resize: vertical; line-height: 1.45; }
 .invite .row { display: flex; gap: 8px; flex-wrap: wrap; }
 .pops { display: grid; gap: 14px; max-height: 50vh; overflow: auto; }
 .pops .pop + .pop { border-top: 1px solid var(--line); padding-top: 12px; }
+
+.seg .count, .chip .count {
+  margin-left: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: var(--quiet);
+}
+.seg label:has(input:checked) .count, .chip.on .count { color: oklch(0.34 0.06 120); }
+.group legend .more { margin-left: 8px; color: var(--accent); font-weight: 600; }
+.filters-more { flex: none; color: var(--accent); font-size: 0.833rem; font-weight: 600; order: 3; }
+.filters-foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding-top: 4px; border-top: 1px solid var(--line); padding-top: 12px; }
+.filters-foot .chip { background: var(--canvas); }
