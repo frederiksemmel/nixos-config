@@ -425,3 +425,4 @@ textarea { resize: vertical; line-height: 1.45; }
 .chip.toggle.on { border-color: transparent; }
 .day-head { margin: 14px 0 2px; font-size: 0.94rem; font-weight: 700; color: var(--accent); }
 .coverage { font-size: 0.833rem; margin: 32px 0 0; max-width: 70ch; }
+.note { margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; background: var(--raised); color: var(--quiet); font-size: 0.94rem; max-width: 70ch; }

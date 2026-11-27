@@ -91,7 +91,7 @@ impl Filters {
             filters.sport = sports.first().cloned().unwrap_or_default();
         }
         filters.place = get("place")
-            .filter(|p| p == "indoor" || p == "outdoor")
+            .filter(|p| p == "indoor" || p == "outdoor" || p == "unknown")
             .unwrap_or_default();
         filters.surface = get("surface").unwrap_or_default();
         if let Some((from, until)) = get("when").and_then(|w| {
@@ -268,7 +268,14 @@ impl Filters {
                 .to_string(),
         );
         if !self.place.is_empty() {
-            parts.push(if self.place == "indoor" { "indoor" } else { "outdoor" }.into());
+            parts.push(
+                match self.place.as_str() {
+                    "indoor" => "indoor",
+                    "outdoor" => "outdoor",
+                    _ => "indoor/outdoor not stated",
+                }
+                .into(),
+            );
         }
         if !self.surface.is_empty() {
             parts.push(self.surface.clone());

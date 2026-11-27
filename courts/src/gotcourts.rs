@@ -20,7 +20,11 @@ pub struct Court {
     pub sport: String,
     pub label: String,
     pub surface: String,
-    pub indoor: bool,
+    /// Indoor or outdoor as GotCourts states it; None when it doesn't.
+    pub indoor: Option<bool>,
+    /// GotCourts' own word for it: indoor, outdoor, balloon (an air hall), lights.
+    #[serde(default)]
+    pub cover: String,
     pub ball_machine: bool,
     pub order: i64,
     pub interval: i64,
@@ -31,6 +35,27 @@ pub struct Court {
 
 fn tennis() -> String {
     "tennis".into()
+}
+
+/// Whether a court is indoors, from GotCourts' court type; None when the
+/// type is missing or one this app doesn't know.
+pub fn covered(cover: &str) -> Option<bool> {
+    match cover {
+        "indoor" | "balloon" => Some(true),
+        "outdoor" | "lights" => Some(false),
+        _ => None,
+    }
+}
+
+/// How a court's cover reads on the page.
+pub fn cover_label(court: &Court) -> &'static str {
+    match (court.cover.as_str(), court.indoor) {
+        ("balloon", _) => "air hall",
+        ("lights", _) => "outdoor, lit",
+        (_, Some(true)) => "indoor",
+        (_, Some(false)) => "outdoor",
+        (_, None) => "indoor or outdoor not stated",
+    }
 }
 
 /// A stretch of one court that can't be booked: someone's reservation, or a
@@ -252,7 +277,8 @@ pub fn parse(body: &Value) -> Result<Day, Error> {
                     .unwrap_or_else(tennis),
                 label: text(&court["label"]).split_whitespace().collect::<Vec<_>>().join(" "),
                 surface: text(&court["surfaceType"]),
-                indoor: text(&court["type"]) != "outdoor",
+                indoor: covered(&text(&court["type"])),
+                cover: text(&court["type"]),
                 ball_machine: court["hasBallMachine"].as_bool().unwrap_or(false),
                 order: int(&court["orderNumber"]).unwrap_or(0),
                 interval: int(&court["interval"]).filter(|minutes| *minutes > 0).unwrap_or(60),
@@ -325,7 +351,10 @@ mod tests {
         assert_eq!(day.club.latitude, 47.35);
         assert_eq!(day.courts.iter().map(|c| c.id).collect::<Vec<_>>(), [111, 115]);
         assert_eq!(day.courts[1].label, "Halle Platz 6");
-        assert!(day.courts[1].indoor && !day.courts[0].indoor);
+        assert_eq!((day.courts[1].indoor, day.courts[0].indoor), (Some(true), Some(false)));
+        assert_eq!(covered("balloon"), Some(true));
+        assert_eq!(covered(""), None);
+        assert_eq!(covered("hall"), None);
         assert_eq!(day.courts[0].durations, [60, 90]);
         assert_eq!(day.busy.len(), 2);
         assert_eq!(

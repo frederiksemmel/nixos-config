@@ -180,8 +180,9 @@ fn guests(club: &db::Club) -> bool {
 fn keeps(filters: &Filters, court: &Court) -> bool {
     court.sport == filters.sport
         && match filters.place.as_str() {
-            "indoor" => court.indoor,
-            "outdoor" => !court.indoor,
+            "indoor" => court.indoor == Some(true),
+            "outdoor" => court.indoor == Some(false),
+            "unknown" => court.indoor.is_none(),
             _ => true,
         }
         && (filters.surface.is_empty() || surface(&court.surface) == filters.surface)
@@ -324,7 +325,7 @@ impl Found<'_> {
                 },
             );
         }
-        for place in ["", "indoor", "outdoor"] {
+        for place in ["", "indoor", "outdoor", "unknown"] {
             put(
                 format!("place:{place}"),
                 Filters {
@@ -523,6 +524,9 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                         <a href=(filters.with_view("map")) aria-current=(current(map_view))>"Map"</a>
                     </nav>
                 </div>
+                if filters.sport == "padel" {
+                    <p class="note">"GotCourts has only two padel clubs near Zurich, both with outdoor courts as GotCourts lists them. The padel halls in Zurich (Padelta, PDL, Unipadel, Yakin Arena) book on Playtomic, which this app doesn't read yet."</p>
+                }
                 if open.is_empty() && full.is_empty() {
                     <p class="empty">"No court of these fits. Widen the hours, the distance or the length, or add days."</p>
                 }
@@ -761,6 +765,9 @@ async fn filter_form(
                         <label><input type="radio" name="place" value="" checked=(filters.place.is_empty())> "Any" <span class="count">(count(facets, "place", ""))</span></label>
                         <label><input type="radio" name="place" value="indoor" checked=(filters.place == "indoor")> "Indoor" <span class="count">(count(facets, "place", "indoor"))</span></label>
                         <label><input type="radio" name="place" value="outdoor" checked=(filters.place == "outdoor")> "Outdoor" <span class="count">(count(facets, "place", "outdoor"))</span></label>
+                        if filters.place == "unknown" || facets.of("place", "unknown").unwrap_or(0) > 0 {
+                            <label><input type="radio" name="place" value="unknown" checked=(filters.place == "unknown")> "Not stated" <span class="count">(count(facets, "place", "unknown"))</span></label>
+                        }
                     </div>
                     if surfaces.len() > 1 {
                         <label class="inline">"Surface"
@@ -882,7 +889,7 @@ async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
                         <li>
                             <span class="court">
                                 (court.label.as_str())
-                                <small>(format!("{}{}", surface(&court.surface), if court.indoor { ", indoor" } else { "" }))</small>
+                                <small>(format!("{}, {}", surface(&court.surface), gotcourts::cover_label(court)))</small>
                             </span>
                             <span class="times">
                                 for slot in slots {
@@ -964,7 +971,7 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
                                 }
                             </td>
                             <td>(sport_name(&court.sport))</td>
-                            <td>(format!("{}{}", surface(&court.surface), if court.indoor { ", indoor" } else { ", outdoor" }))</td>
+                            <td>(format!("{}, {}", surface(&court.surface), gotcourts::cover_label(court)))</td>
                             <td>(format!("{}–{}", clock(court.opening), clock(court.closing)))</td>
                             <td>(court.durations.iter().map(|m| format!("{m} min")).collect::<Vec<_>>().join(", "))</td>
                         </tr>
@@ -1207,7 +1214,8 @@ mod tests {
             sport: "tennis".into(),
             label: format!("Platz {id}"),
             surface: "clay".into(),
-            indoor,
+            indoor: Some(indoor),
+            cover: if indoor { "indoor" } else { "outdoor" }.into(),
             ball_machine: false,
             order: id,
             interval: 60,

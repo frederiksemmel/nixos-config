@@ -187,7 +187,7 @@ pub fn matching(watch: &Watch, day: &gotcourts::Day) -> Vec<Slot> {
     let courts: Vec<_> = day
         .courts
         .iter()
-        .filter(|court| !watch.indoor || court.indoor)
+        .filter(|court| !watch.indoor || court.indoor == Some(true))
         .filter(|court| watch.sport.as_deref().is_none_or(|sport| court.sport == sport))
         .cloned()
         .collect();
