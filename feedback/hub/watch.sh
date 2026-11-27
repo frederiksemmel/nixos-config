@@ -14,7 +14,7 @@ legacy() {
   jq -e --arg name "feedback-$1" 'any(.[]; .name == $name and .state != "done")' <<<"$sessions" >/dev/null
 }
 
-while read -r project; do
+while read -r project <&3; do
   name=$(jq -r .name <<<"$project")
   adapter=$(jq -r .adapter <<<"$project")
   repo=$(jq -r .repo <<<"$project")
@@ -69,4 +69,4 @@ while read -r project; do
   else
     echo "$name: starting a session for ${ids[*]} failed"
   fi
-done < <(jq -c '.projects[]' "$CONFIG")
+done 3< <(jq -c '.projects[]' "$CONFIG")
