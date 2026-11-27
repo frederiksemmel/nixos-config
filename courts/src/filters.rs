@@ -22,7 +22,10 @@ pub const LATEST: i64 = 23;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Filters {
-    pub date: String,
+    /// The days to search, in order; at least one.
+    pub dates: Vec<String>,
+    /// Whether tapping a day adds it to the others instead of choosing it alone.
+    pub several: bool,
     pub sport: String,
     pub place: String,
     pub surface: String,
@@ -39,7 +42,8 @@ pub struct Filters {
 impl Default for Filters {
     fn default() -> Self {
         Self {
-            date: time::today(),
+            dates: vec![time::today()],
+            several: false,
             sport: "tennis".into(),
             place: String::new(),
             surface: String::new(),
@@ -66,9 +70,21 @@ impl Filters {
         let mut filters = Self::default();
         let get = |name: &str| given.get(name).map(|v| v.trim().to_string()).filter(|v| !v.is_empty());
         let hour = |name: &str| get(name).and_then(|v| v.parse::<i64>().ok());
-        if let Some(date) = get("date").filter(|d| dates.contains(d)) {
-            filters.date = date;
+        let mut chosen: Vec<String> = given
+            .get("date")
+            .map(|list| {
+                list.split(',')
+                    .map(|d| d.trim().to_string())
+                    .filter(|d| dates.contains(d))
+                    .collect()
+            })
+            .unwrap_or_default();
+        chosen.sort();
+        chosen.dedup();
+        if !chosen.is_empty() {
+            filters.dates = chosen;
         }
+        filters.several = get("several").is_some_and(|v| v == "1") || filters.dates.len() > 1;
         if let Some(sport) = get("sport").filter(|s| sports.contains(s)) {
             filters.sport = sport;
         } else if !sports.contains(&filters.sport) {
@@ -119,7 +135,7 @@ impl Filters {
             query.clone()
         } else {
             let mut merged = pairs(&remembered);
-            for key in ["date", "view"] {
+            for key in ["date", "view", "several"] {
                 if let Some(value) = given.get(key) {
                     merged.insert(key.into(), value.clone());
                 }
@@ -148,7 +164,10 @@ impl Filters {
         let mut out = url::form_urlencoded::Serializer::new(String::new());
         out.append_pair("f", "1");
         if all {
-            out.append_pair("date", &self.date);
+            out.append_pair("date", &self.dates.join(","));
+            if self.several {
+                out.append_pair("several", "1");
+            }
             if self.view == "map" {
                 out.append_pair("view", "map");
             }
@@ -182,12 +201,49 @@ impl Filters {
         format!("/?{}", self.query(true))
     }
 
+    /// The link a day's chip goes to: that day alone, or with several days
+    /// on, that day added to or taken from the others.
     pub fn with_date(&self, date: &str) -> String {
+        let dates = if !self.several {
+            vec![date.to_string()]
+        } else if self.dates.iter().any(|d| d == date) {
+            let rest: Vec<String> = self.dates.iter().filter(|d| *d != date).cloned().collect();
+            if rest.is_empty() { self.dates.clone() } else { rest }
+        } else {
+            let mut more = self.dates.clone();
+            more.push(date.to_string());
+            more.sort();
+            more
+        };
+        Self { dates, ..self.clone() }.link()
+    }
+
+    pub fn with_dates(&self, dates: Vec<String>) -> String {
         Self {
-            date: date.into(),
+            several: dates.len() > 1 || self.several,
+            dates,
             ..self.clone()
         }
         .link()
+    }
+
+    /// Several days on (keeping what is chosen), or off (keeping the first day).
+    pub fn with_several(&self, several: bool) -> String {
+        let dates = if several {
+            self.dates.clone()
+        } else {
+            self.dates[..1].to_vec()
+        };
+        Self {
+            dates,
+            several,
+            ..self.clone()
+        }
+        .link()
+    }
+
+    pub fn first_date(&self) -> &str {
+        &self.dates[0]
     }
 
     pub fn with_view(&self, view: &str) -> String {
@@ -271,8 +327,26 @@ mod tests {
     }
 
     #[test]
+    fn days_are_chosen_alone_or_together() {
+        let dates = time::dates(4);
+        let one = Filters::parse(&format!("date={}", dates[1]), &dates, &sports());
+        assert!(!one.several);
+        assert!(one.with_date(&dates[2]).contains(&format!("date={}&", dates[2])));
+        let several = Filters::parse(&format!("date={},{},nonsense", dates[2], dates[0]), &dates, &sports());
+        assert_eq!(several.dates, vec![dates[0].clone(), dates[2].clone()]);
+        assert!(several.several);
+        let added = Filters::parse(&several.with_date(&dates[1])[2..], &dates, &sports());
+        assert_eq!(added.dates.len(), 3);
+        let removed = Filters::parse(&several.with_date(&dates[0])[2..], &dates, &sports());
+        assert_eq!(removed.dates, vec![dates[2].clone()]);
+        let last = Filters::parse(&removed.with_date(&dates[2])[2..], &dates, &sports());
+        assert_eq!(last.dates, vec![dates[2].clone()]);
+    }
+
+    #[test]
     fn a_preset_sets_the_hours() {
         let filters = Filters::parse("when=17-22&from=8", &time::dates(1), &sports());
+        assert_eq!(filters.dates, time::dates(1));
         assert_eq!((filters.from, filters.until), (17, 22));
         assert_eq!(filters.summary("Tennis"), "Tennis · 17–22 · 1 h");
     }

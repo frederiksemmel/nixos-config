@@ -68,8 +68,8 @@ function popup(pin) {
   if (pin.times.length) {
     const times = element("div", "pop-times");
     for (const time of pin.times) {
-      const link = element("a", "time", time);
-      link.href = pin.book;
+      const link = element("a", "time", time.label);
+      link.href = time.book;
       link.target = "_blank";
       link.rel = "noopener";
       times.append(link);
@@ -119,13 +119,13 @@ async function start() {
     places.get(key).push(pin);
   }
   for (const group of places.values()) {
-    group.sort((a, b) => (a.times[0] || "99") .localeCompare(b.times[0] || "99"));
+    group.sort((a, b) => (b.free ? 1 : 0) - (a.free ? 1 : 0));
     const first = group[0];
     const free = group.some((pin) => pin.free);
-    const button = element("button", free ? "pin" : "pin none", free ? first.times[0] : "–");
+    const button = element("button", free ? "pin" : "pin none", free ? first.times[0].label : "–");
     button.type = "button";
     const names = group.map((pin) => pin.name).join(", ");
-    button.setAttribute("aria-label", free ? `${names}: free from ${first.times[0]}` : `${names}: nothing free`);
+    button.setAttribute("aria-label", free ? `${names}: free from ${first.times[0].label}` : `${names}: nothing free`);
     const content = element("div", "pops");
     for (const pin of group) content.append(popup(pin));
     const marker = new maplibregl.Marker({ element: button })

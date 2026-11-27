@@ -81,9 +81,25 @@ in
       description = "File with `DESEC_TOKEN=<token>`, a deSEC token that may change the zone's records.";
     };
 
+    area = lib.mkOption {
+      type = lib.types.str;
+      default = "47.3779,8.5403,16";
+      description = ''
+        LAT,LNG,KM: where to look on GotCourts' map. The clubs it books for inside the
+        city of Zurich are asked about, and the padel and squash clubs within this area.
+      '';
+    };
+
     clubs = lib.mkOption {
       type = lib.types.listOf lib.types.ints.positive;
-      description = "GotCourts club ids to ask about.";
+      default = [ ];
+      description = "GotCourts club ids to ask about besides what the map lists: clubs missing from the map itself.";
+    };
+
+    exclude = lib.mkOption {
+      type = lib.types.listOf lib.types.ints.positive;
+      default = [ ];
+      description = "GotCourts club ids never to ask about, such as tournament placeholders and duplicates.";
     };
 
     home = lib.mkOption {
@@ -103,7 +119,7 @@ in
       default = 20;
       description = ''
         How many club-days after today to ask about each minute, besides today and the watched
-        days. With 14 days and 39 clubs, 20 brings every one round in about 25 minutes.
+        days. With 14 days and about 40 clubs, 20 brings every one round in about 25 minutes.
       '';
     };
   };
@@ -126,7 +142,9 @@ in
         PORT = toString cfg.appPort;
         COURTS_DB = "/var/lib/courts/courts.db";
         COURTS_ORIGIN = "https://${cfg.domain}";
+        COURTS_AREA = cfg.area;
         COURTS_CLUBS = lib.concatMapStringsSep "," toString cfg.clubs;
+        COURTS_EXCLUDE = lib.concatMapStringsSep "," toString cfg.exclude;
         COURTS_HOME = cfg.home;
         COURTS_DAYS = toString cfg.days;
         COURTS_PER_MINUTE = toString cfg.perMinute;

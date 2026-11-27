@@ -19,7 +19,6 @@ path_param!(id);
 pub struct Site {
     pub home: (f64, f64),
     pub days: i64,
-    pub clubs: Vec<i64>,
 }
 
 const HOURS: std::ops::Range<i64> = 6..23;
@@ -116,19 +115,52 @@ fn current(on: bool) -> &'static str {
     if on { "page" } else { "false" }
 }
 
-struct Row {
-    club: db::Club,
-    km: f64,
+/// One club's free courts on one of the chosen days.
+struct DayFree {
+    date: String,
     courts: Vec<Court>,
     free: Vec<Slot>,
     hours: BTreeMap<i64, usize>,
+}
+
+struct Row {
+    club: db::Club,
+    km: f64,
+    days: Vec<DayFree>,
     fetched_at: i64,
 }
 
+impl Row {
+    fn total(&self) -> usize {
+        self.days.iter().map(|day| day.free.len()).sum()
+    }
+
+    /// The first free start: its day and time.
+    fn soonest(&self) -> Option<(&str, i64)> {
+        self.days.iter().find_map(|day| {
+            day.free
+                .iter()
+                .map(|slot| slot.start)
+                .min()
+                .map(|start| (day.date.as_str(), start))
+        })
+    }
+
+    fn courts(&self) -> Vec<Court> {
+        let mut seen = BTreeSet::new();
+        self.days
+            .iter()
+            .flat_map(|day| day.courts.iter())
+            .filter(|court| seen.insert(court.id))
+            .cloned()
+            .collect()
+    }
+}
+
 /// Every sport some court of these clubs has, tennis first.
-async fn known_sports(db: &Db, site: &Site) -> Vec<String> {
+async fn known_sports(db: &Db, clubs: &[i64]) -> Vec<String> {
     let set: BTreeSet<String> = db
-        .clubs(&site.clubs)
+        .clubs(clubs)
         .await
         .unwrap_or_default()
         .iter()
@@ -163,15 +195,21 @@ struct Pin {
     lng: f64,
     km: String,
     free: usize,
-    times: Vec<String>,
+    times: Vec<PinTime>,
     book: String,
     about: String,
+}
+
+#[derive(serde::Serialize)]
+struct PinTime {
+    label: String,
+    book: String,
 }
 
 /// What one day's stored answers hold, to search with different filters.
 struct Found<'a> {
     clubs: &'a [db::Club],
-    days: &'a BTreeMap<i64, db::Day>,
+    days: &'a BTreeMap<(i64, String), db::Day>,
     home: (f64, f64),
     today: &'a str,
 }
@@ -199,44 +237,57 @@ impl Facets {
 impl Found<'_> {
     fn rows(&self, filters: &Filters) -> Vec<Row> {
         let origin = filters.origin(self.home);
-        let after = (filters.from * 3600).max(if filters.date == self.today {
-            time::seconds_today()
-        } else {
-            0
-        });
         let until = filters.until * 3600;
         self.clubs
             .iter()
             .filter(|club| filters.members || guests(club))
             .filter_map(|club| {
-                let stored = self.days.get(&club.id)?;
-                let courts: Vec<Court> = stored.courts.0.iter().filter(|c| keeps(filters, c)).cloned().collect();
-                if courts.is_empty() {
-                    return None;
-                }
                 let distance = distance(origin, club);
                 if filters.within > 0 && distance > filters.within as f64 {
                     return None;
                 }
-                let free: Vec<Slot> = slots::free_for(&courts, &stored.busy.0, after, filters.length * 60)
-                    .into_iter()
-                    .filter(|slot| slot.end <= until)
+                let mut fetched_at = i64::MAX;
+                let days: Vec<DayFree> = filters
+                    .dates
+                    .iter()
+                    .filter_map(|date| {
+                        let stored = self.days.get(&(club.id, date.clone()))?;
+                        fetched_at = fetched_at.min(stored.fetched_at);
+                        let courts: Vec<Court> =
+                            stored.courts.0.iter().filter(|c| keeps(filters, c)).cloned().collect();
+                        if courts.is_empty() {
+                            return None;
+                        }
+                        let after =
+                            (filters.from * 3600).max(if date == self.today { time::seconds_today() } else { 0 });
+                        let free: Vec<Slot> = slots::free_for(&courts, &stored.busy.0, after, filters.length * 60)
+                            .into_iter()
+                            .filter(|slot| slot.end <= until)
+                            .collect();
+                        let hours = by_hour(&free);
+                        Some(DayFree {
+                            date: date.clone(),
+                            courts,
+                            free,
+                            hours,
+                        })
+                    })
                     .collect();
-                let hours = by_hour(&free);
+                if days.is_empty() {
+                    return None;
+                }
                 Some(Row {
                     km: distance,
                     club: club.clone(),
-                    courts,
-                    free,
-                    hours,
-                    fetched_at: stored.fetched_at,
+                    days,
+                    fetched_at,
                 })
             })
             .collect()
     }
 
     fn count(&self, filters: &Filters) -> usize {
-        self.rows(filters).iter().map(|row| row.free.len()).sum()
+        self.rows(filters).iter().map(Row::total).sum()
     }
 
     fn facets(&self, filters: &Filters, sports: &[String], surfaces: &BTreeSet<String>) -> Facets {
@@ -332,18 +383,20 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     let db = app_context::<Db>(cx).clone();
     let dates = time::dates(site.days);
     let today = time::today();
-    let all_sports = known_sports(&db, &site).await;
+    let all_sports = known_sports(&db, &app_context::<crate::discover::Clubs>(cx).ids()).await;
     let filters = Filters::of(cx, &dates, &all_sports);
-    let date = filters.date.clone();
-    let origin = filters.origin(site.home);
-    let clubs = db.clubs(&site.clubs).await.map_err(topcoat::Error::msg)?;
-    let days: BTreeMap<i64, db::Day> = db
-        .days_on(&date)
+    let date = filters.first_date().to_string();
+    let several = filters.dates.len() > 1;
+    let clubs = db
+        .clubs(&app_context::<crate::discover::Clubs>(cx).ids())
         .await
-        .map_err(topcoat::Error::msg)?
-        .into_iter()
-        .map(|d| (d.club_id, d))
-        .collect();
+        .map_err(topcoat::Error::msg)?;
+    let mut days: BTreeMap<(i64, String), db::Day> = BTreeMap::new();
+    for day in &filters.dates {
+        for stored in db.days_on(day).await.map_err(topcoat::Error::msg)? {
+            days.insert((stored.club_id, day.clone()), stored);
+        }
+    }
     let surfaces_here: BTreeSet<String> = clubs
         .iter()
         .flat_map(|club| club.courts.0.iter())
@@ -359,17 +412,17 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     };
     let facets = found.facets(&filters, &all_sports, &surfaces_here);
     let mut rows = found.rows(&filters);
-    let soonest = |row: &Row| row.free.iter().map(|s| s.start).min().unwrap_or(i64::MAX);
     if filters.sort == "near" {
         rows.sort_by(|a, b| {
-            (a.free.is_empty(), a.km)
-                .partial_cmp(&(b.free.is_empty(), b.km))
+            (a.total() == 0, a.km)
+                .partial_cmp(&(b.total() == 0, b.km))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
     } else {
         rows.sort_by(|a, b| {
-            (a.free.is_empty(), soonest(a), a.km)
-                .partial_cmp(&(b.free.is_empty(), soonest(b), b.km))
+            let (sa, sb) = (a.soonest(), b.soonest());
+            (sa.is_none(), sa, a.km)
+                .partial_cmp(&(sb.is_none(), sb, b.km))
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
     }
@@ -377,25 +430,38 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     let pins: Vec<Pin> = rows
         .iter()
         .map(|row| {
-            let mut starts: Vec<i64> = row.free.iter().map(|s| s.start).collect();
-            starts.sort();
-            starts.dedup();
+            let mut times: Vec<PinTime> = Vec::new();
+            for day in &row.days {
+                let mut starts: Vec<i64> = day.free.iter().map(|s| s.start).collect();
+                starts.sort();
+                starts.dedup();
+                let book = GotCourts::booking_url(&row.club.canonical, &day.date);
+                times.extend(starts.into_iter().map(|start| PinTime {
+                    label: if several {
+                        format!("{} {}", time::weekday(&day.date), clock(start))
+                    } else {
+                        clock(start)
+                    },
+                    book: book.clone(),
+                }));
+            }
+            times.truncate(8);
             Pin {
                 id: row.club.id,
                 name: row.club.name.clone(),
                 lat: row.club.latitude,
                 lng: row.club.longitude,
                 km: format!("{:.1} km", row.km),
-                free: row.free.len(),
-                times: starts.iter().take(8).map(|&s| clock(s)).collect(),
-                book: GotCourts::booking_url(&row.club.canonical, &date),
-                about: format!("{} · {}", surfaces(&row.courts), kind(&row.club)),
+                free: row.total(),
+                times,
+                book: GotCourts::booking_url(&row.club.canonical, row.soonest().map_or(date.as_str(), |(d, _)| d)),
+                about: format!("{} · {}", surfaces(&row.courts()), kind(&row.club)),
             }
         })
         .collect();
     let pins = serde_json::to_string(&pins).unwrap_or_else(|_| "[]".into());
-    let (open, full): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| !r.free.is_empty());
-    let free_total: usize = open.iter().map(|r| r.free.len()).sum();
+    let (open, full): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| r.total() > 0);
+    let free_total: usize = open.iter().map(Row::total).sum();
     let sport_label = sport_name(&filters.sport);
     let hours: Vec<i64> = (filters.from.max(EARLIEST)..filters.until.min(LATEST)).collect();
     let summary = format!(
@@ -405,20 +471,48 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         open.len(),
         if open.len() == 1 { "club" } else { "clubs" }
     );
+    let origin = filters.origin(site.home);
     let map_view = filters.view == "map";
+    let when = if several {
+        format!("{} days", filters.dates.len())
+    } else {
+        time::label(&date)
+    };
+    let weekend = time::weekend(&dates);
+    let next = |n: usize| dates.iter().take(n).cloned().collect::<Vec<_>>();
+    let presets: Vec<(&str, Vec<String>)> = [
+        ("This weekend", weekend),
+        ("Next 3 days", next(3)),
+        ("Next 7 days", next(7)),
+    ]
+    .into_iter()
+    .filter(|(_, days)| days.len() > 1)
+    .collect();
+    let discovered = app_context::<crate::discover::Clubs>(cx).state();
     Ok(view! {
         nav(current: "courts")
-        <nav class="chips dates" aria-label="Day">
-            for d in &dates {
-                <a class=(chip(*d == date)) aria-current=(current(*d == date)) href=(filters.with_date(d))>(time::label(d))</a>
+        <div class="days">
+            <nav class="chips dates" aria-label="Days">
+                <a class=(if filters.several { "chip toggle on" } else { "chip toggle" }) href=(filters.with_several(!filters.several)) aria-pressed=(filters.several.to_string())>"Several days"</a>
+                for d in &dates {
+                    <a class=(chip(filters.dates.contains(d))) aria-current=(current(filters.dates.contains(d))) href=(filters.with_date(d))>(time::label(d))</a>
+                }
+            </nav>
+            if filters.several {
+                <div class="chips presets">
+                    for (label, days) in &presets {
+                        <a class=(chip(filters.dates == *days)) href=(filters.with_dates(days.clone()))>(*label)</a>
+                    }
+                    <span class="quiet hint">"Tap days to add or remove them."</span>
+                </div>
             }
-        </nav>
+        </div>
         filter_form(filters: &filters, sports: &all_sports, surfaces: &surfaces_here, members_only: members_only, facets: &facets)
         <div class=(if map_view { "split show-map" } else { "split" })>
             <section class="results" aria-label="Free courts">
                 <div class="results-head">
                     <p class="summary">
-                        <strong>(time::label(&date))</strong>
+                        <strong>(when.as_str())</strong>
                         (format!(" · {summary}"))
                         if let Some(at) = oldest {
                             <span class="quiet">(format!(" · updated {}", time::ago(at)))</span>
@@ -430,9 +524,40 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                     </nav>
                 </div>
                 if open.is_empty() && full.is_empty() {
-                    <p class="empty">"No court of these fits. Widen the hours, the distance or the length, or try another day."</p>
+                    <p class="empty">"No court of these fits. Widen the hours, the distance or the length, or add days."</p>
                 }
-                if !open.is_empty() && hours.len() > 1 {
+                if !open.is_empty() && several {
+                    <section class="overview" aria-label="Free starts by day">
+                        <div class="grid-wrap">
+                            <table class="grid">
+                                <thead>
+                                    <tr>
+                                        <th scope="col"><span class="sr">"Club"</span></th>
+                                        for d in &filters.dates {
+                                            <th scope="col">(time::weekday(d))</th>
+                                        }
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for row in &open {
+                                        <tr>
+                                            <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
+                                            for d in &filters.dates {
+                                                <td class=(heat(row.days.iter().find(|day| day.date == *d).map_or(0, |day| day.free.len().min(3))))>
+                                                    if let Some(day) = row.days.iter().find(|day| day.date == *d && !day.free.is_empty()) {
+                                                        (day.free.len().to_string())
+                                                    }
+                                                </td>
+                                            }
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="legend quiet">"Free starts per day."</p>
+                    </section>
+                }
+                if !open.is_empty() && !several && hours.len() > 1 {
                     <section class="overview" aria-label="Free courts by hour">
                         <div class="grid-wrap">
                             <table class="grid">
@@ -449,8 +574,8 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                                         <tr>
                                             <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
                                             for hour in &hours {
-                                                <td class=(heat(row.hours.get(hour).copied().unwrap_or(0)))>
-                                                    if let Some(count) = row.hours.get(hour) {
+                                                <td class=(heat(row.days[0].hours.get(hour).copied().unwrap_or(0)))>
+                                                    if let Some(count) = row.days[0].hours.get(hour) {
                                                         (count.to_string())
                                                     }
                                                 </td>
@@ -465,7 +590,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 }
                 <div class="cards">
                     for row in &open {
-                        club_card(row: row, date: &date, length: filters.length)
+                        club_card(row: row, length: filters.length, several: several)
                     }
                 </div>
                 if !full.is_empty() {
@@ -481,11 +606,40 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                         </ul>
                     </section>
                 }
+                coverage(discovered: &discovered)
             </section>
             <section class="map-pane" aria-label="Map">
                 <div id="map" class="map" data-pins=(pins.as_str()) data-origin=(format!("{},{}", origin.0, origin.1)) data-here=(if filters.near.is_some() { "1" } else { "" })></div>
             </section>
         </div>
+    })
+}
+
+/// Where the clubs come from, and what GotCourts' map couldn't say.
+#[component]
+async fn coverage(discovered: &crate::discover::Discovered) -> Result<impl View> {
+    let holes = discovered.holes.len();
+    Ok(view! {
+        <p class="coverage quiet">
+            if discovered.at > 0 {
+                (format!(
+                    "{} clubs from GotCourts' map, checked {}: of {} clubs it lists around Zurich, {} take bookings on GotCourts. ",
+                    discovered.clubs.len(),
+                    time::ago(discovered.at),
+                    discovered.listed,
+                    discovered.booking
+                ))
+                if holes > 0 {
+                    (format!(
+                        "The map can't answer for {} small {} around Hottingen (GotCourts fails there), so a club right there could be missing.",
+                        holes,
+                        if holes == 1 { "spot" } else { "spots" }
+                    ))
+                }
+            } else {
+                "Looking for clubs on GotCourts' map; this takes a few minutes after a start."
+            }
+        </p>
     })
 }
 
@@ -533,7 +687,8 @@ async fn filter_form(
     };
     let cleared = facets.cleared.saturating_sub(facets.current);
     let clear_link = Filters {
-        date: filters.date.clone(),
+        dates: filters.dates.clone(),
+        several: filters.several,
         sport: filters.sport.clone(),
         view: filters.view.clone(),
         near: filters.near,
@@ -553,7 +708,8 @@ async fn filter_form(
             </summary>
             <form method="get" action="/" data-autosubmit="">
                 <input type="hidden" name="f" value="1">
-                <input type="hidden" name="date" value=(filters.date.as_str())>
+                <input type="hidden" name="date" value=(filters.dates.join(","))>
+                <input type="hidden" name="several" value=(if filters.several { "1" } else { "" })>
                 <input type="hidden" name="view" value=(filters.view.as_str())>
                 <input type="hidden" name="near" value=(filters.near.map(|(a, b)| format!("{a:.4},{b:.4}")).unwrap_or_default())>
                 if sports.len() > 1 {
@@ -670,28 +826,41 @@ pub async fn nav(current: &'static str) -> Result<impl View> {
     })
 }
 
+/// A day of a club card: the day, its booking link, and each court's free starts.
+type CardDay<'a> = (&'a DayFree, String, Vec<(&'a Court, Vec<&'a Slot>)>);
+
 #[component]
-async fn club_card(row: &Row, date: &str, length: i64) -> Result<impl View> {
+async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
     let club = &row.club;
-    let courts: Vec<(&Court, Vec<&Slot>)> = row
-        .courts
+    let courts = row.courts();
+    let first = row.soonest().map_or(row.days[0].date.clone(), |(d, _)| d.to_string());
+    let book = GotCourts::booking_url(&club.canonical, &first);
+    let days: Vec<CardDay> = row
+        .days
         .iter()
-        .map(|court| {
-            (
-                court,
-                row.free.iter().filter(|s| s.court == court.id).collect::<Vec<_>>(),
-            )
+        .filter(|day| !day.free.is_empty())
+        .map(|day| {
+            let free = day
+                .courts
+                .iter()
+                .map(|court| {
+                    (
+                        court,
+                        day.free.iter().filter(|s| s.court == court.id).collect::<Vec<_>>(),
+                    )
+                })
+                .filter(|(_, free)| !free.is_empty())
+                .collect();
+            (day, GotCourts::booking_url(&club.canonical, &day.date), free)
         })
-        .filter(|(_, free)| !free.is_empty())
         .collect();
-    let book = GotCourts::booking_url(&club.canonical, date);
     Ok(view! {
         <section class="club" id=(format!("club-{}", club.id)) data-club=(club.id.to_string())>
             <header>
                 <div>
                     <h2><a href=(format!("/clubs/{}", club.id))>(club.name.as_str())</a></h2>
                     <p class="meta">
-                        (format!("{:.1} km · {} · {}", row.km, surfaces(&row.courts), club.city))
+                        (format!("{:.1} km · {} · {}", row.km, surfaces(&courts), club.city))
                         if !kind(club).is_empty() {
                             (format!(" · {}", kind(club)))
                         }
@@ -704,21 +873,26 @@ async fn club_card(row: &Row, date: &str, length: i64) -> Result<impl View> {
                     <a class="pill" href=(book.as_str()) target="_blank" rel="noopener">"Book"</a>
                 </div>
             </header>
-            <ul class="courts">
-                for (court, free) in &courts {
-                    <li>
-                        <span class="court">
-                            (court.label.as_str())
-                            <small>(format!("{}{}", surface(&court.surface), if court.indoor { ", indoor" } else { "" }))</small>
-                        </span>
-                        <span class="times">
-                            for slot in free {
-                                <a class="time" href=(book.as_str()) target="_blank" rel="noopener" title=(format!("{}–{}", clock(slot.start), clock(slot.start + length * 60)))>(clock(slot.start))</a>
-                            }
-                        </span>
-                    </li>
+            for (day, book, free) in &days {
+                if several {
+                    <h3 class="day-head">(time::label(&day.date))</h3>
                 }
-            </ul>
+                <ul class="courts">
+                    for (court, slots) in free {
+                        <li>
+                            <span class="court">
+                                (court.label.as_str())
+                                <small>(format!("{}{}", surface(&court.surface), if court.indoor { ", indoor" } else { "" }))</small>
+                            </span>
+                            <span class="times">
+                                for slot in slots {
+                                    <a class="time" href=(book.as_str()) target="_blank" rel="noopener" title=(format!("{}–{}", clock(slot.start), clock(slot.start + length * 60)))>(clock(slot.start))</a>
+                                }
+                            </span>
+                        </li>
+                    }
+                </ul>
+            }
         </section>
     })
 }
@@ -852,7 +1026,10 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
         .to_string();
     let site = app_context::<Site>(cx).clone();
     let db = app_context::<Db>(cx).clone();
-    let clubs = db.clubs(&site.clubs).await.map_err(topcoat::Error::msg)?;
+    let clubs = db
+        .clubs(&app_context::<crate::discover::Clubs>(cx).ids())
+        .await
+        .map_err(topcoat::Error::msg)?;
     let mut listed = Vec::new();
     for watch in db.watches().await.map_err(topcoat::Error::msg)? {
         let mut free = 0;
@@ -880,7 +1057,7 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
         listed.push(Listed { watch, club, free });
     }
     let dates = time::dates(site.days);
-    let all_sports = known_sports(&db, &site).await;
+    let all_sports = known_sports(&db, &app_context::<crate::discover::Clubs>(cx).ids()).await;
     Ok(view! {
         nav(current: "watches")
         <article class="page watches">
@@ -1071,7 +1248,7 @@ mod tests {
             }]),
         };
         let clubs = vec![club];
-        let days = BTreeMap::from([(1, day)]);
+        let days = BTreeMap::from([((1, date.clone()), day)]);
         let found = Found {
             clubs: &clubs,
             days: &days,
@@ -1079,7 +1256,7 @@ mod tests {
             today: "2000-01-01",
         };
         let filters = Filters {
-            date,
+            dates: vec![date],
             place: "indoor".into(),
             ..Filters::default()
         };

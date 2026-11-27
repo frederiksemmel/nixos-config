@@ -2,6 +2,7 @@
 
 mod auth;
 mod db;
+mod discover;
 mod feedback;
 mod filters;
 mod gotcourts;
@@ -25,7 +26,9 @@ use topcoat_asset::{Bundler, BundlerConfig};
 const USAGE: &str = "usage: courts [bundle DIR | toasty ARGS…]
 
 Serves the court finder on HOST:PORT (default 127.0.0.1:3000) and asks
-GotCourts about COURTS_CLUBS (comma-separated club ids) every minute.
+GotCourts every minute about the clubs its map lists inside the city of
+Zurich, and the padel and squash within COURTS_AREA (LAT,LNG,KM; default
+Zurich HB, 16 km), plus COURTS_CLUBS and minus COURTS_EXCLUDE (club ids).
 COURTS_DB is the database (default ./courts.db).
 COURTS_KEY_FILE holds the key to sign in with (default: made up, beside the database).
 COURTS_ORIGIN is where the site is on the web, for push services.
@@ -110,11 +113,20 @@ async fn serve() -> Result<(), String> {
         .await
         .map_err(|error| format!("database: {error}"))?;
     let key = key()?;
-    let clubs: Vec<i64> = var("COURTS_CLUBS")
-        .unwrap_or_default()
-        .split(',')
-        .filter_map(|id| id.trim().parse().ok())
-        .collect();
+    let ids = |name: &str| -> Vec<i64> {
+        var(name)
+            .unwrap_or_default()
+            .split(',')
+            .filter_map(|id| id.trim().parse().ok())
+            .collect()
+    };
+    let area = var("COURTS_AREA")
+        .and_then(|area| discover::Area::parse(&area))
+        .unwrap_or(discover::Area {
+            latitude: 47.3779,
+            longitude: 8.5403,
+            km: 16.0,
+        });
     let home = var("COURTS_HOME")
         .and_then(|home| {
             let (lat, lng) = home.split_once(',')?;
@@ -128,11 +140,21 @@ async fn serve() -> Result<(), String> {
     let per_minute = var("COURTS_PER_MINUTE").and_then(|d| d.parse().ok()).unwrap_or(20usize);
     let origin = var("COURTS_ORIGIN").unwrap_or_else(|| "https://localhost".into());
     let push = push::Push::new(db.clone(), origin.clone());
+    let clubs = discover::Clubs::default();
+    let finder = std::sync::Arc::new(discover::Finder {
+        db: db.clone(),
+        gotcourts: gotcourts::GotCourts::default(),
+        clubs: clubs.clone(),
+        area,
+        extra: ids("COURTS_CLUBS"),
+        exclude: ids("COURTS_EXCLUDE"),
+    });
     let poller = poll::Poller {
         db: db.clone(),
         gotcourts: gotcourts::GotCourts::default(),
         push: push.clone(),
         clubs: clubs.clone(),
+        finder,
         days,
         per_minute,
     };
@@ -146,11 +168,8 @@ async fn serve() -> Result<(), String> {
         .app_context(poller)
         .app_context(auth::Key(key))
         .app_context(auth::Origin(origin))
-        .app_context(pages::Site {
-            home,
-            days,
-            clubs: clubs.clone(),
-        })
+        .app_context(pages::Site { home, days })
+        .app_context(clubs)
         .assets(assets)
         .runtime()
         .build();

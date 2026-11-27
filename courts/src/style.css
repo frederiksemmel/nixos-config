@@ -417,3 +417,11 @@ textarea { resize: vertical; line-height: 1.45; }
 .filters-more { flex: none; color: var(--accent); font-size: 0.833rem; font-weight: 600; order: 3; }
 .filters-foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding-top: 4px; border-top: 1px solid var(--line); padding-top: 12px; }
 .filters-foot .chip { background: var(--canvas); }
+
+.days { display: grid; gap: 0; }
+.presets { align-items: center; }
+.presets .hint { flex: none; white-space: nowrap; font-size: 0.833rem; padding-left: 4px; }
+.chip.toggle { border: 1px solid var(--line); }
+.chip.toggle.on { border-color: transparent; }
+.day-head { margin: 14px 0 2px; font-size: 0.94rem; font-weight: 700; color: var(--accent); }
+.coverage { font-size: 0.833rem; margin: 32px 0 0; max-width: 70ch; }

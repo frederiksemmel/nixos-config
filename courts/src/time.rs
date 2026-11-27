@@ -58,6 +58,34 @@ pub fn label(date: &str) -> String {
     }
 }
 
+/// "Today", or the weekday: "Sat".
+pub fn weekday(date: &str) -> String {
+    match parse(date) {
+        Some(day) if day == here().date() => "Today".into(),
+        Some(day) => day.strftime("%a").to_string(),
+        None => date.to_string(),
+    }
+}
+
+/// The coming Saturday and Sunday among `dates` (today, if it is one of them).
+pub fn weekend(dates: &[String]) -> Vec<String> {
+    use jiff::civil::Weekday;
+    let mut days: Vec<String> = Vec::new();
+    for date in dates {
+        let Some(day) = parse(date) else { continue };
+        match day.weekday() {
+            Weekday::Saturday => days.push(date.clone()),
+            Weekday::Sunday => {
+                days.push(date.clone());
+                break;
+            }
+            _ if !days.is_empty() => break,
+            _ => {}
+        }
+    }
+    days
+}
+
 pub fn short(day: Date) -> String {
     day.strftime("%a %-d.%-m.").to_string()
 }
@@ -86,5 +114,10 @@ mod tests {
         assert_eq!(label(&days[1]), "Tomorrow");
         assert_eq!(short("2026-12-05".parse().unwrap()), "Sat 5.12.");
         assert_eq!(midnight("2026-11-27"), Some(1795734000));
+        let around: Vec<String> = ["2026-11-27", "2026-11-28", "2026-11-29", "2026-11-30"]
+            .map(String::from)
+            .to_vec();
+        assert_eq!(weekend(&around), ["2026-11-28", "2026-11-29"]);
+        assert_eq!(weekend(&around[2..]), ["2026-11-29"]);
     }
 }

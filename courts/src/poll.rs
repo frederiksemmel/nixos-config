@@ -18,7 +18,8 @@ pub struct Poller {
     pub db: Db,
     pub gotcourts: GotCourts,
     pub push: Push,
-    pub clubs: Vec<i64>,
+    pub clubs: crate::discover::Clubs,
+    pub finder: std::sync::Arc<crate::discover::Finder>,
     pub days: i64,
     pub per_minute: usize,
 }
@@ -27,11 +28,13 @@ impl Poller {
     pub async fn run(self) {
         let mut turn = 0usize;
         let mut today = String::new();
+        self.finder.ready().await;
         self.first_pass().await;
         let mut tick = tokio::time::interval(Duration::from_secs(60));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
         loop {
             tick.tick().await;
+            self.finder.refresh().await;
             let now = time::today();
             if now != today {
                 if let Err(error) = self.db.forget_before(&now).await {
@@ -56,7 +59,7 @@ impl Poller {
     async fn first_pass(&self) {
         let watches = self.db.watches().await.unwrap_or_default();
         for date in time::dates(self.days.min(7)) {
-            for &club in &self.clubs {
+            for club in self.clubs.ids() {
                 self.fetch(club, &date, &watches).await;
                 tokio::time::sleep(BETWEEN_REQUESTS).await;
             }
@@ -67,19 +70,20 @@ impl Poller {
     /// club, then the `turn`th slice of the days after.
     fn wanted(&self, today: &str, watches: &[Watch], turn: usize) -> Vec<(i64, String)> {
         let dates = time::dates(self.days);
-        let mut wanted: BTreeSet<(i64, String)> = self.clubs.iter().map(|&club| (club, today.to_string())).collect();
+        let clubs = self.clubs.ids();
+        let mut wanted: BTreeSet<(i64, String)> = clubs.iter().map(|&club| (club, today.to_string())).collect();
         for watch in watches.iter().filter(|w| dates.contains(&w.date)) {
             match watch.club_id {
                 Some(club) => {
                     wanted.insert((club, watch.date.clone()));
                 }
-                None => wanted.extend(self.clubs.iter().map(|&club| (club, watch.date.clone()))),
+                None => wanted.extend(clubs.iter().map(|&club| (club, watch.date.clone()))),
             }
         }
         let rest: Vec<(i64, String)> = dates
             .iter()
             .skip(1)
-            .flat_map(|date| self.clubs.iter().map(move |&club| (club, date.clone())))
+            .flat_map(|date| clubs.iter().map(move |&club| (club, date.clone())))
             .filter(|key| !wanted.contains(key))
             .collect();
         let mut list: Vec<(i64, String)> = wanted.into_iter().collect();

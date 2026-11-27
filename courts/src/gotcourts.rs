@@ -58,6 +58,44 @@ pub struct Club {
     pub kind: String,
 }
 
+/// A club on GotCourts' map. `books` is whether GotCourts takes bookings
+/// for it (its "syc" flow) rather than only listing it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Listed {
+    pub canonical: String,
+    pub name: String,
+    pub city: String,
+    pub latitude: f64,
+    pub longitude: f64,
+    pub books: bool,
+}
+
+pub fn listing(body: &Value) -> Result<Vec<Listed>, Error> {
+    if body.get("status") != Some(&Value::Bool(true)) {
+        let response = body.get("response").unwrap_or(body);
+        let why = [text(&response["exception"]), text(&response["message"])]
+            .into_iter()
+            .find(|why| !why.is_empty())
+            .unwrap_or_else(|| body.to_string());
+        return Err(Error::Failed(why));
+    }
+    Ok(body["response"]["clubs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|club| {
+            Some(Listed {
+                canonical: Some(text(&club["canonical_name"])).filter(|c| !c.is_empty())?,
+                name: text(&club["club_name"]),
+                city: text(&club["city"]),
+                latitude: number(&club["latitude"])?,
+                longitude: number(&club["longitude"])?,
+                books: text(&club["flow"]) == "syc",
+            })
+        })
+        .collect())
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Day {
     pub club: Club,
@@ -99,11 +137,9 @@ impl Default for GotCourts {
 }
 
 impl GotCourts {
-    /// The club, its courts and everything taken on `date` (YYYY-MM-DD).
-    pub async fn day(&self, club: i64, date: &str) -> Result<Day, Error> {
+    async fn get(&self, url: String) -> Result<Value, Error> {
         let agent = self.agent.clone();
-        let url = format!("{BASE}/en/api/public/clubs/{club}/reservations?date={date}");
-        let body = tokio::task::spawn_blocking(move || -> Result<Value, Error> {
+        tokio::task::spawn_blocking(move || -> Result<Value, Error> {
             let mut response = agent
                 .get(&url)
                 .header("Accept", "application/json")
@@ -116,8 +152,33 @@ impl GotCourts {
                 .map_err(|error| Error::Failed(format!("not JSON: {error}")))
         })
         .await
-        .map_err(|error| Error::Failed(error.to_string()))??;
-        parse(&body)
+        .map_err(|error| Error::Failed(error.to_string()))?
+    }
+
+    /// The club, its courts and everything taken on `date` (YYYY-MM-DD).
+    pub async fn day(&self, club: i64, date: &str) -> Result<Day, Error> {
+        parse(
+            &self
+                .get(format!("{BASE}/en/api/public/clubs/{club}/reservations?date={date}"))
+                .await?,
+        )
+    }
+
+    /// Every club GotCourts' own map shows within `km` of a point.
+    pub async fn listed(&self, latitude: f64, longitude: f64, km: f64) -> Result<Vec<Listed>, Error> {
+        let url = format!(
+            "{BASE}/en/api2/public/clubs/for/map?location%5Blatitude%5D={latitude:.5}&location%5Blongitude%5D={longitude:.5}&location%5BtimeZone%5D=Europe%2FZurich&location%5Brange%5D={km:.2}"
+        );
+        listing(&self.get(url).await?)
+    }
+
+    /// The number a club's reservations are asked for by, from its map name.
+    pub async fn id_of(&self, canonical: &str) -> Result<i64, Error> {
+        let body = self
+            .get(format!("{BASE}/en/api/public/club/{canonical}/profile"))
+            .await?;
+        let club = &body.get("response").unwrap_or(&body)["club"];
+        int(&club["id"]).ok_or_else(|| Error::Failed(format!("no id for {canonical}")))
     }
 
     /// Where someone books at `club` on `date`, on GotCourts' own page.
@@ -271,6 +332,22 @@ mod tests {
             day.busy[1].note.as_deref(),
             Some("No booking from 8:00 to 21:00. Only club members can book.")
         );
+    }
+
+    #[test]
+    fn the_map_lists_clubs_and_whether_gotcourts_books_them() {
+        let body = serde_json::json!({"status": true, "response": {"clubs": [
+            {"club_id": "clb_1", "club_name": "TA Hardhof", "city": "Zürich", "canonical_name": "hardhof-sportamt",
+             "flow": "syc", "latitude": "47.39", "longitude": "8.49"},
+            {"club_id": "clb_2", "club_name": "Heidi", "city": "Zürich", "canonical_name": "heidi",
+             "flow": "ncc", "latitude": "47.37", "longitude": "8.50"}]}});
+        let listed = listing(&body).unwrap();
+        assert_eq!(listed.len(), 2);
+        assert!(listed[0].books && !listed[1].books);
+        assert_eq!(listed[0].canonical, "hardhof-sportamt");
+        let broken = serde_json::json!({"status": false, "response": {"error": 500, "message": "",
+            "exception": "Doctrine\\ORM\\NonUniqueResultException"}});
+        assert!(matches!(listing(&broken), Err(Error::Failed(why)) if why.contains("NonUnique")));
     }
 
     #[test]
