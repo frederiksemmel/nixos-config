@@ -77,6 +77,7 @@
           ./semmeltv/flake-module.nix
           ./epaper/flake-module.nix
           ./beachparty/flake-module.nix
+          ./courts/flake-module.nix
           {
             options.flake = flake-parts-lib.mkSubmoduleOptions {
               deploy.nodes = lib.mkOption {

@@ -1,0 +1,423 @@
+use crate::gotcourts::{self, Busy, Court};
+use std::fs;
+use std::path::Path;
+use std::time::Duration;
+use toasty::Json;
+use toasty_driver_sqlite::{JournalMode, Sqlite, Synchronous};
+
+static MIGRATIONS: toasty::migration::MigrationSet = toasty::embed_migrations!("toasty");
+
+pub type Error = Box<dyn std::error::Error + Send + Sync>;
+pub type Result<T> = std::result::Result<T, Error>;
+
+mod models {
+    use super::*;
+
+    #[derive(Debug, toasty::Model)]
+    pub struct Club {
+        #[key]
+        pub id: i64,
+        pub name: String,
+        pub canonical: String,
+        pub address: String,
+        pub zip: String,
+        pub city: String,
+        pub latitude: f64,
+        pub longitude: f64,
+        pub phone: String,
+        pub web: String,
+        pub kind: String,
+        #[column(type = text)]
+        pub courts: Json<Vec<Court>>,
+        pub checked_at: i64,
+    }
+
+    /// What GotCourts said about one club on one date, the last time it was asked.
+    #[derive(Debug, toasty::Model)]
+    #[key(club_id, date)]
+    pub struct Day {
+        pub club_id: i64,
+        pub date: String,
+        pub fetched_at: i64,
+        #[column(type = text)]
+        pub courts: Json<Vec<Court>>,
+        #[column(type = text)]
+        pub busy: Json<Vec<Busy>>,
+    }
+
+    /// A club GotCourts doesn't book for, asked again after a day.
+    #[derive(Debug, toasty::Model)]
+    #[table = "closed_clubs"]
+    pub struct Closed {
+        #[key]
+        pub club_id: i64,
+        pub why: String,
+        pub at: i64,
+    }
+
+    #[derive(Debug, toasty::Model)]
+    pub struct Watch {
+        #[key]
+        #[auto]
+        pub id: i64,
+        pub club_id: Option<i64>,
+        #[index]
+        pub date: String,
+        pub earliest: i64,
+        pub latest: i64,
+        pub indoor: bool,
+        pub created_at: i64,
+    }
+
+    /// A free slot a watch already told about, so it is told once.
+    #[derive(Debug, toasty::Model)]
+    #[table = "told"]
+    #[key(watch_id, court_id, start)]
+    pub struct Told {
+        pub watch_id: i64,
+        pub court_id: i64,
+        pub start: i64,
+        pub date: String,
+    }
+
+    #[derive(Debug, toasty::Model)]
+    pub struct Subscription {
+        #[key]
+        pub endpoint: String,
+        pub p256dh: String,
+        pub auth: String,
+        pub created_at: i64,
+    }
+
+    #[derive(Debug, toasty::Model)]
+    pub struct Setting {
+        #[key]
+        pub name: String,
+        pub value: String,
+    }
+
+    pub fn all() -> toasty::ModelSet {
+        toasty::models!(Club, Day, Closed, Watch, Told, Subscription, Setting)
+    }
+}
+
+use models::{Closed, Setting, Told};
+pub use models::{Club, Day, Subscription, Watch};
+
+#[derive(Clone)]
+pub struct Db {
+    db: toasty::Db,
+}
+
+impl Db {
+    pub async fn open(file: &Path) -> Result<Self> {
+        if let Some(dir) = file.parent() {
+            fs::create_dir_all(dir)?;
+        }
+        let driver = Sqlite::open(file)
+            .journal_mode(JournalMode::Wal)
+            .synchronous(Synchronous::Normal)
+            .busy_timeout(Duration::from_secs(5));
+        Self::ready(driver).await
+    }
+
+    #[cfg(test)]
+    pub async fn memory() -> Self {
+        Self::ready(Sqlite::in_memory()).await.unwrap()
+    }
+
+    async fn ready(driver: Sqlite) -> Result<Self> {
+        let db = toasty::Db::builder().models(models::all()).build(driver).await?;
+        MIGRATIONS.apply(&db).await?;
+        Ok(Self { db })
+    }
+
+    pub async fn save_day(&self, day: &gotcourts::Day, date: &str, now: i64) -> Result<()> {
+        let mut db = self.db.clone();
+        let club = &day.club;
+        Club::upsert_by_id(club.id)
+            .name(club.name.clone())
+            .canonical(club.canonical.clone())
+            .address(club.address.clone())
+            .zip(club.zip.clone())
+            .city(club.city.clone())
+            .latitude(club.latitude)
+            .longitude(club.longitude)
+            .phone(club.phone.clone())
+            .web(club.web.clone())
+            .kind(club.kind.clone())
+            .courts(day.courts.clone())
+            .checked_at(now)
+            .exec(&mut db)
+            .await?;
+        Day::upsert_by_club_id_and_date(club.id, date.to_string())
+            .fetched_at(now)
+            .courts(day.courts.clone())
+            .busy(day.busy.clone())
+            .exec(&mut db)
+            .await?;
+        Closed::filter_by_club_id(club.id).delete().exec(&mut db).await?;
+        Ok(())
+    }
+
+    pub async fn close(&self, club: i64, why: &str, now: i64) -> Result<()> {
+        let mut db = self.db.clone();
+        Closed::upsert_by_club_id(club)
+            .why(why.to_string())
+            .at(now)
+            .exec(&mut db)
+            .await?;
+        Ok(())
+    }
+
+    /// When GotCourts last said it doesn't book for `club`.
+    pub async fn closed_at(&self, club: i64) -> Result<Option<i64>> {
+        let mut db = self.db.clone();
+        let found = Closed::filter_by_club_id(club).first().exec(&mut db).await?;
+        Ok(found.map(|closed| closed.at))
+    }
+
+    pub async fn clubs(&self) -> Result<Vec<Club>> {
+        let mut db = self.db.clone();
+        let closed: Vec<i64> = Closed::all()
+            .exec(&mut db)
+            .await?
+            .into_iter()
+            .map(|c| c.club_id)
+            .collect();
+        let mut clubs: Vec<Club> = Club::all()
+            .exec(&mut db)
+            .await?
+            .into_iter()
+            .filter(|club| !closed.contains(&club.id))
+            .collect();
+        clubs.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(clubs)
+    }
+
+    pub async fn club(&self, id: i64) -> Result<Option<Club>> {
+        let mut db = self.db.clone();
+        Ok(Club::filter_by_id(id).first().exec(&mut db).await?)
+    }
+
+    pub async fn days_on(&self, date: &str) -> Result<Vec<Day>> {
+        let mut db = self.db.clone();
+        let fields = Day::fields();
+        Ok(Day::filter(fields.date().eq(date.to_string())).exec(&mut db).await?)
+    }
+
+    pub async fn days_of(&self, club: i64) -> Result<Vec<Day>> {
+        let mut db = self.db.clone();
+        let fields = Day::fields();
+        Ok(Day::filter(fields.club_id().eq(club)).exec(&mut db).await?)
+    }
+
+    #[cfg(test)]
+    pub async fn day(&self, club: i64, date: &str) -> Result<Option<Day>> {
+        let mut db = self.db.clone();
+        Ok(Day::filter_by_club_id_and_date(club, date.to_string())
+            .first()
+            .exec(&mut db)
+            .await?)
+    }
+
+    pub async fn forget_before(&self, date: &str) -> Result<()> {
+        let mut db = self.db.clone();
+        let day = Day::fields();
+        Day::filter(day.date().lt(date.to_string()))
+            .delete()
+            .exec(&mut db)
+            .await?;
+        let watch = Watch::fields();
+        let old: Vec<i64> = Watch::filter(watch.date().lt(date.to_string()))
+            .exec(&mut db)
+            .await?
+            .into_iter()
+            .map(|w| w.id)
+            .collect();
+        for id in old {
+            self.forget_watch(id).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn watches(&self) -> Result<Vec<Watch>> {
+        let mut db = self.db.clone();
+        let mut watches = Watch::all().exec(&mut db).await?;
+        watches.sort_by(|a, b| (&a.date, a.earliest).cmp(&(&b.date, b.earliest)));
+        Ok(watches)
+    }
+
+    pub async fn add_watch(
+        &self,
+        club: Option<i64>,
+        date: &str,
+        earliest: i64,
+        latest: i64,
+        indoor: bool,
+        now: i64,
+    ) -> Result<Watch> {
+        let mut db = self.db.clone();
+        Ok(toasty::create!(Watch {
+            club_id: club,
+            date: date.to_string(),
+            earliest,
+            latest,
+            indoor,
+            created_at: now,
+        })
+        .exec(&mut db)
+        .await?)
+    }
+
+    pub async fn forget_watch(&self, id: i64) -> Result<()> {
+        let mut db = self.db.clone();
+        Told::filter(Told::fields().watch_id().eq(id))
+            .delete()
+            .exec(&mut db)
+            .await?;
+        Watch::filter_by_id(id).delete().exec(&mut db).await?;
+        Ok(())
+    }
+
+    /// The (court, start) pairs `watch` told about before.
+    pub async fn told(&self, watch: i64) -> Result<Vec<(i64, i64)>> {
+        let mut db = self.db.clone();
+        Ok(Told::filter(Told::fields().watch_id().eq(watch))
+            .exec(&mut db)
+            .await?
+            .into_iter()
+            .map(|told| (told.court_id, told.start))
+            .collect())
+    }
+
+    pub async fn tell(&self, watch: i64, date: &str, court: i64, start: i64) -> Result<()> {
+        let mut db = self.db.clone();
+        Told::upsert_by_watch_id_and_court_id_and_start(watch, court, start)
+            .date(date.to_string())
+            .exec(&mut db)
+            .await?;
+        Ok(())
+    }
+
+    /// Forgets that `watch` told about a slot that is taken again, so it
+    /// tells once more when it frees up.
+    pub async fn untell(&self, watch: i64, court: i64, start: i64) -> Result<()> {
+        let mut db = self.db.clone();
+        Told::filter_by_watch_id_and_court_id_and_start(watch, court, start)
+            .delete()
+            .exec(&mut db)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn subscribe(&self, subscription: Subscription) -> Result<()> {
+        let mut db = self.db.clone();
+        Subscription::upsert_by_endpoint(subscription.endpoint)
+            .p256dh(subscription.p256dh)
+            .auth(subscription.auth)
+            .created_at(subscription.created_at)
+            .exec(&mut db)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn unsubscribe(&self, endpoint: &str) -> Result<()> {
+        let mut db = self.db.clone();
+        Subscription::filter_by_endpoint(endpoint.to_string())
+            .delete()
+            .exec(&mut db)
+            .await?;
+        Ok(())
+    }
+
+    pub async fn subscriptions(&self) -> Result<Vec<Subscription>> {
+        let mut db = self.db.clone();
+        Ok(Subscription::all().exec(&mut db).await?)
+    }
+
+    pub async fn setting(&self, name: &str) -> Result<Option<String>> {
+        let mut db = self.db.clone();
+        let found = Setting::filter_by_name(name.to_string()).first().exec(&mut db).await?;
+        Ok(found.map(|setting| setting.value))
+    }
+
+    pub async fn set_setting(&self, name: &str, value: &str) -> Result<()> {
+        let mut db = self.db.clone();
+        Setting::upsert_by_name(name.to_string())
+            .value(value.to_string())
+            .exec(&mut db)
+            .await?;
+        Ok(())
+    }
+}
+
+pub async fn toasty_cli(file: &Path, arguments: Vec<String>) -> Result<()> {
+    let config = toasty_cli::Config::new().migration(toasty_cli::MigrationConfig::new().path("toasty"));
+    let db = toasty::Db::builder()
+        .models(models::all())
+        .build(Sqlite::open(file))
+        .await?;
+    toasty_cli::ToastyCli::with_config(db, config)
+        .parse_from(std::iter::once("toasty".to_string()).chain(arguments))
+        .await
+        .map_err(|error| toasty::Error::from_args(format_args!("{error:#}")))?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn day(busy: Vec<Busy>) -> gotcourts::Day {
+        gotcourts::Day {
+            club: gotcourts::Club {
+                id: 20,
+                name: "Lengg".into(),
+                canonical: "lengg".into(),
+                address: "Lengg 1".into(),
+                zip: "8008".into(),
+                city: "Zürich".into(),
+                latitude: 47.35,
+                longitude: 8.57,
+                phone: String::new(),
+                web: String::new(),
+                kind: "public".into(),
+            },
+            courts: vec![],
+            busy,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_day_fetched_again_replaces_what_was_taken() {
+        let db = Db::memory().await;
+        let busy = Busy {
+            court: Some(1),
+            start: 3600,
+            end: 7200,
+            note: None,
+        };
+        db.save_day(&day(vec![busy.clone()]), "2026-12-01", 1).await.unwrap();
+        db.save_day(&day(vec![]), "2026-12-01", 2).await.unwrap();
+        let stored = db.day(20, "2026-12-01").await.unwrap().unwrap();
+        assert!(stored.busy.0.is_empty());
+        assert_eq!(stored.fetched_at, 2);
+        assert_eq!(db.clubs().await.unwrap().len(), 1);
+        db.close(20, "unknown club", 3).await.unwrap();
+        assert!(db.clubs().await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_watch_tells_once_and_goes_with_its_date() {
+        let db = Db::memory().await;
+        let watch = db.add_watch(None, "2026-12-01", 0, 86400, false, 1).await.unwrap();
+        db.tell(watch.id, "2026-12-01", 5, 3600).await.unwrap();
+        db.tell(watch.id, "2026-12-01", 5, 3600).await.unwrap();
+        assert_eq!(db.told(watch.id).await.unwrap(), [(5, 3600)]);
+        db.untell(watch.id, 5, 3600).await.unwrap();
+        assert!(db.told(watch.id).await.unwrap().is_empty());
+        db.forget_before("2026-12-02").await.unwrap();
+        assert!(db.watches().await.unwrap().is_empty());
+    }
+}

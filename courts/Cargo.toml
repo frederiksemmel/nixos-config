@@ -1,0 +1,25 @@
+[package]
+name = "courts"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-only"
+publish = false
+
+[dependencies]
+base64 = "0.22"
+jiff = { version = "0.2", features = ["tzdb-bundle-always"] }
+ring = "0.17"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toasty = { git = "https://github.com/tokio-rs/toasty", rev = "45ac82a0ba9af5efb9086ca0638b0103c9566e08", default-features = false, features = ["sqlite", "serde", "migration"] }
+toasty-cli = { git = "https://github.com/tokio-rs/toasty", rev = "45ac82a0ba9af5efb9086ca0638b0103c9566e08" }
+toasty-driver-sqlite = { git = "https://github.com/tokio-rs/toasty", rev = "45ac82a0ba9af5efb9086ca0638b0103c9566e08" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }
+topcoat = { version = "=0.11.0", default-features = false, features = ["asset", "compression", "cookie", "router", "runtime", "serve", "view", "discover"] }
+topcoat-asset = { version = "=0.11.0", features = ["bundler"] }
+ureq = { version = "3", features = ["json"] }
+url = "2"
+
+[profile.release]
+lto = "thin"
