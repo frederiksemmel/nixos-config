@@ -65,7 +65,8 @@ choice ("1a", "b", or an answer "QUESTION → b: OPTION") is decided: build it.
 ## Landing
 
 You run in your own worktree, on a branch from origin/main. Do the work
-yourself, without subagents.
+yourself, without subagents. Where the project's prompt lands differently, its
+steps replace these.
 
 1. Write the test first where the project has tests, see it fail, then fix.
 2. Run the project's checks (its prompt says which); all must pass with no new

@@ -8,6 +8,8 @@
 //   data-feedback-launcher="off"          optional: no floating button; open it
 //                                         from any element with data-feedback-open
 // An app that sends differently sets window.feedbackMode.send = async (batch) => text.
+// An app that wants the page's state with each comment sets
+// window.feedbackMode.context = () => value; the value goes into the item.
 
 const root = document.documentElement;
 const project = root.dataset.feedbackProject || "site";
@@ -507,6 +509,7 @@ function add(comment) {
     target: element ? describe(element) : pending.target,
     inside: pending.inside,
     scroll: { x: Math.round(scrollX), y: Math.round(scrollY) },
+    context: window.feedbackMode?.context?.(),
   });
   renumber();
 }

@@ -1,8 +1,9 @@
 # Feedback framework
 
 Comment on a web app from the app itself, and have Claude on beast change the
-app, deploy it and answer. Two apps use it: SemmelTV (`semmeltv/`) and Courts
-(`courts/`). Adding a third takes the four pieces below.
+app, deploy it and answer. Three apps use it: SemmelTV (`semmeltv/`), Courts
+(`courts/`) and Ramura's site (`ramura-site/`, a local copy of someone else's
+site: its reports are GitHub issues there and its fixes draft pull requests). Adding a third takes the four pieces below.
 
 ```
 phone or laptop                    the app's server                  beast
@@ -26,7 +27,10 @@ with attributes on `<html>`:
 | `data-feedback-launcher="off"` | optional: no floating button; any `[data-feedback-open]` element toggles the mode |
 
 An app that sends differently sets `window.feedbackMode.send = async (batch) => message`
-(SemmelTV does: its reports carry the phone's trail and the TV's logs).
+(SemmelTV does: its reports carry the phone's trail and the TV's logs). An app
+that sets `window.feedbackMode.context = () => value` gets that value in each
+item as `context`, taken when the comment is added (`ramura-site` keeps which
+projects were open, so its screenshots show the page as it was).
 
 In feedback mode a layer over the page takes the gestures:
 
@@ -121,8 +125,11 @@ fixes them all, lands on main, deploys once, and marks every report. A report
 is handed over at most twice per status change, so a session that dies doesn't
 loop.
 
-Adapters: `courts/feedback.sh` (Courts on semmeltv5) and
-`home/hosts/beast-semmeltv/adapter.sh` (SemmelTV, around `semmeltv-feedback`).
+Adapters: `courts/feedback.sh` (Courts on semmeltv5),
+`home/hosts/beast-semmeltv/adapter.sh` (SemmelTV, around `semmeltv-feedback`)
+and `ramura-site/feedback.sh` (issues on ragassler/ragassler.github.io). A
+project whose code isn't in nixos-config sets `repo`, the checkout its sessions
+start in.
 
 ## Adding a project
 

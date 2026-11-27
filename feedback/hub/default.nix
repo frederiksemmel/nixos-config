@@ -9,12 +9,11 @@ let
   path = "PATH=%h/.nix-profile/bin:/run/wrappers/bin:/etc/profiles/per-user/%u/bin:/run/current-system/sw/bin";
 
   configFile = pkgs.writers.writeJSON "feedback-hub.json" {
-    inherit (cfg) repo;
     common = ./common.md;
     projects = lib.mapAttrsToList (name: project: {
       inherit name;
       adapter = lib.getExe project.adapter;
-      inherit (project) prompt quiet;
+      inherit (project) prompt quiet repo;
       settings = project.settings;
     }) cfg.projects;
   };
@@ -49,6 +48,11 @@ in
             adapter = lib.mkOption {
               type = lib.types.package;
               description = "The project's adapter CLI (feedback/README.md), installed for the sessions too.";
+            };
+            repo = lib.mkOption {
+              type = lib.types.str;
+              default = cfg.repo;
+              description = "The checkout this project's sessions start in, if not the hub's.";
             };
             prompt = lib.mkOption {
               type = lib.types.path;

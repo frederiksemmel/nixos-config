@@ -39,6 +39,7 @@ in
     ./beast-semmeltv
     ../../feedback/hub
     ../../courts/beast.nix
+    ../../ramura-site/beast.nix
     ./beast-vm-tests.nix
   ];
 

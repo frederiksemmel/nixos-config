@@ -1,7 +1,6 @@
 state=${XDG_STATE_HOME:-$HOME/.local/state}/feedback-hub
 mkdir -p "$state"
 touch "$state/handed"
-repo=$(jq -r .repo "$CONFIG")
 common=$(jq -r .common "$CONFIG")
 sessions=$(claude agents --json)
 now=$(date +%s)
@@ -18,6 +17,7 @@ legacy() {
 while read -r project; do
   name=$(jq -r .name <<<"$project")
   adapter=$(jq -r .adapter <<<"$project")
+  repo=$(jq -r .repo <<<"$project")
   prompt=$(jq -r .prompt <<<"$project")
   quiet=$(jq -r .quiet <<<"$project")
   settings=$(jq -r '.settings // empty' <<<"$project")

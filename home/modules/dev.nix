@@ -165,6 +165,7 @@ in
       gitui
       tuicr
       (callPackage ../../packages/git-stats.nix { })
+      (callPackage ../../ramura-site/package.nix { })
 
       # Networking & Communication
       bluetui
