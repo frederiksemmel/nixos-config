@@ -349,6 +349,22 @@
         "type": "github"
       }
     },
+    "impeccable": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1795656235,
+        "narHash": "sha256-E8WX7pDygLZ7IOJ/4iargSxQP0UMR886xv4ghTBSVyM=",
+        "owner": "pbakaus",
+        "repo": "impeccable",
+        "rev": "2fc5e1459efbbf06d92c7306517c286bf12490cf",
+        "type": "github"
+      },
+      "original": {
+        "owner": "pbakaus",
+        "repo": "impeccable",
+        "type": "github"
+      }
+    },
     "llm-agents": {
       "inputs": {
         "bun2nix": "bun2nix",
@@ -676,6 +692,7 @@
         "disko": "disko",
         "flake-parts": "flake-parts_2",
         "home-manager": "home-manager",
+        "impeccable": "impeccable",
         "llm-agents": "llm-agents",
         "mcp-servers-nix": "mcp-servers-nix",
         "niri": "niri",

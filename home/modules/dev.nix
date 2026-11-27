@@ -840,6 +840,8 @@ in
         package = claudeCode;
         enableMcpIntegration = true;
 
+        skills.impeccable = "${flake.inputs.impeccable}/.claude/skills/impeccable";
+
         # Mailspring's built-in MCP server (Preferences → MCP), up while Mailspring runs.
         # Its bearer token is read from Mailspring's own config on every connect.
         mcpServers.mailspring = {
