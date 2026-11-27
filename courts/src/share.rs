@@ -19,7 +19,7 @@ use topcoat::router::{StatusCode, path_param, route};
 use topcoat::view::{ViewExt, view};
 
 /// One court on one day, from `start` to `end` (seconds after midnight).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Shared {
     pub club: i64,
     pub court: i64,
@@ -29,7 +29,7 @@ pub struct Shared {
 }
 
 impl Shared {
-    fn minutes(&self) -> i64 {
+    pub fn minutes(&self) -> i64 {
         (self.end - self.start) / 60
     }
 
@@ -215,7 +215,7 @@ pub fn now(day: Option<&db::Day>, shared: &Shared, today: &str, seconds_today: i
     }
 }
 
-fn maps(club: &db::Club) -> String {
+pub fn maps(club: &db::Club) -> String {
     let place = format!("{}, {}, {} {}", club.name, club.address, club.zip, club.city);
     let query: String = url::form_urlencoded::byte_serialize(place.as_bytes()).collect();
     format!("https://www.google.com/maps/search/?api=1&query={query}")
@@ -228,6 +228,11 @@ type Found = (Shared, db::Club, Court, Option<db::Day>);
 /// The slot, club, court and stored day a link's code leads to.
 async fn find(db: &Db, key: &str, code: &str) -> Result<Option<Found>> {
     let Some(shared) = read(key, code) else { return Ok(None) };
+    place(db, shared).await
+}
+
+/// The club, court and stored day of a slot.
+pub async fn place(db: &Db, shared: Shared) -> Result<Option<Found>> {
     let Some(club) = db.club(shared.club).await.map_err(topcoat::Error::msg)? else {
         return Ok(None);
     };

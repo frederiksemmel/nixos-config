@@ -24,3 +24,8 @@ snapshot_name = "0003_snapshot.toml"
 id = 2721073642631789578
 name = "0004_tariffs.sql"
 snapshot_name = "0004_snapshot.toml"
+
+[[migrations]]
+id = 6038395353631534309
+name = "0005_people-and-asks.sql"
+snapshot_name = "0005_snapshot.toml"

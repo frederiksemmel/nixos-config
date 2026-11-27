@@ -733,7 +733,10 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                     </section>
                 }
                 if !open.is_empty() {
-                    <p class="quiet hint">"Pick a time to send that court to someone. The number beside it is what booking it costs, in CHF."</p>
+                    <div class="ask-bar" data-ask-bar="1">
+                        <p class="quiet hint" data-ask-hint="1">"Pick a time to send that court to someone. The number beside it is what booking it costs, in CHF."</p>
+                        <button type="button" class="pill quiet" data-ask-start="1" hidden=(true)>"Ask which one"</button>
+                    </div>
                 }
                 <div class="cards">
                     for row in &open {
@@ -985,14 +988,18 @@ async fn filter_form(
 }
 
 #[component]
-pub async fn nav(current: &'static str) -> Result<impl View> {
+pub async fn nav(cx: &Cx, current: &'static str) -> Result<impl View> {
+    let admin = crate::auth::admin(cx);
     Ok(view! {
         <header class="top">
             <a class="brand" href="/">"Courts"</a>
             <nav class="tabs" aria-label="Sections">
                 <a href="/" aria-current=(if current == "courts" { "page" } else { "false" })>"Free courts"</a>
                 <a href="/watches" aria-current=(if current == "watches" { "page" } else { "false" })>"Watches"</a>
-                <a href="/feedback" aria-current=(if current == "feedback" { "page" } else { "false" })>"Feedback"</a>
+                if admin {
+                    <a href="/users" aria-current=(if current == "users" { "page" } else { "false" })>"Users"</a>
+                    <a href="/feedback" aria-current=(if current == "feedback" { "page" } else { "false" })>"Feedback"</a>
+                }
             </nav>
         </header>
     })
@@ -1300,14 +1307,19 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
         .0
         .trim_end_matches('/')
         .to_string();
+    let me = crate::auth::person(cx)?;
     let site = app_context::<Site>(cx).clone();
     let db = app_context::<Db>(cx).clone();
     let clubs = db
         .clubs(&app_context::<crate::discover::Clubs>(cx).ids())
         .await
         .map_err(topcoat::Error::msg)?;
+    let mut asked = Vec::new();
+    for ask in db.asks_of(me.id).await.map_err(topcoat::Error::msg)? {
+        asked.push(asked_line(&db, &ask).await?);
+    }
     let mut listed = Vec::new();
-    for watch in db.watches().await.map_err(topcoat::Error::msg)? {
+    for watch in db.watches_of(me.id).await.map_err(topcoat::Error::msg)? {
         let mut free = 0;
         for stored in db.days_on(&watch.date).await.map_err(topcoat::Error::msg)? {
             if watch.club_id.is_some_and(|c| c != stored.club_id) {
@@ -1404,13 +1416,30 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
                 <label class="check"><input type="checkbox" name="indoor" value="1"> "Indoor only"</label>
                 <button class="pill" type="submit">"Watch"</button>
             </form>
+            if !asked.is_empty() {
+                <section class="asked" id="asked">
+                    <h2>"Asked which one"</h2>
+                    <ul class="watch-list">
+                        for (url, what, picks) in &asked {
+                            <li>
+                                <span>
+                                    <a href=(url.as_str())><strong>(what.as_str())</strong></a>
+                                    <br>
+                                    <span class="quiet">(picks.as_str())</span>
+                                </span>
+                            </li>
+                        }
+                    </ul>
+                </section>
+            }
             <section class="devices" id="devices">
                 <h2>"Other devices"</h2>
+                <p class="quiet">(format!("Signed in as {}.", me.name))</p>
                 if let Some(token) = &invite {
                     <div class="invite">
                         <img src=(format!("/invites/{token}/qr.svg")) width="240" height="240" alt="QR code of the sign-in link">
                         <div class="invite-text">
-                            <p>"Scan this with the phone's camera, or send it the link. It works once, within a day, and keeps that device signed in."</p>
+                            <p>(format!("Scan this with the phone's camera, or send it the link. It works once, within a week, and keeps that device signed in as {}.", me.name))</p>
                             <p class="invite-link"><code>(format!("{origin}/invite/{token}"))</code></p>
                             <div class="row">
                                 <button type="button" class="pill" data-share=(format!("{origin}/invite/{token}"))>"Share link"</button>
@@ -1419,14 +1448,50 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
                         </div>
                     </div>
                 } else {
-                    <p class="quiet">"Sign in on a phone or another computer without typing the key: make a link, then scan its QR code or send it over."</p>
-                    <form method="post" action="/invites">
-                        <button class="pill quiet" type="submit">"Make a sign-in link"</button>
-                    </form>
+                    <p class="quiet">"Sign in on a phone or another computer: make a link, then scan its QR code or send it over."</p>
+                    <div class="row">
+                        <form method="post" action="/invites">
+                            <button class="pill quiet" type="submit">"Make a sign-in link"</button>
+                        </form>
+                        <form method="post" action="/sign-out">
+                            <button class="pill quiet" type="submit">"Sign out here"</button>
+                        </form>
+                    </div>
                 }
             </section>
         </article>
     })
+}
+
+/// An ask on the Watches page: its link, its options in a line, and who picked.
+async fn asked_line(db: &Db, ask: &db::Ask) -> Result<(String, String, String)> {
+    let mut names = Vec::new();
+    for shared in &ask.options.0 {
+        let club = db.club(shared.club).await.map_err(topcoat::Error::msg)?;
+        names.push(crate::ask::short(
+            shared,
+            club.as_ref().map_or("a club", |club| club.name.as_str()),
+        ));
+    }
+    let what = match names.as_slice() {
+        [one] => one.clone(),
+        [first, ..] => format!("{first} and {} more", names.len() - 1),
+        [] => "Nothing".into(),
+    };
+    let picks = if ask.picks.0.is_empty() {
+        format!("Sent {}, nobody picked yet", time::ago(ask.created_at))
+    } else {
+        ask.picks
+            .0
+            .iter()
+            .map(|pick| {
+                let chose = names.get(pick.option).map_or("?", String::as_str);
+                format!("{} picked {chose}", pick.name)
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+    };
+    Ok((format!("/a/{}", ask.token), what, picks))
 }
 
 #[derive(serde::Deserialize)]
@@ -1441,12 +1506,14 @@ struct NewWatch {
 
 #[route(POST "/watches/add")]
 async fn add_watch(cx: &Cx, Form(new): Form<NewWatch>) -> Result<SeeOther> {
+    let me = crate::auth::person(cx)?;
     let db = app_context::<Db>(cx).clone();
     let site = app_context::<Site>(cx);
     if time::dates(site.days).contains(&new.date) && new.earliest < new.latest {
         let club = new.club.as_deref().and_then(|c| c.parse().ok());
         let watch = db
             .add_watch(
+                me.id,
                 club,
                 &new.date,
                 new.earliest.clamp(0, 24) * 3600,
@@ -1464,9 +1531,13 @@ async fn add_watch(cx: &Cx, Form(new): Form<NewWatch>) -> Result<SeeOther> {
 
 #[route(POST "/watches/{id}/delete")]
 async fn delete_watch(cx: &Cx) -> Result<SeeOther> {
+    let me = crate::auth::person(cx)?;
     let db = app_context::<Db>(cx).clone();
     if let Ok(id) = path_param::<Id>(cx).parse::<i64>() {
-        db.forget_watch(id).await.map_err(topcoat::Error::msg)?;
+        let found = db.watch(id).await.map_err(topcoat::Error::msg)?;
+        if found.is_some_and(|watch| watch.person_id == Some(me.id)) {
+            db.forget_watch(id).await.map_err(topcoat::Error::msg)?;
+        }
     }
     Ok(see_other("/watches"))
 }

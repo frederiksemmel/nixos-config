@@ -1,5 +1,6 @@
 #![recursion_limit = "512"]
 
+mod ask;
 mod auth;
 mod db;
 mod discover;
@@ -17,6 +18,7 @@ mod slots;
 mod source;
 mod tariffs;
 mod time;
+mod users;
 
 use std::env;
 use std::path::PathBuf;
@@ -120,6 +122,9 @@ async fn serve() -> Result<(), String> {
         .await
         .map_err(|error| format!("database: {error}"))?;
     let key = key()?;
+    db.first_admin(auth::FIRST_ADMIN, now())
+        .await
+        .map_err(|error| format!("database: {error}"))?;
     let ids = |name: &str| -> Vec<i64> {
         var(name)
             .unwrap_or_default()
@@ -186,8 +191,8 @@ async fn serve() -> Result<(), String> {
     );
     let router: Router = Router::builder()
         .discover()
-        .cookies()
         .layer(auth::SignedIn)
+        .cookies()
         .app_context(db)
         .app_context(push)
         .app_context(poller)

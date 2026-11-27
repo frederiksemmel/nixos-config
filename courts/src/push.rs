@@ -252,9 +252,10 @@ impl Push {
         Ok(self.vapid().await?.public_key())
     }
 
-    /// Sends `notice` to every browser that turned notifications on, and
-    /// forgets the ones their push service no longer knows.
-    pub async fn notify(&self, notice: &Notice) -> usize {
+    /// Sends `notice` to every browser of `person` that turned notifications
+    /// on, and forgets the ones their push service no longer knows.
+    pub async fn notify(&self, person: Option<i64>, notice: &Notice) -> usize {
+        let Some(person) = person else { return 0 };
         let vapid = match self.vapid().await {
             Ok(vapid) => vapid,
             Err(error) => {
@@ -262,7 +263,7 @@ impl Push {
                 return 0;
             }
         };
-        let subscriptions = self.db.subscriptions().await.unwrap_or_else(|error| {
+        let subscriptions = self.db.subscriptions_of(person).await.unwrap_or_else(|error| {
             eprintln!("push: subscriptions: {error}");
             Vec::new()
         });
@@ -311,6 +312,7 @@ mod tests {
         let public = browser.compute_public_key().unwrap();
         let to = Subscription {
             endpoint: "https://push.example/abc".into(),
+            person_id: None,
             p256dh: URL_SAFE_NO_PAD.encode(public.as_ref()),
             auth: URL_SAFE_NO_PAD.encode([7u8; 16]),
             created_at: 0,

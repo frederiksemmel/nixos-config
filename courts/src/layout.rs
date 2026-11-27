@@ -15,9 +15,10 @@ pub const ICON_URL: &str = "/icon.svg";
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
     let signed_in = crate::auth::signed_in(cx);
+    let admin = crate::auth::admin(cx);
     Ok(view! {
         <!DOCTYPE html>
-        <html lang="en" data-feedback-project=(if signed_in { "courts" } else { "" }) data-feedback-send="/api/feedback" data-feedback-list="/feedback">
+        <html lang="en" data-feedback-project=(if admin { "courts" } else { "" }) data-feedback-send="/api/feedback" data-feedback-list="/feedback">
             <head>
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
@@ -32,6 +33,8 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <script type="module" src=(NOTIFY)></script>
                 if signed_in {
                     <script type="module" src=(DAY)></script>
+                }
+                if admin {
                     <link rel="stylesheet" href=(FEEDBACK_STYLE)>
                     <script type="module" src=(FEEDBACK)></script>
                 }

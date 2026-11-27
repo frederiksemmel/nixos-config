@@ -225,10 +225,137 @@ function toast(text, url) {
   toastTimer = setTimeout(() => box.classList.remove("shown"), 5000);
 }
 
+// Asking which one: tap several times, then send them as one link. The
+// choice is kept for the tab, so changing days or filters keeps it.
+const ASK = "courts-ask";
+const MOST = 12;
+const askStart = document.querySelector("[data-ask-start]");
+const askHint = document.querySelector("[data-ask-hint]");
+let asking = { on: false, picks: [] };
+let tray = null;
+
+function codeOf(slot) {
+  return new URL(slot.getAttribute("href"), location.href).pathname.replace(/^\/s\//, "");
+}
+
+function saveAsk() {
+  try {
+    sessionStorage.setItem(ASK, JSON.stringify(asking));
+  } catch {}
+}
+
+function drawAsk() {
+  if (location.pathname !== "/") return;
+  document.body.classList.toggle("asking", asking.on);
+  if (askStart) askStart.hidden = asking.on;
+  if (askHint) askHint.textContent = asking.on ? "Tap the times to offer. Other days and filters keep what you chose." : "Pick a time to send that court to someone. The number beside it is what booking it costs, in CHF.";
+  const chosen = new Set(asking.picks.map((pick) => pick.code));
+  for (const slot of document.querySelectorAll("a[data-slot]")) {
+    const on = asking.on && chosen.has(codeOf(slot));
+    slot.classList.toggle("chosen", on);
+    if (asking.on) slot.setAttribute("aria-pressed", String(on));
+    else slot.removeAttribute("aria-pressed");
+  }
+  if (!asking.on) {
+    tray?.remove();
+    tray = null;
+    return;
+  }
+  if (!tray) {
+    tray = element("div", "ask-tray");
+    tray.setAttribute("role", "region");
+    tray.setAttribute("aria-label", "Ask which one");
+    const count = element("span", "ask-count");
+    count.setAttribute("aria-live", "polite");
+    const send = element("button", "pill", "Send");
+    send.type = "button";
+    send.dataset.askSend = "";
+    const cancel = element("button", "pill quiet", "Cancel");
+    cancel.type = "button";
+    cancel.dataset.askCancel = "";
+    tray.append(count, cancel, send);
+    document.body.append(tray);
+  }
+  const n = asking.picks.length;
+  tray.querySelector(".ask-count").textContent = n === 0 ? "Tap times" : `${n} ${n === 1 ? "time" : "times"}`;
+  tray.querySelector("[data-ask-send]").disabled = n === 0;
+}
+
+try {
+  const kept = JSON.parse(sessionStorage.getItem(ASK) || "null");
+  if (kept && Array.isArray(kept.picks)) asking = { on: Boolean(kept.on), picks: kept.picks.slice(0, MOST) };
+} catch {}
+if (askStart) askStart.hidden = asking.on;
+drawAsk();
+
+async function sendAsk(button) {
+  button.disabled = true;
+  button.textContent = "Sending…";
+  try {
+    const response = await fetch("/api/asks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ codes: asking.picks.map((pick) => pick.code) }),
+    });
+    const answer = await response.json();
+    if (!answer.ok) throw new Error(answer.message || "Courts didn't take it");
+    asking = { on: false, picks: [] };
+    saveAsk();
+    drawAsk();
+    if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+      try {
+        await navigator.share({ title: answer.title, url: answer.url });
+      } catch (error) {
+        if (error.name !== "AbortError") toast("The link is ready", answer.url);
+      }
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(answer.url);
+      toast("Link copied: send it to whoever should choose", answer.url);
+    } catch {
+      toast("The link is ready", answer.url);
+    }
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Send";
+    toast(`Not sent: ${error.message}`);
+  }
+}
+
+document.addEventListener("click", (event) => {
+  if (event.target.closest("[data-ask-start]")) {
+    asking.on = true;
+    saveAsk();
+    drawAsk();
+    return;
+  }
+  if (event.target.closest("[data-ask-cancel]")) {
+    asking = { on: false, picks: [] };
+    saveAsk();
+    drawAsk();
+    return;
+  }
+  const send = event.target.closest("[data-ask-send]");
+  if (send) sendAsk(send);
+});
+
 document.addEventListener("click", async (event) => {
   const slot = event.target.closest("a[data-slot]");
   if (!slot || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
   event.preventDefault();
+  if (asking.on) {
+    const code = codeOf(slot);
+    const at = asking.picks.findIndex((pick) => pick.code === code);
+    if (at >= 0) asking.picks.splice(at, 1);
+    else if (asking.picks.length >= MOST) {
+      toast(`At most ${MOST} times in one ask`);
+      return;
+    } else asking.picks.push({ code, title: slot.dataset.slot });
+    saveAsk();
+    drawAsk();
+    return;
+  }
   const url = new URL(slot.getAttribute("href"), location.href).href;
   const title = slot.dataset.slot;
   if (navigator.share && matchMedia("(pointer: coarse)").matches) {

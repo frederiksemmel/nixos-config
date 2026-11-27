@@ -184,7 +184,7 @@ impl Poller {
             return;
         }
         let notice = notice(watch, day, &fresh);
-        let sent = self.push.notify(&notice).await;
+        let sent = self.push.notify(watch.person_id, &notice).await;
         eprintln!("poll: watch {}: {} ({sent} browsers)", watch.id, notice.body);
         for slot in fresh {
             if let Err(error) = self.db.tell(watch.id, &watch.date, slot.court, slot.start).await {

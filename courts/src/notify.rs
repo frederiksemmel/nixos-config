@@ -90,9 +90,11 @@ async fn push_subscribe(cx: &Cx, Json(browser): Json<Browser>) -> Result<Json<An
             message: "That is no push subscription".into(),
         }));
     };
+    let me = crate::auth::person(cx)?;
     app_context::<Db>(cx)
         .subscribe(Subscription {
             endpoint: browser.endpoint,
+            person_id: Some(me.id),
             p256dh: keys.p256dh,
             auth: keys.auth,
             created_at: crate::time::now(),
