@@ -487,7 +487,7 @@ let
       while sleep 300; do
         if parked && [[ $(makoctl list -j | jq length) -gt 0 ]]; then
           makoctl mode -a peek >/dev/null || true
-          sleep 4
+          sleep 10
           makoctl mode -r peek >/dev/null || true
         fi
       done &
