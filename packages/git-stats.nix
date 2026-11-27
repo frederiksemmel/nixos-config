@@ -2,6 +2,8 @@
   lib,
   writeShellApplication,
   symlinkJoin,
+  coreutils,
+  gawk,
   git,
   git-who,
   gource,
@@ -24,10 +26,14 @@ let
 
   gitWho = writeShellApplication {
     name = "git-who";
-    runtimeInputs = [ git ];
+    runtimeInputs = [
+      coreutils
+      gawk
+      git
+    ];
     text = ''
       ${readIgnores}
-      real=${lib.getExe git-who}
+      real=${lib.getExe' git-who "git-who"}
 
       for a in "$@"; do
         case $a in -h | -help | --help | -version | --version) exec "$real" "$@" ;; esac
@@ -64,7 +70,11 @@ let
 
   gourceWrapped = writeShellApplication {
     name = "gource";
-    runtimeInputs = [ git ];
+    runtimeInputs = [
+      coreutils
+      gawk
+      git
+    ];
     text = ''
       ${readIgnores}
       real=${lib.getExe gource}
@@ -88,23 +98,49 @@ let
       fi
 
       rev=HEAD
+      start=""
       rest=()
       set -- "''${args[@]}"
       while (($#)); do
         case $1 in
         --git-branch) rev=$2; shift 2 ;;
+        --start-date) start=$2; shift 2 ;;
+        --start-date=*) start=''${1#*=}; shift ;;
         *) rest+=("$1"); shift ;;
         esac
       done
 
-      excludes=()
-      while IFS= read -r p; do excludes+=(":(top,exclude)$p"); done < <(stats_ignores "$repo")
+      paths=(':/')
+      while IFS= read -r p; do paths+=(":(top,exclude)$p"); done < <(stats_ignores "$repo")
+      g() { git -C "$repo" -c core.quotePath=false "$@"; }
 
       log=$(mktemp --suffix=.gource.log)
       trap 'rm -f "$log"' EXIT
-      git -C "$repo" log --pretty=format:user:%aN%n%ct --reverse --raw --encoding=UTF-8 \
-        --no-renames --no-show-signature "$rev" -- ':/' "''${excludes[@]}" >"$log"
-      "$real" --log-format git "''${rest[@]}" "$log"
+
+      since=()
+      if [[ -n $start ]]; then
+        epoch=$(date -d "$start" +%s)
+        since=(--since="@$epoch")
+        if base=$(g rev-list -1 --before="@$epoch" "$rev") && [[ -n $base ]]; then
+          # Every file in the tree at the start date, credited to whoever
+          # changed it last, so the animation opens on the repo as it was.
+          awk -F '\t' -v ts="$((epoch - 1))" -v fallback="$(g log -1 --format=%aN "$base")" '
+            FNR == 1 { pass++ }
+            pass == 1 && /^\x01/ { author = substr($0, 2); next }
+            pass == 1 && NF >= 2 && !($NF in last) { last[$NF] = author; next }
+            pass == 2 && NF { printf "%s|%s|A|/%s\n", ts, ($0 in last ? last[$0] : fallback), $0 }
+          ' <(g log --no-merges --no-renames --name-status --format=$'\x01%aN' "$base" -- "''${paths[@]}") \
+            <(g diff --name-only --no-renames 4b825dc642cb6eb9a060e54bf8d69288fbee4904 "$base" -- "''${paths[@]}") >>"$log"
+        fi
+      fi
+
+      g log --reverse --no-merges --no-renames --name-status --format=$'\x01%ct|%aN' "''${since[@]}" "$rev" -- "''${paths[@]}" |
+        awk -F '\t' '
+          /^\x01/ { head = substr($0, 2); next }
+          NF >= 2 { t = substr($1, 1, 1); if (t != "A" && t != "D") t = "M"; printf "%s|%s|/%s\n", head, t, $NF }
+        ' >>"$log"
+
+      "$real" --log-format custom "''${rest[@]}" "$log"
     '';
   };
 in
