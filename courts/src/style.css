@@ -285,7 +285,7 @@ textarea { resize: vertical; line-height: 1.45; }
 .who { font-weight: 600; font-size: 0.94rem; }
 .reply { display: flex; gap: 8px; align-items: end; }
 @media (prefers-reduced-motion: reduce) {
-  .chip, .day, .switch::before { transition: none; }
+  .chip, .day { transition: none; }
 }
 
 .filters { margin: 0 0 24px; background: var(--raised); border-radius: 16px; }
@@ -445,33 +445,18 @@ textarea { resize: vertical; line-height: 1.45; }
 .filters-more { flex: none; color: var(--accent); font-size: 0.833rem; font-weight: 600; order: 3; }
 .filters-foot { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; justify-content: space-between; padding-top: 4px; border-top: 1px solid var(--line); padding-top: 12px; }
 .filters-foot .chip { background: var(--canvas); }
+.filters form.members { display: grid; grid-template-columns: none; gap: 8px; margin: 0 16px; padding: 12px 0 16px; border-top: 1px solid var(--line); }
+.members .hint { margin: 0; font-size: 0.833rem; max-width: 70ch; }
 
 .days { display: grid; gap: 8px; margin: 4px 0 16px; }
 .days-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .group-label { margin: 0; color: var(--quiet); font-size: 0.833rem; font-weight: 600; line-height: 1.3; }
-.switch {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: var(--tap);
-  color: var(--quiet);
-  font-size: 0.875rem;
-  font-weight: 600;
-  text-decoration: none;
+.days-hint { margin: 0; font-size: 0.833rem; text-align: right; }
+.days-hint.touch { display: none; }
+@media (hover: none) and (pointer: coarse) {
+  .days-hint.fine { display: none; }
+  .days-hint.touch { display: inline; }
 }
-.switch::before {
-  content: "";
-  flex: none;
-  width: 30px;
-  height: 18px;
-  border-radius: 999px;
-  background: var(--raised-2) radial-gradient(circle at 9px 50%, var(--quiet) 6px, transparent 6.5px);
-  box-shadow: inset 0 0 0 1px var(--line);
-  transition: background-color 150ms var(--ease);
-}
-.switch:hover { color: var(--text); }
-.switch.on { color: var(--text); }
-.switch.on::before { background: var(--accent) radial-gradient(circle at 21px 50%, var(--on-accent) 6px, transparent 6.5px); box-shadow: none; }
 .day-strip {
   display: flex;
   gap: 2px;
@@ -500,6 +485,8 @@ textarea { resize: vertical; line-height: 1.45; }
   font-variant-numeric: tabular-nums;
   scroll-snap-align: start;
   transition: background-color 150ms var(--ease);
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 .day:hover { background: var(--raised-2); }
 .day-name { font-weight: 650; font-size: 0.94rem; line-height: 1.25; }
@@ -523,7 +510,6 @@ textarea { resize: vertical; line-height: 1.45; }
 .day[aria-current="page"] .day-date { color: oklch(0.34 0.06 120); }
 .day[aria-current="page"] .day-count { background: oklch(0.24 0.05 120 / 0.14); color: var(--on-accent); }
 .presets { align-items: center; padding-block: 0; }
-.presets .hint { flex: none; white-space: nowrap; font-size: 0.833rem; padding-left: 4px; margin: 0; }
 .day-head { margin: 14px 0 2px; font-size: 0.94rem; font-weight: 700; color: var(--accent); }
 .coverage { font-size: 0.833rem; margin: 32px 0 0; max-width: 70ch; }
 .note { margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; background: var(--raised); color: var(--quiet); font-size: 0.94rem; max-width: 70ch; }

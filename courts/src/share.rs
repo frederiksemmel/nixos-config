@@ -202,7 +202,10 @@ pub fn now(day: Option<&db::Day>, shared: &Shared, today: &str, seconds_today: i
         return Now::Unknown;
     }
     let taken = day.busy.0.iter().any(|busy| {
-        busy.court.is_none_or(|id| id == shared.court) && busy.start < shared.end && busy.end > shared.start
+        !busy.members
+            && busy.court.is_none_or(|id| id == shared.court)
+            && busy.start < shared.end
+            && busy.end > shared.start
     });
     if taken {
         Now::Taken {
@@ -500,6 +503,7 @@ mod tests {
             start: from * 3600,
             end: to * 3600,
             note: None,
+            members: false,
         }
     }
 

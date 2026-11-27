@@ -3,12 +3,13 @@
 //! the page opens with Frederik's usual search (but always on today).
 
 use crate::time;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use topcoat::context::Cx;
 use topcoat::cookie::{Cookies, SameSite, cookie, cookies, time::Duration};
 use topcoat::router::request::uri;
 
 const COOKIE: &str = "courts_filters";
+const DAYS: &str = "DAYS";
 pub const LENGTHS: [(i64, &str); 3] = [(60, "1 h"), (90, "1½ h"), (120, "2 h")];
 pub const WITHIN: [i64; 5] = [2, 3, 5, 10, 15];
 /// The most an hour may cost, in francs; 0 is any price.
@@ -26,8 +27,6 @@ pub const LATEST: i64 = 23;
 pub struct Filters {
     /// The days to search, in order; at least one.
     pub dates: Vec<String>,
-    /// Whether tapping a day adds it to the others instead of choosing it alone.
-    pub several: bool,
     pub sport: String,
     pub place: String,
     pub surface: String,
@@ -38,7 +37,8 @@ pub struct Filters {
     /// The most an hour may cost, in francs; 0 is any price. A slot
     /// without a known price shows under every limit.
     pub price: i64,
-    pub members: bool,
+    /// The clubs the person is a member of, from the store, not the query.
+    pub member_of: BTreeSet<i64>,
     pub near: Option<(f64, f64)>,
     pub sort: String,
     pub view: String,
@@ -48,7 +48,6 @@ impl Default for Filters {
     fn default() -> Self {
         Self {
             dates: vec![time::today()],
-            several: false,
             sport: "tennis".into(),
             place: String::new(),
             surface: String::new(),
@@ -57,7 +56,7 @@ impl Default for Filters {
             length: 60,
             within: 0,
             price: 0,
-            members: false,
+            member_of: BTreeSet::new(),
             near: None,
             sort: "soon".into(),
             view: "list".into(),
@@ -90,7 +89,6 @@ impl Filters {
         if !chosen.is_empty() {
             filters.dates = chosen;
         }
-        filters.several = get("several").is_some_and(|v| v == "1") || filters.dates.len() > 1;
         if let Some(sport) = get("sport").filter(|s| sports.contains(s)) {
             filters.sport = sport;
         } else if !sports.contains(&filters.sport) {
@@ -117,7 +115,6 @@ impl Filters {
             .unwrap_or(60);
         filters.within = hour("within").filter(|w| WITHIN.contains(w)).unwrap_or(0);
         filters.price = hour("price").filter(|p| PRICES.contains(p)).unwrap_or(0);
-        filters.members = get("members").is_some_and(|m| m == "1");
         filters.near = get("near").and_then(|n| {
             let (lat, lng) = n.split_once(',')?;
             let (lat, lng): (f64, f64) = (lat.parse().ok()?, lng.parse().ok()?);
@@ -142,7 +139,7 @@ impl Filters {
             query.clone()
         } else {
             let mut merged = pairs(&remembered);
-            for key in ["date", "view", "several"] {
+            for key in ["date", "view"] {
                 if let Some(value) = given.get(key) {
                     merged.insert(key.into(), value.clone());
                 }
@@ -172,9 +169,6 @@ impl Filters {
         out.append_pair("f", "1");
         if all {
             out.append_pair("date", &self.dates.join(","));
-            if self.several {
-                out.append_pair("several", "1");
-            }
             if self.view == "map" {
                 out.append_pair("view", "map");
             }
@@ -195,9 +189,6 @@ impl Filters {
         if self.price > 0 {
             out.append_pair("price", &self.price.to_string());
         }
-        if self.members {
-            out.append_pair("members", "1");
-        }
         if let Some((lat, lng)) = self.near {
             out.append_pair("near", &format!("{lat:.4},{lng:.4}"));
         }
@@ -211,45 +202,19 @@ impl Filters {
         format!("/?{}", self.query(true))
     }
 
-    /// The link a day's chip goes to: that day alone, or with several days
-    /// on, that day added to or taken from the others.
+    /// The link a day's chip goes to: that day alone.
     pub fn with_date(&self, date: &str) -> String {
-        let dates = if !self.several {
-            vec![date.to_string()]
-        } else if self.dates.iter().any(|d| d == date) {
-            let rest: Vec<String> = self.dates.iter().filter(|d| *d != date).cloned().collect();
-            if rest.is_empty() { self.dates.clone() } else { rest }
-        } else {
-            let mut more = self.dates.clone();
-            more.push(date.to_string());
-            more.sort();
-            more
-        };
-        Self { dates, ..self.clone() }.link()
+        self.with_dates(vec![date.to_string()])
     }
 
     pub fn with_dates(&self, dates: Vec<String>) -> String {
-        Self {
-            several: dates.len() > 1 || self.several,
-            dates,
-            ..self.clone()
-        }
-        .link()
+        Self { dates, ..self.clone() }.link()
     }
 
-    /// Several days on (keeping what is chosen), or off (keeping the first day).
-    pub fn with_several(&self, several: bool) -> String {
-        let dates = if several {
-            self.dates.clone()
-        } else {
-            self.dates[..1].to_vec()
-        };
-        Self {
-            dates,
-            several,
-            ..self.clone()
-        }
-        .link()
+    /// The link to any days, with `DAYS` where they go, comma-separated:
+    /// for picking several with Shift or Ctrl.
+    pub fn days_template(&self) -> String {
+        self.with_dates(vec![DAYS.to_string()])
     }
 
     pub fn first_date(&self) -> &str {
@@ -296,9 +261,6 @@ impl Filters {
         if self.price > 0 {
             parts.push(format!("≤ CHF {}/h", self.price));
         }
-        if self.members {
-            parts.push("with members-only".into());
-        }
         parts.join(" · ")
     }
 
@@ -320,7 +282,7 @@ mod tests {
         let dates = time::dates(3);
         let filters = Filters::parse(
             &format!(
-                "f=1&date={}&sport=squash&place=indoor&from=17&until=22&length=90&within=5&price=40&members=1&near=47.37,8.54&sort=near",
+                "f=1&date={}&sport=squash&place=indoor&from=17&until=22&length=90&within=5&price=40&near=47.37,8.54&sort=near",
                 dates[1]
             ),
             &dates,
@@ -331,7 +293,6 @@ mod tests {
             (filters.from, filters.until, filters.length, filters.within),
             (17, 22, 90, 5)
         );
-        assert!(filters.members);
         assert_eq!(filters.price, 40);
         assert_eq!(filters.near, Some((47.37, 8.54)));
         assert_eq!(Filters::parse(&filters.query(true), &dates, &sports()), filters);
@@ -349,20 +310,22 @@ mod tests {
     }
 
     #[test]
-    fn days_are_chosen_alone_or_together() {
+    fn a_day_is_chosen_alone_and_the_template_takes_any_days() {
         let dates = time::dates(4);
-        let one = Filters::parse(&format!("date={}", dates[1]), &dates, &sports());
-        assert!(!one.several);
-        assert!(one.with_date(&dates[2]).contains(&format!("date={}&", dates[2])));
         let several = Filters::parse(&format!("date={},{},nonsense", dates[2], dates[0]), &dates, &sports());
         assert_eq!(several.dates, vec![dates[0].clone(), dates[2].clone()]);
-        assert!(several.several);
-        let added = Filters::parse(&several.with_date(&dates[1])[2..], &dates, &sports());
-        assert_eq!(added.dates.len(), 3);
-        let removed = Filters::parse(&several.with_date(&dates[0])[2..], &dates, &sports());
-        assert_eq!(removed.dates, vec![dates[2].clone()]);
-        let last = Filters::parse(&removed.with_date(&dates[2])[2..], &dates, &sports());
-        assert_eq!(last.dates, vec![dates[2].clone()]);
+        let alone = Filters::parse(&several.with_date(&dates[1])[2..], &dates, &sports());
+        assert_eq!(alone.dates, vec![dates[1].clone()]);
+        let range = several.days_template().replace("DAYS", &dates[1..].join(","));
+        let range = Filters::parse(&range[2..], &dates, &sports());
+        assert_eq!(range.dates, dates[1..].to_vec());
+        assert_eq!(
+            Filters {
+                dates: several.dates.clone(),
+                ..range
+            },
+            several
+        );
     }
 
     #[test]

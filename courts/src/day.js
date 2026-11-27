@@ -9,7 +9,7 @@ const details = document.querySelector("[data-filters]");
 const form = details && details.querySelector("form");
 
 function openOnWide() {
-  if (details) details.open = WIDE.matches || details.open;
+  if (details) details.open = WIDE.matches || details.open || location.hash === "#filters";
 }
 
 if (form) {
@@ -21,6 +21,73 @@ if (form) {
       form.elements.near.value = "";
       form.requestSubmit();
     }
+  });
+}
+
+// Days: a click picks that day alone, Shift-click every day from the last
+// one picked to it, Ctrl- or Cmd-click adds or drops it. On a phone,
+// holding a day adds or drops it.
+const strip = document.querySelector("[data-days-link]");
+const ANCHOR = "courts-day-anchor";
+
+if (strip) {
+  const all = [...strip.querySelectorAll("[data-day]")].map((day) => day.dataset.day);
+  const chosen = strip.dataset.days.split(",").filter((day) => all.includes(day));
+  const go = (days) => {
+    const list = [...new Set(days)].sort();
+    if (list.length) location.href = strip.dataset.daysLink.replace("DAYS", list.join(","));
+  };
+  const anchor = () => {
+    let kept = null;
+    try {
+      kept = sessionStorage.getItem(ANCHOR);
+    } catch {}
+    return chosen.includes(kept) ? kept : chosen[0];
+  };
+  const remember = (day) => {
+    try {
+      sessionStorage.setItem(ANCHOR, day);
+    } catch {}
+  };
+  const toggle = (day) => {
+    remember(day);
+    go(chosen.includes(day) ? chosen.filter((d) => d !== day) : [...chosen, day]);
+  };
+  let held = null;
+  strip.addEventListener("click", (event) => {
+    const link = event.target.closest("[data-day]");
+    if (!link) return;
+    const day = link.dataset.day;
+    if (held === day) {
+      event.preventDefault();
+      held = null;
+      return;
+    }
+    if (event.shiftKey) {
+      event.preventDefault();
+      const from = all.indexOf(anchor() || day);
+      const to = all.indexOf(day);
+      go(all.slice(Math.min(from, to), Math.max(from, to) + 1));
+    } else if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      toggle(day);
+    } else remember(day);
+  });
+  let timer = null;
+  strip.addEventListener("pointerdown", (event) => {
+    const link = event.target.closest("[data-day]");
+    if (!link || event.pointerType === "mouse") return;
+    held = null;
+    timer = setTimeout(() => {
+      held = link.dataset.day;
+      navigator.vibrate?.(10);
+      toggle(held);
+    }, 450);
+  });
+  for (const type of ["pointerup", "pointercancel", "pointerleave"]) strip.addEventListener(type, () => clearTimeout(timer));
+  strip.addEventListener("scroll", () => clearTimeout(timer), { passive: true });
+  strip.addEventListener("contextmenu", (event) => {
+    if (event.target.closest("[data-day]") && held) event.preventDefault();
   });
 }
 

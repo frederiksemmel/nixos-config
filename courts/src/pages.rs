@@ -313,8 +313,9 @@ impl Found<'_> {
         let until = filters.until * 3600;
         self.clubs
             .iter()
-            .filter(|club| filters.members || guests(club))
+            .filter(|club| guests(club) || filters.member_of.contains(&club.id))
             .filter_map(|club| {
+                let taken = |busy: &[gotcourts::Busy]| slots::taken_for(busy, filters.member_of.contains(&club.id));
                 let distance = distance(origin, club);
                 if filters.within > 0 && distance > filters.within as f64 {
                     return None;
@@ -335,7 +336,7 @@ impl Found<'_> {
                             (filters.from * 3600).max(if date == self.today { time::seconds_today() } else { 0 });
                         let source = Source::parse(&club.source);
                         let (free, costs): (Vec<Slot>, Vec<Option<(i64, i64)>>) =
-                            slots::free_for(&courts, &stored.busy.0, after, filters.length * 60)
+                            slots::free_for(&courts, &taken(&stored.busy.0), after, filters.length * 60)
                                 .into_iter()
                                 .filter(|slot| slot.end <= until)
                                 .map(|slot| {
@@ -392,7 +393,7 @@ impl Found<'_> {
             .collect()
     }
 
-    fn facets(&self, filters: &Filters, sports: &[String], surfaces: &BTreeSet<String>) -> Facets {
+    fn facets(&self, filters: &Filters, sports: &[String], surfaces: &BTreeSet<String>, joinable: &[i64]) -> Facets {
         let mut options = BTreeMap::new();
         let mut put = |key: String, changed: Filters| {
             options.insert(key, self.count(&changed));
@@ -462,11 +463,15 @@ impl Found<'_> {
                 },
             );
         }
-        for members in [false, true] {
+        for club in joinable {
+            let mut member_of = filters.member_of.clone();
+            if !member_of.remove(club) {
+                member_of.insert(*club);
+            }
             put(
-                format!("members:{}", u8::from(members)),
+                format!("member:{club}"),
                 Filters {
-                    members,
+                    member_of,
                     ..filters.clone()
                 },
             );
@@ -507,7 +512,9 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     let dates = time::dates(site.days);
     let today = time::today();
     let all_sports = known_sports(&db, &app_context::<crate::discover::Clubs>(cx).ids()).await;
-    let filters = Filters::of(cx, &dates, &all_sports);
+    let mut filters = Filters::of(cx, &dates, &all_sports);
+    let me = crate::auth::me(cx).map(|me| me.id);
+    filters.member_of = db.memberships_of(me).await.map_err(topcoat::Error::msg)?;
     let date = filters.first_date().to_string();
     let several = filters.dates.len() > 1;
     let apps = crate::source::apps(cx);
@@ -527,7 +534,17 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         .filter(|court| court.sport == filters.sport)
         .map(|court| surface(&court.surface).to_string())
         .collect();
-    let members_only = clubs.iter().filter(|club| !guests(club)).count();
+    let joinable: Vec<&db::Club> = clubs
+        .iter()
+        .filter(|club| {
+            !guests(club)
+                || filters.member_of.contains(&club.id)
+                || days
+                    .iter()
+                    .any(|((id, _), day)| *id == club.id && day.busy.0.iter().any(|busy| busy.members))
+        })
+        .collect();
+    let joinable_ids: Vec<i64> = joinable.iter().map(|club| club.id).collect();
     let rates = Rates::load(&db).await;
     let found = Found {
         clubs: &clubs,
@@ -536,7 +553,16 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         today: &today,
         rates: &rates,
     };
-    let facets = found.facets(&filters, &all_sports, &surfaces_here);
+    let facets = found.facets(&filters, &all_sports, &surfaces_here, &joinable_ids);
+    let memberships: Vec<Membership> = joinable
+        .iter()
+        .map(|club| Membership {
+            id: club.id,
+            name: club.name.clone(),
+            member: filters.member_of.contains(&club.id),
+            more: facets.of("member", &club.id.to_string()).unwrap_or(0) as i64 - facets.current as i64,
+        })
+        .collect();
     let per_day = found.per_day(&filters, &dates);
     let mut rows = found.rows(&filters);
     if filters.sort == "near" {
@@ -662,28 +688,26 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         nav(current: "courts")
         <section class="days" aria-label="Day">
             <div class="days-head">
-                <h2 class="group-label">(if filters.several { "Days" } else { "Day" })</h2>
-                <a class=(if filters.several { "switch on" } else { "switch" }) href=(filters.with_several(!filters.several)) aria-pressed=(filters.several.to_string())>"Several days"</a>
+                <h2 class="group-label">(if several { "Days" } else { "Day" })</h2>
+                <span class="quiet hint days-hint fine">"Shift-click for the days between, Ctrl-click to add or drop one"</span>
+                <span class="quiet hint days-hint touch">"Hold a day to add or drop it"</span>
             </div>
-            <nav class="day-strip" aria-label="Days, with the free starts each would show">
+            <nav class="day-strip" aria-label="Days, with the free starts each would show" data-days=(filters.dates.join(",")) data-days-link=(filters.days_template())>
                 for (d, n) in &per_day {
-                    <a class=(if *n == 0 { "day empty" } else { "day" }) aria-current=(current(filters.dates.contains(d))) href=(filters.with_date(d)) aria-label=(format!("{}, {n} free", time::label(d)))>
+                    <a class=(if *n == 0 { "day empty" } else { "day" }) aria-current=(current(filters.dates.contains(d))) href=(filters.with_date(d)) data-day=(d.as_str()) aria-label=(format!("{}, {n} free", time::label(d)))>
                         <span class="day-name">(time::weekday(d))</span>
                         <span class="day-date">(time::day_month(d))</span>
                         <span class="day-count">(n.to_string())</span>
                     </a>
                 }
             </nav>
-            if filters.several {
-                <div class="chips presets">
-                    for (label, days) in &presets {
-                        <a class=(chip(filters.dates == *days)) href=(filters.with_dates(days.clone()))>(*label)</a>
-                    }
-                    <span class="quiet hint">"Tap days to add or remove them."</span>
-                </div>
-            }
+            <div class="chips presets">
+                for (label, days) in &presets {
+                    <a class=(chip(filters.dates == *days)) href=(filters.with_dates(days.clone()))>(*label)</a>
+                }
+            </div>
         </section>
-        filter_form(filters: &filters, sports: &all_sports, surfaces: &surfaces_here, members_only: members_only, facets: &facets)
+        filter_form(filters: &filters, sports: &all_sports, surfaces: &surfaces_here, memberships: &memberships, facets: &facets)
         <div class=(if map_view { "split show-map" } else { "split" })>
             <section class="results" aria-label="Free courts">
                 <div class="results-head">
@@ -843,7 +867,7 @@ async fn filter_form(
     filters: &Filters,
     sports: &[String],
     surfaces: &BTreeSet<String>,
-    members_only: usize,
+    memberships: &[Membership],
     facets: &Facets,
 ) -> Result<impl View> {
     let summary = filters.summary(&sport_name(&filters.sport));
@@ -869,25 +893,19 @@ async fn filter_form(
         1 => "Francs, as GotCourts and Eversports quote them without signing in. A limit hides only what is known to cost more: the one free start without a known price stays under every limit.".to_string(),
         n => format!("Francs, as GotCourts and Eversports quote them without signing in. A limit hides only what is known to cost more: the {n} free starts without a known price stay under every limit."),
     };
-    let members_more = if filters.members {
-        String::new()
-    } else {
-        more(facets, "members", "1")
-    };
+    let back = filters.link();
     let cleared = facets.cleared.saturating_sub(facets.current);
     let clear_link = Filters {
         dates: filters.dates.clone(),
-        several: filters.several,
         sport: filters.sport.clone(),
         view: filters.view.clone(),
         near: filters.near,
         sort: filters.sort.clone(),
-        members: filters.members,
         ..Filters::default()
     }
     .link();
     Ok(view! {
-        <details class="filters" data-filters="">
+        <details class="filters" id="filters" data-filters="">
             <summary>
                 <span class="filters-label">"Filters"</span>
                 <span class="filters-summary">(summary.as_str())</span>
@@ -898,7 +916,6 @@ async fn filter_form(
             <form method="get" action="/" data-autosubmit="">
                 <input type="hidden" name="f" value="1">
                 <input type="hidden" name="date" value=(filters.dates.join(","))>
-                <input type="hidden" name="several" value=(if filters.several { "1" } else { "" })>
                 <input type="hidden" name="view" value=(filters.view.as_str())>
                 <input type="hidden" name="near" value=(filters.near.map(|(a, b)| format!("{a:.4},{b:.4}")).unwrap_or_default())>
                 if sports.len() > 1 {
@@ -992,15 +1009,11 @@ async fn filter_form(
                     </div>
                 </fieldset>
                 <fieldset class="group">
-                    <legend>"Order and access" <span class="more">(members_more.as_str())</span></legend>
+                    <legend>"Order"</legend>
                     <div class="seg">
                         <label><input type="radio" name="sort" value="soon" checked=(filters.sort != "near")> "Soonest"</label>
                         <label><input type="radio" name="sort" value="near" checked=(filters.sort == "near")> "Nearest"</label>
                     </div>
-                    <label class="check">
-                        <input type="checkbox" name="members" value="1" checked=(filters.members)>
-                        (format!("Members-only clubs too ({members_only} {}, {} free)", if members_only == 1 { "club" } else { "clubs" }, count(facets, "members", "1")))
-                    </label>
                 </fieldset>
                 <div class="filters-foot">
                     <span class="quiet">(format!("{} free starts with these filters", facets.current))</span>
@@ -1010,6 +1023,23 @@ async fn filter_form(
                 </div>
                 <noscript><button class="pill" type="submit">"Show"</button></noscript>
             </form>
+            if !memberships.is_empty() {
+                <form class="group members" method="post" action="/memberships">
+                    <input type="hidden" name="back" value=(back.as_str())>
+                    <p class="group-label">"Clubs you're a member of"</p>
+                    <div class="row">
+                        for club in memberships {
+                            <button type="submit" name="club" value=(club.id.to_string()) class=(chip(club.member)) aria-pressed=(club.member.to_string())>
+                                (club.name.as_str())
+                                if club.more != 0 {
+                                    <span class="count">(if club.member { club.more.abs().to_string() } else { format!("+{}", club.more) })</span>
+                                }
+                            </button>
+                        }
+                    </div>
+                    <p class="quiet hint">"Hours a club keeps for its members count as free at the clubs you tick, and a members-only club shows at all. The number is how many free starts that makes."</p>
+                </form>
+            }
         </details>
     })
 }
@@ -1219,6 +1249,11 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
     } else {
         "Book there"
     };
+    let member = db
+        .memberships_of(crate::auth::me(cx).map(|me| me.id))
+        .await
+        .map_err(topcoat::Error::msg)?
+        .contains(&club.id);
     let mut days = db.days_of(id).await.map_err(topcoat::Error::msg)?;
     days.sort_by(|a, b| a.date.cmp(&b.date));
     let weeks: Vec<(String, BTreeMap<i64, usize>)> = days
@@ -1227,7 +1262,11 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
             let after = if day.date == today { time::seconds_today() } else { 0 };
             (
                 day.date.clone(),
-                by_hour(&slots::free(&day.courts.0, &day.busy.0, after)),
+                by_hour(&slots::free(
+                    &day.courts.0,
+                    &slots::taken_for(&day.busy.0, member),
+                    after,
+                )),
             )
         })
         .collect();
@@ -1350,6 +1389,7 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
     for ask in db.asks_of(me.id).await.map_err(topcoat::Error::msg)? {
         asked.push(asked_line(&db, &ask).await?);
     }
+    let member_of = db.memberships_of(Some(me.id)).await.map_err(topcoat::Error::msg)?;
     let mut listed = Vec::new();
     for watch in db.watches_of(me.id).await.map_err(topcoat::Error::msg)? {
         let mut free = 0;
@@ -1365,7 +1405,7 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
                 courts: stored.courts.0,
                 busy: stored.busy.0,
             };
-            free += crate::poll::matching(&watch, &day).len();
+            free += crate::poll::matching(&watch, &day, member_of.contains(&club.id)).len();
         }
         let club = match watch.club_id {
             Some(id) => clubs
@@ -1536,6 +1576,43 @@ struct NewWatch {
     sport: Option<String>,
 }
 
+/// A club in the filter panel's list of clubs someone may be a member of.
+struct Membership {
+    id: i64,
+    name: String,
+    member: bool,
+    /// How many free starts ticking (or unticking) it adds.
+    more: i64,
+}
+
+#[derive(serde::Deserialize)]
+struct Join {
+    club: i64,
+    back: String,
+}
+
+/// Ticks or unticks a club the person is a member of, then goes back to
+/// the day page as it was.
+#[route(POST "/memberships")]
+async fn toggle_membership(cx: &Cx, Form(join): Form<Join>) -> Result<SeeOther> {
+    let me = crate::auth::person(cx)?;
+    let db = app_context::<Db>(cx).clone();
+    let member = db
+        .memberships_of(Some(me.id))
+        .await
+        .map_err(topcoat::Error::msg)?
+        .contains(&join.club);
+    db.set_member(me.id, join.club, !member)
+        .await
+        .map_err(topcoat::Error::msg)?;
+    let back = if join.back.starts_with("/?") {
+        join.back
+    } else {
+        "/".to_string()
+    };
+    Ok(see_other(format!("{back}#filters")))
+}
+
 #[route(POST "/watches/add")]
 async fn add_watch(cx: &Cx, Form(new): Form<NewWatch>) -> Result<SeeOther> {
     let me = crate::auth::person(cx)?;
@@ -1629,6 +1706,7 @@ mod tests {
                 start: 9 * 3600,
                 end: 10 * 3600,
                 note: None,
+                members: false,
             }]),
         };
         (vec![club], BTreeMap::from([((1, date), day)]))
@@ -1653,6 +1731,59 @@ mod tests {
     }
 
     #[test]
+    fn a_member_sees_the_members_only_hours_and_clubs() {
+        let (mut clubs, mut days) = lengg();
+        let date = DATE.to_string();
+        // ASVZ's way: every hour nobody booked is kept for members by a rule.
+        let rule = |court: i64, from: i64, to: i64| Busy {
+            court: Some(court),
+            start: from * 3600,
+            end: to * 3600,
+            note: Some("No booking from 8:00 to 21:00. Only club members can create reservations".into()),
+            members: true,
+        };
+        let day = days.get_mut(&(1, date.clone())).unwrap();
+        day.busy.0.extend([rule(1, 8, 12), rule(2, 8, 9), rule(2, 10, 12)]);
+        let rates = Rates::default();
+        let filters = Filters {
+            dates: vec![date],
+            ..Filters::default()
+        };
+        let count = |clubs: &[db::Club], filters: &Filters| {
+            Found {
+                clubs,
+                days: &days,
+                home: (47.3779, 8.5403),
+                today: "2000-01-01",
+                rates: &rates,
+            }
+            .facets(filters, &["tennis".into()], &BTreeSet::new(), &[1])
+        };
+        let outsider = count(&clubs, &filters);
+        assert_eq!(outsider.current, 0);
+        assert_eq!(outsider.of("member", "1"), Some(7));
+        let member = Filters {
+            member_of: BTreeSet::from([1]),
+            ..filters.clone()
+        };
+        assert_eq!(count(&clubs, &member).current, 7);
+        assert_eq!(count(&clubs, &member).of("member", "1"), Some(0));
+        clubs[0].kind = "private".into();
+        assert!(
+            Found {
+                clubs: &clubs,
+                days: &days,
+                home: (47.3779, 8.5403),
+                today: "2000-01-01",
+                rates: &rates,
+            }
+            .rows(&filters)
+            .is_empty()
+        );
+        assert_eq!(count(&clubs, &member).current, 7);
+    }
+
+    #[test]
     fn each_choice_counts_what_it_would_show() {
         let (clubs, days) = lengg();
         let date = DATE.to_string();
@@ -1669,7 +1800,7 @@ mod tests {
             place: "indoor".into(),
             ..Filters::default()
         };
-        let facets = found.facets(&filters, &["tennis".into()], &BTreeSet::from(["clay".to_string()]));
+        let facets = found.facets(&filters, &["tennis".into()], &BTreeSet::from(["clay".to_string()]), &[]);
         // Indoor: 08–12 on court 1 is four starts; outdoor court 2 has three.
         assert_eq!(facets.current, 4);
         assert_eq!(facets.of("place", "outdoor"), Some(3));
@@ -1699,7 +1830,7 @@ mod tests {
             dates: vec![DATE.to_string()],
             ..Filters::default()
         };
-        let facets = found.facets(&filters, &["tennis".into()], &BTreeSet::new());
+        let facets = found.facets(&filters, &["tennis".into()], &BTreeSet::new(), &[]);
         // Court 1 costs 40 an hour but 65 from 11; court 2 has a price only at 10.
         // A start without a known price stays under every limit.
         assert_eq!(facets.current, 7);

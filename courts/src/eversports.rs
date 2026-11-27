@@ -406,6 +406,7 @@ pub fn taken(body: &Value, days: &Layout) -> BTreeMap<String, Vec<Busy>> {
                 .map(str::trim)
                 .filter(|t| !t.is_empty())
                 .map(str::to_string),
+            members: false,
         });
     }
     busy

@@ -1,6 +1,6 @@
 use crate::gotcourts::{self, Busy, Court};
 use crate::tariffs::Week;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -186,6 +186,15 @@ mod models {
         pub picks: Json<Vec<crate::ask::Pick>>,
     }
 
+    /// A club someone is a member of: its members-only hours count as free
+    /// for them, and a members-only club shows at all.
+    #[derive(Debug, toasty::Model)]
+    #[key(person_id, club_id)]
+    pub struct Membership {
+        pub person_id: i64,
+        pub club_id: i64,
+    }
+
     #[derive(Debug, toasty::Model)]
     pub struct Setting {
         #[key]
@@ -207,13 +216,14 @@ mod models {
             Tariff,
             Person,
             Device,
-            Ask
+            Ask,
+            Membership
         )
     }
 }
 
 pub use models::{Ask, Club, Day, Device, Person, Report, Subscription, Watch};
-use models::{Closed, Invite, Setting, Tariff, Told};
+use models::{Closed, Invite, Membership, Setting, Tariff, Told};
 
 #[derive(Clone)]
 pub struct Db {
@@ -631,6 +641,10 @@ impl Db {
             .delete()
             .exec(&mut db)
             .await?;
+        Membership::filter(Membership::fields().person_id().eq(id))
+            .delete()
+            .exec(&mut db)
+            .await?;
         Person::filter_by_id(id).delete().exec(&mut db).await?;
         Ok(())
     }
@@ -735,6 +749,36 @@ impl Db {
         toasty::update!(ask { picks: picks }).exec(&mut transaction).await?;
         transaction.commit().await?;
         Ok(true)
+    }
+
+    /// The clubs `person` is a member of; none for nobody.
+    pub async fn memberships_of(&self, person: Option<i64>) -> Result<BTreeSet<i64>> {
+        let Some(person) = person else {
+            return Ok(BTreeSet::new());
+        };
+        let mut db = self.db.clone();
+        Ok(Membership::filter(Membership::fields().person_id().eq(person))
+            .exec(&mut db)
+            .await?
+            .into_iter()
+            .map(|membership| membership.club_id)
+            .collect())
+    }
+
+    pub async fn set_member(&self, person: i64, club: i64, member: bool) -> Result<()> {
+        let mut db = self.db.clone();
+        if member {
+            Membership::upsert_by_person_id_and_club_id(person, club)
+                .or_ignore()
+                .exec(&mut db)
+                .await?;
+        } else {
+            Membership::filter_by_person_id_and_club_id(person, club)
+                .delete()
+                .exec(&mut db)
+                .await?;
+        }
+        Ok(())
     }
 
     pub async fn subscribe(&self, subscription: Subscription) -> Result<()> {
@@ -873,6 +917,7 @@ mod tests {
             start: 3600,
             end: 7200,
             note: None,
+            members: false,
         };
         db.save_day(&day(vec![busy.clone()]), "2026-12-01", 1).await.unwrap();
         db.save_day(&day(vec![]), "2026-12-01", 2).await.unwrap();
@@ -891,6 +936,23 @@ mod tests {
         );
         db.close(20, "unknown club", 3).await.unwrap();
         assert!(db.clubs(&[20]).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn someone_is_a_member_of_the_clubs_they_tick_until_they_leave() {
+        let db = Db::memory().await;
+        let one = db.add_person("Frederik", true, 1).await.unwrap();
+        let other = db.add_person("Anna", false, 1).await.unwrap();
+        db.set_member(one.id, 21, true).await.unwrap();
+        db.set_member(one.id, 21, true).await.unwrap();
+        db.set_member(one.id, 57, true).await.unwrap();
+        assert_eq!(db.memberships_of(Some(one.id)).await.unwrap(), BTreeSet::from([21, 57]));
+        assert!(db.memberships_of(Some(other.id)).await.unwrap().is_empty());
+        assert!(db.memberships_of(None).await.unwrap().is_empty());
+        db.set_member(one.id, 57, false).await.unwrap();
+        assert_eq!(db.memberships_of(Some(one.id)).await.unwrap(), BTreeSet::from([21]));
+        db.remove_person(one.id).await.unwrap();
+        assert!(db.memberships_of(Some(one.id)).await.unwrap().is_empty());
     }
 
     #[tokio::test]

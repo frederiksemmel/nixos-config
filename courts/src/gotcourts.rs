@@ -78,6 +78,14 @@ pub struct Busy {
     pub start: i64,
     pub end: i64,
     pub note: Option<String>,
+    /// A club rule that only keeps out who isn't a member ("Only club
+    /// members can create reservations…"): free for the club's members.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub members: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -347,19 +355,21 @@ pub fn parse(body: &Value) -> Result<Day, Error> {
         .as_array()
         .into_iter()
         .flatten()
-        .map(|taken| (taken, None));
+        .map(|taken| (taken, None, false));
     let blockings = response["blockings"].as_array().into_iter().flatten().map(|taken| {
         let note = text(&taken["text"]).replace("<br>", " ");
-        (taken, Some(note).filter(|note| !note.is_empty()))
+        let rule = text(&taken["blockingType"]) == "rule";
+        (taken, Some(note).filter(|note| !note.is_empty()), rule)
     });
     let busy = reservations
         .chain(blockings)
-        .filter_map(|(taken, note)| {
+        .filter_map(|(taken, note, members)| {
             Some(Busy {
                 court: int(&taken["courtId"]),
                 start: int(&taken["startTime"])?,
                 end: int(&taken["endTime"])?,
                 note,
+                members,
             })
         })
         .collect();
@@ -379,8 +389,9 @@ mod tests {
         let body = serde_json::json!({
             "status": true,
             "response": {
-                "blockings": [{"id": 1, "courtId": 115, "type": "blocking", "startTime": 54000, "endTime": 57600,
-                    "text": "No booking from 8:00 to 21:00.<br>Only club members can book."}],
+                "blockings": [{"id": 1, "courtId": 115, "type": "blocking", "blockingType": "rule", "startTime": 54000, "endTime": 57600,
+                    "text": "No booking from 8:00 to 21:00.<br>Only club members can book."},
+                    {"courtId": 111, "startTime": 28800, "endTime": 79200, "shortDesc": "Winterpause", "type": "other"}],
                 "reservations": [{"id": 9, "courtId": 111, "startTime": 32400, "endTime": 36000, "type": "club"}],
                 "club": {"id": 20, "name": "Tennis Lengg", "canonicalName": "tennis-lengg", "address1": "Lengg 1",
                     "address2": "", "zipCode": "8008", "city": "Zürich", "latitude": "47.35", "longitude": "8.57",
@@ -406,10 +417,15 @@ mod tests {
         assert_eq!(covered(""), None);
         assert_eq!(covered("hall"), None);
         assert_eq!(day.courts[0].durations, [60, 90]);
-        assert_eq!(day.busy.len(), 2);
+        assert_eq!(day.busy.len(), 3);
         assert_eq!(
             day.busy[1].note.as_deref(),
             Some("No booking from 8:00 to 21:00. Only club members can book.")
+        );
+        assert_eq!(
+            day.busy.iter().map(|busy| busy.members).collect::<Vec<_>>(),
+            [false, true, false],
+            "a rule keeps out only who isn't a member; a reservation or a closure keeps out everybody"
         );
     }
 

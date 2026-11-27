@@ -42,6 +42,12 @@ pub fn free_for(courts: &[Court], busy: &[Busy], after: i64, seconds: i64) -> Ve
     slots
 }
 
+/// What keeps courts taken for someone who is (`member`) or isn't a member
+/// of the club: a member books over the club's members-only rules.
+pub fn taken_for(busy: &[Busy], member: bool) -> Vec<Busy> {
+    busy.iter().filter(|busy| !(member && busy.members)).cloned().collect()
+}
+
 fn taken(court: &Court, busy: &[Busy], start: i64, end: i64) -> bool {
     busy.iter()
         .any(|busy| busy.court.is_none_or(|id| id == court.id) && busy.start < end && busy.end > start)
@@ -133,6 +139,7 @@ mod tests {
             start: (from * 3600.0) as i64,
             end: (to * 3600.0) as i64,
             note: None,
+            members: false,
         }
     }
 
@@ -168,5 +175,22 @@ mod tests {
         let slots = free(&[court(1, 60), court(2, 60)], &[busy(None, 8.0, 9.0)], 10 * 3600);
         assert_eq!(starts(&slots, 1), ["10:00", "11:00"]);
         assert_eq!(starts(&slots, 2), ["10:00", "11:00"]);
+    }
+
+    #[test]
+    fn a_member_books_over_a_members_only_rule_and_nobody_over_a_reservation() {
+        let rule = Busy {
+            members: true,
+            ..busy(Some(1), 8.0, 10.0)
+        };
+        let taken = [rule, busy(Some(1), 10.0, 11.0)];
+        assert_eq!(
+            starts(&free(&[court(1, 60)], &taken_for(&taken, false), 0), 1),
+            ["11:00"]
+        );
+        assert_eq!(
+            starts(&free(&[court(1, 60)], &taken_for(&taken, true), 0), 1),
+            ["08:00", "09:00", "11:00"]
+        );
     }
 }

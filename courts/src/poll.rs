@@ -166,7 +166,7 @@ impl Poller {
 
     /// Tells about slots of `day` that `watch` wants and didn't tell about yet.
     async fn check(&self, watch: &Watch, day: &gotcourts::Day) {
-        let free = matching(watch, day);
+        let free = matching(watch, day, self.member(watch, day.club.id).await);
         let ours: HashSet<i64> = day.courts.iter().map(|c| c.id).collect();
         let told: HashSet<(i64, i64)> = match self.db.told(watch.id).await {
             Ok(told) => told.into_iter().filter(|(court, _)| ours.contains(court)).collect(),
@@ -193,6 +193,14 @@ impl Poller {
         }
     }
 
+    /// Whether the watch's person is a member of `club`.
+    async fn member(&self, watch: &Watch, club: i64) -> bool {
+        self.db
+            .memberships_of(watch.person_id)
+            .await
+            .is_ok_and(|clubs| clubs.contains(&club))
+    }
+
     /// Takes note of what is free for a new watch now, so it tells only
     /// about what frees up from here on.
     pub async fn note(&self, watch: &Watch) {
@@ -211,14 +219,20 @@ impl Poller {
                 courts: stored.courts.0,
                 busy: stored.busy.0,
             };
-            for slot in matching(watch, &day) {
+            let member = self.member(watch, day.club.id).await;
+            for slot in matching(watch, &day, member) {
                 let _ = self.db.tell(watch.id, &watch.date, slot.court, slot.start).await;
             }
         }
     }
 }
 
-pub fn matching(watch: &Watch, day: &gotcourts::Day) -> Vec<Slot> {
+/// The free slots of `day` that `watch` wants, for someone who is
+/// (`member`) or isn't a member of the club.
+pub fn matching(watch: &Watch, day: &gotcourts::Day, member: bool) -> Vec<Slot> {
+    if day.club.kind == "private" && !member {
+        return Vec::new();
+    }
     let courts: Vec<_> = day
         .courts
         .iter()
@@ -231,7 +245,7 @@ pub fn matching(watch: &Watch, day: &gotcourts::Day) -> Vec<Slot> {
     } else {
         0
     };
-    slots::free(&courts, &day.busy, after)
+    slots::free(&courts, &slots::taken_for(&day.busy, member), after)
         .into_iter()
         .filter(|slot| slot.start >= watch.earliest && slot.end <= watch.latest)
         .collect()
