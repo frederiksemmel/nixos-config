@@ -1,9 +1,10 @@
 use crate::db::{self, Db};
-use crate::filters::{EARLIEST, Filters, LATEST, LENGTHS, PRESETS, WITHIN};
+use crate::filters::{EARLIEST, Filters, LATEST, LENGTHS, PRESETS, PRICES, WITHIN};
 use crate::gotcourts::{self, Court};
 use crate::poll::Poller;
 use crate::slots::{self, Slot, clock};
 use crate::source::Source;
+use crate::tariffs::Rates;
 use crate::time;
 use std::collections::{BTreeMap, BTreeSet};
 use topcoat::Result;
@@ -135,6 +136,25 @@ fn heat(count: usize) -> &'static str {
     }
 }
 
+/// "45", or "37.50" when it isn't whole francs.
+fn chf(rappen: i64) -> String {
+    if rappen % 100 == 0 {
+        (rappen / 100).to_string()
+    } else {
+        format!("{}.{:02}", rappen / 100, rappen % 100)
+    }
+}
+
+/// How cheap an hour is, for a grid cell's colour.
+fn price_heat(hourly: Option<i64>) -> &'static str {
+    match hourly {
+        None => "cell unpriced",
+        Some(rappen) if rappen <= 3000 => "cell cheap",
+        Some(rappen) if rappen <= 5000 => "cell fair",
+        Some(_) => "cell dear",
+    }
+}
+
 fn chip(on: bool) -> &'static str {
     if on { "chip on" } else { "chip" }
 }
@@ -143,12 +163,29 @@ fn current(on: bool) -> &'static str {
     if on { "page" } else { "false" }
 }
 
-/// One club's free courts on one of the chosen days.
+/// One club's free courts on one of the chosen days, each free slot with
+/// what booking it costs and what an hour of it costs (Rappen) when known.
 struct DayFree {
     date: String,
     courts: Vec<Court>,
     free: Vec<Slot>,
-    hours: BTreeMap<i64, usize>,
+    costs: Vec<Option<(i64, i64)>>,
+}
+
+impl DayFree {
+    fn cost(&self, slot: &Slot) -> Option<(i64, i64)> {
+        let at = self.free.iter().position(|s| s == slot)?;
+        self.costs[at]
+    }
+
+    /// The cheapest free slot among those `keep` takes, the earliest of
+    /// the cheapest; one with a known price before any without.
+    fn cheapest(&self, keep: impl Fn(&Slot) -> bool) -> Option<usize> {
+        (0..self.free.len()).filter(|&i| keep(&self.free[i])).min_by_key(|&i| {
+            let total = self.costs[i].map(|(total, _)| total);
+            (total.is_none(), total, self.free[i].start, self.free[i].court)
+        })
+    }
 }
 
 struct Row {
@@ -242,6 +279,7 @@ struct Found<'a> {
     days: &'a BTreeMap<(i64, String), db::Day>,
     home: (f64, f64),
     today: &'a str,
+    rates: &'a Rates,
 }
 
 /// How many free starts each other choice in the filter panel would give,
@@ -251,6 +289,8 @@ pub struct Facets {
     pub options: BTreeMap<String, usize>,
     pub current: usize,
     pub cleared: usize,
+    /// Free starts at any price whose price isn't known.
+    pub unpriced: usize,
 }
 
 impl Facets {
@@ -290,16 +330,30 @@ impl Found<'_> {
                         }
                         let after =
                             (filters.from * 3600).max(if date == self.today { time::seconds_today() } else { 0 });
-                        let free: Vec<Slot> = slots::free_for(&courts, &stored.busy.0, after, filters.length * 60)
-                            .into_iter()
-                            .filter(|slot| slot.end <= until)
-                            .collect();
-                        let hours = by_hour(&free);
+                        let source = Source::parse(&club.source);
+                        let (free, costs): (Vec<Slot>, Vec<Option<(i64, i64)>>) =
+                            slots::free_for(&courts, &stored.busy.0, after, filters.length * 60)
+                                .into_iter()
+                                .filter(|slot| slot.end <= until)
+                                .map(|slot| {
+                                    let court = courts.iter().find(|c| c.id == slot.court);
+                                    let cost = court.and_then(|court| {
+                                        Some((
+                                            self.rates.cost(source, court, date, &slot)?,
+                                            self.rates.hourly(source, court, date, &slot)?,
+                                        ))
+                                    });
+                                    (slot, cost)
+                                })
+                                .filter(|(_, cost)| {
+                                    filters.price == 0 || cost.is_some_and(|(_, hourly)| hourly <= filters.price * 100)
+                                })
+                                .unzip();
                         Some(DayFree {
                             date: date.clone(),
                             courts,
                             free,
-                            hours,
+                            costs,
                         })
                     })
                     .collect();
@@ -381,6 +435,15 @@ impl Found<'_> {
                 },
             );
         }
+        for price in PRICES.iter().copied().chain([0]) {
+            put(
+                format!("price:{price}"),
+                Filters {
+                    price,
+                    ..filters.clone()
+                },
+            );
+        }
         for members in [false, true] {
             put(
                 format!("members:{}", u8::from(members)),
@@ -397,12 +460,24 @@ impl Found<'_> {
             place: String::new(),
             surface: String::new(),
             within: 0,
+            price: 0,
             ..filters.clone()
         });
+        let unpriced = self
+            .rows(&Filters {
+                price: 0,
+                ..filters.clone()
+            })
+            .iter()
+            .flat_map(|row| &row.days)
+            .flat_map(|day| &day.costs)
+            .filter(|cost| cost.is_none())
+            .count();
         Facets {
             options,
             current: self.count(filters),
             cleared,
+            unpriced,
         }
     }
 }
@@ -435,11 +510,13 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         .map(|court| surface(&court.surface).to_string())
         .collect();
     let members_only = clubs.iter().filter(|club| !guests(club)).count();
+    let rates = Rates::load(&db).await;
     let found = Found {
         clubs: &clubs,
         days: &days,
         home: site.home,
         today: &today,
+        rates: &rates,
     };
     let facets = found.facets(&filters, &all_sports, &surfaces_here);
     let mut rows = found.rows(&filters);
@@ -496,6 +573,41 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     let free_total: usize = open.iter().map(Row::total).sum();
     let sport_label = sport_name(&filters.sport);
     let hours: Vec<i64> = (filters.from.max(EARLIEST)..filters.until.min(LATEST)).collect();
+    let share_key = app_context::<crate::auth::Key>(cx).0.clone();
+    let by_day: Vec<Vec<Option<Pick>>> = open
+        .iter()
+        .map(|row| {
+            filters
+                .dates
+                .iter()
+                .map(|d| {
+                    let day = row.days.iter().find(|day| day.date == *d)?;
+                    Some(pick(&row.club, day, day.cheapest(|_| true)?, &share_key))
+                })
+                .collect()
+        })
+        .collect();
+    let by_hours: Vec<Vec<Option<Pick>>> = open
+        .iter()
+        .map(|row| {
+            let day = &row.days[0];
+            hours
+                .iter()
+                .map(|hour| {
+                    Some(pick(
+                        &row.club,
+                        day,
+                        day.cheapest(|s| s.start / 3600 == *hour)?,
+                        &share_key,
+                    ))
+                })
+                .collect()
+        })
+        .collect();
+    let length_label = LENGTHS
+        .iter()
+        .find(|(m, _)| *m == filters.length)
+        .map_or("1 h", |(_, l)| *l);
     let summary = format!(
         "{} {} at {} {}",
         free_total,
@@ -521,7 +633,6 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     .filter(|(_, days)| days.len() > 1)
     .collect();
     let discovered = app_context::<crate::discover::Clubs>(cx).state();
-    let share_key = app_context::<crate::auth::Key>(cx).0.clone();
     let venues: Vec<String> = clubs
         .iter()
         .filter(|club| Source::parse(&club.source) == Source::Eversports)
@@ -568,7 +679,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                     <p class="empty">"No court of these fits. Widen the hours, the distance or the length, or add days."</p>
                 }
                 if !open.is_empty() && several {
-                    <section class="overview" aria-label="Free starts by day">
+                    <section class="overview" aria-label="Cheapest free start by day">
                         <div class="grid-wrap">
                             <table class="grid">
                                 <thead>
@@ -580,26 +691,22 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    for row in &open {
+                                    for (row, picks) in open.iter().zip(&by_day) {
                                         <tr>
                                             <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
-                                            for d in &filters.dates {
-                                                <td class=(heat(row.days.iter().find(|day| day.date == *d).map_or(0, |day| day.free.len().min(3))))>
-                                                    if let Some(day) = row.days.iter().find(|day| day.date == *d && !day.free.is_empty()) {
-                                                        (day.free.len().to_string())
-                                                    }
-                                                </td>
+                                            for found in picks {
+                                                grid_cell(found: found)
                                             }
                                         </tr>
                                     }
                                 </tbody>
                             </table>
                         </div>
-                        <p class="legend quiet">"Free starts per day."</p>
+                        price_legend(what: format!("Cheapest free start each day, CHF for {length_label}."))
                     </section>
                 }
                 if !open.is_empty() && !several && hours.len() > 1 {
-                    <section class="overview" aria-label="Free courts by hour">
+                    <section class="overview" aria-label="Cheapest free court by hour">
                         <div class="grid-wrap">
                             <table class="grid">
                                 <thead>
@@ -611,26 +718,22 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                                     </tr>
                                 </thead>
                                 <tbody>
-                                    for row in &open {
+                                    for (row, picks) in open.iter().zip(&by_hours) {
                                         <tr>
                                             <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
-                                            for hour in &hours {
-                                                <td class=(heat(row.days[0].hours.get(hour).copied().unwrap_or(0)))>
-                                                    if let Some(count) = row.days[0].hours.get(hour) {
-                                                        (count.to_string())
-                                                    }
-                                                </td>
+                                            for found in picks {
+                                                grid_cell(found: found)
                                             }
                                         </tr>
                                     }
                                 </tbody>
                             </table>
                         </div>
-                        <p class="legend quiet">(format!("Courts free for {} from each hour.", LENGTHS.iter().find(|(m, _)| *m == filters.length).map_or("1 h", |(_, l)| *l)))</p>
+                        price_legend(what: format!("Cheapest court free for {length_label} from each hour, in CHF."))
                     </section>
                 }
                 if !open.is_empty() {
-                    <p class="quiet hint">"Pick a time to send that court to someone."</p>
+                    <p class="quiet hint">"Pick a time to send that court to someone. The number beside it is what booking it costs, in CHF."</p>
                 }
                 <div class="cards">
                     for row in &open {
@@ -730,6 +833,12 @@ async fn filter_form(
         more(facets, "surface", "")
     };
     let within_more = more(facets, "within", "0");
+    let price_more = more(facets, "price", "0");
+    let unpriced_note = match facets.unpriced {
+        0 => "Francs, as GotCourts and Eversports quote them without signing in. A court without a known price shows only under Any.".to_string(),
+        1 => "Francs, as GotCourts and Eversports quote them without signing in. One free start has no known price: it shows only under Any.".to_string(),
+        n => format!("Francs, as GotCourts and Eversports quote them without signing in. {n} free starts have no known price: they show only under Any."),
+    };
     let members_more = if filters.members {
         String::new()
     } else {
@@ -806,6 +915,16 @@ async fn filter_form(
                     </div>
                 </fieldset>
                 <fieldset class="group">
+                    <legend>"Price an hour" <span class="more">(price_more.as_str())</span></legend>
+                    <div class="seg">
+                        <label><input type="radio" name="price" value="0" checked=(filters.price == 0)> "Any" <span class="count">(count(facets, "price", "0"))</span></label>
+                        for chf in PRICES {
+                            <label><input type="radio" name="price" value=(chf.to_string()) checked=(chf == filters.price)> (format!("≤ {chf}")) <span class="count">(count(facets, "price", &chf.to_string()))</span></label>
+                        }
+                    </div>
+                    <p class="quiet hint">(unpriced_note.as_str())</p>
+                </fieldset>
+                <fieldset class="group">
                     <legend>"Court" <span class="more">(if place_more.is_empty() { surface_more.as_str() } else { place_more.as_str() })</span></legend>
                     <div class="seg">
                         <label><input type="radio" name="place" value="" checked=(filters.place.is_empty())> "Any" <span class="count">(count(facets, "place", ""))</span></label>
@@ -876,6 +995,63 @@ pub async fn nav(current: &'static str) -> Result<impl View> {
                 <a href="/feedback" aria-current=(if current == "feedback" { "page" } else { "false" })>"Feedback"</a>
             </nav>
         </header>
+    })
+}
+
+/// One cell of an overview grid: the cheapest free slot in it, and its
+/// share page.
+struct Pick {
+    class: &'static str,
+    href: String,
+    label: String,
+    title: String,
+}
+
+fn pick(club: &db::Club, day: &DayFree, at: usize, key: &str) -> Pick {
+    let slot = &day.free[at];
+    let court = day.courts.iter().find(|c| c.id == slot.court);
+    let (href, about) = court.map_or_else(Default::default, |court| {
+        (
+            shared_path(key, club.id, court, &day.date, slot),
+            format!("{}, {}", court.label, slot_title(court, slot, day.costs[at])),
+        )
+    });
+    let (class, label, about) = match day.costs[at] {
+        Some((total, hourly)) => (price_heat(Some(hourly)), ((total + 50) / 100).to_string(), about),
+        None => (price_heat(None), "–".to_string(), format!("{about} · price not known")),
+    };
+    Pick {
+        class,
+        href,
+        label,
+        title: format!("{} {about}", time::weekday(&day.date)),
+    }
+}
+
+#[component]
+async fn grid_cell(found: &Option<Pick>) -> Result<impl View> {
+    Ok(view! {
+        if let Some(found) = found {
+            <td class=(found.class)><a href=(found.href.as_str()) title=(found.title.as_str()) aria-label=(found.title.as_str())>(found.label.as_str())</a></td>
+        } else {
+            <td class="cell none"></td>
+        }
+    })
+}
+
+/// What a grid's numbers and colours mean.
+#[component]
+async fn price_legend(what: String) -> Result<impl View> {
+    Ok(view! {
+        <p class="legend quiet">
+            (what.as_str())
+            <span class="keys">
+                <span class="key"><span class="swatch cell cheap"></span>"up to 30 an hour"</span>
+                <span class="key"><span class="swatch cell fair"></span>"up to 50"</span>
+                <span class="key"><span class="swatch cell dear"></span>"more"</span>
+                <span class="key"><span class="swatch cell unpriced">"–"</span>"price not known"</span>
+            </span>
+        </p>
     })
 }
 
@@ -965,7 +1141,12 @@ async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str, iphon
                             </span>
                             <span class="times">
                                 for slot in slots {
-                                    <a class="time" href=(shared_path(share_key, club.id, court, &day.date, slot)) data-slot=(shared_title(court, &day.date, slot, &club.name)) title=(format!("Share {}", slot_title(court, slot)))>(clock(slot.start))</a>
+                                    <a class="time" href=(shared_path(share_key, club.id, court, &day.date, slot)) data-slot=(shared_title(court, &day.date, slot, &club.name)) title=(format!("Share {}", slot_title(court, slot, day.cost(slot))))>
+                                        (clock(slot.start))
+                                        if let Some((total, _)) = day.cost(slot) {
+                                            <span class="price">(chf(total))</span>
+                                        }
+                                    </a>
                                 }
                             </span>
                         </li>
@@ -976,14 +1157,12 @@ async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str, iphon
     })
 }
 
-/// "18:15–19:15" and, when the source tells it, what that costs; where the
-/// court is booked in cells, until the end of the last cell it takes.
-fn slot_title(court: &Court, slot: &Slot) -> String {
-    let end = slots::booked_end(court, slot);
-    let span = format!("{}–{}", clock(slot.start), clock(end));
-    let booked = Slot { end, ..*slot };
-    match slots::price(court, &booked) {
-        Some(rappen) => format!("{span} · {}", crate::share::francs(rappen)),
+/// "18:15–19:15" and, when known, what that costs; where the court is
+/// booked in cells, until the end of the last cell it takes.
+fn slot_title(court: &Court, slot: &Slot, cost: Option<(i64, i64)>) -> String {
+    let span = format!("{}–{}", clock(slot.start), clock(slots::booked_end(court, slot)));
+    match cost {
+        Some((total, _)) => format!("{span} · {}", crate::share::francs(total)),
         None => span,
     }
 }
@@ -1316,8 +1495,10 @@ mod tests {
         }
     }
 
-    #[test]
-    fn each_choice_counts_what_it_would_show() {
+    const DATE: &str = "2099-01-01";
+
+    /// Lengg on DATE: indoor court 1 free 08–12, outdoor court 2 taken 09–10.
+    fn lengg() -> (Vec<db::Club>, BTreeMap<(i64, String), db::Day>) {
         let club = db::Club {
             id: 1,
             source: "gotcourts".into(),
@@ -1334,7 +1515,7 @@ mod tests {
             courts: Json(vec![court(1, true), court(2, false)]),
             checked_at: 0,
         };
-        let date = "2099-01-01".to_string();
+        let date = DATE.to_string();
         let day = db::Day {
             club_id: 1,
             date: date.clone(),
@@ -1347,13 +1528,20 @@ mod tests {
                 note: None,
             }]),
         };
-        let clubs = vec![club];
-        let days = BTreeMap::from([((1, date.clone()), day)]);
+        (vec![club], BTreeMap::from([((1, date), day)]))
+    }
+
+    #[test]
+    fn each_choice_counts_what_it_would_show() {
+        let (clubs, days) = lengg();
+        let date = DATE.to_string();
+        let rates = Rates::default();
         let found = Found {
             clubs: &clubs,
             days: &days,
             home: (47.3779, 8.5403),
             today: "2000-01-01",
+            rates: &rates,
         };
         let filters = Filters {
             dates: vec![date],
@@ -1369,5 +1557,61 @@ mod tests {
         // Two hours in a row: indoor 08, 09, 10.
         assert_eq!(facets.of("length", "120"), Some(3));
         assert_eq!(facets.cleared, 7);
+    }
+
+    #[test]
+    fn a_price_limit_keeps_what_costs_less_and_the_cheapest_leads_a_cell() {
+        let (clubs, days) = lengg();
+        let mut indoor = crate::tariffs::Week(vec![vec![Some(4000); 24]; 7]);
+        indoor.0.iter_mut().for_each(|day| day[11] = Some(6500));
+        let mut outdoor = crate::tariffs::Week(vec![vec![None; 24]; 7]);
+        outdoor.0.iter_mut().for_each(|day| day[10] = Some(3000));
+        let rates = Rates::new(std::collections::HashMap::from([(1, indoor), (2, outdoor)]));
+        let found = Found {
+            clubs: &clubs,
+            days: &days,
+            home: (47.3779, 8.5403),
+            today: "2000-01-01",
+            rates: &rates,
+        };
+        let filters = Filters {
+            dates: vec![DATE.to_string()],
+            ..Filters::default()
+        };
+        let facets = found.facets(&filters, &["tennis".into()], &BTreeSet::new());
+        // Court 1 costs 40 an hour but 65 from 11; court 2 has a price only at 10.
+        assert_eq!(facets.current, 7);
+        assert_eq!(facets.of("price", "30"), Some(1));
+        assert_eq!(facets.of("price", "40"), Some(4));
+        assert_eq!(facets.of("price", "60"), Some(4));
+        assert_eq!(facets.unpriced, 2);
+        let rows = found.rows(&filters);
+        let day = &rows[0].days[0];
+        let best = &day.free[day.cheapest(|_| true).unwrap()];
+        assert_eq!((best.court, best.start), (2, 10 * 3600));
+        let at_eight = &day.free[day.cheapest(|s| s.start / 3600 == 8).unwrap()];
+        assert_eq!((at_eight.court, at_eight.start), (1, 8 * 3600));
+        let cell = pick(
+            &rows[0].club,
+            day,
+            day.cheapest(|s| s.start / 3600 == 11).unwrap(),
+            "a key of enough length",
+        );
+        assert_eq!((cell.class, cell.label.as_str()), ("cell dear", "65"));
+        assert!(cell.href.starts_with("/s/1-1-20990101-1100-60-"));
+        let unknown = day.cheapest(|s| s.court == 2 && s.start / 3600 == 8).unwrap();
+        let cell = pick(&rows[0].club, day, unknown, "a key of enough length");
+        assert_eq!((cell.class, cell.label.as_str()), ("cell unpriced", "–"));
+        assert!(cell.title.ends_with("price not known"));
+        let limited = found.rows(&Filters {
+            price: 40,
+            ..filters.clone()
+        });
+        assert!(
+            limited[0].days[0]
+                .costs
+                .iter()
+                .all(|cost| cost.is_some_and(|(_, hourly)| hourly <= 4000))
+        );
     }
 }

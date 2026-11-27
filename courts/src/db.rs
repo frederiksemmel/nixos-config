@@ -1,4 +1,6 @@
 use crate::gotcourts::{self, Busy, Court};
+use crate::tariffs::Week;
+use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::path::Path;
 use std::time::Duration;
@@ -124,6 +126,18 @@ mod models {
         pub created_at: i64,
     }
 
+    /// A court's price for each hour of each weekday, asked of GotCourts once a day.
+    #[derive(Debug, toasty::Model)]
+    pub struct Tariff {
+        #[key]
+        pub court_id: i64,
+        #[index]
+        pub club_id: i64,
+        pub checked_at: i64,
+        #[column(type = text)]
+        pub week: Json<crate::tariffs::Week>,
+    }
+
     #[derive(Debug, toasty::Model)]
     pub struct Setting {
         #[key]
@@ -132,11 +146,22 @@ mod models {
     }
 
     pub fn all() -> toasty::ModelSet {
-        toasty::models!(Club, Day, Closed, Watch, Told, Subscription, Setting, Report, Invite)
+        toasty::models!(
+            Club,
+            Day,
+            Closed,
+            Watch,
+            Told,
+            Subscription,
+            Setting,
+            Report,
+            Invite,
+            Tariff
+        )
     }
 }
 
-use models::{Closed, Invite, Setting, Told};
+use models::{Closed, Invite, Setting, Tariff, Told};
 pub use models::{Club, Day, Report, Subscription, Watch};
 
 #[derive(Clone)]
@@ -466,6 +491,48 @@ impl Db {
         Ok(Subscription::all().exec(&mut db).await?)
     }
 
+    /// Every court's week of prices.
+    pub async fn tariffs(&self) -> Result<HashMap<i64, Week>> {
+        let mut db = self.db.clone();
+        Ok(Tariff::all()
+            .exec(&mut db)
+            .await?
+            .into_iter()
+            .map(|tariff| (tariff.court_id, tariff.week.0))
+            .collect())
+    }
+
+    /// When each club's tariffs were last asked: the oldest of its courts.
+    pub async fn tariffs_checked(&self) -> Result<HashMap<i64, i64>> {
+        let mut db = self.db.clone();
+        let mut checked = HashMap::new();
+        for tariff in Tariff::all().exec(&mut db).await? {
+            let at = checked.entry(tariff.club_id).or_insert(tariff.checked_at);
+            *at = (*at).min(tariff.checked_at);
+        }
+        Ok(checked)
+    }
+
+    /// A club's weeks of prices, in place of what was there.
+    pub async fn save_tariffs(&self, club: i64, weeks: &BTreeMap<i64, Week>, now: i64) -> Result<()> {
+        let mut db = self.db.clone();
+        let mut transaction = db.transaction().await?;
+        Tariff::filter(Tariff::fields().club_id().eq(club))
+            .delete()
+            .exec(&mut transaction)
+            .await?;
+        for (court, week) in weeks {
+            Tariff::upsert_by_court_id(*court)
+                .club_id(club)
+                .checked_at(now)
+                .week(week.clone())
+                .exec(&mut transaction)
+                .await?;
+        }
+        transaction.commit().await?;
+        Ok(())
+    }
+
     pub async fn setting(&self, name: &str) -> Result<Option<String>> {
         let mut db = self.db.clone();
         let found = Setting::filter_by_name(name.to_string()).first().exec(&mut db).await?;
@@ -581,6 +648,25 @@ mod tests {
         assert!(!db.redeem("aa", 51).await.unwrap());
         assert!(!db.redeem("bb", 100).await.unwrap());
         assert!(!db.redeem("cc", 50).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn a_club_s_tariffs_replace_its_old_ones() {
+        let db = Db::memory().await;
+        let mut week = Week(vec![vec![None; 24]; 7]);
+        week.0[0][8] = Some(7500);
+        let weeks = BTreeMap::from([(1, week.clone()), (2, week.clone())]);
+        db.save_tariffs(20, &weeks, 5).await.unwrap();
+        db.save_tariffs(21, &BTreeMap::from([(3, week.clone())]), 9)
+            .await
+            .unwrap();
+        db.save_tariffs(20, &BTreeMap::from([(2, week.clone())]), 7)
+            .await
+            .unwrap();
+        let stored = db.tariffs().await.unwrap();
+        assert_eq!(stored.len(), 2);
+        assert_eq!(stored[&2], week);
+        assert_eq!(db.tariffs_checked().await.unwrap()[&20], 7);
     }
 
     #[tokio::test]

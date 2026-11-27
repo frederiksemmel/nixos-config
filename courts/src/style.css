@@ -156,6 +156,29 @@ small { font-size: 0.833rem; margin-left: 6px; }
 .cell.two { background: var(--heat-2); color: oklch(0.15 0.03 150); }
 .cell.many { background: var(--heat-3); color: oklch(0.2 0.05 125); font-weight: 700; }
 .legend { font-size: 0.833rem; margin: 8px 0 0; }
+.cell.cheap { background: var(--heat-3); color: oklch(0.2 0.05 125); font-weight: 700; }
+.cell.fair { background: var(--heat-2); color: oklch(0.15 0.03 150); font-weight: 600; }
+.cell.dear { background: var(--heat-1); color: var(--text); }
+.cell.unpriced { background: oklch(0.32 0.01 162); color: var(--quiet); }
+.grid td a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  height: 28px;
+  padding: 0 4px;
+  border-radius: 5px;
+  color: inherit;
+  text-decoration: none;
+  transition: filter 150ms var(--ease);
+}
+.grid td a:hover { filter: brightness(1.15); }
+@media (pointer: coarse) {
+  .grid td a { min-width: var(--tap); height: var(--tap); }
+}
+.legend .keys { display: flex; flex-wrap: wrap; gap: 4px 14px; margin-top: 6px; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .swatch { display: inline-grid; place-items: center; width: 16px; height: 16px; border-radius: 4px; font-size: 0.75rem; line-height: 1; }
 
 .cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 @media (min-width: 900px) { .cards { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); align-items: start; } }
@@ -183,6 +206,7 @@ small { font-size: 0.833rem; margin-left: 6px; }
   font-weight: 600;
 }
 .time:hover { background: var(--line); }
+.time .price { margin-left: 8px; color: var(--quiet); font-weight: 500; font-size: 0.833rem; }
 
 .full { margin-top: 32px; }
 .full h2 { margin-bottom: 8px; color: var(--quiet); font-size: 1rem; }

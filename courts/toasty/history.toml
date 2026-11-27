@@ -19,3 +19,8 @@ snapshot_name = "0002_snapshot.toml"
 id = 8847215134428966363
 name = "0003_club-source.sql"
 snapshot_name = "0003_snapshot.toml"
+
+[[migrations]]
+id = 2721073642631789578
+name = "0004_tariffs.sql"
+snapshot_name = "0004_snapshot.toml"

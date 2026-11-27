@@ -11,6 +11,8 @@ use topcoat::router::request::uri;
 const COOKIE: &str = "courts_filters";
 pub const LENGTHS: [(i64, &str); 3] = [(60, "1 h"), (90, "1½ h"), (120, "2 h")];
 pub const WITHIN: [i64; 5] = [2, 3, 5, 10, 15];
+/// The most an hour may cost, in francs; 0 is any price.
+pub const PRICES: [i64; 4] = [30, 40, 50, 60];
 pub const PRESETS: [(&str, i64, i64); 4] = [
     ("Morning", 7, 12),
     ("Midday", 11, 15),
@@ -33,6 +35,9 @@ pub struct Filters {
     pub until: i64,
     pub length: i64,
     pub within: i64,
+    /// The most an hour may cost, in francs; 0 is any price, and only
+    /// then do slots without a known price show.
+    pub price: i64,
     pub members: bool,
     pub near: Option<(f64, f64)>,
     pub sort: String,
@@ -51,6 +56,7 @@ impl Default for Filters {
             until: LATEST,
             length: 60,
             within: 0,
+            price: 0,
             members: false,
             near: None,
             sort: "soon".into(),
@@ -110,6 +116,7 @@ impl Filters {
             .filter(|l| LENGTHS.iter().any(|(m, _)| m == l))
             .unwrap_or(60);
         filters.within = hour("within").filter(|w| WITHIN.contains(w)).unwrap_or(0);
+        filters.price = hour("price").filter(|p| PRICES.contains(p)).unwrap_or(0);
         filters.members = get("members").is_some_and(|m| m == "1");
         filters.near = get("near").and_then(|n| {
             let (lat, lng) = n.split_once(',')?;
@@ -184,6 +191,9 @@ impl Filters {
         out.append_pair("length", &self.length.to_string());
         if self.within > 0 {
             out.append_pair("within", &self.within.to_string());
+        }
+        if self.price > 0 {
+            out.append_pair("price", &self.price.to_string());
         }
         if self.members {
             out.append_pair("members", "1");
@@ -283,6 +293,9 @@ impl Filters {
         if self.within > 0 {
             parts.push(format!("≤ {} km", self.within));
         }
+        if self.price > 0 {
+            parts.push(format!("≤ CHF {}/h", self.price));
+        }
         if self.members {
             parts.push("with members-only".into());
         }
@@ -307,7 +320,7 @@ mod tests {
         let dates = time::dates(3);
         let filters = Filters::parse(
             &format!(
-                "f=1&date={}&sport=squash&place=indoor&from=17&until=22&length=90&within=5&members=1&near=47.37,8.54&sort=near",
+                "f=1&date={}&sport=squash&place=indoor&from=17&until=22&length=90&within=5&price=40&members=1&near=47.37,8.54&sort=near",
                 dates[1]
             ),
             &dates,
@@ -319,10 +332,11 @@ mod tests {
             (17, 22, 90, 5)
         );
         assert!(filters.members);
+        assert_eq!(filters.price, 40);
         assert_eq!(filters.near, Some((47.37, 8.54)));
         assert_eq!(Filters::parse(&filters.query(true), &dates, &sports()), filters);
         let odd = Filters::parse(
-            "sport=golf&length=45&within=7&from=30&until=2&near=1,2",
+            "sport=golf&length=45&within=7&price=35&from=30&until=2&near=1,2",
             &dates,
             &sports(),
         );
@@ -331,6 +345,7 @@ mod tests {
             ("tennis", 60, 0, None)
         );
         assert_eq!((odd.from, odd.until), (23, 24));
+        assert_eq!(odd.price, 0);
     }
 
     #[test]

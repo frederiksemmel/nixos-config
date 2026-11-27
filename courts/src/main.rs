@@ -15,6 +15,7 @@ mod push;
 mod share;
 mod slots;
 mod source;
+mod tariffs;
 mod time;
 
 use std::env;
@@ -40,6 +41,7 @@ COURTS_ORIGIN is where the site is on the web, for push services.
 COURTS_HOME is LAT,LNG that distances count from (default Zurich HB).
 COURTS_DAYS is how many days ahead to look (default 14).
 COURTS_PER_MINUTE is how many later club-days to ask about each minute (default 20).
+COURTS_PRICE_GAP is how many seconds to wait between price questions (default 10).
 COURTS_ASSETS is the asset bundle; without it the app bundles itself.";
 
 pub use time::now;
@@ -173,6 +175,15 @@ async fn serve() -> Result<(), String> {
         per_minute,
     };
     tokio::spawn(poller.clone().run());
+    tokio::spawn(
+        tariffs::Prober {
+            db: db.clone(),
+            gotcourts: gotcourts::GotCourts::default(),
+            clubs: clubs.clone(),
+            gap: std::time::Duration::from_secs(var("COURTS_PRICE_GAP").and_then(|s| s.parse().ok()).unwrap_or(10)),
+        }
+        .run(),
+    );
     let router: Router = Router::builder()
         .discover()
         .cookies()
