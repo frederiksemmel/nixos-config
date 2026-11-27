@@ -11,6 +11,7 @@
     raspberry-pi-5.base
     raspberry-pi-5.display-vc4
     flake.self.nixosModules.courts
+    ../../../ramura-site/preview.nix
   ];
 
   networking.hostName = "semmeltv5";
@@ -35,6 +36,8 @@
           "beachparty.semmeltv.ch" = "192.168.1.230:8445";
           "semmeltvmami.semmeltv.ch" = "192.168.1.164:8445";
           ${config.services.courts.domain} = "127.0.0.1:${toString config.services.courts.port}";
+          ${config.services.ramura-preview.domain} =
+            "127.0.0.1:${toString config.services.ramura-preview.port}";
         };
         desecTokenFile = config.age.secrets.desec_token.path;
       };
@@ -63,6 +66,13 @@
       53610 # GCL 2024 Finalturnier, a tournament placeholder
       26 # Im Hau, an old copy of 45026 TC Im Hau Witikon
     ];
+  };
+
+  services.ramura-preview = {
+    enable = true;
+    domain = "ramura.semmeltv.ch";
+    target = "semmeltv5.semmeltv.ch";
+    desecTokenFile = config.age.secrets.desec_token.path;
   };
 
   age.secrets.mullvad_wireguard.file = ../../../secrets/mullvad_wireguard.age;

@@ -4,6 +4,7 @@ usage: feedback-ramura-site open
        feedback-ramura-site brief ID
        feedback-ramura-site show ID
        feedback-ramura-site screenshot ID N FILE
+       feedback-ramura-site preview ID
        feedback-ramura-site comment ID TEXT
        feedback-ramura-site mark ID fixed COMMIT WHAT
        feedback-ramura-site mark ID no-change WHY
@@ -14,7 +15,10 @@ The feedback framework's adapter for Ramura's site (feedback/README.md). A
 report is an issue labelled feedback on RAMURA_REPO; ID is its number. Its
 batch and screenshots are on the feedback-screenshots branch. Only comments by
 the repo's owner and collaborators count. A comment from here is signed Claude
-and never reopens a report. mark comments on the issue itself.
+and never reopens a report. mark comments on the issue itself. preview builds
+the report's pull request branch and publishes it on PREVIEW_HOST at
+https://PREVIEW_DOMAIN/issue-N/; mark ID fixed does it too and puts the link in
+the pull request and the comment.
 EOF
   exit 2
 }
@@ -46,6 +50,20 @@ batch() {
 
 pr() {
   gh api "repos/$RAMURA_REPO/pulls?state=all&head=${RAMURA_REPO%%/*}:feedback/issue-$1" | jq '[.[] | {number, html_url, state, draft, merged_at, head: .head.ref}] | first // null'
+}
+
+preview() {
+  local id=$1 branch work name
+  branch=$(pr "$id" | jq -r '.head // empty')
+  branch=${branch:-feedback/issue-$id}
+  work=$(mktemp -d)
+  git clone --quiet --depth 1 --branch "$branch" "https://github.com/$RAMURA_REPO" "$work/src"
+  (cd "$work/src" && python3 build.py >/dev/null)
+  name=${branch#feedback/}
+  tar -C "$work/src/_site" -czf - . | ssh -o BatchMode=yes -o ConnectTimeout=10 "$PREVIEW_HOST" \
+    "sudo bash -c 'set -e; d=/var/lib/ramura-preview; rm -rf \$d/$name.new; mkdir -p \$d/$name.new; tar -xzf - -C \$d/$name.new; chmod -R a+rX \$d/$name.new; rm -rf \$d/$name; mv \$d/$name.new \$d/$name'"
+  rm -rf "$work"
+  echo "https://$PREVIEW_DOMAIN/$name/"
 }
 
 say() {
@@ -123,6 +141,10 @@ case $command in
       (.batch.items[]? | "\(.n). **\(.comment)**\n   on \(.what) (\(.kind)) at \(.page)\n   ```json\n   \({target, rect, point, inside, context} | tojson)\n   ```"),
       (if (.thread | length) > 0 then "\nThread:\n", (.thread[] | "- \(.at) \(.by | who): \(.text)") else empty end)'
     ;;
+  preview)
+    (($# == 1)) || usage
+    preview "$1"
+    ;;
   comment)
     (($# == 2)) || usage
     say "$1" "$2"
@@ -135,8 +157,18 @@ case $command in
     case $kind in
       fixed)
         (($# == 2)) || usage
-        link=$(pr "$id" | jq -r '.html_url // empty')
-        say "$id" "$2"$'\n\n'"Changed in ${link:-the branch feedback/issue-$id} ($1). It reaches the site once the pull request is merged."
+        found=$(pr "$id")
+        link=$(jq -r '.html_url // empty' <<<"$found")
+        url=$(preview "$id") || url=""
+        seen=""
+        [[ -z $url ]] || seen=$'\n\n'"Preview: $url"
+        if [[ -n $link && -n $url ]]; then
+          body=$(gh api "repos/$RAMURA_REPO/pulls/$(jq -r .number <<<"$found")" -q '.body // ""')
+          if [[ $body != *"$url"* ]]; then
+            gh api -X PATCH "repos/$RAMURA_REPO/pulls/$(jq -r .number <<<"$found")" -f body="**Preview:** $url"$'\n\n'"$body" >/dev/null
+          fi
+        fi
+        say "$id" "$2"$'\n\n'"Changed in ${link:-the branch feedback/issue-$id} ($1). It reaches the site once the pull request is merged.$seen"
         label "$id" in-pr needs-review
         gh api -X PATCH "repos/$RAMURA_REPO/issues/$id" -f state=open >/dev/null
         ;;

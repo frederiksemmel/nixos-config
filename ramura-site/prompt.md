@@ -37,8 +37,12 @@ Pages publishes `main` when Ramura merges a pull request.
   you didn't take, and ends with `Closes #ID`. Never merge, never mark a pull
   request ready, never push to `main`, never force-push.
 - `{{adapter}} deploy` does nothing here; skip it.
-- `{{adapter}} mark ID fixed COMMIT "WHAT"` posts WHAT on the issue with the
-  pull request's link: don't post a second comment for the same thing.
+- Every pull request has a preview: `{{adapter}} preview ID` builds the
+  pushed branch and publishes it at https://ramura.semmeltv.ch/issue-ID/.
+  Run it after each push and look at the preview with the Playwright tools.
+- `{{adapter}} mark ID fixed COMMIT "WHAT"` publishes the preview again, puts
+  its link at the top of the pull request's description and posts WHAT on the
+  issue with the links: don't post a second comment for the same thing.
 
 ## The content is Ramura's
 
