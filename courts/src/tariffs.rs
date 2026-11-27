@@ -98,6 +98,9 @@ struct Probe {
 /// Asks the price of booking a court on a date from a start for some minutes.
 trait Ask {
     async fn ask(&mut self, court: i64, date: &str, start: i64, minutes: i64) -> Result<Option<i64>, Error>;
+
+    /// The weeks known so far, after each day of each tariff.
+    async fn progress(&mut self, _weeks: &BTreeMap<i64, Week>) {}
 }
 
 /// Gives up on a club after this many failed answers in a row.
@@ -202,6 +205,10 @@ async fn survey(days: &[Probe], asker: &mut impl Ask) -> Result<BTreeMap<i64, We
                         row
                     }
                 };
+                for id in &courts {
+                    weeks.insert(*id, week.clone());
+                }
+                asker.asker.progress(&weeks).await;
             }
         }
         for id in courts {
@@ -277,6 +284,9 @@ struct Live<'a> {
     gotcourts: &'a GotCourts,
     gap: Duration,
     asked: usize,
+    /// Where to keep what is known so far, for a club never priced before:
+    /// as not yet checked, so a restart asks again.
+    partial: Option<(&'a Db, i64)>,
 }
 
 impl Ask for Live<'_> {
@@ -284,6 +294,14 @@ impl Ask for Live<'_> {
         tokio::time::sleep(self.gap).await;
         self.asked += 1;
         self.gotcourts.price(court, date, start, minutes).await
+    }
+
+    async fn progress(&mut self, weeks: &BTreeMap<i64, Week>) {
+        if let Some((db, club)) = self.partial
+            && let Err(error) = db.save_tariffs(club, weeks, 0).await
+        {
+            eprintln!("tariffs: saving club {club} so far: {error}");
+        }
     }
 }
 
@@ -362,6 +380,11 @@ impl Prober {
 
     /// Every court's week at `club`, and how many questions that took.
     async fn club(&self, club: &db::Club) -> Result<(BTreeMap<i64, Week>, usize), Error> {
+        let never = self
+            .db
+            .tariffs_checked()
+            .await
+            .is_ok_and(|checked| checked.get(&club.id).is_none_or(|at| *at == 0));
         let mut days = Vec::new();
         for date in time::dates(8).into_iter().skip(1) {
             let stored = self.db.day(club.id, &date).await.ok().flatten();
@@ -374,6 +397,7 @@ impl Prober {
             gotcourts: &self.gotcourts,
             gap: self.gap,
             asked: 0,
+            partial: never.then_some((&self.db, club.id)),
         };
         let weeks = survey(&days, &mut live).await?;
         Ok((weeks, live.asked))
@@ -409,6 +433,8 @@ mod tests {
         broken: bool,
         /// Friday evenings from 18 cost 85.
         friday: bool,
+        /// The courts priced so far, at each step.
+        steps: Vec<Vec<i64>>,
     }
 
     impl Ask for Lengg {
@@ -425,6 +451,10 @@ mod tests {
                 _ => 7500,
             } + if court == 3 { 100 } else { 0 };
             Ok(Some(hourly * minutes / 60))
+        }
+
+        async fn progress(&mut self, weeks: &BTreeMap<i64, Week>) {
+            self.steps.push(weeks.keys().copied().collect());
         }
     }
 
@@ -448,6 +478,7 @@ mod tests {
             asked: 0,
             broken: false,
             friday: false,
+            steps: Vec::new(),
         };
         let weeks = survey(&week(), &mut lengg).await.unwrap();
         // Three courts at two times, then for two tariffs every hour of a
@@ -455,6 +486,10 @@ mod tests {
         assert_eq!(lengg.asked, 6 + 2 * (2 * 15 + 5 * 2));
         assert_eq!(weeks[&1].rate(3, 7), Some(4900));
         assert_eq!(weeks[&1].rate(6, 21), Some(7500));
+        // What is known is kept after each day of each tariff.
+        assert_eq!(lengg.steps.len(), 2 * 7);
+        assert_eq!(lengg.steps[0], [1, 2]);
+        assert_eq!(lengg.steps[13], [1, 2, 3]);
         assert_eq!(weeks[&1], weeks[&2]);
         assert_eq!(weeks[&1].rate(0, 7), Some(4900));
         assert_eq!(weeks[&1].rate(0, 8), Some(7500));
@@ -470,6 +505,7 @@ mod tests {
             asked: 0,
             broken: false,
             friday: true,
+            steps: Vec::new(),
         };
         let weeks = survey(&week(), &mut lengg).await.unwrap();
         assert_eq!(lengg.asked, 6 + 2 * (2 * 15 + 5 * 2 + 15));
@@ -484,6 +520,7 @@ mod tests {
             asked: 0,
             broken: true,
             friday: false,
+            steps: Vec::new(),
         };
         assert!(survey(&week(), &mut broken).await.is_err());
         assert_eq!(broken.asked, FAILURES);
