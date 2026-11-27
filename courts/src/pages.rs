@@ -41,10 +41,30 @@ pub fn club_info(club: &db::Club) -> gotcourts::Club {
     }
 }
 
-/// Where to book at `club`: on Eversports at the day, sport and start when
-/// given; GotCourts opens on today.
-fn book(club: &db::Club, date: &str, sport: &str, start: Option<i64>) -> String {
-    Source::parse(&club.source).booking_url(&club.canonical, Some(date), Some(sport), start)
+/// Where to book at `club`: in GotCourts' app when `iphone`, on today; on
+/// Eversports at the day, sport and start when given; else GotCourts' site
+/// on today.
+fn book(club: &db::Club, date: &str, sport: &str, start: Option<i64>, iphone: bool) -> String {
+    let source = Source::parse(&club.source);
+    source
+        .app_url(club.id)
+        .filter(|_| iphone)
+        .unwrap_or_else(|| source.booking_url(&club.canonical, Some(date), Some(sport), start))
+}
+
+/// Whether `book` opens the club in an app rather than on a site.
+fn in_app(club: &db::Club, iphone: bool) -> bool {
+    iphone && Source::parse(&club.source).app_url(club.id).is_some()
+}
+
+/// The words on the button `book` makes: the app opens on today, so it
+/// names the app rather than the day.
+fn book_label(club: &db::Club, date: &str, iphone: bool) -> String {
+    if in_app(club, iphone) {
+        format!("Book in {}", Source::parse(&club.source).name())
+    } else {
+        format!("Book {}", time::weekday(date))
+    }
 }
 
 fn km(site: &Site, club: &db::Club) -> f64 {
@@ -206,7 +226,7 @@ struct Pin {
     free: usize,
     times: Vec<PinTime>,
     book: String,
-    day: String,
+    book_label: String,
     about: String,
 }
 
@@ -397,6 +417,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     let filters = Filters::of(cx, &dates, &all_sports);
     let date = filters.first_date().to_string();
     let several = filters.dates.len() > 1;
+    let iphone = crate::source::on_iphone(cx);
     let clubs = db
         .clubs(&app_context::<crate::discover::Clubs>(cx).ids())
         .await
@@ -451,10 +472,11 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                     } else {
                         clock(start)
                     },
-                    book: book(&row.club, &day.date, &filters.sport, Some(start)),
+                    book: book(&row.club, &day.date, &filters.sport, Some(start), iphone),
                 }));
             }
             times.truncate(8);
+            let soonest = row.soonest().map_or(date.as_str(), |(d, _)| d);
             Pin {
                 id: row.club.id,
                 name: row.club.name.clone(),
@@ -463,13 +485,8 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 km: format!("{:.1} km", row.km),
                 free: row.total(),
                 times,
-                book: book(
-                    &row.club,
-                    row.soonest().map_or(date.as_str(), |(d, _)| d),
-                    &filters.sport,
-                    None,
-                ),
-                day: time::weekday(row.soonest().map_or(date.as_str(), |(d, _)| d)),
+                book: book(&row.club, soonest, &filters.sport, None, iphone),
+                book_label: book_label(&row.club, soonest, iphone),
                 about: format!("{} · {}", surfaces(&row.courts()), kind(&row.club)),
             }
         })
@@ -617,7 +634,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 }
                 <div class="cards">
                     for row in &open {
-                        club_card(row: row, sport: &filters.sport, several: several, share_key: share_key.as_str())
+                        club_card(row: row, sport: &filters.sport, several: several, share_key: share_key.as_str(), iphone: iphone)
                     }
                 </div>
                 if !full.is_empty() {
@@ -885,17 +902,18 @@ fn shared(club: i64, court: &Court, date: &str, slot: &Slot) -> crate::share::Sh
 }
 
 #[component]
-async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str) -> Result<impl View> {
+async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str, iphone: bool) -> Result<impl View> {
     let club = &row.club;
     let courts = row.courts();
     let first = row.soonest().map_or(row.days[0].date.clone(), |(d, _)| d.to_string());
     let source = Source::parse(&club.source);
-    let book_at = book(club, &first, sport, None);
+    let book_at = book(club, &first, sport, None, iphone);
     let book_title = match source {
+        Source::GotCourts if iphone => "Opens the GotCourts app; pick the day there".to_string(),
         Source::GotCourts => "Opens GotCourts; pick the day there".to_string(),
         Source::Eversports => format!("Opens Eversports on {}", time::label(&first)),
     };
-    let book_label = format!("Book {}", time::weekday(&first));
+    let label = book_label(club, &first, iphone);
     let days: Vec<CardDay> = row
         .days
         .iter()
@@ -931,7 +949,7 @@ async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str) -> Re
                     <button type="button" class="icon-button" data-show-on-map=(club.id.to_string()) aria-label=(format!("Show {} on the map", club.name))>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"></path><circle cx="12" cy="10" r="2.3"></circle></svg>
                     </button>
-                    <a class="pill" href=(book_at.as_str()) target="_blank" rel="noopener" title=(book_title.as_str())>(book_label.as_str())</a>
+                    <a class="pill" href=(book_at.as_str()) target="_blank" rel="noopener" title=(book_title.as_str())>(label.as_str())</a>
                 </div>
             </header>
             for (day, free) in &days {
@@ -977,6 +995,12 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
     let id: i64 = path_param::<Id>(cx).parse().map_err(|_| not_found())?;
     let club = db.club(id).await.map_err(topcoat::Error::msg)?.ok_or_else(not_found)?;
     let today = time::today();
+    let iphone = crate::source::on_iphone(cx);
+    let book_there = if in_app(&club, iphone) {
+        "Book in the app"
+    } else {
+        "Book there"
+    };
     let mut days = db.days_of(id).await.map_err(topcoat::Error::msg)?;
     days.sort_by(|a, b| a.date.cmp(&b.date));
     let weeks: Vec<(String, BTreeMap<i64, usize>)> = days
@@ -1022,7 +1046,7 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
                     <dd><a href=(web.as_str()) target="_blank" rel="noopener">(club.web.as_str())</a></dd>
                 }
                 <dt>(Source::parse(&club.source).name())</dt>
-                <dd><a href=(book(&club, &today, courts.first().map_or("tennis", |c| c.sport.as_str()), None)) target="_blank" rel="noopener">"Book there"</a></dd>
+                <dd><a href=(book(&club, &today, courts.first().map_or("tennis", |c| c.sport.as_str()), None, iphone)) target="_blank" rel="noopener">(book_there)</a></dd>
             </dl>
             <h2>"Courts"</h2>
             <table class="list">

@@ -3,8 +3,29 @@
 //! and moves Eversports' past every number GotCourts could reach.
 
 use crate::slots::clock;
+use topcoat::context::Cx;
+use topcoat::router::request::headers;
 
 const EVERSPORTS_FROM: i64 = 1_000_000_000;
+
+/// GotCourts' own Branch key, as its Android app ships it. iOS hands a link
+/// on got.link to the GotCourts app; without the app, Branch sends the
+/// phone on to the App Store.
+const GOTCOURTS_BRANCH: &str = "https://got.link/a/key_live_len2iS5oAbcZRntzaijvWdoprDjB1ZgR";
+
+/// Whether the page is read on an iPhone, iPad or iPod, by its user agent.
+pub fn on_iphone(cx: &Cx) -> bool {
+    headers(cx)
+        .get("user-agent")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(iphone)
+}
+
+fn iphone(user_agent: &str) -> bool {
+    ["iPhone", "iPad", "iPod"]
+        .iter()
+        .any(|device| user_agent.contains(device))
+}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Source {
@@ -42,6 +63,16 @@ impl Source {
         match self {
             Self::GotCourts => theirs,
             Self::Eversports => EVERSPORTS_FROM + theirs,
+        }
+    }
+
+    /// Where someone books at `club` in the source's iPhone app: GotCourts'
+    /// app opens on the club's page for today. None for Eversports, whose
+    /// site opens on the day and time.
+    pub fn app_url(self, club: i64) -> Option<String> {
+        match self {
+            Self::GotCourts => Some(format!("{GOTCOURTS_BRANCH}?club_id={club}")),
+            Self::Eversports => None,
         }
     }
 
@@ -93,5 +124,23 @@ mod tests {
             Source::GotCourts.booking_url("tennis-lengg", Some("2026-12-05"), None, None),
             "https://apps.gotcourts.com/de/reservations/tennis-lengg"
         );
+    }
+
+    #[test]
+    fn on_an_iphone_gotcourts_opens_its_app_at_the_club() {
+        assert_eq!(
+            Source::GotCourts.app_url(19).as_deref(),
+            Some("https://got.link/a/key_live_len2iS5oAbcZRntzaijvWdoprDjB1ZgR?club_id=19")
+        );
+        assert_eq!(Source::Eversports.app_url(1_000_078_306), None);
+        assert!(iphone(
+            "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1"
+        ));
+        assert!(!iphone(
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Safari/537.36"
+        ));
+        assert!(!iphone(
+            "Mozilla/5.0 (Linux; Android 15; Pixel 9) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0 Mobile Safari/537.36"
+        ));
     }
 }

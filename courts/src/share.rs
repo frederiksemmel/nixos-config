@@ -313,15 +313,19 @@ async fn shared_slot(cx: &Cx) -> Result<(StatusCode, Html<String>)> {
         Now::Unknown => "when unsure",
     };
     let source = Source::parse(&club.source);
-    let book = source.booking_url(
-        &club.canonical,
-        Some(&shared.date),
-        Some(&court.sport),
-        Some(shared.start),
-    );
+    let app = source.app_url(club.id).filter(|_| crate::source::on_iphone(cx));
+    let (on, book_hint_lead) = if app.is_some() { ("in", "In") } else { ("on", "On") };
+    let book = app.unwrap_or_else(|| {
+        source.booking_url(
+            &club.canonical,
+            Some(&shared.date),
+            Some(&court.sport),
+            Some(shared.start),
+        )
+    });
     let book_hint = match source {
         Source::GotCourts => format!(
-            "On GotCourts, pick {date}, then {} on {}.",
+            "{book_hint_lead} GotCourts, pick {date}, then {} on {}.",
             clock(shared.start),
             court.label
         ),
@@ -331,8 +335,8 @@ async fn shared_slot(cx: &Cx) -> Result<(StatusCode, Html<String>)> {
             court.label
         ),
     };
-    let book_free = format!("Book on {}", source.name());
-    let book_other = format!("Other times on {}", source.name());
+    let book_free = format!("Book {on} {}", source.name());
+    let book_other = format!("Other times {on} {}", source.name());
     let credit = format!(
         "Shared from Courts, which finds free courts on GotCourts and Eversports. Times and prices are {}'.",
         source.name()

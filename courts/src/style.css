@@ -160,8 +160,8 @@ small { font-size: 0.833rem; margin-left: 6px; }
 .cards { display: grid; grid-template-columns: minmax(0, 1fr); gap: 12px; }
 @media (min-width: 900px) { .cards { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); align-items: start; } }
 .club { background: var(--raised); border-radius: 16px; padding: 16px; scroll-margin-top: 16px; }
-.club > header { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 8px; }
-.club > header > div { min-width: 0; }
+.club > header { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 8px; }
+.club > header > div:first-child { min-width: 0; flex: 1 1 11rem; }
 .club h2 { overflow-wrap: break-word; hyphens: auto; }
 .club h2 a { text-decoration: none; }
 .club h2 a:hover { text-decoration: underline; }
