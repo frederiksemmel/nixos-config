@@ -2114,7 +2114,10 @@ in
           "${mod}+Shift+Slash".action = show-hotkey-overlay;
 
           # Launchers
-          "${mod}+Return".action = spawn "foot";
+          "${mod}+Return" = {
+            action = spawn "systemd-run" "--user" "--scope" "--slice=app.slice" "--collect" "--quiet" "foot";
+            hotkey-overlay.title = "Open a Terminal: foot";
+          };
           "${mod}+D".action = spawn "vicinae" "toggle";
           "${mod}+Shift+D".action = spawn "fuzzel";
           "${mod}+P".action = spawn "wlr-which-key" "${config.theme.dir}/current/which-key-power.yaml";
