@@ -1,8 +1,10 @@
 //! Asks GotCourts every minute: today at every club, every watched day, and
 //! a slice of the coming two weeks, so every club and day comes round about
-//! every quarter of an hour.
+//! every quarter of an hour. Then Eversports, a week at a time: the first
+//! week every minute, the second every few minutes or when watched.
 
 use crate::db::{Db, Watch};
+use crate::eversports::Venues;
 use crate::gotcourts::{self, GotCourts};
 use crate::push::{Notice, Push};
 use crate::slots::{self, Slot};
@@ -20,6 +22,7 @@ pub struct Poller {
     pub push: Push,
     pub clubs: crate::discover::Clubs,
     pub finder: std::sync::Arc<crate::discover::Finder>,
+    pub venues: std::sync::Arc<Venues>,
     pub days: i64,
     pub per_minute: usize,
 }
@@ -28,6 +31,7 @@ impl Poller {
     pub async fn run(self) {
         let mut turn = 0usize;
         let mut today = String::new();
+        self.known_venues().await;
         self.finder.ready().await;
         self.first_pass().await;
         let mut tick = tokio::time::interval(Duration::from_secs(60));
@@ -52,14 +56,41 @@ impl Poller {
                 self.fetch(club, &date, &watches).await;
                 tokio::time::sleep(BETWEEN_REQUESTS).await;
             }
+            self.eversports(&watches, turn).await;
+        }
+    }
+
+    /// Shows the Eversports venues stored before right away, while they are looked up again.
+    async fn known_venues(&self) {
+        for club in self
+            .db
+            .clubs_from(crate::source::Source::Eversports)
+            .await
+            .unwrap_or_default()
+        {
+            if self.venues.slugs.contains(&club.canonical) {
+                self.clubs.add_eversports(club.id);
+            }
+        }
+    }
+
+    async fn eversports(&self, watches: &[Watch], turn: usize) {
+        if self.venues.slugs.is_empty() {
+            return;
+        }
+        let watched: BTreeSet<String> = watches.iter().map(|w| w.date.clone()).collect();
+        for (date, day) in self.venues.poll(&time::dates(self.days), &watched, turn).await {
+            self.clubs.add_eversports(day.club.id);
+            self.take(&day, &date, watches).await;
         }
     }
 
     /// Today and the next few days at every club, before the minute-by-minute round starts.
     async fn first_pass(&self) {
         let watches = self.db.watches().await.unwrap_or_default();
+        self.eversports(&watches, 0).await;
         for date in time::dates(self.days.min(7)) {
-            for club in self.clubs.ids() {
+            for club in self.clubs.gotcourts() {
                 self.fetch(club, &date, &watches).await;
                 tokio::time::sleep(BETWEEN_REQUESTS).await;
             }
@@ -70,7 +101,7 @@ impl Poller {
     /// club, then the `turn`th slice of the days after.
     fn wanted(&self, today: &str, watches: &[Watch], turn: usize) -> Vec<(i64, String)> {
         let dates = time::dates(self.days);
-        let clubs = self.clubs.ids();
+        let clubs = self.clubs.gotcourts();
         let mut wanted: BTreeSet<(i64, String)> = clubs.iter().map(|&club| (club, today.to_string())).collect();
         for watch in watches.iter().filter(|w| dates.contains(&w.date)) {
             match watch.club_id {
@@ -107,18 +138,7 @@ impl Poller {
             _ => {}
         }
         match self.gotcourts.day(club, date).await {
-            Ok(day) => {
-                if let Err(error) = self.db.save_day(&day, date, now).await {
-                    eprintln!("poll: saving club {club} on {date}: {error}");
-                    return;
-                }
-                for watch in watches
-                    .iter()
-                    .filter(|w| w.date == date && w.club_id.is_none_or(|c| c == club))
-                {
-                    self.check(watch, &day).await;
-                }
-            }
+            Ok(day) => self.take(&day, date, watches).await,
             Err(gotcourts::Error::Unknown) => {
                 eprintln!("poll: GotCourts does not book for club {club}; asking again tomorrow");
                 if let Err(error) = self.db.close(club, "unknown club", now).await {
@@ -126,6 +146,21 @@ impl Poller {
                 }
             }
             Err(gotcourts::Error::Failed(why)) => eprintln!("poll: club {club} on {date}: {why}"),
+        }
+    }
+
+    /// Keeps what a source said about a club on `date`, and tells the watches on it.
+    async fn take(&self, day: &gotcourts::Day, date: &str, watches: &[Watch]) {
+        let club = day.club.id;
+        if let Err(error) = self.db.save_day(day, date, time::now()).await {
+            eprintln!("poll: saving club {club} on {date}: {error}");
+            return;
+        }
+        for watch in watches
+            .iter()
+            .filter(|w| w.date == date && w.club_id.is_none_or(|c| c == club))
+        {
+            self.check(watch, day).await;
         }
     }
 

@@ -10,7 +10,7 @@ use topcoat::router::request::uri;
 
 const COOKIE: &str = "courts_filters";
 pub const LENGTHS: [(i64, &str); 3] = [(60, "1 h"), (90, "1½ h"), (120, "2 h")];
-pub const WITHIN: [i64; 4] = [2, 3, 5, 10];
+pub const WITHIN: [i64; 5] = [2, 3, 5, 10, 15];
 pub const PRESETS: [(&str, i64, i64); 4] = [
     ("Morning", 7, 12),
     ("Midday", 11, 15),

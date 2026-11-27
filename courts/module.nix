@@ -12,7 +12,7 @@ let
 in
 {
   options.services.courts = {
-    enable = lib.mkEnableOption "the court finder: free tennis courts from GotCourts, with watches that notify";
+    enable = lib.mkEnableOption "the court finder: free tennis, padel and squash courts from GotCourts and Eversports, with watches that notify";
 
     package = lib.mkOption {
       type = lib.types.package;
@@ -96,6 +96,16 @@ in
       description = "GotCourts club ids to ask about besides what the map lists: clubs missing from the map itself.";
     };
 
+    eversports = lib.mkOption {
+      type = lib.types.listOf (lib.types.strMatching "[a-z0-9-]+");
+      default = [ ];
+      example = [ "sihlsports" ];
+      description = ''
+        Venues booked on Eversports instead of GotCourts, by their slug (the last part of
+        `www.eversports.ch/s/<slug>`). Their tennis, padel and squash courts are asked about too.
+      '';
+    };
+
     exclude = lib.mkOption {
       type = lib.types.listOf lib.types.ints.positive;
       default = [ ];
@@ -145,6 +155,7 @@ in
         COURTS_AREA = cfg.area;
         COURTS_CLUBS = lib.concatMapStringsSep "," toString cfg.clubs;
         COURTS_EXCLUDE = lib.concatMapStringsSep "," toString cfg.exclude;
+        COURTS_EVERSPORTS = lib.concatStringsSep "," cfg.eversports;
         COURTS_HOME = cfg.home;
         COURTS_DAYS = toString cfg.days;
         COURTS_PER_MINUTE = toString cfg.perMinute;

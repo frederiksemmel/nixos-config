@@ -1,0 +1,148 @@
+{
+ "slots": [
+  {
+   "date": "2026-11-30",
+   "start": "1015",
+   "court": 99112,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1015",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1115",
+   "court": 99112,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1115",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1630",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1715",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1800",
+   "court": 99112,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1800",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1845",
+   "court": 99112,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1845",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "1930",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "2015",
+   "court": 99112,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "2015",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "2100",
+   "court": 99112,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-11-30",
+   "start": "2100",
+   "court": 99113,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  },
+  {
+   "date": "2026-12-01",
+   "start": "0745",
+   "court": 99112,
+   "title": null,
+   "present": false,
+   "isUserBookingOwner": false,
+   "booking": null
+  }
+ ]
+}

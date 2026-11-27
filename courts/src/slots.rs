@@ -19,16 +19,17 @@ pub fn free(courts: &[Court], busy: &[Busy], after: i64) -> Vec<Slot> {
 pub fn free_for(courts: &[Court], busy: &[Busy], after: i64, seconds: i64) -> Vec<Slot> {
     let mut slots = Vec::new();
     for court in courts {
+        if !court.cells.is_empty() {
+            slots.extend(in_cells(court, busy, after, seconds));
+            continue;
+        }
         let shortest = court.durations.iter().copied().filter(|m| *m > 0).min().unwrap_or(60) * 60;
         let length = shortest.max(seconds);
         let step = court.interval.max(15) * 60;
         let mut start = court.opening;
         while start + length <= court.closing {
             let end = start + length;
-            let taken = busy
-                .iter()
-                .any(|busy| busy.court.is_none_or(|id| id == court.id) && busy.start < end && busy.end > start);
-            if start >= after && !taken {
+            if start >= after && !taken(court, busy, start, end) {
                 slots.push(Slot {
                     court: court.id,
                     start,
@@ -39,6 +40,65 @@ pub fn free_for(courts: &[Court], busy: &[Busy], after: i64, seconds: i64) -> Ve
         }
     }
     slots
+}
+
+fn taken(court: &Court, busy: &[Busy], start: i64, end: i64) -> bool {
+    busy.iter()
+        .any(|busy| busy.court.is_none_or(|id| id == court.id) && busy.start < end && busy.end > start)
+}
+
+/// Free slots of a court laid out in cells: each starts where a cell does
+/// and lasts `seconds` (at least that cell), over cells that follow each
+/// other without a gap and that nobody has.
+fn in_cells(court: &Court, busy: &[Busy], after: i64, seconds: i64) -> Vec<Slot> {
+    let mut slots = Vec::new();
+    for (i, cell) in court.cells.iter().enumerate() {
+        if cell.start < after {
+            continue;
+        }
+        let end = cell.start + (cell.end - cell.start).max(seconds);
+        let mut reach = cell.start;
+        for next in &court.cells[i..] {
+            if next.start != reach || reach >= end {
+                break;
+            }
+            reach = next.end;
+        }
+        if reach >= end && !taken(court, busy, cell.start, end) {
+            slots.push(Slot {
+                court: court.id,
+                start: cell.start,
+                end,
+            });
+        }
+    }
+    slots
+}
+
+/// Where booking `slot` ends: on a court laid out in cells, at the end of
+/// the last cell it reaches into.
+pub fn booked_end(court: &Court, slot: &Slot) -> i64 {
+    court
+        .cells
+        .iter()
+        .filter(|cell| cell.start < slot.end && cell.end > slot.start)
+        .map(|cell| cell.end)
+        .max()
+        .unwrap_or(slot.end)
+}
+
+/// What booking `slot` costs, in Rappen: every cell it reaches into, when
+/// the source tells the prices.
+pub fn price(court: &Court, slot: &Slot) -> Option<i64> {
+    let cells: Vec<_> = court
+        .cells
+        .iter()
+        .filter(|cell| cell.start < slot.end && cell.end > slot.start)
+        .collect();
+    if cells.is_empty() {
+        return None;
+    }
+    cells.iter().map(|cell| cell.price).sum()
 }
 
 pub fn clock(seconds: i64) -> String {
@@ -63,6 +123,7 @@ mod tests {
             durations: vec![60],
             opening: 8 * 3600,
             closing: 12 * 3600,
+            cells: Vec::new(),
         }
     }
 

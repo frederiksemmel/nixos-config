@@ -2,11 +2,12 @@
 //! is in the link itself, signed with the sign-in key, so a link can't be
 //! made up for another slot and the key itself never leaves the server.
 //! The page says what the slot is, what it costs, and whether it is still
-//! free as of the last time GotCourts was asked.
+//! free as of the last time its source (GotCourts or Eversports) was asked.
 
 use crate::db::{self, Db};
 use crate::gotcourts::{self, Court, GotCourts};
 use crate::slots::clock;
+use crate::source::Source;
 use crate::time;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -140,6 +141,7 @@ pub enum Price {
 type Asked = (i64, String, i64, i64);
 
 /// Prices asked of GotCourts once per slot, kept while the app runs.
+/// Eversports tells its prices with the courts, so those need no asking.
 #[derive(Clone, Default)]
 pub struct Prices {
     known: Arc<Mutex<HashMap<Asked, Price>>>,
@@ -147,7 +149,15 @@ pub struct Prices {
 }
 
 impl Prices {
-    pub async fn of(&self, shared: &Shared) -> Price {
+    pub async fn of(&self, shared: &Shared, club: &db::Club, court: &Court) -> Price {
+        if Source::parse(&club.source) == Source::Eversports {
+            let slot = crate::slots::Slot {
+                court: court.id,
+                start: shared.start,
+                end: shared.end,
+            };
+            return crate::slots::price(court, &slot).map_or(Price::NotListed, Price::Rappen);
+        }
         let key = (shared.court, shared.date.clone(), shared.start, shared.end);
         if let Some(price) = self.known.lock().ok().and_then(|known| known.get(&key).copied()) {
             return price;
@@ -263,7 +273,7 @@ async fn shared_slot(cx: &Cx) -> Result<(StatusCode, Html<String>)> {
         return Ok((StatusCode::NOT_FOUND, Html(html)));
     };
     let state = now(day.as_ref(), &shared, &time::today(), time::seconds_today());
-    let price = app_context::<Prices>(cx).of(&shared).await;
+    let price = app_context::<Prices>(cx).of(&shared, &club, &court).await;
     let origin = app_context::<crate::auth::Origin>(cx)
         .0
         .trim_end_matches('/')
@@ -302,11 +312,30 @@ async fn shared_slot(cx: &Cx) -> Result<(StatusCode, Html<String>)> {
         Now::Taken { .. } | Now::Over => "when gone",
         Now::Unknown => "when unsure",
     };
-    let book = GotCourts::booking_url(&club.canonical);
-    let book_hint = format!(
-        "On GotCourts, pick {date}, then {} on {}.",
-        clock(shared.start),
-        court.label
+    let source = Source::parse(&club.source);
+    let book = source.booking_url(
+        &club.canonical,
+        Some(&shared.date),
+        Some(&court.sport),
+        Some(shared.start),
+    );
+    let book_hint = match source {
+        Source::GotCourts => format!(
+            "On GotCourts, pick {date}, then {} on {}.",
+            clock(shared.start),
+            court.label
+        ),
+        Source::Eversports => format!(
+            "Eversports opens on {date}: pick {} on {}.",
+            clock(shared.start),
+            court.label
+        ),
+    };
+    let book_free = format!("Book on {}", source.name());
+    let book_other = format!("Other times on {}", source.name());
+    let credit = format!(
+        "Shared from Courts, which finds free courts on GotCourts and Eversports. Times and prices are {}'.",
+        source.name()
     );
     let map = maps(&club);
     let signed_in = crate::auth::signed_in(cx);
@@ -349,9 +378,9 @@ async fn shared_slot(cx: &Cx) -> Result<(StatusCode, Html<String>)> {
                         </dl>
                         <div class="slot-actions">
                             if free {
-                                <a class="pill" href=(book.as_str()) target="_blank" rel="noopener">"Book on GotCourts"</a>
+                                <a class="pill" href=(book.as_str()) target="_blank" rel="noopener">(book_free.as_str())</a>
                             } else {
-                                <a class="pill quiet" href=(book.as_str()) target="_blank" rel="noopener">"Other times on GotCourts"</a>
+                                <a class="pill quiet" href=(book.as_str()) target="_blank" rel="noopener">(book_other.as_str())</a>
                             }
                             <a class="pill quiet" href=(map.as_str()) target="_blank" rel="noopener">"Open in Google Maps"</a>
                         </div>
@@ -360,7 +389,7 @@ async fn shared_slot(cx: &Cx) -> Result<(StatusCode, Html<String>)> {
                         }
                     </article>
                     <footer class="shared-foot quiet">
-                        "Shared from Courts, which finds free courts on GotCourts. Times and prices are GotCourts'."
+                        (credit.as_str())
                         if signed_in {
                             " " <a href="/">"Back to Courts"</a>
                         }
@@ -445,6 +474,7 @@ mod tests {
             durations: vec![60],
             opening: 8 * 3600,
             closing: 22 * 3600,
+            cells: Vec::new(),
         };
         db::Day {
             club_id: 20,

@@ -3,6 +3,7 @@
 mod auth;
 mod db;
 mod discover;
+mod eversports;
 mod feedback;
 mod filters;
 mod gotcourts;
@@ -13,6 +14,7 @@ mod poll;
 mod push;
 mod share;
 mod slots;
+mod source;
 mod time;
 
 use std::env;
@@ -30,6 +32,8 @@ Serves the court finder on HOST:PORT (default 127.0.0.1:3000) and asks
 GotCourts every minute about the clubs its map lists inside the city of
 Zurich, and the padel and squash within COURTS_AREA (LAT,LNG,KM; default
 Zurich HB, 16 km), plus COURTS_CLUBS and minus COURTS_EXCLUDE (club ids).
+COURTS_EVERSPORTS lists venues booked on Eversports instead, by slug
+(www.eversports.ch/s/SLUG), comma-separated.
 COURTS_DB is the database (default ./courts.db).
 COURTS_KEY_FILE holds the key to sign in with (default: made up, beside the database).
 COURTS_ORIGIN is where the site is on the web, for push services.
@@ -150,12 +154,21 @@ async fn serve() -> Result<(), String> {
         extra: ids("COURTS_CLUBS"),
         exclude: ids("COURTS_EXCLUDE"),
     });
+    let venues = eversports::Venues::new(
+        var("COURTS_EVERSPORTS")
+            .unwrap_or_default()
+            .split(',')
+            .map(|slug| slug.trim().to_string())
+            .filter(|slug| !slug.is_empty())
+            .collect(),
+    );
     let poller = poll::Poller {
         db: db.clone(),
         gotcourts: gotcourts::GotCourts::default(),
         push: push.clone(),
         clubs: clubs.clone(),
         finder,
+        venues,
         days,
         per_minute,
     };

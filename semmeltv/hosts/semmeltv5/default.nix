@@ -55,6 +55,10 @@
       52805 # Vontobel Tennis Club
       53170 # Tennis-Sportclub Zürich
     ];
+    eversports = [
+      "sihlsports" # Langnau a. A.: tennis indoor, squash, padel outdoor
+      "squash-arena-uster" # squash
+    ];
     exclude = [
       53610 # GCL 2024 Finalturnier, a tournament placeholder
       26 # Im Hau, an old copy of 45026 TC Im Hau Witikon

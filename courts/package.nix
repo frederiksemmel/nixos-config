@@ -53,7 +53,7 @@ craneLib.buildPackage (
     '';
 
     meta = {
-      description = "Free tennis courts in Zurich from GotCourts, with watches that notify";
+      description = "Free tennis, padel and squash courts around Zurich from GotCourts and Eversports, with watches that notify";
       license = lib.licenses.gpl3Only;
       mainProgram = "courts";
       platforms = lib.platforms.linux;

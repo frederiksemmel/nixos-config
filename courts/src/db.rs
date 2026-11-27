@@ -17,7 +17,10 @@ mod models {
     pub struct Club {
         #[key]
         pub id: i64,
+        /// Where its courts are booked: "gotcourts" or "eversports".
+        pub source: String,
         pub name: String,
+        /// GotCourts' map name or Eversports' slug.
         pub canonical: String,
         pub address: String,
         pub zip: String,
@@ -168,6 +171,7 @@ impl Db {
         let mut db = self.db.clone();
         let club = &day.club;
         Club::upsert_by_id(club.id)
+            .source(club.source.key().to_string())
             .name(club.name.clone())
             .canonical(club.canonical.clone())
             .address(club.address.clone())
@@ -226,6 +230,17 @@ impl Db {
             .collect();
         clubs.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(clubs)
+    }
+
+    /// The clubs stored from `source`.
+    pub async fn clubs_from(&self, source: crate::source::Source) -> Result<Vec<Club>> {
+        let mut db = self.db.clone();
+        Ok(Club::all()
+            .exec(&mut db)
+            .await?
+            .into_iter()
+            .filter(|club| club.source == source.key())
+            .collect())
     }
 
     pub async fn club(&self, id: i64) -> Result<Option<Club>> {
@@ -488,6 +503,7 @@ mod tests {
         gotcourts::Day {
             club: gotcourts::Club {
                 id: 20,
+                source: crate::source::Source::GotCourts,
                 name: "Lengg".into(),
                 canonical: "lengg".into(),
                 address: "Lengg 1".into(),
@@ -520,6 +536,14 @@ mod tests {
         assert_eq!(stored.fetched_at, 2);
         assert_eq!(db.clubs(&[20]).await.unwrap().len(), 1);
         assert!(db.clubs(&[21]).await.unwrap().is_empty());
+        let stored = db.clubs_from(crate::source::Source::GotCourts).await.unwrap();
+        assert_eq!(stored[0].source, "gotcourts");
+        assert!(
+            db.clubs_from(crate::source::Source::Eversports)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         db.close(20, "unknown club", 3).await.unwrap();
         assert!(db.clubs(&[20]).await.unwrap().is_empty());
     }

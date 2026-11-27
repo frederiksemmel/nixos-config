@@ -31,6 +31,18 @@ pub struct Court {
     pub durations: Vec<i64>,
     pub opening: i64,
     pub closing: i64,
+    /// The stretches the court is booked in, where they don't follow from
+    /// `opening` and `interval` (Eversports lays out each day on its own).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub cells: Vec<Cell>,
+}
+
+/// One bookable stretch of a court, and what it costs in Rappen when known.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Cell {
+    pub start: i64,
+    pub end: i64,
+    pub price: Option<i64>,
 }
 
 fn tennis() -> String {
@@ -71,6 +83,7 @@ pub struct Busy {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Club {
     pub id: i64,
+    pub source: crate::source::Source,
     pub name: String,
     pub canonical: String,
     pub address: String,
@@ -285,6 +298,7 @@ pub fn parse(body: &Value) -> Result<Day, Error> {
         .join(", ");
     let club_info = Club {
         id,
+        source: crate::source::Source::GotCourts,
         name: text(&club["name"]),
         canonical: text(&club["canonicalName"]),
         address,
@@ -319,6 +333,7 @@ pub fn parse(body: &Value) -> Result<Day, Error> {
                     .unwrap_or_default(),
                 opening: int(&court["openingTime"]).unwrap_or(0),
                 closing: int(&court["closingTime"]).unwrap_or(0),
+                cells: Vec::new(),
             })
         })
         .collect();

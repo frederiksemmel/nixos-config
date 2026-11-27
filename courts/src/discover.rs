@@ -96,25 +96,57 @@ pub struct Discovered {
     pub ids: BTreeMap<String, i64>,
 }
 
-/// The clubs to ask about now, shared by the poller and the pages.
+/// The clubs to ask about now, shared by the pollers and the pages: what
+/// GotCourts' map found, and the venues booked on Eversports.
 #[derive(Clone, Default)]
-pub struct Clubs(Arc<RwLock<Discovered>>);
+pub struct Clubs {
+    found: Arc<RwLock<Discovered>>,
+    eversports: Arc<RwLock<BTreeSet<i64>>>,
+}
 
 impl Clubs {
+    /// Every club, from every source.
     pub fn ids(&self) -> Vec<i64> {
-        self.0
+        let mut ids = self.gotcourts();
+        ids.extend(self.eversports());
+        ids
+    }
+
+    /// The clubs to ask GotCourts about.
+    pub fn gotcourts(&self) -> Vec<i64> {
+        self.found
             .read()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .clubs
             .clone()
     }
 
+    pub fn eversports(&self) -> Vec<i64> {
+        self.eversports
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .iter()
+            .copied()
+            .collect()
+    }
+
+    /// Takes up a venue booked on Eversports.
+    pub fn add_eversports(&self, id: i64) {
+        self.eversports
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .insert(id);
+    }
+
     pub fn state(&self) -> Discovered {
-        self.0.read().unwrap_or_else(|poisoned| poisoned.into_inner()).clone()
+        self.found
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
     }
 
     fn set(&self, discovered: Discovered) {
-        *self.0.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = discovered;
+        *self.found.write().unwrap_or_else(|poisoned| poisoned.into_inner()) = discovered;
     }
 }
 

@@ -1,8 +1,9 @@
 use crate::db::{self, Db};
 use crate::filters::{EARLIEST, Filters, LATEST, LENGTHS, PRESETS, WITHIN};
-use crate::gotcourts::{self, Court, GotCourts};
+use crate::gotcourts::{self, Court};
 use crate::poll::Poller;
 use crate::slots::{self, Slot, clock};
+use crate::source::Source;
 use crate::time;
 use std::collections::{BTreeMap, BTreeSet};
 use topcoat::Result;
@@ -26,6 +27,7 @@ const HOURS: std::ops::Range<i64> = 6..23;
 pub fn club_info(club: &db::Club) -> gotcourts::Club {
     gotcourts::Club {
         id: club.id,
+        source: Source::parse(&club.source),
         name: club.name.clone(),
         canonical: club.canonical.clone(),
         address: club.address.clone(),
@@ -37,6 +39,12 @@ pub fn club_info(club: &db::Club) -> gotcourts::Club {
         web: club.web.clone(),
         kind: club.kind.clone(),
     }
+}
+
+/// Where to book at `club`: on Eversports at the day, sport and start when
+/// given; GotCourts opens on today.
+fn book(club: &db::Club, date: &str, sport: &str, start: Option<i64>) -> String {
+    Source::parse(&club.source).booking_url(&club.canonical, Some(date), Some(sport), start)
 }
 
 fn km(site: &Site, club: &db::Club) -> f64 {
@@ -437,14 +445,13 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 let mut starts: Vec<i64> = day.free.iter().map(|s| s.start).collect();
                 starts.sort();
                 starts.dedup();
-                let book = GotCourts::booking_url(&row.club.canonical);
                 times.extend(starts.into_iter().map(|start| PinTime {
                     label: if several {
                         format!("{} {}", time::weekday(&day.date), clock(start))
                     } else {
                         clock(start)
                     },
-                    book: book.clone(),
+                    book: book(&row.club, &day.date, &filters.sport, Some(start)),
                 }));
             }
             times.truncate(8);
@@ -456,7 +463,12 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 km: format!("{:.1} km", row.km),
                 free: row.total(),
                 times,
-                book: GotCourts::booking_url(&row.club.canonical),
+                book: book(
+                    &row.club,
+                    row.soonest().map_or(date.as_str(), |(d, _)| d),
+                    &filters.sport,
+                    None,
+                ),
                 day: time::weekday(row.soonest().map_or(date.as_str(), |(d, _)| d)),
                 about: format!("{} · {}", surfaces(&row.courts()), kind(&row.club)),
             }
@@ -493,6 +505,11 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     .collect();
     let discovered = app_context::<crate::discover::Clubs>(cx).state();
     let share_key = app_context::<crate::auth::Key>(cx).0.clone();
+    let venues: Vec<String> = clubs
+        .iter()
+        .filter(|club| Source::parse(&club.source) == Source::Eversports)
+        .map(|club| club.name.clone())
+        .collect();
     Ok(view! {
         nav(current: "courts")
         <div class="days">
@@ -528,7 +545,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                     </nav>
                 </div>
                 if filters.sport == "padel" {
-                    <p class="note">"GotCourts has only two padel clubs near Zurich, both with outdoor courts as GotCourts lists them. The padel halls in Zurich (Padelta, PDL, Unipadel, Yakin Arena) book on Playtomic, which this app doesn't read yet."</p>
+                    <p class="note">"Padel here is outdoors: two clubs on GotCourts and SIHLSPORTS in Langnau on Eversports. The padel halls in Zurich (Padelta, PDL, Unipadel, Yakin Arena) book on Playtomic, which this app doesn't read yet."</p>
                 }
                 if open.is_empty() && full.is_empty() {
                     <p class="empty">"No court of these fits. Widen the hours, the distance or the length, or add days."</p>
@@ -600,7 +617,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 }
                 <div class="cards">
                     for row in &open {
-                        club_card(row: row, several: several, share_key: share_key.as_str())
+                        club_card(row: row, sport: &filters.sport, several: several, share_key: share_key.as_str())
                     }
                 </div>
                 if !full.is_empty() {
@@ -616,7 +633,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                         </ul>
                     </section>
                 }
-                coverage(discovered: &discovered)
+                coverage(discovered: &discovered, venues: &venues)
             </section>
             <section class="map-pane" aria-label="Map">
                 <div id="map" class="map" data-pins=(pins.as_str()) data-origin=(format!("{},{}", origin.0, origin.1)) data-here=(if filters.near.is_some() { "1" } else { "" })></div>
@@ -627,8 +644,13 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
 
 /// Where the clubs come from, and what GotCourts' map couldn't say.
 #[component]
-async fn coverage(discovered: &crate::discover::Discovered) -> Result<impl View> {
+async fn coverage(discovered: &crate::discover::Discovered, venues: &[String]) -> Result<impl View> {
     let holes = discovered.holes.len();
+    let eversports = match venues {
+        [] => String::new(),
+        [one] => format!("{one} books on Eversports. "),
+        [rest @ .., last] => format!("{} and {last} book on Eversports. ", rest.join(", ")),
+    };
     Ok(view! {
         <p class="coverage quiet">
             if discovered.at > 0 {
@@ -647,8 +669,9 @@ async fn coverage(discovered: &crate::discover::Discovered) -> Result<impl View>
                     ))
                 }
             } else {
-                "Looking for clubs on GotCourts' map; this takes a few minutes after a start."
+                "Looking for clubs on GotCourts' map; this takes a few minutes after a start. "
             }
+            (eversports.as_str())
         </p>
     })
 }
@@ -842,30 +865,36 @@ pub async fn nav(current: &'static str) -> Result<impl View> {
 /// A day of a club card: the day and each court's free starts.
 type CardDay<'a> = (&'a DayFree, Vec<(&'a Court, Vec<&'a Slot>)>);
 
-fn shared_path(key: &str, club: i64, date: &str, slot: &Slot) -> String {
-    crate::share::path(key, &shared(club, date, slot))
+fn shared_path(key: &str, club: i64, court: &Court, date: &str, slot: &Slot) -> String {
+    crate::share::path(key, &shared(club, court, date, slot))
 }
 
 fn shared_title(court: &Court, date: &str, slot: &Slot, club: &str) -> String {
-    crate::share::title(&court.sport, &shared(0, date, slot), club)
+    crate::share::title(&court.sport, &shared(0, court, date, slot), club)
 }
 
-fn shared(club: i64, date: &str, slot: &Slot) -> crate::share::Shared {
+/// The slot to share: as far as booking it reaches, to the end of a cell.
+fn shared(club: i64, court: &Court, date: &str, slot: &Slot) -> crate::share::Shared {
     crate::share::Shared {
         club,
         court: slot.court,
         date: date.to_string(),
         start: slot.start,
-        end: slot.end,
+        end: slots::booked_end(court, slot),
     }
 }
 
 #[component]
-async fn club_card(row: &Row, several: bool, share_key: &str) -> Result<impl View> {
+async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str) -> Result<impl View> {
     let club = &row.club;
     let courts = row.courts();
     let first = row.soonest().map_or(row.days[0].date.clone(), |(d, _)| d.to_string());
-    let book = GotCourts::booking_url(&club.canonical);
+    let source = Source::parse(&club.source);
+    let book_at = book(club, &first, sport, None);
+    let book_title = match source {
+        Source::GotCourts => "Opens GotCourts; pick the day there".to_string(),
+        Source::Eversports => format!("Opens Eversports on {}", time::label(&first)),
+    };
     let book_label = format!("Book {}", time::weekday(&first));
     let days: Vec<CardDay> = row
         .days
@@ -902,7 +931,7 @@ async fn club_card(row: &Row, several: bool, share_key: &str) -> Result<impl Vie
                     <button type="button" class="icon-button" data-show-on-map=(club.id.to_string()) aria-label=(format!("Show {} on the map", club.name))>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"></path><circle cx="12" cy="10" r="2.3"></circle></svg>
                     </button>
-                    <a class="pill" href=(book.as_str()) target="_blank" rel="noopener" title="Opens GotCourts; pick the day there">(book_label.as_str())</a>
+                    <a class="pill" href=(book_at.as_str()) target="_blank" rel="noopener" title=(book_title.as_str())>(book_label.as_str())</a>
                 </div>
             </header>
             for (day, free) in &days {
@@ -918,7 +947,7 @@ async fn club_card(row: &Row, several: bool, share_key: &str) -> Result<impl Vie
                             </span>
                             <span class="times">
                                 for slot in slots {
-                                    <a class="time" href=(shared_path(share_key, club.id, &day.date, slot)) data-slot=(shared_title(court, &day.date, slot, &club.name)) title=(format!("Share {}–{}", clock(slot.start), clock(slot.end)))>(clock(slot.start))</a>
+                                    <a class="time" href=(shared_path(share_key, club.id, court, &day.date, slot)) data-slot=(shared_title(court, &day.date, slot, &club.name)) title=(format!("Share {}", slot_title(court, slot)))>(clock(slot.start))</a>
                                 }
                             </span>
                         </li>
@@ -927,6 +956,18 @@ async fn club_card(row: &Row, several: bool, share_key: &str) -> Result<impl Vie
             }
         </section>
     })
+}
+
+/// "18:15–19:15" and, when the source tells it, what that costs; where the
+/// court is booked in cells, until the end of the last cell it takes.
+fn slot_title(court: &Court, slot: &Slot) -> String {
+    let end = slots::booked_end(court, slot);
+    let span = format!("{}–{}", clock(slot.start), clock(end));
+    let booked = Slot { end, ..*slot };
+    match slots::price(court, &booked) {
+        Some(rappen) => format!("{span} · {}", crate::share::francs(rappen)),
+        None => span,
+    }
 }
 
 #[page("/clubs/{id}")]
@@ -980,8 +1021,8 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
                     <dt>"Web"</dt>
                     <dd><a href=(web.as_str()) target="_blank" rel="noopener">(club.web.as_str())</a></dd>
                 }
-                <dt>"GotCourts"</dt>
-                <dd><a href=(GotCourts::booking_url(&club.canonical)) target="_blank" rel="noopener">"Book there"</a></dd>
+                <dt>(Source::parse(&club.source).name())</dt>
+                <dd><a href=(book(&club, &today, courts.first().map_or("tennis", |c| c.sport.as_str()), None)) target="_blank" rel="noopener">"Book there"</a></dd>
             </dl>
             <h2>"Courts"</h2>
             <table class="list">
@@ -1247,6 +1288,7 @@ mod tests {
             durations: vec![60],
             opening: 8 * 3600,
             closing: 12 * 3600,
+            cells: Vec::new(),
         }
     }
 
@@ -1254,6 +1296,7 @@ mod tests {
     fn each_choice_counts_what_it_would_show() {
         let club = db::Club {
             id: 1,
+            source: "gotcourts".into(),
             name: "Lengg".into(),
             canonical: "lengg".into(),
             address: String::new(),
