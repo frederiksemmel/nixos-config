@@ -919,7 +919,7 @@ async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str) -> Re
         <section class="club" id=(format!("club-{}", club.id)) data-club=(club.id.to_string())>
             <header>
                 <div>
-                    <h2><a href=(format!("/clubs/{}", club.id))>(club.name.as_str())</a></h2>
+                    <h2 lang="de"><a href=(format!("/clubs/{}", club.id))>(club.name.as_str())</a></h2>
                     <p class="meta">
                         (format!("{:.1} km · {} · {}", row.km, surfaces(&courts), club.city))
                         if !kind(club).is_empty() {
