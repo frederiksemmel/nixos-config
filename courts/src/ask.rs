@@ -122,7 +122,7 @@ struct Choice {
 async fn choices(cx: &Cx, ask: &db::Ask) -> Result<Vec<(Choice, String)>> {
     let db = app_context::<Db>(cx).clone();
     let prices = app_context::<share::Prices>(cx).clone();
-    let iphone = crate::source::on_iphone(cx);
+    let apps = crate::source::apps(cx);
     let (today, seconds) = (time::today(), time::seconds_today());
     let mut found = Vec::new();
     for (index, shared) in ask.options.0.iter().enumerate() {
@@ -143,7 +143,7 @@ async fn choices(cx: &Cx, ask: &db::Ask) -> Result<Vec<(Choice, String)>> {
         let state = share::now(day.as_ref(), &shared, &today, seconds);
         let sport = crate::pages::sport_name(&court.sport);
         let source = Source::parse(&club.source);
-        let app = source.app_url(club.id).filter(|_| iphone);
+        let app = source.app_url(apps.get(&club.id).map(String::as_str));
         let book_label = format!("Book {} {}", if app.is_some() { "in" } else { "on" }, source.name());
         let book = app.unwrap_or_else(|| {
             source.booking_url(

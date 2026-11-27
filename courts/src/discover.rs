@@ -18,6 +18,8 @@ use std::sync::{Arc, RwLock};
 use std::time::Duration;
 
 const SETTING: &str = "discovered";
+/// 1: the app's names for the clubs.
+const VERSION: u32 = 1;
 const AGAIN_AFTER: i64 = 24 * 60 * 60;
 const STEP_KM: f64 = 2.5;
 const FINE_STEP_KM: f64 = 0.6;
@@ -94,6 +96,12 @@ pub struct Discovered {
     pub holes: Vec<Hole>,
     /// Map name → club number, so known clubs aren't looked up again.
     pub ids: BTreeMap<String, i64>,
+    /// Club number → the app's name for it (`clb_…`), which app links take.
+    #[serde(default)]
+    pub apps: BTreeMap<i64, String>,
+    /// What a look found: a look older than `VERSION` is done again.
+    #[serde(default)]
+    pub version: u32,
 }
 
 /// The clubs to ask about now, shared by the pollers and the pages: what
@@ -136,6 +144,15 @@ impl Clubs {
             .write()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(id);
+    }
+
+    /// Club number → GotCourts' app name for it, for the clubs on its map.
+    pub fn apps(&self) -> BTreeMap<i64, String> {
+        self.found
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .apps
+            .clone()
     }
 
     pub fn state(&self) -> Discovered {
@@ -198,7 +215,7 @@ impl Finder {
     /// Looks at the map again when the last look is a day old.
     pub async fn refresh(&self) {
         let known = self.clubs.state();
-        if !known.clubs.is_empty() && time::now() - known.at < AGAIN_AFTER {
+        if !known.clubs.is_empty() && known.version >= VERSION && time::now() - known.at < AGAIN_AFTER {
             return;
         }
         match self.look(known.ids).await {
@@ -286,6 +303,7 @@ impl Finder {
         let booking: Vec<&&Listed> = near.iter().filter(|club| club.books).collect();
         let mut clubs = Vec::new();
         let mut names = BTreeMap::new();
+        let mut apps = BTreeMap::new();
         for club in &booking {
             let id = match ids.get(&club.canonical) {
                 Some(id) => *id,
@@ -315,6 +333,9 @@ impl Finder {
             if wanted {
                 clubs.push(id);
                 names.insert(id, club.name.clone());
+                if !club.app.is_empty() {
+                    apps.insert(id, club.app.clone());
+                }
             }
         }
         Ok(Discovered {
@@ -325,6 +346,8 @@ impl Finder {
             booking: booking.len(),
             holes,
             ids,
+            apps,
+            version: VERSION,
         })
     }
 }

@@ -101,6 +101,9 @@ pub struct Club {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Listed {
     pub canonical: String,
+    /// The app's own name for the club (`clb_…`), which its links take.
+    #[serde(default)]
+    pub app: String,
     pub name: String,
     pub city: String,
     pub latitude: f64,
@@ -124,6 +127,7 @@ pub fn listing(body: &Value) -> Result<Vec<Listed>, Error> {
         .filter_map(|club| {
             Some(Listed {
                 canonical: Some(text(&club["canonical_name"])).filter(|c| !c.is_empty())?,
+                app: text(&club["club_id"]),
                 name: text(&club["club_name"]),
                 city: text(&club["city"]),
                 latitude: number(&club["latitude"])?,
@@ -420,6 +424,7 @@ mod tests {
         assert_eq!(listed.len(), 2);
         assert!(listed[0].books && !listed[1].books);
         assert_eq!(listed[0].canonical, "hardhof-sportamt");
+        assert_eq!(listed[0].app, "clb_1");
         let broken = serde_json::json!({"status": false, "response": {"error": 500, "message": "",
             "exception": "Doctrine\\ORM\\NonUniqueResultException"}});
         assert!(matches!(listing(&broken), Err(Error::Failed(why)) if why.contains("NonUnique")));

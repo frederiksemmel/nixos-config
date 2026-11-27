@@ -2,8 +2,10 @@
 //! their clubs and courts on their own, so this app keeps GotCourts' numbers
 //! and moves Eversports' past every number GotCourts could reach.
 
+use crate::discover::Clubs;
 use crate::slots::clock;
-use topcoat::context::Cx;
+use std::collections::BTreeMap;
+use topcoat::context::{Cx, app_context};
 use topcoat::router::request::headers;
 
 const EVERSPORTS_FROM: i64 = 1_000_000_000;
@@ -12,6 +14,16 @@ const EVERSPORTS_FROM: i64 = 1_000_000_000;
 /// on got.link to the GotCourts app; without the app, Branch sends the
 /// phone on to the App Store.
 const GOTCOURTS_BRANCH: &str = "https://got.link/a/key_live_len2iS5oAbcZRntzaijvWdoprDjB1ZgR";
+
+/// The app's names for the clubs (`clb_…`) when the page is read on an
+/// iPhone, where Book opens the app; none elsewhere.
+pub fn apps(cx: &Cx) -> BTreeMap<i64, String> {
+    if on_iphone(cx) {
+        app_context::<Clubs>(cx).apps()
+    } else {
+        BTreeMap::new()
+    }
+}
 
 /// Whether the page is read on an iPhone, iPad or iPod, by its user agent.
 pub fn on_iphone(cx: &Cx) -> bool {
@@ -66,13 +78,20 @@ impl Source {
         }
     }
 
-    /// Where someone books at `club` in the source's iPhone app: GotCourts'
-    /// app opens on the club's page for today. None for Eversports, whose
-    /// site opens on the day and time.
-    pub fn app_url(self, club: i64) -> Option<String> {
-        match self {
-            Self::GotCourts => Some(format!("{GOTCOURTS_BRANCH}?club_id={club}")),
-            Self::Eversports => None,
+    /// Where someone books in the source's iPhone app at the club its app
+    /// names `app` (GotCourts' map gives each club a `clb_…`; its website
+    /// number is unknown to the app): GotCourts' app opens on the club's
+    /// page for today. None for Eversports, whose site opens on the day and
+    /// time, and for a club without that name.
+    pub fn app_url(self, app: Option<&str>) -> Option<String> {
+        match (self, app) {
+            (Self::GotCourts, Some(app)) if !app.is_empty() => {
+                let query = url::form_urlencoded::Serializer::new(String::new())
+                    .append_pair("club_id", app)
+                    .finish();
+                Some(format!("{GOTCOURTS_BRANCH}?{query}"))
+            }
+            _ => None,
         }
     }
 
@@ -129,10 +148,16 @@ mod tests {
     #[test]
     fn on_an_iphone_gotcourts_opens_its_app_at_the_club() {
         assert_eq!(
-            Source::GotCourts.app_url(19).as_deref(),
-            Some("https://got.link/a/key_live_len2iS5oAbcZRntzaijvWdoprDjB1ZgR?club_id=19")
+            Source::GotCourts
+                .app_url(Some("clb_11ec1c674f3f7c5c9240024b6438f3f4"))
+                .as_deref(),
+            Some(
+                "https://got.link/a/key_live_len2iS5oAbcZRntzaijvWdoprDjB1ZgR?club_id=clb_11ec1c674f3f7c5c9240024b6438f3f4"
+            )
         );
-        assert_eq!(Source::Eversports.app_url(1_000_078_306), None);
+        assert_eq!(Source::GotCourts.app_url(None), None);
+        assert_eq!(Source::GotCourts.app_url(Some("")), None);
+        assert_eq!(Source::Eversports.app_url(Some("clb_1")), None);
         assert!(iphone(
             "Mozilla/5.0 (iPhone; CPU iPhone OS 18_1 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.1 Mobile/15E148 Safari/604.1"
         ));
