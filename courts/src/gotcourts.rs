@@ -206,12 +206,9 @@ impl GotCourts {
         int(&club["id"]).ok_or_else(|| Error::Failed(format!("no id for {canonical}")))
     }
 
-    /// Where someone books at `club` on `date`, on GotCourts' own page.
-    pub fn booking_url(canonical: &str, date: &str) -> String {
-        match crate::time::midnight(date) {
-            Some(midnight) => format!("{BASE}/de/reservations/{canonical}?date={midnight}"),
-            None => format!("{BASE}/de/reservations/{canonical}"),
-        }
+    /// Where someone books at a club, on GotCourts' own page.
+    pub fn booking_url(canonical: &str) -> String {
+        format!("{BASE}/de/reservations/{canonical}")
     }
 }
 

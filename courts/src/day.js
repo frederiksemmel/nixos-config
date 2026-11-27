@@ -79,7 +79,7 @@ function popup(pin) {
   const actions = element("div", "pop-actions");
   const list = element("a", "pop-link", "Courts and times");
   list.href = `#club-${pin.id}`;
-  const book = element("a", "pill", "Book");
+  const book = element("a", "pill", `Book ${pin.day}`);
   book.href = pin.book;
   book.target = "_blank";
   book.rel = "noopener";

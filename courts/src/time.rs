@@ -34,11 +34,6 @@ pub fn dates(count: i64) -> Vec<String> {
         .collect()
 }
 
-/// Midnight of `date` in Zurich, in seconds since 1970, which GotCourts' own pages take as a date.
-pub fn midnight(date: &str) -> Option<i64> {
-    Some(parse(date)?.to_zoned(zurich()).ok()?.timestamp().as_second())
-}
-
 pub fn parse(date: &str) -> Option<Date> {
     date.parse().ok()
 }
@@ -113,7 +108,6 @@ mod tests {
         assert_eq!(label(&days[0]), "Today");
         assert_eq!(label(&days[1]), "Tomorrow");
         assert_eq!(short("2026-12-05".parse().unwrap()), "Sat 5.12.");
-        assert_eq!(midnight("2026-11-27"), Some(1795734000));
         let around: Vec<String> = ["2026-11-27", "2026-11-28", "2026-11-29", "2026-11-30"]
             .map(String::from)
             .to_vec();

@@ -198,6 +198,7 @@ struct Pin {
     free: usize,
     times: Vec<PinTime>,
     book: String,
+    day: String,
     about: String,
 }
 
@@ -436,7 +437,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 let mut starts: Vec<i64> = day.free.iter().map(|s| s.start).collect();
                 starts.sort();
                 starts.dedup();
-                let book = GotCourts::booking_url(&row.club.canonical, &day.date);
+                let book = GotCourts::booking_url(&row.club.canonical);
                 times.extend(starts.into_iter().map(|start| PinTime {
                     label: if several {
                         format!("{} {}", time::weekday(&day.date), clock(start))
@@ -455,7 +456,8 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 km: format!("{:.1} km", row.km),
                 free: row.total(),
                 times,
-                book: GotCourts::booking_url(&row.club.canonical, row.soonest().map_or(date.as_str(), |(d, _)| d)),
+                book: GotCourts::booking_url(&row.club.canonical),
+                day: time::weekday(row.soonest().map_or(date.as_str(), |(d, _)| d)),
                 about: format!("{} · {}", surfaces(&row.courts()), kind(&row.club)),
             }
         })
@@ -841,7 +843,8 @@ async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
     let club = &row.club;
     let courts = row.courts();
     let first = row.soonest().map_or(row.days[0].date.clone(), |(d, _)| d.to_string());
-    let book = GotCourts::booking_url(&club.canonical, &first);
+    let book = GotCourts::booking_url(&club.canonical);
+    let book_label = format!("Book {}", time::weekday(&first));
     let days: Vec<CardDay> = row
         .days
         .iter()
@@ -858,7 +861,7 @@ async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
                 })
                 .filter(|(_, free)| !free.is_empty())
                 .collect();
-            (day, GotCourts::booking_url(&club.canonical, &day.date), free)
+            (day, GotCourts::booking_url(&club.canonical), free)
         })
         .collect();
     Ok(view! {
@@ -877,7 +880,7 @@ async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
                     <button type="button" class="icon-button" data-show-on-map=(club.id.to_string()) aria-label=(format!("Show {} on the map", club.name))>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"></path><circle cx="12" cy="10" r="2.3"></circle></svg>
                     </button>
-                    <a class="pill" href=(book.as_str()) target="_blank" rel="noopener">"Book"</a>
+                    <a class="pill" href=(book.as_str()) target="_blank" rel="noopener" title="Opens GotCourts; pick the day there">(book_label.as_str())</a>
                 </div>
             </header>
             for (day, book, free) in &days {
@@ -956,7 +959,7 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
                     <dd><a href=(web.as_str()) target="_blank" rel="noopener">(club.web.as_str())</a></dd>
                 }
                 <dt>"GotCourts"</dt>
-                <dd><a href=(GotCourts::booking_url(&club.canonical, &today)) target="_blank" rel="noopener">"Book there"</a></dd>
+                <dd><a href=(GotCourts::booking_url(&club.canonical)) target="_blank" rel="noopener">"Book there"</a></dd>
             </dl>
             <h2>"Courts"</h2>
             <table class="list">
