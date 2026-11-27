@@ -81,6 +81,11 @@ pub fn weekend(dates: &[String]) -> Vec<String> {
     days
 }
 
+/// "28.11.", for under the weekday.
+pub fn day_month(date: &str) -> String {
+    parse(date).map_or_else(|| date.to_string(), |day| day.strftime("%-d.%-m.").to_string())
+}
+
 pub fn short(day: Date) -> String {
     day.strftime("%a %-d.%-m.").to_string()
 }

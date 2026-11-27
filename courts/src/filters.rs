@@ -35,8 +35,8 @@ pub struct Filters {
     pub until: i64,
     pub length: i64,
     pub within: i64,
-    /// The most an hour may cost, in francs; 0 is any price, and only
-    /// then do slots without a known price show.
+    /// The most an hour may cost, in francs; 0 is any price. A slot
+    /// without a known price shows under every limit.
     pub price: i64,
     pub members: bool,
     pub near: Option<(f64, f64)>,

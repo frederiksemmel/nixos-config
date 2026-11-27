@@ -346,7 +346,7 @@ impl Found<'_> {
                                     (slot, cost)
                                 })
                                 .filter(|(_, cost)| {
-                                    filters.price == 0 || cost.is_some_and(|(_, hourly)| hourly <= filters.price * 100)
+                                    filters.price == 0 || cost.is_none_or(|(_, hourly)| hourly <= filters.price * 100)
                                 })
                                 .unzip();
                         Some(DayFree {
@@ -372,6 +372,21 @@ impl Found<'_> {
 
     fn count(&self, filters: &Filters) -> usize {
         self.rows(filters).iter().map(Row::total).sum()
+    }
+
+    /// How many free starts each of `dates` alone would give with the rest
+    /// of `filters`.
+    fn per_day(&self, filters: &Filters, dates: &[String]) -> Vec<(String, usize)> {
+        dates
+            .iter()
+            .map(|date| {
+                let alone = Filters {
+                    dates: vec![date.clone()],
+                    ..filters.clone()
+                };
+                (date.clone(), self.count(&alone))
+            })
+            .collect()
     }
 
     fn facets(&self, filters: &Filters, sports: &[String], surfaces: &BTreeSet<String>) -> Facets {
@@ -498,7 +513,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         .await
         .map_err(topcoat::Error::msg)?;
     let mut days: BTreeMap<(i64, String), db::Day> = BTreeMap::new();
-    for day in &filters.dates {
+    for day in &dates {
         for stored in db.days_on(day).await.map_err(topcoat::Error::msg)? {
             days.insert((stored.club_id, day.clone()), stored);
         }
@@ -519,6 +534,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         rates: &rates,
     };
     let facets = found.facets(&filters, &all_sports, &surfaces_here);
+    let per_day = found.per_day(&filters, &dates);
     let mut rows = found.rows(&filters);
     if filters.sort == "near" {
         rows.sort_by(|a, b| {
@@ -640,11 +656,18 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         .collect();
     Ok(view! {
         nav(current: "courts")
-        <div class="days">
-            <nav class="chips dates" aria-label="Days">
-                <a class=(if filters.several { "chip toggle on" } else { "chip toggle" }) href=(filters.with_several(!filters.several)) aria-pressed=(filters.several.to_string())>"Several days"</a>
-                for d in &dates {
-                    <a class=(chip(filters.dates.contains(d))) aria-current=(current(filters.dates.contains(d))) href=(filters.with_date(d))>(time::label(d))</a>
+        <section class="days" aria-label="Day">
+            <div class="days-head">
+                <h2 class="group-label">(if filters.several { "Days" } else { "Day" })</h2>
+                <a class=(if filters.several { "switch on" } else { "switch" }) href=(filters.with_several(!filters.several)) aria-pressed=(filters.several.to_string())>"Several days"</a>
+            </div>
+            <nav class="day-strip" aria-label="Days, with the free starts each would show">
+                for (d, n) in &per_day {
+                    <a class=(if *n == 0 { "day empty" } else { "day" }) aria-current=(current(filters.dates.contains(d))) href=(filters.with_date(d)) aria-label=(format!("{}, {n} free", time::label(d)))>
+                        <span class="day-name">(time::weekday(d))</span>
+                        <span class="day-date">(time::day_month(d))</span>
+                        <span class="day-count">(n.to_string())</span>
+                    </a>
                 }
             </nav>
             if filters.several {
@@ -655,7 +678,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                     <span class="quiet hint">"Tap days to add or remove them."</span>
                 </div>
             }
-        </div>
+        </section>
         filter_form(filters: &filters, sports: &all_sports, surfaces: &surfaces_here, members_only: members_only, facets: &facets)
         <div class=(if map_view { "split show-map" } else { "split" })>
             <section class="results" aria-label="Free courts">
@@ -838,9 +861,9 @@ async fn filter_form(
     let within_more = more(facets, "within", "0");
     let price_more = more(facets, "price", "0");
     let unpriced_note = match facets.unpriced {
-        0 => "Francs, as GotCourts and Eversports quote them without signing in. A court without a known price shows only under Any.".to_string(),
-        1 => "Francs, as GotCourts and Eversports quote them without signing in. One free start has no known price: it shows only under Any.".to_string(),
-        n => format!("Francs, as GotCourts and Eversports quote them without signing in. {n} free starts have no known price: they show only under Any."),
+        0 => "Francs, as GotCourts and Eversports quote them without signing in. A limit hides only what is known to cost more.".to_string(),
+        1 => "Francs, as GotCourts and Eversports quote them without signing in. A limit hides only what is known to cost more: the one free start without a known price stays under every limit.".to_string(),
+        n => format!("Francs, as GotCourts and Eversports quote them without signing in. A limit hides only what is known to cost more: the {n} free starts without a known price stay under every limit."),
     };
     let members_more = if filters.members {
         String::new()
@@ -1651,10 +1674,11 @@ mod tests {
         };
         let facets = found.facets(&filters, &["tennis".into()], &BTreeSet::new());
         // Court 1 costs 40 an hour but 65 from 11; court 2 has a price only at 10.
+        // A start without a known price stays under every limit.
         assert_eq!(facets.current, 7);
-        assert_eq!(facets.of("price", "30"), Some(1));
-        assert_eq!(facets.of("price", "40"), Some(4));
-        assert_eq!(facets.of("price", "60"), Some(4));
+        assert_eq!(facets.of("price", "30"), Some(3));
+        assert_eq!(facets.of("price", "40"), Some(6));
+        assert_eq!(facets.of("price", "60"), Some(6));
         assert_eq!(facets.unpriced, 2);
         let rows = found.rows(&filters);
         let day = &rows[0].days[0];
@@ -1682,7 +1706,30 @@ mod tests {
             limited[0].days[0]
                 .costs
                 .iter()
-                .all(|cost| cost.is_some_and(|(_, hourly)| hourly <= 4000))
+                .all(|cost| cost.is_none_or(|(_, hourly)| hourly <= 4000))
+        );
+    }
+
+    #[test]
+    fn each_day_counts_what_the_other_filters_would_show_on_it() {
+        let (clubs, days) = lengg();
+        let rates = Rates::default();
+        let found = Found {
+            clubs: &clubs,
+            days: &days,
+            home: (47.3779, 8.5403),
+            today: "2000-01-01",
+            rates: &rates,
+        };
+        let later = "2099-01-02".to_string();
+        let filters = Filters {
+            dates: vec![later.clone()],
+            place: "indoor".into(),
+            ..Filters::default()
+        };
+        assert_eq!(
+            found.per_day(&filters, &[DATE.to_string(), later.clone()]),
+            vec![(DATE.to_string(), 4), (later, 0)]
         );
     }
 }
