@@ -91,6 +91,16 @@ mod models {
         pub thread: Json<Vec<crate::feedback::Said>>,
     }
 
+    /// A one-time link that signs a device in, kept as the SHA-256 of its token.
+    #[derive(Debug, toasty::Model)]
+    pub struct Invite {
+        #[key]
+        pub token_hash: String,
+        pub created_at: i64,
+        pub expires_at: i64,
+        pub used_at: Option<i64>,
+    }
+
     /// A free slot a watch already told about, so it is told once.
     #[derive(Debug, toasty::Model)]
     #[table = "told"]
@@ -119,11 +129,11 @@ mod models {
     }
 
     pub fn all() -> toasty::ModelSet {
-        toasty::models!(Club, Day, Closed, Watch, Told, Subscription, Setting, Report)
+        toasty::models!(Club, Day, Closed, Watch, Told, Subscription, Setting, Report, Invite)
     }
 }
 
-use models::{Closed, Setting, Told};
+use models::{Closed, Invite, Setting, Told};
 pub use models::{Club, Day, Report, Subscription, Watch};
 
 #[derive(Clone)]
@@ -199,7 +209,8 @@ impl Db {
         Ok(found.map(|closed| closed.at))
     }
 
-    pub async fn clubs(&self) -> Result<Vec<Club>> {
+    /// The clubs among `only` that GotCourts books for.
+    pub async fn clubs(&self, only: &[i64]) -> Result<Vec<Club>> {
         let mut db = self.db.clone();
         let closed: Vec<i64> = Closed::all()
             .exec(&mut db)
@@ -211,7 +222,7 @@ impl Db {
             .exec(&mut db)
             .await?
             .into_iter()
-            .filter(|club| !closed.contains(&club.id))
+            .filter(|club| !closed.contains(&club.id) && only.contains(&club.id))
             .collect();
         clubs.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(clubs)
@@ -353,7 +364,7 @@ impl Db {
     pub async fn reports(&self) -> Result<Vec<Report>> {
         let mut db = self.db.clone();
         let mut reports = Report::all().exec(&mut db).await?;
-        reports.sort_by(|a, b| b.id.cmp(&a.id));
+        reports.sort_by_key(|report| std::cmp::Reverse(report.id));
         Ok(reports)
     }
 
@@ -384,6 +395,36 @@ impl Db {
         .exec(&mut db)
         .await?;
         Ok(())
+    }
+
+    pub async fn add_invite(&self, token_hash: &str, now: i64, expires_at: i64) -> Result<()> {
+        let mut db = self.db.clone();
+        toasty::create!(Invite {
+            token_hash: token_hash.to_string(),
+            created_at: now,
+            expires_at,
+        })
+        .exec(&mut db)
+        .await?;
+        Ok(())
+    }
+
+    /// Uses up the invite with this hash: whether it was there, unused and in time.
+    pub async fn redeem(&self, token_hash: &str, now: i64) -> Result<bool> {
+        let mut db = self.db.clone();
+        let mut transaction = db.transaction().await?;
+        let found = Invite::filter_by_token_hash(token_hash.to_string())
+            .first()
+            .exec(&mut transaction)
+            .await?;
+        let Some(mut found) = found.filter(|invite| invite.used_at.is_none() && invite.expires_at > now) else {
+            return Ok(false);
+        };
+        toasty::update!(found { used_at: Some(now) })
+            .exec(&mut transaction)
+            .await?;
+        transaction.commit().await?;
+        Ok(true)
     }
 
     pub async fn subscribe(&self, subscription: Subscription) -> Result<()> {
@@ -478,9 +519,10 @@ mod tests {
         let stored = db.day(20, "2026-12-01").await.unwrap().unwrap();
         assert!(stored.busy.0.is_empty());
         assert_eq!(stored.fetched_at, 2);
-        assert_eq!(db.clubs().await.unwrap().len(), 1);
+        assert_eq!(db.clubs(&[20]).await.unwrap().len(), 1);
+        assert!(db.clubs(&[21]).await.unwrap().is_empty());
         db.close(20, "unknown club", 3).await.unwrap();
-        assert!(db.clubs().await.unwrap().is_empty());
+        assert!(db.clubs(&[20]).await.unwrap().is_empty());
     }
 
     #[tokio::test]
@@ -505,6 +547,17 @@ mod tests {
         );
         assert_eq!(again.batch.0, batch);
         assert_eq!(again.thread.0.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn an_invite_works_once_and_only_in_time() {
+        let db = Db::memory().await;
+        db.add_invite("aa", 10, 100).await.unwrap();
+        db.add_invite("bb", 10, 100).await.unwrap();
+        assert!(db.redeem("aa", 50).await.unwrap());
+        assert!(!db.redeem("aa", 51).await.unwrap());
+        assert!(!db.redeem("bb", 100).await.unwrap());
+        assert!(!db.redeem("cc", 50).await.unwrap());
     }
 
     #[tokio::test]

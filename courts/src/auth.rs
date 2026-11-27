@@ -7,14 +7,15 @@ use topcoat::cookie::{Cookies, SameSite, cookie, cookies, time::Duration};
 use topcoat::router::content::Form;
 use topcoat::router::error::{SeeOther, redirect, see_other};
 use topcoat::router::request::{headers, uri};
-use topcoat::router::{Body, Layer, LayerFuture, Next, Path, page, query_params, route};
+use topcoat::router::{Body, Layer, LayerFuture, Next, Path, page, path_param, query_params, route};
 use topcoat::view::{View, view};
 
 const COOKIE: &str = "courts_key";
-const OPEN: [&str; 7] = [
+const OPEN: [&str; 8] = [
     "/sign-in",
     "/sign-in/key",
     "/sign-in/link",
+    "/invite/",
     "/sw.js",
     "/icon.svg",
     "/manifest.webmanifest",
@@ -23,6 +24,95 @@ const OPEN: [&str; 7] = [
 
 #[derive(Clone)]
 pub struct Key(pub String);
+
+/// Where the site is on the web, for the links it makes.
+#[derive(Clone)]
+pub struct Origin(pub String);
+
+const INVITE_LIFE: i64 = 24 * 60 * 60;
+
+fn hash(token: &str) -> String {
+    ring::digest::digest(&ring::digest::SHA256, token.as_bytes())
+        .as_ref()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
+}
+
+/// Makes a one-time sign-in link, good for a day.
+pub async fn invite(cx: &Cx) -> Result<(String, String)> {
+    use base64::Engine;
+    use ring::rand::SecureRandom;
+    let mut bytes = [0u8; 24];
+    ring::rand::SystemRandom::new()
+        .fill(&mut bytes)
+        .map_err(|_| topcoat::Error::msg("no randomness for a link"))?;
+    let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let now = crate::time::now();
+    app_context::<crate::db::Db>(cx)
+        .add_invite(&hash(&token), now, now + INVITE_LIFE)
+        .await
+        .map_err(topcoat::Error::msg)?;
+    let url = format!("{}/invite/{token}", app_context::<Origin>(cx).0.trim_end_matches('/'));
+    Ok((token, url))
+}
+
+path_param!(token);
+
+#[route(GET "/invite/{token}")]
+async fn redeem_invite(cx: &Cx) -> Result<SeeOther> {
+    let token = path_param::<Token>(cx).to_string();
+    let used = app_context::<crate::db::Db>(cx)
+        .redeem(&hash(&token), crate::time::now())
+        .await
+        .map_err(topcoat::Error::msg)?;
+    if used {
+        keep(cx, &app_context::<Key>(cx).0);
+        Ok(see_other("/"))
+    } else {
+        Ok(see_other("/sign-in?invite=spent"))
+    }
+}
+
+#[route(POST "/invites")]
+async fn make_invite(cx: &Cx) -> Result<SeeOther> {
+    let (token, _) = invite(cx).await?;
+    Ok(see_other(format!("/watches?invite={token}#devices")))
+}
+
+#[route(POST "/api/invites")]
+async fn api_invite(cx: &Cx) -> Result<topcoat::router::content::Json<serde_json::Value>> {
+    let (_, url) = invite(cx).await?;
+    Ok(topcoat::router::content::Json(
+        serde_json::json!({"ok": true, "url": url, "hours": INVITE_LIFE / 3600}),
+    ))
+}
+
+/// The QR code of a sign-in link, for a phone's camera.
+pub struct Svg(String);
+
+impl topcoat::router::response::IntoResponse for Svg {
+    fn into_response(self, _cx: &Cx) -> Result<topcoat::router::response::Response> {
+        Ok(topcoat::router::response::Response::builder()
+            .header("Content-Type", "image/svg+xml")
+            .header("Cache-Control", "no-store")
+            .body(topcoat::router::Body::from(self.0))?)
+    }
+}
+
+#[route(GET "/invites/{token}/qr.svg")]
+async fn invite_qr(cx: &Cx) -> Result<Svg> {
+    let token = path_param::<Token>(cx).to_string();
+    let url = format!("{}/invite/{token}", app_context::<Origin>(cx).0.trim_end_matches('/'));
+    let code = qrcode::QrCode::new(url.as_bytes()).map_err(|error| topcoat::Error::msg(error.to_string()))?;
+    let svg = code
+        .render::<qrcode::render::svg::Color>()
+        .min_dimensions(240, 240)
+        .dark_color(qrcode::render::svg::Color("#0d1a12"))
+        .light_color(qrcode::render::svg::Color("#ffffff"))
+        .build();
+    Ok(Svg(svg))
+}
 
 fn same(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
@@ -95,6 +185,7 @@ fn keep(cx: &Cx, key: &str) {
 #[query_params]
 struct SignInQuery {
     wrong: Option<String>,
+    invite: Option<String>,
 }
 
 #[query_params]
@@ -126,16 +217,20 @@ fn check(cx: &Cx, given: &str) -> SeeOther {
 async fn sign_in(cx: &Cx) -> Result<impl View> {
     let query = query_params::<SignInQuery>(cx).map_err(|error| topcoat::Error::msg(error.to_string()))?;
     let wrong = query.wrong.is_some();
+    let spent = query.invite.is_some();
     Ok(view! {
         <article class="sign-in">
             <h1>"Courts"</h1>
-            <p>"Free tennis courts in Zurich, from GotCourts."</p>
+            <p>"Free tennis, padel and squash courts in Zurich, from GotCourts. Open a sign-in link on this device, or enter the key."</p>
             <form method="post" action="/sign-in/key">
                 <label>"Key" <input type="password" name="key" autocomplete="current-password" autofocus=(true)></label>
                 <button class="pill" type="submit">"Sign in"</button>
             </form>
             if wrong {
                 <p class="wrong">"That key is not the one."</p>
+            }
+            if spent {
+                <p class="wrong">"That sign-in link was used already or is older than a day. Make a new one on a device that is signed in (Watches, Other devices), or ask Claude for one."</p>
             }
         </article>
     })
@@ -161,6 +256,8 @@ mod tests {
         assert!(open("/_topcoat/assets/style.css"));
         assert!(open("/sw.js"));
         assert!(open("/sign-in/key"));
+        assert!(open("/invite/abc"));
+        assert!(!open("/invites"));
         assert!(!open("/"));
         assert!(!open("/watches"));
         assert!(!open("/sign-in/elsewhere"));

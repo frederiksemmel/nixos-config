@@ -7,6 +7,7 @@ use topcoat::view::{View, error_boundary, view};
 
 const STYLE: Asset = asset!("./style.css");
 const NOTIFY: Asset = asset!("./notify.js");
+const DAY: Asset = asset!("./day.js");
 const FEEDBACK: Asset = asset!("../../feedback/client/feedback-mode.js");
 const FEEDBACK_STYLE: Asset = asset!("../../feedback/client/feedback-mode.css");
 pub const ICON_URL: &str = "/icon.svg";
@@ -30,6 +31,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <link rel="stylesheet" href=(STYLE)>
                 <script type="module" src=(NOTIFY)></script>
                 if signed_in {
+                    <script type="module" src=(DAY)></script>
                     <link rel="stylesheet" href=(FEEDBACK_STYLE)>
                     <script type="module" src=(FEEDBACK)></script>
                 }

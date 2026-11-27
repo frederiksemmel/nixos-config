@@ -3,6 +3,7 @@
 mod auth;
 mod db;
 mod feedback;
+mod filters;
 mod gotcourts;
 mod layout;
 mod notify;
@@ -126,12 +127,12 @@ async fn serve() -> Result<(), String> {
         .clamp(1, 60);
     let per_minute = var("COURTS_PER_MINUTE").and_then(|d| d.parse().ok()).unwrap_or(20usize);
     let origin = var("COURTS_ORIGIN").unwrap_or_else(|| "https://localhost".into());
-    let push = push::Push::new(db.clone(), origin);
+    let push = push::Push::new(db.clone(), origin.clone());
     let poller = poll::Poller {
         db: db.clone(),
         gotcourts: gotcourts::GotCourts::default(),
         push: push.clone(),
-        clubs,
+        clubs: clubs.clone(),
         days,
         per_minute,
     };
@@ -144,7 +145,12 @@ async fn serve() -> Result<(), String> {
         .app_context(push)
         .app_context(poller)
         .app_context(auth::Key(key))
-        .app_context(pages::Site { home, days })
+        .app_context(auth::Origin(origin))
+        .app_context(pages::Site {
+            home,
+            days,
+            clubs: clubs.clone(),
+        })
         .assets(assets)
         .runtime()
         .build();

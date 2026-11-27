@@ -11,9 +11,16 @@ pub struct Slot {
 
 /// The free slots of every court, the ones starting from `after` on.
 pub fn free(courts: &[Court], busy: &[Busy], after: i64) -> Vec<Slot> {
+    free_for(courts, busy, after, 0)
+}
+
+/// Where a court is free for `seconds` in a row (at least its shortest
+/// booking), starting from `after` on, at every step it can be booked at.
+pub fn free_for(courts: &[Court], busy: &[Busy], after: i64, seconds: i64) -> Vec<Slot> {
     let mut slots = Vec::new();
     for court in courts {
-        let length = court.durations.iter().copied().filter(|m| *m > 0).min().unwrap_or(60) * 60;
+        let shortest = court.durations.iter().copied().filter(|m| *m > 0).min().unwrap_or(60) * 60;
+        let length = shortest.max(seconds);
         let step = court.interval.max(15) * 60;
         let mut start = court.opening;
         while start + length <= court.closing {
@@ -79,6 +86,13 @@ mod tests {
     fn an_hour_is_free_where_no_booking_overlaps_it() {
         let slots = free(&[court(1, 60)], &[busy(Some(1), 9.0, 10.0)], 0);
         assert_eq!(starts(&slots, 1), ["08:00", "10:00", "11:00"]);
+    }
+
+    #[test]
+    fn two_hours_need_two_free_hours_in_a_row() {
+        let slots = free_for(&[court(1, 60)], &[busy(Some(1), 10.0, 11.0)], 0, 2 * 3600);
+        assert_eq!(starts(&slots, 1), ["08:00"]);
+        assert_eq!(slots[0].end, 10 * 3600);
     }
 
     #[test]

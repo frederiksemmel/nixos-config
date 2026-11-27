@@ -8,6 +8,9 @@ use std::time::Duration;
 
 const BASE: &str = "https://apps.gotcourts.com";
 
+/// The sports this app is for; beach fields and sports halls ("other") are left out.
+pub const SPORTS: [&str; 3] = ["tennis", "padel", "squash"];
+
 /// A court as GotCourts describes it for one day. Times are seconds after
 /// midnight in Zurich.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,6 +204,7 @@ pub fn parse(body: &Value) -> Result<Day, Error> {
             })
         })
         .collect();
+    courts.retain(|court| SPORTS.contains(&court.sport.as_str()));
     courts.sort_by_key(|court| (court.order, court.id));
     let reservations = response["reservations"]
         .as_array()

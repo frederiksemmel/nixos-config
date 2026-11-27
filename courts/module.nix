@@ -103,7 +103,7 @@ in
       default = 20;
       description = ''
         How many club-days after today to ask about each minute, besides today and the watched
-        days. With 14 days and 27 clubs, 20 brings every one round in about 18 minutes.
+        days. With 14 days and 39 clubs, 20 brings every one round in about 25 minutes.
       '';
     };
   };

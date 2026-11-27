@@ -1,4 +1,5 @@
 use crate::db::{self, Db};
+use crate::filters::{EARLIEST, Filters, LATEST, LENGTHS, PRESETS, WITHIN};
 use crate::gotcourts::{self, Court, GotCourts};
 use crate::poll::Poller;
 use crate::slots::{self, Slot, clock};
@@ -8,7 +9,7 @@ use topcoat::Result;
 use topcoat::context::{Cx, app_context};
 use topcoat::router::content::Form;
 use topcoat::router::error::{SeeOther, not_found, see_other};
-use topcoat::router::{page, path_param, query_params, route};
+use topcoat::router::{page, path_param, route};
 use topcoat::view::{View, component, view};
 
 path_param!(id);
@@ -18,10 +19,10 @@ path_param!(id);
 pub struct Site {
     pub home: (f64, f64),
     pub days: i64,
+    pub clubs: Vec<i64>,
 }
 
 const HOURS: std::ops::Range<i64> = 6..23;
-const FROM_HOURS: [i64; 4] = [12, 17, 18, 19];
 
 pub fn club_info(club: &db::Club) -> gotcourts::Club {
     gotcourts::Club {
@@ -40,7 +41,10 @@ pub fn club_info(club: &db::Club) -> gotcourts::Club {
 }
 
 fn km(site: &Site, club: &db::Club) -> f64 {
-    let (lat, lng) = site.home;
+    distance(site.home, club)
+}
+
+fn distance((lat, lng): (f64, f64), club: &db::Club) -> f64 {
     let dy = (club.latitude - lat) * 111.2;
     let dx = (club.longitude - lng) * 111.2 * lat.to_radians().cos();
     (dx * dx + dy * dy).sqrt()
@@ -86,68 +90,6 @@ fn kind(club: &db::Club) -> &'static str {
     }
 }
 
-/// What the day page shows: a day, a sport, indoor or outdoor, and from when.
-#[derive(Clone, Default)]
-struct Filters {
-    date: String,
-    sport: String,
-    only: String,
-    from: i64,
-}
-
-impl Filters {
-    fn keeps(&self, court: &Court) -> bool {
-        (self.sport.is_empty() || court.sport == self.sport)
-            && match self.only.as_str() {
-                "indoor" => court.indoor,
-                "outdoor" => !court.indoor,
-                _ => true,
-            }
-    }
-
-    fn link(&self) -> String {
-        let mut link = format!("/?date={}", self.date);
-        if !self.sport.is_empty() {
-            link.push_str(&format!("&sport={}", self.sport));
-        }
-        if !self.only.is_empty() {
-            link.push_str(&format!("&only={}", self.only));
-        }
-        if self.from > 0 {
-            link.push_str(&format!("&from={}", self.from));
-        }
-        link
-    }
-
-    fn date(&self, date: &str) -> String {
-        Filters {
-            date: date.into(),
-            ..self.clone()
-        }
-        .link()
-    }
-
-    fn sport(&self, sport: &str) -> String {
-        Filters {
-            sport: sport.into(),
-            ..self.clone()
-        }
-        .link()
-    }
-
-    fn only(&self, only: &str) -> String {
-        Filters {
-            only: only.into(),
-            ..self.clone()
-        }
-        .link()
-    }
-
-    fn from(&self, from: i64) -> String {
-        Filters { from, ..self.clone() }.link()
-    }
-}
-
 /// How many courts are free starting in each hour.
 fn by_hour(free: &[Slot]) -> BTreeMap<i64, usize> {
     let mut hours: BTreeMap<i64, BTreeSet<i64>> = BTreeMap::new();
@@ -183,60 +125,62 @@ struct Row {
     fetched_at: i64,
 }
 
-#[query_params]
-struct DayQuery {
-    date: Option<String>,
-    sport: Option<String>,
-    only: Option<String>,
-    from: Option<i64>,
-}
-
 /// Every sport some court of these clubs has, tennis first.
-async fn known_sports(db: &Db) -> Vec<String> {
-    let mut set: BTreeSet<String> = db
-        .clubs()
+async fn known_sports(db: &Db, site: &Site) -> Vec<String> {
+    let set: BTreeSet<String> = db
+        .clubs(&site.clubs)
         .await
         .unwrap_or_default()
         .iter()
         .flat_map(|club| club.courts.0.iter().map(|c| c.sport.clone()).collect::<Vec<_>>())
         .collect();
-    let mut list = Vec::new();
-    if set.remove("tennis") {
-        list.push("tennis".to_string());
-    }
-    list.extend(set);
-    list
+    gotcourts::SPORTS
+        .iter()
+        .filter(|sport| set.contains(**sport))
+        .map(|sport| sport.to_string())
+        .collect()
+}
+
+fn guests(club: &db::Club) -> bool {
+    club.kind != "private"
+}
+
+fn keeps(filters: &Filters, court: &Court) -> bool {
+    court.sport == filters.sport
+        && match filters.place.as_str() {
+            "indoor" => court.indoor,
+            "outdoor" => !court.indoor,
+            _ => true,
+        }
+        && (filters.surface.is_empty() || surface(&court.surface) == filters.surface)
+}
+
+#[derive(serde::Serialize)]
+struct Pin {
+    id: i64,
+    name: String,
+    lat: f64,
+    lng: f64,
+    km: String,
+    free: usize,
+    times: Vec<String>,
+    book: String,
+    about: String,
 }
 
 #[page("/")]
 async fn day_page(cx: &Cx) -> Result<impl View> {
     let site = app_context::<Site>(cx).clone();
     let db = app_context::<Db>(cx).clone();
-    let query = query_params::<DayQuery>(cx).map_err(|error| topcoat::Error::msg(error.to_string()))?;
     let dates = time::dates(site.days);
     let today = time::today();
-    let all_sports = known_sports(&db).await;
-    let filters = Filters {
-        date: query
-            .date
-            .clone()
-            .filter(|d| dates.contains(d))
-            .unwrap_or_else(|| today.clone()),
-        sport: query
-            .sport
-            .clone()
-            .filter(|s| all_sports.contains(s))
-            .unwrap_or_default(),
-        only: query
-            .only
-            .clone()
-            .filter(|o| o == "indoor" || o == "outdoor")
-            .unwrap_or_default(),
-        from: query.from.unwrap_or(0).clamp(0, 23),
-    };
+    let all_sports = known_sports(&db, &site).await;
+    let filters = Filters::of(cx, &dates, &all_sports);
     let date = filters.date.clone();
+    let origin = filters.origin(site.home);
     let after = (filters.from * 3600).max(if date == today { time::seconds_today() } else { 0 });
-    let clubs = db.clubs().await.map_err(topcoat::Error::msg)?;
+    let until = filters.until * 3600;
+    let clubs = db.clubs(&site.clubs).await.map_err(topcoat::Error::msg)?;
     let days: BTreeMap<i64, db::Day> = db
         .days_on(&date)
         .await
@@ -244,18 +188,33 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         .into_iter()
         .map(|d| (d.club_id, d))
         .collect();
+    let surfaces_here: BTreeSet<String> = clubs
+        .iter()
+        .flat_map(|club| club.courts.0.iter())
+        .filter(|court| court.sport == filters.sport)
+        .map(|court| surface(&court.surface).to_string())
+        .collect();
+    let members_only = clubs.iter().filter(|club| !guests(club)).count();
     let mut rows: Vec<Row> = clubs
         .into_iter()
+        .filter(|club| filters.members || guests(club))
         .filter_map(|club| {
             let stored = days.get(&club.id)?;
-            let courts: Vec<Court> = stored.courts.0.iter().filter(|c| filters.keeps(c)).cloned().collect();
+            let courts: Vec<Court> = stored.courts.0.iter().filter(|c| keeps(&filters, c)).cloned().collect();
             if courts.is_empty() {
                 return None;
             }
-            let free = slots::free(&courts, &stored.busy.0, after);
+            let distance = distance(origin, &club);
+            if filters.within > 0 && distance > filters.within as f64 {
+                return None;
+            }
+            let free: Vec<Slot> = slots::free_for(&courts, &stored.busy.0, after, filters.length * 60)
+                .into_iter()
+                .filter(|slot| slot.end <= until)
+                .collect();
             let hours = by_hour(&free);
             Some(Row {
-                km: km(&site, &club),
+                km: distance,
                 club,
                 courts,
                 free,
@@ -264,108 +223,248 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
             })
         })
         .collect();
-    rows.sort_by(|a, b| {
-        (a.free.is_empty(), a.km)
-            .partial_cmp(&(b.free.is_empty(), b.km))
-            .unwrap_or(std::cmp::Ordering::Equal)
-    });
+    let soonest = |row: &Row| row.free.iter().map(|s| s.start).min().unwrap_or(i64::MAX);
+    if filters.sort == "near" {
+        rows.sort_by(|a, b| {
+            (a.free.is_empty(), a.km)
+                .partial_cmp(&(b.free.is_empty(), b.km))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    } else {
+        rows.sort_by(|a, b| {
+            (a.free.is_empty(), soonest(a), a.km)
+                .partial_cmp(&(b.free.is_empty(), soonest(b), b.km))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+    }
     let oldest = rows.iter().map(|r| r.fetched_at).min();
+    let pins: Vec<Pin> = rows
+        .iter()
+        .map(|row| {
+            let mut starts: Vec<i64> = row.free.iter().map(|s| s.start).collect();
+            starts.sort();
+            starts.dedup();
+            Pin {
+                id: row.club.id,
+                name: row.club.name.clone(),
+                lat: row.club.latitude,
+                lng: row.club.longitude,
+                km: format!("{:.1} km", row.km),
+                free: row.free.len(),
+                times: starts.iter().take(8).map(|&s| clock(s)).collect(),
+                book: GotCourts::booking_url(&row.club.canonical, &date),
+                about: format!("{} · {}", surfaces(&row.courts), kind(&row.club)),
+            }
+        })
+        .collect();
+    let pins = serde_json::to_string(&pins).unwrap_or_else(|_| "[]".into());
     let (open, full): (Vec<Row>, Vec<Row>) = rows.into_iter().partition(|r| !r.free.is_empty());
     let free_total: usize = open.iter().map(|r| r.free.len()).sum();
-    let several_sports = all_sports.len() > 1;
+    let sport_label = sport_name(&filters.sport);
+    let hours: Vec<i64> = (filters.from.max(EARLIEST)..filters.until.min(LATEST)).collect();
     let summary = format!(
-        "{} free {} at {} {}",
+        "{} {} at {} {}",
         free_total,
-        if free_total == 1 { "slot" } else { "slots" },
+        if free_total == 1 { "start" } else { "starts" },
         open.len(),
         if open.len() == 1 { "club" } else { "clubs" }
     );
+    let map_view = filters.view == "map";
     Ok(view! {
         nav(current: "courts")
-        <section class="filters" aria-label="Filters">
-            <nav class="chips dates" aria-label="Day">
-                for d in &dates {
-                    <a class=(chip(*d == date)) aria-current=(current(*d == date)) href=(filters.date(d))>(time::label(d))</a>
-                }
-            </nav>
-            <div class="chips">
-                if several_sports {
-                    <a class=(chip(filters.sport.is_empty())) href=(filters.sport(""))>"All sports"</a>
-                    for sport in &all_sports {
-                        <a class=(chip(filters.sport == *sport)) href=(filters.sport(sport))>(sport_name(sport))</a>
-                    }
-                    <span class="gap" aria-hidden="true"></span>
-                }
-                <a class=(chip(filters.only.is_empty())) href=(filters.only(""))>"Indoor and outdoor"</a>
-                <a class=(chip(filters.only == "indoor")) href=(filters.only("indoor"))>"Indoor"</a>
-                <a class=(chip(filters.only == "outdoor")) href=(filters.only("outdoor"))>"Outdoor"</a>
-            </div>
-            <div class="chips">
-                <a class=(chip(filters.from == 0)) href=(filters.from(0))>"Any time"</a>
-                for hour in FROM_HOURS {
-                    <a class=(chip(filters.from == hour)) href=(filters.from(hour))>(format!("From {hour}:00"))</a>
-                }
-            </div>
-        </section>
-        <p class="summary">
-            <strong>(time::label(&date))</strong>
-            (format!(" · {summary}"))
-            if let Some(at) = oldest {
-                <span class="quiet">(format!(" · updated {}", time::ago(at)))</span>
+        <nav class="chips dates" aria-label="Day">
+            for d in &dates {
+                <a class=(chip(*d == date)) aria-current=(current(*d == date)) href=(filters.with_date(d))>(time::label(d))</a>
             }
-        </p>
-        if open.is_empty() && full.is_empty() {
-            <p class="empty">"Nothing from GotCourts for this day yet. After a restart the first round takes a few minutes."</p>
-        }
-        if !open.is_empty() {
-            <section class="overview" aria-label="Free courts by hour">
-                <div class="grid-wrap">
-                    <table class="grid">
-                        <thead>
-                            <tr>
-                                <th scope="col"><span class="sr">"Club"</span></th>
-                                for hour in HOURS {
-                                    <th scope="col">(format!("{hour}"))</th>
-                                }
-                            </tr>
-                        </thead>
-                        <tbody>
-                            for row in &open {
-                                <tr>
-                                    <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
-                                    for hour in HOURS {
-                                        <td class=(heat(row.hours.get(&hour).copied().unwrap_or(0)))>
-                                            if let Some(count) = row.hours.get(&hour) {
-                                                (count.to_string())
-                                            }
-                                        </td>
-                                    }
-                                </tr>
-                            }
-                        </tbody>
-                    </table>
+        </nav>
+        filter_form(filters: &filters, sports: &all_sports, surfaces: &surfaces_here, members_only: members_only)
+        <div class=(if map_view { "split show-map" } else { "split" })>
+            <section class="results" aria-label="Free courts">
+                <div class="results-head">
+                    <p class="summary">
+                        <strong>(time::label(&date))</strong>
+                        (format!(" · {summary}"))
+                        if let Some(at) = oldest {
+                            <span class="quiet">(format!(" · updated {}", time::ago(at)))</span>
+                        }
+                    </p>
+                    <nav class="seg views" aria-label="View">
+                        <a href=(filters.with_view("list")) aria-current=(current(!map_view))>"List"</a>
+                        <a href=(filters.with_view("map")) aria-current=(current(map_view))>"Map"</a>
+                    </nav>
                 </div>
-                <p class="legend quiet">"Courts free per hour. Tap a club for its times."</p>
-            </section>
-        }
-        <div class="cards">
-            for row in &open {
-                club_card(row: row, date: &date, several_sports: several_sports)
-            }
-        </div>
-        if !full.is_empty() {
-            <section class="full">
-                <h2>"Nothing free"</h2>
-                <ul>
-                    for row in &full {
-                        <li>
-                            <a href=(format!("/clubs/{}", row.club.id))>(row.club.name.as_str())</a>
-                            <span class="quiet">(format!(" · {:.1} km", row.km))</span>
-                        </li>
+                if open.is_empty() && full.is_empty() {
+                    <p class="empty">"No court of these fits. Widen the hours, the distance or the length, or try another day."</p>
+                }
+                if !open.is_empty() && hours.len() > 1 {
+                    <section class="overview" aria-label="Free courts by hour">
+                        <div class="grid-wrap">
+                            <table class="grid">
+                                <thead>
+                                    <tr>
+                                        <th scope="col"><span class="sr">"Club"</span></th>
+                                        for hour in &hours {
+                                            <th scope="col">(format!("{hour}"))</th>
+                                        }
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    for row in &open {
+                                        <tr>
+                                            <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
+                                            for hour in &hours {
+                                                <td class=(heat(row.hours.get(hour).copied().unwrap_or(0)))>
+                                                    if let Some(count) = row.hours.get(hour) {
+                                                        (count.to_string())
+                                                    }
+                                                </td>
+                                            }
+                                        </tr>
+                                    }
+                                </tbody>
+                            </table>
+                        </div>
+                        <p class="legend quiet">(format!("Courts free for {} from each hour.", LENGTHS.iter().find(|(m, _)| *m == filters.length).map_or("1 h", |(_, l)| *l)))</p>
+                    </section>
+                }
+                <div class="cards">
+                    for row in &open {
+                        club_card(row: row, date: &date, length: filters.length)
                     }
-                </ul>
+                </div>
+                if !full.is_empty() {
+                    <section class="full">
+                        <h2>(format!("Nothing free for {sport_label} here"))</h2>
+                        <ul>
+                            for row in &full {
+                                <li>
+                                    <a href=(format!("/clubs/{}", row.club.id))>(row.club.name.as_str())</a>
+                                    <span class="quiet">(format!(" · {:.1} km", row.km))</span>
+                                </li>
+                            }
+                        </ul>
+                    </section>
+                }
             </section>
-        }
+            <section class="map-pane" aria-label="Map">
+                <div id="map" class="map" data-pins=(pins.as_str()) data-origin=(format!("{},{}", origin.0, origin.1)) data-here=(if filters.near.is_some() { "1" } else { "" })></div>
+            </section>
+        </div>
+    })
+}
+
+#[component]
+async fn filter_form(
+    filters: &Filters,
+    sports: &[String],
+    surfaces: &BTreeSet<String>,
+    members_only: usize,
+) -> Result<impl View> {
+    let summary = filters.summary(&sport_name(&filters.sport));
+    let from_hours: Vec<i64> = (EARLIEST..LATEST).collect();
+    let until_hours: Vec<i64> = (EARLIEST + 1..=LATEST).collect();
+    Ok(view! {
+        <details class="filters" data-filters="">
+            <summary>
+                <span class="filters-label">"Filters"</span>
+                <span class="filters-summary">(summary.as_str())</span>
+            </summary>
+            <form method="get" action="/" data-autosubmit="">
+                <input type="hidden" name="f" value="1">
+                <input type="hidden" name="date" value=(filters.date.as_str())>
+                <input type="hidden" name="view" value=(filters.view.as_str())>
+                <input type="hidden" name="near" value=(filters.near.map(|(a, b)| format!("{a:.4},{b:.4}")).unwrap_or_default())>
+                if sports.len() > 1 {
+                    <fieldset class="group">
+                        <legend>"Sport"</legend>
+                        <div class="seg">
+                            for sport in sports {
+                                <label><input type="radio" name="sport" value=(sport.as_str()) checked=(*sport == filters.sport)> (sport_name(sport))</label>
+                            }
+                        </div>
+                    </fieldset>
+                }
+                <fieldset class="group">
+                    <legend>"When"</legend>
+                    <div class="row">
+                        for (label, from, until) in PRESETS {
+                            <button type="submit" name="when" value=(format!("{from}-{until}")) class=(if filters.from == from && filters.until == until { "chip on" } else { "chip" })>(label)</button>
+                        }
+                        <button type="submit" name="when" value=(format!("{EARLIEST}-{LATEST}")) class=(if filters.from == EARLIEST && filters.until == LATEST { "chip on" } else { "chip" })>"Any time"</button>
+                    </div>
+                    <div class="row hours">
+                        <label>"From"
+                            <select name="from">
+                                for hour in &from_hours {
+                                    <option value=(hour.to_string()) selected=(*hour == filters.from)>(format!("{hour}:00"))</option>
+                                }
+                            </select>
+                        </label>
+                        <label>"Until"
+                            <select name="until">
+                                for hour in &until_hours {
+                                    <option value=(hour.to_string()) selected=(*hour == filters.until)>(format!("{hour}:00"))</option>
+                                }
+                            </select>
+                        </label>
+                    </div>
+                </fieldset>
+                <fieldset class="group">
+                    <legend>"How long"</legend>
+                    <div class="seg">
+                        for (minutes, label) in LENGTHS {
+                            <label><input type="radio" name="length" value=(minutes.to_string()) checked=(minutes == filters.length)> (label)</label>
+                        }
+                    </div>
+                </fieldset>
+                <fieldset class="group">
+                    <legend>"Court"</legend>
+                    <div class="seg">
+                        <label><input type="radio" name="place" value="" checked=(filters.place.is_empty())> "Any"</label>
+                        <label><input type="radio" name="place" value="indoor" checked=(filters.place == "indoor")> "Indoor"</label>
+                        <label><input type="radio" name="place" value="outdoor" checked=(filters.place == "outdoor")> "Outdoor"</label>
+                    </div>
+                    if surfaces.len() > 1 {
+                        <label class="inline">"Surface"
+                            <select name="surface">
+                                <option value="">"Any surface"</option>
+                                for name in surfaces {
+                                    <option value=(name.as_str()) selected=(*name == filters.surface)>(name.as_str())</option>
+                                }
+                            </select>
+                        </label>
+                    }
+                </fieldset>
+                <fieldset class="group">
+                    <legend>"Where"</legend>
+                    <div class="seg">
+                        <label><input type="radio" name="within" value="0" checked=(filters.within == 0)> "Anywhere"</label>
+                        for km in WITHIN {
+                            <label><input type="radio" name="within" value=(km.to_string()) checked=(km == filters.within)> (format!("{km} km"))</label>
+                        }
+                    </div>
+                    <div class="row">
+                        <span class="quiet">(if filters.near.is_some() { "From where you are" } else { "From home" })</span>
+                        <button type="button" class="chip" data-locate="">(if filters.near.is_some() { "Update my location" } else { "Use my location" })</button>
+                        if filters.near.is_some() {
+                            <button type="button" class="chip" data-home="">"From home"</button>
+                        }
+                    </div>
+                </fieldset>
+                <fieldset class="group">
+                    <legend>"Order"</legend>
+                    <div class="seg">
+                        <label><input type="radio" name="sort" value="soon" checked=(filters.sort != "near")> "Soonest"</label>
+                        <label><input type="radio" name="sort" value="near" checked=(filters.sort == "near")> "Nearest"</label>
+                    </div>
+                    <label class="check">
+                        <input type="checkbox" name="members" value="1" checked=(filters.members)>
+                        (format!("Members-only clubs too ({members_only})"))
+                    </label>
+                </fieldset>
+                <noscript><button class="pill" type="submit">"Show"</button></noscript>
+            </form>
+        </details>
     })
 }
 
@@ -384,7 +483,7 @@ pub async fn nav(current: &'static str) -> Result<impl View> {
 }
 
 #[component]
-async fn club_card(row: &Row, date: &str, several_sports: bool) -> Result<impl View> {
+async fn club_card(row: &Row, date: &str, length: i64) -> Result<impl View> {
     let club = &row.club;
     let courts: Vec<(&Court, Vec<&Slot>)> = row
         .courts
@@ -398,35 +497,35 @@ async fn club_card(row: &Row, date: &str, several_sports: bool) -> Result<impl V
         .filter(|(_, free)| !free.is_empty())
         .collect();
     let book = GotCourts::booking_url(&club.canonical, date);
-    let what = if several_sports {
-        format!("{} · {}", sports(&row.courts), surfaces(&row.courts))
-    } else {
-        surfaces(&row.courts)
-    };
     Ok(view! {
-        <section class="club" id=(format!("club-{}", club.id))>
+        <section class="club" id=(format!("club-{}", club.id)) data-club=(club.id.to_string())>
             <header>
                 <div>
                     <h2><a href=(format!("/clubs/{}", club.id))>(club.name.as_str())</a></h2>
                     <p class="meta">
-                        (format!("{:.1} km · {} · {}", row.km, what, club.city))
+                        (format!("{:.1} km · {} · {}", row.km, surfaces(&row.courts), club.city))
                         if !kind(club).is_empty() {
                             (format!(" · {}", kind(club)))
                         }
                     </p>
                 </div>
-                <a class="pill" href=(book.as_str()) target="_blank" rel="noopener">"Book"</a>
+                <div class="club-actions">
+                    <button type="button" class="icon-button" data-show-on-map=(club.id.to_string()) aria-label=(format!("Show {} on the map", club.name))>
+                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"></path><circle cx="12" cy="10" r="2.3"></circle></svg>
+                    </button>
+                    <a class="pill" href=(book.as_str()) target="_blank" rel="noopener">"Book"</a>
+                </div>
             </header>
             <ul class="courts">
                 for (court, free) in &courts {
                     <li>
                         <span class="court">
                             (court.label.as_str())
-                            <small>(format!("{}{}{}", if several_sports { format!("{}, ", sport_name(&court.sport)) } else { String::new() }, surface(&court.surface), if court.indoor { ", indoor" } else { "" }))</small>
+                            <small>(format!("{}{}", surface(&court.surface), if court.indoor { ", indoor" } else { "" }))</small>
                         </span>
                         <span class="times">
                             for slot in free {
-                                <a class="time" href=(book.as_str()) target="_blank" rel="noopener">(clock(slot.start))</a>
+                                <a class="time" href=(book.as_str()) target="_blank" rel="noopener" title=(format!("{}–{}", clock(slot.start), clock(slot.start + length * 60)))>(clock(slot.start))</a>
                             }
                         </span>
                     </li>
@@ -547,11 +646,25 @@ struct Listed {
     free: usize,
 }
 
+#[topcoat::router::query_params]
+struct WatchesQuery {
+    invite: Option<String>,
+}
+
 #[page("/watches")]
 async fn watches_page(cx: &Cx) -> Result<impl View> {
+    let invite = topcoat::router::query_params::<WatchesQuery>(cx)
+        .map_err(|error| topcoat::Error::msg(error.to_string()))?
+        .invite
+        .clone()
+        .filter(|token| token.len() == 32 && token.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_'));
+    let origin = app_context::<crate::auth::Origin>(cx)
+        .0
+        .trim_end_matches('/')
+        .to_string();
     let site = app_context::<Site>(cx).clone();
     let db = app_context::<Db>(cx).clone();
-    let clubs = db.clubs().await.map_err(topcoat::Error::msg)?;
+    let clubs = db.clubs(&site.clubs).await.map_err(topcoat::Error::msg)?;
     let mut listed = Vec::new();
     for watch in db.watches().await.map_err(topcoat::Error::msg)? {
         let mut free = 0;
@@ -579,7 +692,7 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
         listed.push(Listed { watch, club, free });
     }
     let dates = time::dates(site.days);
-    let all_sports = known_sports(&db).await;
+    let all_sports = known_sports(&db, &site).await;
     Ok(view! {
         nav(current: "watches")
         <article class="page watches">
@@ -650,6 +763,27 @@ async fn watches_page(cx: &Cx) -> Result<impl View> {
                 <label class="check"><input type="checkbox" name="indoor" value="1"> "Indoor only"</label>
                 <button class="pill" type="submit">"Watch"</button>
             </form>
+            <section class="devices" id="devices">
+                <h2>"Other devices"</h2>
+                if let Some(token) = &invite {
+                    <div class="invite">
+                        <img src=(format!("/invites/{token}/qr.svg")) width="240" height="240" alt="QR code of the sign-in link">
+                        <div class="invite-text">
+                            <p>"Scan this with the phone's camera, or send it the link. It works once, within a day, and keeps that device signed in."</p>
+                            <p class="invite-link"><code>(format!("{origin}/invite/{token}"))</code></p>
+                            <div class="row">
+                                <button type="button" class="pill" data-share=(format!("{origin}/invite/{token}"))>"Share link"</button>
+                                <button type="button" class="pill quiet" data-copy-link=(format!("{origin}/invite/{token}"))>"Copy"</button>
+                            </div>
+                        </div>
+                    </div>
+                } else {
+                    <p class="quiet">"Sign in on a phone or another computer without typing the key: make a link, then scan its QR code or send it over."</p>
+                    <form method="post" action="/invites">
+                        <button class="pill quiet" type="submit">"Make a sign-in link"</button>
+                    </form>
+                }
+            </section>
         </article>
     })
 }
