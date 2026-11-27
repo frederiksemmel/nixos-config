@@ -204,3 +204,45 @@ document.addEventListener("click", async (event) => {
     (share || copy).textContent = "Copy it from the text above";
   }
 });
+
+let toastTimer = 0;
+
+function toast(text, url) {
+  let box = document.querySelector(".toast");
+  if (!box) {
+    box = element("div", "toast");
+    box.setAttribute("role", "status");
+    document.body.append(box);
+  }
+  box.replaceChildren(element("span", "", text));
+  if (url) {
+    const open = element("a", "", "Open");
+    open.href = url;
+    box.append(open);
+  }
+  box.classList.add("shown");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => box.classList.remove("shown"), 5000);
+}
+
+document.addEventListener("click", async (event) => {
+  const slot = event.target.closest("a[data-slot]");
+  if (!slot || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+  event.preventDefault();
+  const url = new URL(slot.getAttribute("href"), location.href).href;
+  const title = slot.dataset.slot;
+  if (navigator.share && matchMedia("(pointer: coarse)").matches) {
+    try {
+      await navigator.share({ title, url });
+    } catch (error) {
+      if (error.name !== "AbortError") location.href = url;
+    }
+    return;
+  }
+  try {
+    await navigator.clipboard.writeText(url);
+    toast(`Link copied: ${title}`, url);
+  } catch {
+    location.href = url;
+  }
+});

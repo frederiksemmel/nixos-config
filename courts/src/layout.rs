@@ -5,7 +5,7 @@ use topcoat::router::error::NotFoundError;
 use topcoat::router::{Slot, StatusCode, layout, not_found};
 use topcoat::view::{View, error_boundary, view};
 
-const STYLE: Asset = asset!("./style.css");
+pub const STYLE: Asset = asset!("./style.css");
 const NOTIFY: Asset = asset!("./notify.js");
 const DAY: Asset = asset!("./day.js");
 const FEEDBACK: Asset = asset!("../../feedback/client/feedback-mode.js");

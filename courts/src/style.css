@@ -426,3 +426,56 @@ textarea { resize: vertical; line-height: 1.45; }
 .day-head { margin: 14px 0 2px; font-size: 0.94rem; font-weight: 700; color: var(--accent); }
 .coverage { font-size: 0.833rem; margin: 32px 0 0; max-width: 70ch; }
 .note { margin: 0 0 12px; padding: 10px 14px; border-radius: 12px; background: var(--raised); color: var(--quiet); font-size: 0.94rem; max-width: 70ch; }
+
+.hint { font-size: 0.833rem; margin: 0 0 8px; }
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: max(16px, env(safe-area-inset-bottom));
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  width: max-content;
+  max-width: calc(100vw - 32px);
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--raised-2);
+  color: var(--text);
+  box-shadow: 0 10px 30px oklch(0 0 0 / 0.45);
+  font-size: 0.94rem;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 12px);
+  transition: opacity 200ms var(--ease), transform 300ms var(--ease);
+}
+.toast.shown { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
+.toast a { color: var(--accent); font-weight: 700; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) {
+  .toast { transition: none; }
+}
+
+.shared { max-width: 600px; padding-top: max(24px, env(safe-area-inset-top)); padding-bottom: 48px; }
+.slot h1 { margin: 24px 0 16px; }
+.when { display: grid; gap: 2px; margin: 0 0 16px; }
+.when .date { font-size: 1.2rem; font-weight: 600; }
+.when .hours {
+  font-size: clamp(2.6rem, 12vw, 3.6rem);
+  font-weight: 800;
+  line-height: 1.05;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+}
+.when.unsure .hours { color: var(--text); }
+.when.gone .hours { color: var(--quiet); text-decoration: line-through; text-decoration-thickness: 3px; }
+.status { display: inline-flex; align-items: center; gap: 8px; margin: 0; padding: 6px 12px; border-radius: 999px; background: var(--raised); font-weight: 600; font-size: 0.94rem; }
+.status .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--quiet); flex: none; }
+.status.free .dot { background: var(--accent); }
+.status.taken { color: var(--bad); }
+.status.taken .dot { background: var(--bad); }
+.status.over, .status.unknown { color: var(--quiet); }
+.slot .facts { margin: 24px 0; padding: 16px; border-radius: 16px; background: var(--raised); }
+.slot-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.slot .hint { margin-top: 12px; }
+.shared-foot { margin-top: 48px; padding-top: 16px; border-top: 1px solid var(--line); font-size: 0.833rem; max-width: 60ch; }

@@ -11,6 +11,7 @@ mod notify;
 mod pages;
 mod poll;
 mod push;
+mod share;
 mod slots;
 mod time;
 
@@ -170,6 +171,7 @@ async fn serve() -> Result<(), String> {
         .app_context(auth::Origin(origin))
         .app_context(pages::Site { home, days })
         .app_context(clubs)
+        .app_context(share::Prices::default())
         .assets(assets)
         .runtime()
         .build();

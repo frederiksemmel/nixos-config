@@ -245,7 +245,6 @@ impl Db {
         Ok(Day::filter(fields.club_id().eq(club)).exec(&mut db).await?)
     }
 
-    #[cfg(test)]
     pub async fn day(&self, club: i64, date: &str) -> Result<Option<Day>> {
         let mut db = self.db.clone();
         Ok(Day::filter_by_club_id_and_date(club, date.to_string())

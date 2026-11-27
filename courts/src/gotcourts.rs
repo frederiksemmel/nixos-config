@@ -206,6 +206,18 @@ impl GotCourts {
         int(&club["id"]).ok_or_else(|| Error::Failed(format!("no id for {canonical}")))
     }
 
+    /// What booking `court` on `date` from `start` (seconds after midnight)
+    /// for `minutes` costs, in Rappen; None when the club lists no price.
+    pub async fn price(&self, court: i64, date: &str, start: i64, minutes: i64) -> Result<Option<i64>, Error> {
+        price(
+            &self
+                .get(format!(
+                    "{BASE}/de/api2/public/reservation/price?newFormat=true&courtId={court}&date={date}&time={start}&duration={minutes}&ballMachine=false&withGuest=false"
+                ))
+                .await?,
+        )
+    }
+
     /// Where someone books at a club, on GotCourts' own page.
     pub fn booking_url(canonical: &str) -> String {
         format!("{BASE}/de/reservations/{canonical}")
@@ -230,6 +242,28 @@ fn number(value: &Value) -> Option<f64> {
 
 fn int(value: &Value) -> Option<i64> {
     number(value).map(|number| number as i64)
+}
+
+/// The total of a price answer, in Rappen. A total of nothing is a club
+/// that set no tariff on GotCourts (ASVZ's courts answer so), not a free
+/// court, so it counts as no price.
+pub fn price(body: &Value) -> Result<Option<i64>, Error> {
+    let response = body.get("response").unwrap_or(body);
+    if body.get("status") != Some(&Value::Bool(true)) {
+        let message = text(&response["message"]);
+        return Err(Error::Failed(if message.is_empty() {
+            body.to_string()
+        } else {
+            message
+        }));
+    }
+    let currency = text(&response["currency"]);
+    if !currency.is_empty() && !currency.eq_ignore_ascii_case("CHF") {
+        return Ok(None);
+    }
+    Ok(number(&response["total"])
+        .map(|francs| (francs * 100.0).round() as i64)
+        .filter(|rappen| *rappen > 0))
 }
 
 pub fn parse(body: &Value) -> Result<Day, Error> {
@@ -374,6 +408,22 @@ mod tests {
         let broken = serde_json::json!({"status": false, "response": {"error": 500, "message": "",
             "exception": "Doctrine\\ORM\\NonUniqueResultException"}});
         assert!(matches!(listing(&broken), Err(Error::Failed(why)) if why.contains("NonUnique")));
+    }
+
+    #[test]
+    fn a_price_is_the_total_in_rappen_and_nothing_is_no_price() {
+        let answer = |total: &str| {
+            serde_json::json!({"status": true, "response": {"currency": "CHF", "total": total, "additional": [],
+                "params": {"cancelDateTime": false, "transactionFee": 0.05}}})
+        };
+        assert_eq!(price(&answer("75.00")).unwrap(), Some(7500));
+        assert_eq!(price(&answer("37.50")).unwrap(), Some(3750));
+        assert_eq!(price(&answer("0.00")).unwrap(), None);
+        let euros = serde_json::json!({"status": true, "response": {"currency": "EUR", "total": "20.00"}});
+        assert_eq!(price(&euros).unwrap(), None);
+        let broken = serde_json::json!({"status": false, "response": {"error": 500,
+            "message": "Fatal error: Call to a member function getClub() on null"}});
+        assert!(matches!(price(&broken), Err(Error::Failed(why)) if why.contains("getClub")));
     }
 
     #[test]

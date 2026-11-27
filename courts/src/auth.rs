@@ -11,11 +11,12 @@ use topcoat::router::{Body, Layer, LayerFuture, Next, Path, page, path_param, qu
 use topcoat::view::{View, view};
 
 const COOKIE: &str = "courts_key";
-const OPEN: [&str; 8] = [
+const OPEN: [&str; 9] = [
     "/sign-in",
     "/sign-in/key",
     "/sign-in/link",
     "/invite/",
+    "/s/",
     "/sw.js",
     "/icon.svg",
     "/manifest.webmanifest",
@@ -257,6 +258,8 @@ mod tests {
         assert!(open("/sw.js"));
         assert!(open("/sign-in/key"));
         assert!(open("/invite/abc"));
+        assert!(open("/s/20-111-20261129-1800-60-abc"));
+        assert!(!open("/s"));
         assert!(!open("/invites"));
         assert!(!open("/"));
         assert!(!open("/watches"));

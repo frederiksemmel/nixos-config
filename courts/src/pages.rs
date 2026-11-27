@@ -54,7 +54,7 @@ fn surfaces(courts: &[Court]) -> String {
     set.into_iter().collect::<Vec<_>>().join(", ")
 }
 
-fn surface(name: &str) -> &str {
+pub fn surface(name: &str) -> &str {
     match name {
         "clay" => "clay",
         "hard" => "hard",
@@ -492,6 +492,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
     .filter(|(_, days)| days.len() > 1)
     .collect();
     let discovered = app_context::<crate::discover::Clubs>(cx).state();
+    let share_key = app_context::<crate::auth::Key>(cx).0.clone();
     Ok(view! {
         nav(current: "courts")
         <div class="days">
@@ -594,9 +595,12 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                         <p class="legend quiet">(format!("Courts free for {} from each hour.", LENGTHS.iter().find(|(m, _)| *m == filters.length).map_or("1 h", |(_, l)| *l)))</p>
                     </section>
                 }
+                if !open.is_empty() {
+                    <p class="quiet hint">"Pick a time to send that court to someone."</p>
+                }
                 <div class="cards">
                     for row in &open {
-                        club_card(row: row, length: filters.length, several: several)
+                        club_card(row: row, several: several, share_key: share_key.as_str())
                     }
                 </div>
                 if !full.is_empty() {
@@ -835,11 +839,29 @@ pub async fn nav(current: &'static str) -> Result<impl View> {
     })
 }
 
-/// A day of a club card: the day, its booking link, and each court's free starts.
-type CardDay<'a> = (&'a DayFree, String, Vec<(&'a Court, Vec<&'a Slot>)>);
+/// A day of a club card: the day and each court's free starts.
+type CardDay<'a> = (&'a DayFree, Vec<(&'a Court, Vec<&'a Slot>)>);
+
+fn shared_path(key: &str, club: i64, date: &str, slot: &Slot) -> String {
+    crate::share::path(key, &shared(club, date, slot))
+}
+
+fn shared_title(court: &Court, date: &str, slot: &Slot, club: &str) -> String {
+    crate::share::title(&court.sport, &shared(0, date, slot), club)
+}
+
+fn shared(club: i64, date: &str, slot: &Slot) -> crate::share::Shared {
+    crate::share::Shared {
+        club,
+        court: slot.court,
+        date: date.to_string(),
+        start: slot.start,
+        end: slot.end,
+    }
+}
 
 #[component]
-async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
+async fn club_card(row: &Row, several: bool, share_key: &str) -> Result<impl View> {
     let club = &row.club;
     let courts = row.courts();
     let first = row.soonest().map_or(row.days[0].date.clone(), |(d, _)| d.to_string());
@@ -861,7 +883,7 @@ async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
                 })
                 .filter(|(_, free)| !free.is_empty())
                 .collect();
-            (day, GotCourts::booking_url(&club.canonical), free)
+            (day, free)
         })
         .collect();
     Ok(view! {
@@ -883,7 +905,7 @@ async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
                     <a class="pill" href=(book.as_str()) target="_blank" rel="noopener" title="Opens GotCourts; pick the day there">(book_label.as_str())</a>
                 </div>
             </header>
-            for (day, book, free) in &days {
+            for (day, free) in &days {
                 if several {
                     <h3 class="day-head">(time::label(&day.date))</h3>
                 }
@@ -896,7 +918,7 @@ async fn club_card(row: &Row, length: i64, several: bool) -> Result<impl View> {
                             </span>
                             <span class="times">
                                 for slot in slots {
-                                    <a class="time" href=(book.as_str()) target="_blank" rel="noopener" title=(format!("{}–{}", clock(slot.start), clock(slot.start + length * 60)))>(clock(slot.start))</a>
+                                    <a class="time" href=(shared_path(share_key, club.id, &day.date, slot)) data-slot=(shared_title(court, &day.date, slot, &club.name)) title=(format!("Share {}–{}", clock(slot.start), clock(slot.end)))>(clock(slot.start))</a>
                                 }
                             </span>
                         </li>
