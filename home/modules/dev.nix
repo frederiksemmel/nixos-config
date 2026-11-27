@@ -164,6 +164,7 @@ in
       serie
       gitui
       tuicr
+      (callPackage ../../packages/git-stats.nix { })
 
       # Networking & Communication
       bluetui
@@ -255,6 +256,17 @@ in
     #   command = lib.getExe pkgs.devenv;
     #   args = [ "mcp" ];
     # };
+
+    # Paths git-who and gource leave out, in git pathspec syntax from the repo
+    # root (`*` also matches `/`). Repos add their own in .statsignore or
+    # .git/info/statsignore.
+    xdg.configFile."git-stats/ignore".text = ''
+      *.lock
+      *package-lock.json
+      *pnpm-lock.yaml
+      *yarn.nix
+      *go.sum
+    '';
 
     # Infinity (accounting) MCP, kept out of the shared registry above so no
     # session loads it by default. Start one with the `claude-infinity` alias
