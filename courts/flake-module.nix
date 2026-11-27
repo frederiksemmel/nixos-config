@@ -1,6 +1,8 @@
 { inputs, flake-parts-lib, ... }:
 {
-  flake.nixosModules.courts = flake-parts-lib.importApply ./module.nix { inherit (inputs) crane; };
+  flake.nixosModules.courts = flake-parts-lib.importApply ./module.nix {
+    inherit (inputs) crane nixpkgs;
+  };
 
   perSystem =
     { pkgs, ... }:

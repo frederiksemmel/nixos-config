@@ -1,4 +1,4 @@
-{ crane }:
+{ crane, nixpkgs }:
 {
   config,
   lib,
@@ -7,6 +7,7 @@
 }:
 let
   cfg = config.services.courts;
+  newer = nixpkgs.legacyPackages.${pkgs.stdenv.hostPlatform.system};
   subname = lib.removeSuffix ".${cfg.zone}" cfg.domain;
 in
 {
@@ -15,8 +16,8 @@ in
 
     package = lib.mkOption {
       type = lib.types.package;
-      default = pkgs.callPackage ./package.nix { inherit crane; };
-      defaultText = lib.literalExpression "courts";
+      default = newer.callPackage ./package.nix { inherit crane; };
+      defaultText = lib.literalMD "the app from `courts`, built with the flake's nixpkgs for Topcoat's Rust";
     };
 
     domain = lib.mkOption {
