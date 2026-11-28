@@ -10,8 +10,8 @@ use topcoat::router::route;
 
 const WORKER: &str = include_str!("sw.js");
 
-/// A fixed file at a fixed address: the service worker, or the web manifest.
-pub struct Fixed(&'static str, String);
+/// A fixed file at a fixed address: the service worker, the web manifest, an icon.
+pub struct Fixed(&'static str, Vec<u8>);
 
 impl IntoResponse for Fixed {
     fn into_response(self, _cx: &Cx) -> Result<Response> {
@@ -24,12 +24,22 @@ impl IntoResponse for Fixed {
 
 #[route(GET "/sw.js")]
 async fn service_worker() -> Result<Fixed> {
-    Ok(Fixed("text/javascript; charset=utf-8", WORKER.to_string()))
+    Ok(Fixed("text/javascript; charset=utf-8", WORKER.into()))
 }
 
 #[route(GET "/icon.svg")]
 async fn app_icon() -> Result<Fixed> {
-    Ok(Fixed("image/svg+xml", include_str!("icon.svg").to_string()))
+    Ok(Fixed("image/svg+xml", include_bytes!("icons/court.svg").into()))
+}
+
+#[route(GET "/icon-180.png")]
+async fn home_screen_icon() -> Result<Fixed> {
+    Ok(Fixed("image/png", include_bytes!("icons/court-180.png").into()))
+}
+
+#[route(GET "/icon-512.png")]
+async fn large_icon() -> Result<Fixed> {
+    Ok(Fixed("image/png", include_bytes!("icons/court-512.png").into()))
 }
 
 #[route(GET "/manifest.webmanifest")]
@@ -41,9 +51,13 @@ async fn web_manifest() -> Result<Fixed> {
         "display": "standalone",
         "background_color": "#10241a",
         "theme_color": "#10241a",
-        "icons": [{"src": crate::layout::ICON_URL, "sizes": "any", "type": "image/svg+xml"}],
+        "icons": [
+            {"src": crate::layout::ICON_URL, "sizes": "any", "type": "image/svg+xml"},
+            {"src": crate::layout::HOME_ICON_URL, "sizes": "180x180", "type": "image/png"},
+            {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"},
+        ],
     });
-    Ok(Fixed("application/manifest+json", body.to_string()))
+    Ok(Fixed("application/manifest+json", body.to_string().into()))
 }
 
 #[derive(serde::Serialize)]

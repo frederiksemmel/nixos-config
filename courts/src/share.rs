@@ -266,6 +266,7 @@ async fn shared_slot(cx: &Cx) -> Result<(StatusCode, Html<String>)> {
                     <meta name="robots" content="noindex">
                     <title>"Courts"</title>
                     <link rel="icon" href=(crate::layout::ICON_URL) type="image/svg+xml">
+                    <link rel="apple-touch-icon" href=(crate::layout::HOME_ICON_URL)>
                     <link rel="stylesheet" href=(crate::layout::STYLE)>
                 </head>
                 <body>
@@ -372,6 +373,7 @@ async fn shared_slot(cx: &Cx) -> Result<(StatusCode, Html<String>)> {
                 <meta property="og:url" content=(here.as_str())>
                 <meta name="twitter:card" content="summary">
                 <link rel="icon" href=(crate::layout::ICON_URL) type="image/svg+xml">
+                <link rel="apple-touch-icon" href=(crate::layout::HOME_ICON_URL)>
                 <link rel="stylesheet" href=(crate::layout::STYLE)>
             </head>
             <body>

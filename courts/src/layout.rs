@@ -11,6 +11,7 @@ const DAY: Asset = asset!("./day.js");
 const FEEDBACK: Asset = asset!("../../feedback/client/feedback-mode.js");
 const FEEDBACK_STYLE: Asset = asset!("../../feedback/client/feedback-mode.css");
 pub const ICON_URL: &str = "/icon.svg";
+pub const HOME_ICON_URL: &str = "/icon-180.png";
 
 #[layout("/")]
 async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
@@ -28,6 +29,7 @@ async fn root(cx: &Cx, slot: Slot<'_>) -> Result<impl View> {
                 <meta name="apple-mobile-web-app-title" content="Courts">
                 <title>"Courts"</title>
                 <link rel="icon" href=(ICON_URL) type="image/svg+xml">
+                <link rel="apple-touch-icon" href=(HOME_ICON_URL)>
                 <link rel="manifest" href="/manifest.webmanifest">
                 <link rel="stylesheet" href=(STYLE)>
                 <script type="module" src=(NOTIFY)></script>

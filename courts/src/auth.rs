@@ -16,7 +16,7 @@ use topcoat::view::{View, view};
 /// The key itself, as browsers signed in before there were people keep it.
 const KEY_COOKIE: &str = "courts_key";
 const DEVICE_COOKIE: &str = "courts_device";
-const OPEN: [&str; 10] = [
+const OPEN: [&str; 12] = [
     "/sign-in",
     "/sign-in/key",
     "/sign-in/link",
@@ -25,6 +25,8 @@ const OPEN: [&str; 10] = [
     "/a/",
     "/sw.js",
     "/icon.svg",
+    "/icon-180.png",
+    "/icon-512.png",
     "/manifest.webmanifest",
     "/_topcoat/",
 ];
