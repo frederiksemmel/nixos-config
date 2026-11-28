@@ -638,3 +638,31 @@ html[data-feedback-project="courts"] .asking .toast { bottom: calc(max(16px, env
 .sign-in .key { margin-top: 24px; }
 .sign-in .key > summary { cursor: pointer; color: var(--quiet); min-height: var(--tap); display: flex; align-items: center; }
 .sign-in .key form { margin-top: 8px; }
+
+.find { margin: 4px 0 12px; max-width: 520px; }
+.find-field { display: block; position: relative; color: var(--text); font-size: 1rem; }
+.find-icon { position: absolute; left: 12px; top: 50%; width: 20px; height: 20px; translate: 0 -50%; fill: none; stroke: var(--quiet); stroke-width: 2; stroke-linecap: round; pointer-events: none; }
+.find input {
+  font: inherit;
+  font-size: 16px;
+  width: 100%;
+  min-height: var(--tap);
+  padding: 8px 12px 8px 42px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  color: var(--text);
+  appearance: none;
+}
+.find input::placeholder { color: var(--quiet); opacity: 1; }
+.find input:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; border-radius: 12px; }
+.find-hits { list-style: none; margin: 6px 0 0; padding: 4px; background: var(--raised); border: 1px solid var(--line); border-radius: 12px; }
+.find-hits a { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; min-height: var(--tap); padding: 10px; border-radius: 8px; text-decoration: none; }
+.find-hits a:hover { background: var(--raised-2); }
+.find-hits a:focus-visible { background: var(--raised-2); outline-offset: -2px; }
+.find-name { font-weight: 600; }
+.find-hits .quiet { flex: none; font-size: 0.833rem; }
+.find-none { padding: 10px; max-width: 60ch; }
+.club-list { list-style: none; padding: 0; margin: 16px 0; }
+.club-list li { display: grid; gap: 2px; padding: 12px 0; border-bottom: 1px solid var(--line); }
+.club-list a { font-weight: 600; }

@@ -126,6 +126,63 @@ if (placeInput) {
   });
 }
 
+// Finding a club: the clubs whose words hold every typed word show under
+// the field, those whose name starts with it first; Enter opens the first.
+// find.rs `plain` and `matching` do the same without JavaScript.
+const FIND_MOST = 6;
+const finder = document.querySelector("[data-find]");
+const findItems = finder ? [...finder.querySelectorAll("li[data-words]")] : [];
+
+function plainText(text) {
+  return text
+    .normalize("NFD")
+    .replace(/\p{M}/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, " ")
+    .trim();
+}
+
+function findClubs() {
+  const input = finder.querySelector("[data-find-input]");
+  const hits = finder.querySelector("[data-find-hits]");
+  const query = plainText(input.value);
+  const words = query.split(" ").filter(Boolean);
+  const found = words.length
+    ? findItems
+        .filter((item) => words.every((word) => item.dataset.words.includes(word)))
+        .map((item, at) => {
+          const name = plainText(item.querySelector(".find-name").textContent);
+          const rank = (name.startsWith(query) ? 0 : 2) + (words.every((word) => name.includes(word)) ? 0 : 1);
+          return { item, rank, at };
+        })
+        .sort((a, b) => a.rank - b.rank || a.at - b.at)
+        .slice(0, FIND_MOST)
+    : [];
+  for (const item of findItems) item.hidden = true;
+  for (const { item } of found) hits.insertBefore(item, hits.querySelector("[data-find-none]"));
+  for (const { item } of found) item.hidden = false;
+  hits.querySelector("[data-find-none]").hidden = !words.length || found.length > 0;
+  hits.hidden = !words.length;
+  return found.map(({ item }) => item);
+}
+
+if (finder) {
+  const input = finder.querySelector("[data-find-input]");
+  input.addEventListener("input", findClubs);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      input.value = "";
+      findClubs();
+    }
+  });
+  finder.addEventListener("submit", (event) => {
+    const [first] = findClubs();
+    if (!first) return;
+    event.preventDefault();
+    location.href = first.querySelector("a").href;
+  });
+}
+
 // Days: a click picks that day alone, Shift-click every day from the last
 // one picked to it, Ctrl- or Cmd-click adds or drops it. On a phone,
 // holding a day adds or drops it.

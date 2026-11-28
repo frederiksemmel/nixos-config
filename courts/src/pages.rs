@@ -75,6 +75,10 @@ fn km(site: &Site, club: &db::Club) -> f64 {
     distance(site.home, club)
 }
 
+pub fn km_from_home(cx: &Cx, club: &db::Club) -> f64 {
+    km(app_context::<Site>(cx), club)
+}
+
 fn distance((lat, lng): (f64, f64), club: &db::Club) -> f64 {
     let dy = (club.latitude - lat) * 111.2;
     let dx = (club.longitude - lng) * 111.2 * lat.to_radians().cos();
@@ -702,8 +706,10 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         .filter(|club| Source::parse(&club.source) == Source::Eversports)
         .map(|club| club.name.clone())
         .collect();
+    let findable = crate::find::entries(&clubs);
     Ok(view! {
         nav(current: "courts")
+        crate::find::club_search(entries: &findable, query: "")
         <section class="days" aria-label="Day">
             <div class="days-head">
                 <h2 class="group-label">(if several { "Days" } else { "Day" })</h2>
@@ -1329,8 +1335,14 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
         format!("https://{}", club.web)
     };
     let phone: String = club.phone.chars().filter(|c| c.is_ascii_digit() || *c == '+').collect();
+    let findable = crate::find::entries(
+        &db.clubs(&app_context::<crate::discover::Clubs>(cx).ids())
+            .await
+            .map_err(topcoat::Error::msg)?,
+    );
     Ok(view! {
         nav(current: "courts")
+        crate::find::club_search(entries: &findable, query: "")
         <article class="page club-page">
             <h1>(club.name.as_str())</h1>
             <p class="meta">
@@ -1362,26 +1374,6 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
                 <dt>(Source::parse(&club.source).name())</dt>
                 <dd><a href=(book(&club, &today, courts.first().map_or("tennis", |c| c.sport.as_str()), None, app.as_deref())) target="_blank" rel="noopener">(book_there)</a></dd>
             </dl>
-            <h2>"Courts"</h2>
-            <table class="list">
-                <thead><tr><th>"Court"</th><th>"Sport"</th><th>"Surface"</th><th>"Hours"</th><th>"Booked in"</th></tr></thead>
-                <tbody>
-                    for court in &courts {
-                        <tr>
-                            <td>
-                                (court.label.as_str())
-                                if court.ball_machine {
-                                    <small>" · ball machine"</small>
-                                }
-                            </td>
-                            <td>(sport_name(&court.sport))</td>
-                            <td>(format!("{}, {}", surface(&court.surface), gotcourts::cover_label(court)))</td>
-                            <td>(format!("{}–{}", clock(court.opening), clock(court.closing)))</td>
-                            <td>(court.durations.iter().map(|m| format!("{m} min")).collect::<Vec<_>>().join(", "))</td>
-                        </tr>
-                    }
-                </tbody>
-            </table>
             <h2>"Free courts by hour"</h2>
             <div class="grid-wrap">
                 <table class="grid">
@@ -1409,6 +1401,26 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
                     </tbody>
                 </table>
             </div>
+            <h2>"Courts"</h2>
+            <table class="list">
+                <thead><tr><th>"Court"</th><th>"Sport"</th><th>"Surface"</th><th>"Hours"</th><th>"Booked in"</th></tr></thead>
+                <tbody>
+                    for court in &courts {
+                        <tr>
+                            <td>
+                                (court.label.as_str())
+                                if court.ball_machine {
+                                    <small>" · ball machine"</small>
+                                }
+                            </td>
+                            <td>(sport_name(&court.sport))</td>
+                            <td>(format!("{}, {}", surface(&court.surface), gotcourts::cover_label(court)))</td>
+                            <td>(format!("{}–{}", clock(court.opening), clock(court.closing)))</td>
+                            <td>(court.durations.iter().map(|m| format!("{m} min")).collect::<Vec<_>>().join(", "))</td>
+                        </tr>
+                    }
+                </tbody>
+            </table>
         </article>
     })
 }

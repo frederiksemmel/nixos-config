@@ -7,6 +7,7 @@ mod discover;
 mod eversports;
 mod feedback;
 mod filters;
+mod find;
 mod gotcourts;
 mod layout;
 mod notify;
