@@ -14,6 +14,7 @@ mod pages;
 mod poll;
 mod push;
 mod share;
+mod sites;
 mod slots;
 mod source;
 mod tariffs;

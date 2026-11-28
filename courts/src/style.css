@@ -328,6 +328,9 @@ textarea { resize: vertical; line-height: 1.45; }
 .group .hours select { width: auto; }
 .group label.inline { display: flex; align-items: center; gap: 8px; font-size: 0.94rem; }
 .group label.inline select { width: auto; flex: 1; }
+.group label.place { margin-top: 4px; }
+.group .places:empty { display: none; }
+.group .places .chip { white-space: normal; text-align: left; padding-block: 8px; }
 .group button.chip { border: 0; font: inherit; font-size: 0.94rem; cursor: pointer; background: var(--canvas); }
 .group button.chip:hover { background: var(--raised-2); }
 .group button.chip.on { background: var(--accent); color: var(--on-accent); }

@@ -40,6 +40,8 @@ pub struct Filters {
     /// The clubs the person is a member of, from the store, not the query.
     pub member_of: BTreeSet<i64>,
     pub near: Option<(f64, f64)>,
+    /// What the person typed for `near`; empty when it is where they are.
+    pub near_name: String,
     pub sort: String,
     pub view: String,
 }
@@ -58,6 +60,7 @@ impl Default for Filters {
             price: 0,
             member_of: BTreeSet::new(),
             near: None,
+            near_name: String::new(),
             sort: "soon".into(),
             view: "list".into(),
         }
@@ -121,6 +124,11 @@ impl Filters {
             (45.0..48.5).contains(&lat).then_some(())?;
             (5.0..11.0).contains(&lng).then_some((lat, lng))
         });
+        if filters.near.is_some() {
+            filters.near_name = get("near_name")
+                .map(|name| name.chars().take(80).collect())
+                .unwrap_or_default();
+        }
         filters.sort = get("sort").filter(|s| s == "near").unwrap_or_else(|| "soon".into());
         filters.view = get("view").filter(|v| v == "map").unwrap_or_else(|| "list".into());
         filters
@@ -191,6 +199,9 @@ impl Filters {
         }
         if let Some((lat, lng)) = self.near {
             out.append_pair("near", &format!("{lat:.4},{lng:.4}"));
+            if !self.near_name.is_empty() {
+                out.append_pair("near_name", &self.near_name);
+            }
         }
         if self.sort == "near" {
             out.append_pair("sort", "near");
@@ -282,7 +293,7 @@ mod tests {
         let dates = time::dates(3);
         let filters = Filters::parse(
             &format!(
-                "f=1&date={}&sport=squash&place=indoor&from=17&until=22&length=90&within=5&price=40&near=47.37,8.54&sort=near",
+                "f=1&date={}&sport=squash&place=indoor&from=17&until=22&length=90&within=5&price=40&near=47.37,8.54&near_name=Bucheggplatz%204&sort=near",
                 dates[1]
             ),
             &dates,
@@ -295,9 +306,10 @@ mod tests {
         );
         assert_eq!(filters.price, 40);
         assert_eq!(filters.near, Some((47.37, 8.54)));
+        assert_eq!(filters.near_name, "Bucheggplatz 4");
         assert_eq!(Filters::parse(&filters.query(true), &dates, &sports()), filters);
         let odd = Filters::parse(
-            "sport=golf&length=45&within=7&price=35&from=30&until=2&near=1,2",
+            "sport=golf&length=45&within=7&price=35&from=30&until=2&near=1,2&near_name=Nowhere",
             &dates,
             &sports(),
         );
@@ -306,6 +318,7 @@ mod tests {
             ("tennis", 60, 0, None)
         );
         assert_eq!((odd.from, odd.until), (23, 24));
+        assert_eq!(odd.near_name, "", "a name goes only with a place");
         assert_eq!(odd.price, 0);
     }
 

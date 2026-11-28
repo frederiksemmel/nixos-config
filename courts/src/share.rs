@@ -244,7 +244,10 @@ pub async fn place(db: &Db, shared: Shared) -> Result<Option<Found>> {
         .as_ref()
         .and_then(|day| day.courts.0.iter().find(|c| c.id == shared.court).cloned())
         .or_else(|| club.courts.0.iter().find(|c| c.id == shared.court).cloned());
-    Ok(court.map(|court| (shared, club, court, day)))
+    Ok(court.map(|court| {
+        let club = crate::sites::at(&club, crate::sites::site_of(club.id, &court));
+        (shared, club, court, day)
+    }))
 }
 
 #[route(GET "/s/{code}")]

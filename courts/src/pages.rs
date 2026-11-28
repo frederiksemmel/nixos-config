@@ -192,7 +192,10 @@ impl DayFree {
 }
 
 struct Row {
+    /// The club, or one site of it, as it shows.
     club: db::Club,
+    /// For anchors and map pins: the club's id, or its site's key.
+    key: String,
     km: f64,
     days: Vec<DayFree>,
     fetched_at: i64,
@@ -259,6 +262,7 @@ fn keeps(filters: &Filters, court: &Court) -> bool {
 #[derive(serde::Serialize)]
 struct Pin {
     id: i64,
+    key: String,
     name: String,
     lat: f64,
     lng: f64,
@@ -314,7 +318,9 @@ impl Found<'_> {
         self.clubs
             .iter()
             .filter(|club| guests(club) || filters.member_of.contains(&club.id))
-            .filter_map(|club| {
+            .flat_map(crate::sites::parts)
+            .filter_map(|part| {
+                let club = &part.club;
                 let taken = |busy: &[gotcourts::Busy]| slots::taken_for(busy, filters.member_of.contains(&club.id));
                 let distance = distance(origin, club);
                 if filters.within > 0 && distance > filters.within as f64 {
@@ -327,8 +333,13 @@ impl Found<'_> {
                     .filter_map(|date| {
                         let stored = self.days.get(&(club.id, date.clone()))?;
                         fetched_at = fetched_at.min(stored.fetched_at);
-                        let courts: Vec<Court> =
-                            stored.courts.0.iter().filter(|c| keeps(filters, c)).cloned().collect();
+                        let courts: Vec<Court> = stored
+                            .courts
+                            .0
+                            .iter()
+                            .filter(|c| keeps(filters, c) && part.holds(c))
+                            .cloned()
+                            .collect();
                         if courts.is_empty() {
                             return None;
                         }
@@ -366,7 +377,8 @@ impl Found<'_> {
                 }
                 Some(Row {
                     km: distance,
-                    club: club.clone(),
+                    club: part.club.clone(),
+                    key: part.key.clone(),
                     days,
                     fetched_at,
                 })
@@ -602,6 +614,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
             let soonest = row.soonest().map_or(date.as_str(), |(d, _)| d);
             Pin {
                 id: row.club.id,
+                key: row.key.clone(),
                 name: row.club.name.clone(),
                 lat: row.club.latitude,
                 lng: row.club.longitude,
@@ -662,6 +675,11 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
         if open.len() == 1 { "club" } else { "clubs" }
     );
     let origin = filters.origin(site.home);
+    let here_title = match (filters.near, filters.near_name.as_str()) {
+        (None, _) => String::new(),
+        (Some(_), "") => "You".to_string(),
+        (Some(_), name) => name.to_string(),
+    };
     let map_view = filters.view == "map";
     let when = if several {
         format!("{} days", filters.dates.len())
@@ -744,7 +762,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                                 <tbody>
                                     for (row, picks) in open.iter().zip(&by_day) {
                                         <tr>
-                                            <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
+                                            <th scope="row"><a href=(format!("#club-{}", row.key))>(row.club.name.as_str())</a></th>
                                             for found in picks {
                                                 grid_cell(found: found)
                                             }
@@ -771,7 +789,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                                 <tbody>
                                     for (row, picks) in open.iter().zip(&by_hours) {
                                         <tr>
-                                            <th scope="row"><a href=(format!("#club-{}", row.club.id))>(row.club.name.as_str())</a></th>
+                                            <th scope="row"><a href=(format!("#club-{}", row.key))>(row.club.name.as_str())</a></th>
                                             for found in picks {
                                                 grid_cell(found: found)
                                             }
@@ -810,7 +828,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 coverage(discovered: &discovered, venues: &venues)
             </section>
             <section class="map-pane" aria-label="Map">
-                <div id="map" class="map" data-pins=(pins.as_str()) data-origin=(format!("{},{}", origin.0, origin.1)) data-here=(if filters.near.is_some() { "1" } else { "" })></div>
+                <div id="map" class="map" data-pins=(pins.as_str()) data-origin=(format!("{},{}", origin.0, origin.1)) data-here=(here_title.as_str())></div>
             </section>
         </div>
     })
@@ -894,12 +912,18 @@ async fn filter_form(
         n => format!("Francs, as GotCourts and Eversports quote them without signing in. A limit hides only what is known to cost more: the {n} free starts without a known price stay under every limit."),
     };
     let back = filters.link();
+    let from_label = match (filters.near, filters.near_name.as_str()) {
+        (None, _) => "From home".to_string(),
+        (Some(_), "") => "From where you are".to_string(),
+        (Some(_), name) => format!("From {name}"),
+    };
     let cleared = facets.cleared.saturating_sub(facets.current);
     let clear_link = Filters {
         dates: filters.dates.clone(),
         sport: filters.sport.clone(),
         view: filters.view.clone(),
         near: filters.near,
+        near_name: filters.near_name.clone(),
         sort: filters.sort.clone(),
         ..Filters::default()
     }
@@ -918,6 +942,7 @@ async fn filter_form(
                 <input type="hidden" name="date" value=(filters.dates.join(","))>
                 <input type="hidden" name="view" value=(filters.view.as_str())>
                 <input type="hidden" name="near" value=(filters.near.map(|(a, b)| format!("{a:.4},{b:.4}")).unwrap_or_default())>
+                <input type="hidden" name="near_name" value=(filters.near_name.as_str())>
                 if sports.len() > 1 {
                     <fieldset class="group">
                         <legend>"Sport"</legend>
@@ -1001,12 +1026,18 @@ async fn filter_form(
                         }
                     </div>
                     <div class="row">
-                        <span class="quiet">(if filters.near.is_some() { "From where you are" } else { "From home" })</span>
-                        <button type="button" class="chip" data-locate="">(if filters.near.is_some() { "Update my location" } else { "Use my location" })</button>
+                        <span class="quiet">(from_label.as_str())</span>
+                        <button type="button" class="chip" data-locate="">(if filters.near.is_some() && filters.near_name.is_empty() { "Update my location" } else { "Use my location" })</button>
                         if filters.near.is_some() {
                             <button type="button" class="chip" data-home="">"From home"</button>
                         }
                     </div>
+                    <p class="quiet hint" data-locate-note="1" role="status" hidden=(true)></p>
+                    <label class="place">"Or type a place"
+                        <input type="text" data-place="1" placeholder="Address, quarter or stop in Zurich" autocomplete="off" autocapitalize="off" enterkeyhint="search">
+                    </label>
+                    <div class="row places" data-place-results="1" aria-live="polite"></div>
+                    <p class="quiet hint" data-place-hint="1" role="status" hidden=(true)></p>
                 </fieldset>
                 <fieldset class="group">
                     <legend>"Order"</legend>
@@ -1179,7 +1210,7 @@ async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str, app: 
         })
         .collect();
     Ok(view! {
-        <section class="club" id=(format!("club-{}", club.id)) data-club=(club.id.to_string())>
+        <section class="club" id=(format!("club-{}", row.key)) data-club=(club.id.to_string())>
             <header>
                 <div>
                     <h2 lang="de"><a href=(format!("/clubs/{}", club.id))>(club.name.as_str())</a></h2>
@@ -1191,7 +1222,7 @@ async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str, app: 
                     </p>
                 </div>
                 <div class="club-actions">
-                    <button type="button" class="icon-button" data-show-on-map=(club.id.to_string()) aria-label=(format!("Show {} on the map", club.name))>
+                    <button type="button" class="icon-button" data-show-on-map=(row.key.as_str()) aria-label=(format!("Show {} on the map", club.name))>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"></path><circle cx="12" cy="10" r="2.3"></circle></svg>
                     </button>
                     <a class="pill" href=(book_at.as_str()) target="_blank" rel="noopener" title=(book_title.as_str())>(label.as_str())</a>
@@ -1271,10 +1302,27 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
         })
         .collect();
     let courts = club.courts.0.clone();
-    let map = format!(
-        "https://www.openstreetmap.org/?mlat={0}&mlon={1}#map=17/{0}/{1}",
-        club.latitude, club.longitude
-    );
+    let osm = |club: &db::Club| {
+        format!(
+            "https://www.openstreetmap.org/?mlat={0}&mlon={1}#map=17/{0}/{1}",
+            club.latitude, club.longitude
+        )
+    };
+    let map = osm(&club);
+    let places: Vec<(String, String, String, String)> = crate::sites::of(club.id)
+        .map(|place| {
+            let shown = crate::sites::at(&club, Some(place));
+            (
+                place.name.to_string(),
+                format!("{}, {} {}", shown.address, shown.zip, shown.city),
+                osm(&shown),
+                format!("{:.1} km", km(&site, &shown)),
+            )
+        })
+        .collect();
+    let anchor = crate::sites::of(club.id)
+        .next()
+        .map_or_else(|| club.id.to_string(), |place| place.key.to_string());
     let web = if club.web.is_empty() || club.web.starts_with("http") {
         club.web.clone()
     } else {
@@ -1286,14 +1334,23 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
         <article class="page club-page">
             <h1>(club.name.as_str())</h1>
             <p class="meta">
-                (format!("{:.1} km · {} · {}", km(&site, &club), sports(&courts), surfaces(&courts)))
+                if places.is_empty() {
+                    (format!("{:.1} km · ", km(&site, &club)))
+                }
+                (format!("{} · {}", sports(&courts), surfaces(&courts)))
                 if !kind(&club).is_empty() {
                     (format!(" · {}", kind(&club)))
                 }
             </p>
             <dl class="facts">
-                <dt>"Address"</dt>
-                <dd><a href=(map.as_str()) target="_blank" rel="noopener">(format!("{}, {} {}", club.address, club.zip, club.city))</a></dd>
+                if places.is_empty() {
+                    <dt>"Address"</dt>
+                    <dd><a href=(map.as_str()) target="_blank" rel="noopener">(format!("{}, {} {}", club.address, club.zip, club.city))</a></dd>
+                }
+                for (name, address, link, far) in &places {
+                    <dt>(name.as_str())</dt>
+                    <dd><a href=(link.as_str()) target="_blank" rel="noopener">(address.as_str())</a><span class="quiet">(format!(" · {far}"))</span></dd>
+                }
                 if !phone.is_empty() {
                     <dt>"Phone"</dt>
                     <dd><a href=(format!("tel:{phone}"))>(club.phone.as_str())</a></dd>
@@ -1339,7 +1396,7 @@ async fn club_page(cx: &Cx) -> Result<impl View> {
                     <tbody>
                         for (date, hours) in &weeks {
                             <tr>
-                                <th><a href=(format!("/?date={date}#club-{}", club.id))>(time::label(date))</a></th>
+                                <th><a href=(format!("/?date={date}#club-{anchor}"))>(time::label(date))</a></th>
                                 for hour in HOURS {
                                     <td class=(heat(hours.get(&hour).copied().unwrap_or(0)))>
                                         if let Some(count) = hours.get(&hour) {
@@ -1781,6 +1838,59 @@ mod tests {
             .is_empty()
         );
         assert_eq!(count(&clubs, &member).current, 7);
+    }
+
+    #[test]
+    fn asvz_shows_as_irchel_and_hoenggerberg_each_at_its_place() {
+        let (mut clubs, mut days) = lengg();
+        let mut irchel = court(1, false);
+        irchel.label = "SC Irchel Platz 1".into();
+        let mut hoengg = court(2, false);
+        hoengg.label = "SC Hönggerberg 1".into();
+        clubs[0].id = 21;
+        clubs[0].name = "ASVZ Zürich".into();
+        let mut day = days.pop_first().unwrap().1;
+        day.club_id = 21;
+        day.courts = Json(vec![irchel, hoengg]);
+        let days = BTreeMap::from([((21, DATE.to_string()), day)]);
+        let rates = Rates::default();
+        let found = Found {
+            clubs: &clubs,
+            days: &days,
+            home: (47.3779, 8.5403),
+            today: "2000-01-01",
+            rates: &rates,
+        };
+        let filters = Filters {
+            dates: vec![DATE.to_string()],
+            ..Filters::default()
+        };
+        let rows = found.rows(&filters);
+        let shown: Vec<(&str, &str, Vec<i64>)> = rows
+            .iter()
+            .map(|row| {
+                (
+                    row.key.as_str(),
+                    row.club.name.as_str(),
+                    row.courts().iter().map(|c| c.id).collect(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            shown,
+            [
+                ("21-irchel", "ASVZ Irchel", vec![1]),
+                ("21-hoenggerberg", "ASVZ Hönggerberg", vec![2])
+            ]
+        );
+        assert!(rows[1].km > rows[0].km, "Hönggerberg lies farther from HB than Irchel");
+        assert_eq!(rows[0].club.id, 21);
+        let within = Filters {
+            within: 3,
+            ..filters.clone()
+        };
+        let near: Vec<String> = found.rows(&within).into_iter().map(|row| row.key).collect();
+        assert_eq!(near, ["21-irchel"]);
     }
 
     #[test]

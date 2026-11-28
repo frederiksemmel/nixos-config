@@ -14,13 +14,115 @@ function openOnWide() {
 
 if (form) {
   openOnWide();
-  form.addEventListener("change", () => form.requestSubmit());
+  form.addEventListener("change", (event) => {
+    if (!event.target.closest("[data-place]")) form.requestSubmit();
+  });
   form.addEventListener("click", (event) => {
     if (event.target.closest("[data-locate]")) locate(event.target.closest("[data-locate]"));
-    if (event.target.closest("[data-home]")) {
-      form.elements.near.value = "";
-      form.requestSubmit();
+    if (event.target.closest("[data-home]")) setNear("", "");
+    const place = event.target.closest("[data-near]");
+    if (place) setNear(place.dataset.near, place.dataset.name);
+  });
+}
+
+function setNear(near, name) {
+  form.elements.near.value = near;
+  form.elements.near_name.value = name;
+  form.requestSubmit();
+}
+
+function say(selector, text) {
+  const note = form.querySelector(selector);
+  if (!note) return;
+  note.textContent = text;
+  note.hidden = !text;
+}
+
+// A place typed in: swisstopo's search, kept to Zurich and around.
+const SEARCH = "https://api3.geo.admin.ch/rest/services/api/SearchServer";
+const AREA = "2665000,1230000,2715000,1270000";
+const placeInput = form && form.querySelector("[data-place]");
+const placeList = form && form.querySelector("[data-place-results]");
+let placeHits = [];
+let placeQuery = null;
+let placePause = null;
+
+function plain(label) {
+  return label
+    .replace(/<i>[^]*?<\/i>(<\/i>)?/g, "")
+    .replace(/<[^>]+>/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function typedPoint(text) {
+  const parts = text.split(",").map((part) => Number(part.trim()));
+  if (parts.length !== 2 || parts.some(Number.isNaN)) return null;
+  const [lat, lng] = parts;
+  return lat > 45 && lat < 48.5 && lng > 5 && lng < 11 ? `${lat.toFixed(4)},${lng.toFixed(4)}` : null;
+}
+
+async function search(text) {
+  placeQuery?.abort();
+  placeQuery = new AbortController();
+  const url = new URL(SEARCH);
+  const query = {
+    searchText: text,
+    type: "locations",
+    origins: "address,gazetteer,zipcode,gg25,haltestellen",
+    bbox: AREA,
+    sr: "2056",
+    limit: "5",
+  };
+  for (const [key, value] of Object.entries(query)) url.searchParams.set(key, value);
+  try {
+    const answer = await fetch(url, { signal: placeQuery.signal });
+    if (!answer.ok) throw new Error(`HTTP ${answer.status}`);
+    const body = await answer.json();
+    placeHits = (body.results || []).map((result) => ({
+      near: `${result.attrs.lat.toFixed(4)},${result.attrs.lon.toFixed(4)}`,
+      name: plain(result.attrs.origin === "address" ? result.attrs.label.replace(" <b>", ", <b>") : result.attrs.label),
+    }));
+    say("[data-place-hint]", placeHits.length ? "" : `Nothing in or around Zurich is called “${text}”.`);
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    placeHits = [];
+    say("[data-place-hint]", "The place search didn't answer. Try again in a moment.");
+  }
+  placeList.replaceChildren(
+    ...placeHits.map((place) => {
+      const button = element("button", "chip", place.name);
+      button.type = "button";
+      button.dataset.near = place.near;
+      button.dataset.name = place.name;
+      return button;
+    }),
+  );
+}
+
+if (placeInput) {
+  placeInput.addEventListener("input", () => {
+    clearTimeout(placePause);
+    const text = placeInput.value.trim();
+    if (text.length < 2) {
+      placeQuery?.abort();
+      placeHits = [];
+      placeList.replaceChildren();
+      say("[data-place-hint]", "");
+      return;
     }
+    placePause = setTimeout(() => search(text), 250);
+  });
+  placeInput.addEventListener("keydown", async (event) => {
+    if (event.key !== "Enter") return;
+    event.preventDefault();
+    const text = placeInput.value.trim();
+    const point = typedPoint(text);
+    if (point) return setNear(point, text);
+    if (text.length < 2) return;
+    clearTimeout(placePause);
+    await search(text);
+    if (placeHits.length) setNear(placeHits[0].near, placeHits[0].name);
   });
 }
 
@@ -93,17 +195,26 @@ if (strip) {
 
 function locate(button) {
   if (!("geolocation" in navigator)) {
-    button.textContent = "This browser can't tell where you are";
+    say("[data-locate-note]", "This browser can't tell where you are. Type a place below instead.");
     return;
   }
+  const label = button.textContent;
   button.textContent = "Finding you…";
+  say("[data-locate-note]", "");
   navigator.geolocation.getCurrentPosition(
-    (position) => {
-      form.elements.near.value = `${position.coords.latitude.toFixed(4)},${position.coords.longitude.toFixed(4)}`;
-      form.requestSubmit();
+    (position) => setNear(`${position.coords.latitude.toFixed(4)},${position.coords.longitude.toFixed(4)}`, ""),
+    (error) => {
+      button.textContent = label;
+      say(
+        "[data-locate-note]",
+        error.code === error.PERMISSION_DENIED
+          ? "Location is blocked for this page. Type a place below, or allow it (on an iPhone: Settings › Privacy & Security › Location Services › Safari Websites) and reload."
+          : error.code === error.TIMEOUT
+            ? "Finding you took too long. Try again, or type a place below."
+            : "Your device couldn't tell where you are just now. Try again, or type a place below.",
+      );
     },
-    () => (button.textContent = "Location not allowed"),
-    { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+    { enableHighAccuracy: false, timeout: 15000, maximumAge: 300000 },
   );
 }
 
@@ -145,7 +256,7 @@ function popup(pin) {
   } else box.append(element("p", "pop-meta", "Nothing free that fits."));
   const actions = element("div", "pop-actions");
   const list = element("a", "pop-link", "Courts and times");
-  list.href = `#club-${pin.id}`;
+  list.href = `#club-${pin.key}`;
   const book = element("a", "pill", pin.book_label);
   book.href = pin.book;
   book.target = "_blank";
@@ -176,7 +287,7 @@ async function start() {
   map.addControl(new maplibregl.NavigationControl({ showCompass: false }), "top-right");
   map.addControl(new maplibregl.GeolocateControl({ trackUserLocation: false, showUserLocation: true }), "top-right");
   const origin = element("div", "origin");
-  origin.title = holder.dataset.here ? "You" : "Home";
+  origin.title = holder.dataset.here || "Home";
   new maplibregl.Marker({ element: origin }).setLngLat([lng, lat]).addTo(map);
   const bounds = new maplibregl.LngLatBounds([lng, lat], [lng, lat]);
   const places = new Map();
@@ -200,8 +311,8 @@ async function start() {
       .setPopup(new maplibregl.Popup({ offset: 18, maxWidth: "300px", closeButton: true }).setDOMContent(content))
       .addTo(map);
     marker.getElement().style.zIndex = free ? "2" : "1";
-    button.addEventListener("click", () => highlight(first.id));
-    for (const pin of group) markers.set(String(pin.id), marker);
+    button.addEventListener("click", () => highlight(first.key));
+    for (const pin of group) markers.set(pin.key, marker);
     if (free) bounds.extend([first.lng, first.lat]);
   }
   if (pins.some((pin) => pin.free)) map.fitBounds(bounds, { padding: 56, maxZoom: 14, duration: 0 });
@@ -237,7 +348,7 @@ document.addEventListener("click", (event) => {
 
 async function boot() {
   await start();
-  const wanted = location.hash.match(/^#pin-(\d+)$/);
+  const wanted = location.hash.match(/^#pin-([\w-]+)$/);
   if (map && wanted) {
     map.once("idle", () => {
       const marker = markers.get(wanted[1]);
