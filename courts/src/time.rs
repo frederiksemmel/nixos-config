@@ -53,6 +53,13 @@ pub fn label(date: &str) -> String {
     }
 }
 
+/// How many days `date` lies after today; 0 for today, an earlier day or none.
+pub fn days_ahead(date: &str) -> i64 {
+    parse(date)
+        .and_then(|day| here().date().until(day).ok())
+        .map_or(0, |span| i64::from(span.get_days()).max(0))
+}
+
 /// "Today", or the weekday: "Sat".
 pub fn weekday(date: &str) -> String {
     match parse(date) {

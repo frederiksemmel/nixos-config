@@ -71,6 +71,14 @@ fn book_label(club: &db::Club, date: &str, app: Option<&str>) -> String {
     }
 }
 
+/// How to reach `date` on GotCourts' site, which opens on today: its date
+/// picker steps a day per ▸. None in the app, on Eversports and for today.
+fn book_hint(club: &db::Club, date: &str, app: Option<&str>) -> Option<String> {
+    let ahead = time::days_ahead(date);
+    (Source::parse(&club.source) == Source::GotCourts && !in_app(club, app) && ahead > 0)
+        .then(|| format!("GotCourts opens on today: ▸ {ahead}×"))
+}
+
 fn km(site: &Site, club: &db::Club) -> f64 {
     distance(site.home, club)
 }
@@ -275,6 +283,7 @@ struct Pin {
     times: Vec<PinTime>,
     book: String,
     book_label: String,
+    book_hint: Option<String>,
     about: String,
 }
 
@@ -627,6 +636,7 @@ async fn day_page(cx: &Cx) -> Result<impl View> {
                 times,
                 book: book(&row.club, soonest, &filters.sport, None, app),
                 book_label: book_label(&row.club, soonest, app),
+                book_hint: book_hint(&row.club, soonest, app),
                 about: format!("{} · {}", surfaces(&row.courts()), kind(&row.club)),
             }
         })
@@ -1196,6 +1206,7 @@ async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str, app: 
         Source::Eversports => format!("Opens Eversports on {}", time::label(&first)),
     };
     let label = book_label(club, &first, app);
+    let hint = book_hint(club, &first, app);
     let days: Vec<CardDay> = row
         .days
         .iter()
@@ -1231,7 +1242,12 @@ async fn club_card(row: &Row, sport: &str, several: bool, share_key: &str, app: 
                     <button type="button" class="icon-button" data-show-on-map=(row.key.as_str()) aria-label=(format!("Show {} on the map", club.name))>
                         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11Z"></path><circle cx="12" cy="10" r="2.3"></circle></svg>
                     </button>
-                    <a class="pill" href=(book_at.as_str()) target="_blank" rel="noopener" title=(book_title.as_str())>(label.as_str())</a>
+                    <div class="book">
+                        <a class="pill" href=(book_at.as_str()) target="_blank" rel="noopener" title=(book_title.as_str())>(label.as_str())</a>
+                        if let Some(hint) = &hint {
+                            <p class="book-hint">(hint.as_str())</p>
+                        }
+                    </div>
                 </div>
             </header>
             for (day, free) in &days {
@@ -1789,6 +1805,13 @@ mod tests {
         assert_eq!(book_label(club, saturday, None), "Book Sat");
         assert_eq!(book_label(club, &time::today(), None), "Book today");
         assert_eq!(book_label(club, saturday, Some("clb_1")), "Book Sat in GotCourts");
+        let in_four = &time::dates(5)[4];
+        assert_eq!(book_hint(club, &time::today(), None), None);
+        assert_eq!(
+            book_hint(club, in_four, None).as_deref(),
+            Some("GotCourts opens on today: ▸ 4×")
+        );
+        assert_eq!(book_hint(club, in_four, Some("clb_1")), None);
         assert_eq!(
             book(club, saturday, "tennis", None, Some("clb_1")),
             "https://got.link/a/key_live_len2iS5oAbcZRntzaijvWdoprDjB1ZgR?club_id=clb_1"

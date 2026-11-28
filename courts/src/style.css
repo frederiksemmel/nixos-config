@@ -380,7 +380,12 @@ textarea { resize: vertical; line-height: 1.45; }
 }
 
 .club.picked { outline: 2px solid var(--accent); outline-offset: 2px; }
-.club-actions { display: flex; align-items: center; gap: 8px; flex: none; }
+.club-actions { display: flex; align-items: start; gap: 8px; flex: none; }
+.book { display: grid; justify-items: end; gap: 4px; }
+@media (max-width: 599px) {
+  .book { justify-items: start; }
+}
+.book-hint { margin: 0; color: var(--quiet); font-size: 0.82rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .icon-button {
   display: inline-grid;
   place-items: center;
@@ -539,6 +544,7 @@ textarea { resize: vertical; line-height: 1.45; }
   transform: translate(-50%, 12px);
   transition: opacity 200ms var(--ease), transform 300ms var(--ease);
 }
+html:not([data-feedback-project=""]) .toast { bottom: calc(max(16px, env(safe-area-inset-bottom)) + 56px); }
 .toast.shown { opacity: 1; pointer-events: auto; transform: translate(-50%, 0); }
 .toast a { color: var(--accent); font-weight: 700; white-space: nowrap; }
 @media (prefers-reduced-motion: reduce) {

@@ -320,6 +320,7 @@ function popup(pin) {
   book.rel = "noopener";
   actions.append(list, book);
   box.append(actions);
+  if (pin.book_hint) box.append(element("p", "pop-meta", pin.book_hint));
   return box;
 }
 
@@ -442,7 +443,7 @@ document.addEventListener("click", async (event) => {
 
 let toastTimer = 0;
 
-function toast(text, url) {
+function toast(text, url, { action = "Open", away = false, shown = 5000 } = {}) {
   let box = document.querySelector(".toast");
   if (!box) {
     box = element("div", "toast");
@@ -451,14 +452,38 @@ function toast(text, url) {
   }
   box.replaceChildren(element("span", "", text));
   if (url) {
-    const open = element("a", "", "Open");
+    const open = element("a", "", action);
     open.href = url;
+    if (away) {
+      open.target = "_blank";
+      open.rel = "noopener";
+      open.addEventListener("click", () => box.classList.remove("shown"));
+    }
     box.append(open);
   }
   box.classList.add("shown");
   clearTimeout(toastTimer);
-  toastTimer = setTimeout(() => box.classList.remove("shown"), 5000);
+  toastTimer = setTimeout(() => box.classList.remove("shown"), shown);
 }
+
+// GotCourts' iPhone app can open without the club when it was not
+// running yet; a second tap opens it, so coming back soon offers one.
+const GOTCOURTS_APP = "https://got.link/";
+let leftForApp = null;
+
+document.addEventListener("click", (event) => {
+  const link = event.target.closest(`a[href^="${GOTCOURTS_APP}"]`);
+  if (link && !link.closest(".toast")) leftForApp = { url: link.href, at: Date.now() };
+});
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState !== "visible" || !leftForApp) return;
+  const { url, at } = leftForApp;
+  leftForApp = null;
+  if (Date.now() - at < 120_000) {
+    toast("GotCourts opened without the club?", url, { action: "Open again", away: true, shown: 12_000 });
+  }
+});
 
 // Asking which one: tap several times, then send them as one link. The
 // choice is kept for the tab, so changing days or filters keeps it.
